@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -135,7 +136,13 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provide(ServerSettings.layerTest()),
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerRuntimeModeDefaults: {
+            [ProviderInstanceId.make("codex")]: "auto",
+          },
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -220,10 +227,18 @@ it.effect.each([
         readonly type: string;
         readonly defaultModelSelection?: unknown;
         readonly modelSelection?: unknown;
+        readonly runtimeMode?: unknown;
       }>
     >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provide(ServerSettings.layerTest({ defaultModelSelection: machineSelection })),
+      Effect.provide(
+        ServerSettings.layerTest({
+          defaultModelSelection: machineSelection,
+          providerRuntimeModeDefaults: {
+            [ProviderInstanceId.make("codex")]: "auto",
+          },
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -297,16 +312,27 @@ it.effect.each([
           model: DEFAULT_MODEL,
         },
     );
+    assert.equal(
+      commands.at(-1)?.runtimeMode,
+      projectSelection || !machineSelection ? "auto" : "full-access",
+    );
   }),
 );
 
 it.effect(
-  "resolveAutoBootstrapWelcomeTargets preserves a project created before thread failure",
+  "resolveAutoBootstrapWelcomeTargets preserves project creation when settings and thread lookup fail",
   () =>
     Effect.gen(function* () {
       const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
       const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-        Effect.provide(ServerSettings.layerTest()),
+        Effect.provideService(ServerSettings.ServerSettingsService, {
+          start: Effect.void,
+          ready: Effect.void,
+          getSettings: Effect.die("settings unavailable"),
+          updateSettings: () => Effect.die("unused"),
+          streamChanges: Stream.empty,
+          subscribeChanges: Effect.succeed(Stream.empty),
+        } satisfies ServerSettings.ServerSettingsService["Service"]),
         Effect.provideService(ServerConfig.ServerConfig, {
           cwd: "/tmp/startup-project",
           autoBootstrapProjectFromCwd: true,
@@ -354,6 +380,34 @@ it.effect(
       assert.equal(targets.bootstrapThreadCreated, undefined);
       assert.deepStrictEqual(yield* Ref.get(dispatchCalls), ["project.create"]);
     }),
+);
+
+it.effect("resolveAutoBootstrapWelcomeTargets propagates settings read interruption", () =>
+  Effect.gen(function* () {
+    const interrupted = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.interrupt,
+        updateSettings: () => Effect.die("unused"),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      } satisfies ServerSettings.ServerSettingsService["Service"]),
+      Effect.provideService(ServerConfig.ServerConfig, {
+        cwd: "/tmp/startup-project",
+        autoBootstrapProjectFromCwd: true,
+      } as never),
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {} as never),
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {} as never),
+      Effect.provide(NodeServices.layer),
+      Effect.matchCause({
+        onFailure: Cause.hasInterrupts,
+        onSuccess: () => false,
+      }),
+    );
+
+    assert.isTrue(interrupted);
+  }),
 );
 
 it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation failures", () =>

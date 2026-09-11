@@ -337,6 +337,7 @@ describe("EnvironmentProviderSettings routing", () => {
       providerInstances: {
         [codexId]: settingsState.value.providerInstances?.[codexId],
       },
+      providerRuntimeModeDefaults: { [customId]: null },
     });
 
     settingsState.updateSettings.mockClear();

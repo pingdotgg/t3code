@@ -68,6 +68,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -243,6 +244,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
+  resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import {
@@ -1840,8 +1842,8 @@ export default function ChatView(props: ChatViewProps) {
   // session.lastError. Bump a tick so the banner hides immediately. Mirrors
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
@@ -2285,10 +2287,16 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
+      const targetServerConfig = environmentById.get(activeProject.environmentId)?.serverConfig;
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode: resolveNewThreadRuntimeMode(
+          targetServerConfig?.settings,
+          activeProject.defaultModelSelection?.instanceId ??
+            resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+              ?.instanceId,
+        ),
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
@@ -2301,6 +2309,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeProject,
       draftId,
+      environmentById,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
       isServerThread,
@@ -3490,16 +3499,36 @@ export default function ChatView(props: ChatViewProps) {
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
     if (!target) return;
+    const targetProject = allProjects.find(
+      (project) =>
+        project.environmentId === target.environmentId && project.id === target.projectId,
+    );
+    const targetServerConfig = environmentById.get(target.environmentId)?.serverConfig;
     setDraftThreadContext(draftId, {
       projectRef: scopeProjectRef(target.environmentId, target.projectId),
       environmentSelection: "auto",
       loadBalancedEnvironmentId: target.environmentId,
+      ...(composerRuntimeMode === null
+        ? {
+            runtimeMode: resolveNewThreadRuntimeMode(
+              targetServerConfig?.settings,
+              composerActiveProvider ??
+                targetProject?.defaultModelSelection?.instanceId ??
+                resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                  ?.instanceId,
+            ),
+          }
+        : {}),
     });
   }, [
+    allProjects,
+    composerActiveProvider,
+    composerRuntimeMode,
     needsLoadBalancing,
     loadBalancing.pending,
     loadBalancing.environmentId,
     draftId,
+    environmentById,
     logicalProjectEnvironments,
     setDraftThreadContext,
   ]);
@@ -3552,13 +3581,38 @@ export default function ChatView(props: ChatViewProps) {
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
+      const targetProject = allProjects.find(
+        (project) =>
+          project.environmentId === target.environmentId && project.id === target.projectId,
+      );
+      const targetServerConfig = environmentById.get(target.environmentId)?.serverConfig;
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
         environmentSelection: "manual",
         loadBalancedEnvironmentId: null,
+        ...(composerRuntimeMode === null
+          ? {
+              runtimeMode: resolveNewThreadRuntimeMode(
+                targetServerConfig?.settings,
+                composerActiveProvider ??
+                  targetProject?.defaultModelSelection?.instanceId ??
+                  resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                    ?.instanceId,
+              ),
+            }
+          : {}),
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [
+      allProjects,
+      composerActiveProvider,
+      composerRuntimeMode,
+      draftId,
+      envLocked,
+      environmentById,
+      logicalProjectEnvironments,
+      setDraftThreadContext,
+    ],
   );
 
   const activeTerminalGroup =
@@ -4091,7 +4145,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
-      if (mode === runtimeMode) return;
+      if (mode === composerRuntimeMode) return;
       setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
@@ -4100,7 +4154,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       isLocalDraftThread,
-      runtimeMode,
+      composerRuntimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
@@ -7821,6 +7875,10 @@ export default function ChatView(props: ChatViewProps) {
     }
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+    const nextThreadRuntimeMode = resolveNewThreadRuntimeMode(
+      environmentById.get(activeProject.environmentId)?.serverConfig?.settings,
+      nextThreadModelSelection.instanceId,
+    );
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -7836,7 +7894,7 @@ export default function ChatView(props: ChatViewProps) {
         projectId: activeProject.id,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
-        runtimeMode,
+        runtimeMode: nextThreadRuntimeMode,
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
@@ -7859,7 +7917,7 @@ export default function ChatView(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: nextThreadTitle,
-          runtimeMode,
+          runtimeMode: nextThreadRuntimeMode,
           interactionMode: "default",
           sourceProposedPlan: {
             threadId: activeThread.id,
@@ -7928,12 +7986,12 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     createThread,
     deleteThread,
+    environmentById,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
     resetLocalDispatch,
-    runtimeMode,
     startThreadTurn,
     environmentId,
     composerRef,
@@ -8021,16 +8079,29 @@ export default function ChatView(props: ChatViewProps) {
         { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      if (isLocalDraftThread && composerRuntimeMode === null) {
+        setDraftThreadContext(composerDraftTarget, {
+          runtimeMode: resolveNewThreadRuntimeMode(
+            environmentById.get(activeThread.environmentId)?.serverConfig?.settings,
+            instanceId,
+          ),
+        });
+      }
       scheduleComposerFocus();
     },
     [
       activeThread,
+      composerDraftTarget,
+      composerRuntimeMode,
+      isLocalDraftThread,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
+      setDraftThreadContext,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
+      environmentById,
     ],
   );
   const onEnvModeChange = useCallback(

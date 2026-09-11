@@ -28,6 +28,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
@@ -36,6 +37,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom, primaryServerSettingsAtom } from "../state/server";
+import { resolveDefaultProviderModelSelection } from "../providerInstances";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -86,6 +88,7 @@ export function useNewThreadHandler() {
       const projects = readProjects();
       const targetServerSettings =
         environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+      const targetServerConfig = environmentServerConfigs.get(projectRef.environmentId);
       const {
         getComposerDraft,
         getDraftSessionByLogicalProjectKey,
@@ -99,10 +102,10 @@ export function useNewThreadHandler() {
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
-      // A new thread carries the user's working mode from the thread being
-      // viewed. The target project's configured model still wins; runtime and
-      // interaction modes carry independently. Branch, worktree, and env mode
-      // come from configured defaults unless the caller passes them explicitly.
+      // The target project's configured model and permission defaults win.
+      // Interaction mode carries from the thread being viewed. Branch,
+      // worktree, and env mode come from configured defaults unless the caller
+      // passes them explicitly.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
@@ -124,11 +127,6 @@ export function useNewThreadHandler() {
         : null;
       const carryModelSelection =
         composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
-      const carryRuntimeMode =
-        carrySourceComposer?.runtimeMode ??
-        carrySourceShell?.runtimeMode ??
-        carrySourceDraft?.runtimeMode ??
-        null;
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??
@@ -139,6 +137,19 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
+      const resolveImplicitRuntimeMode = (destinationDraftId: DraftId) => {
+        const destinationDraft = getComposerDraft(destinationDraftId);
+        if (destinationDraft?.runtimeMode != null) {
+          return undefined;
+        }
+        return resolveNewThreadRuntimeMode(
+          targetServerSettings,
+          destinationDraft?.activeProvider ??
+            project?.defaultModelSelection?.instanceId ??
+            resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+              ?.instanceId,
+        );
+      };
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection:
@@ -265,7 +276,6 @@ export function useNewThreadHandler() {
           if (workspaceContext) {
             setDraftThreadContext(emptyStoredDraftThread.draftId, {
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
           }
@@ -295,14 +305,15 @@ export function useNewThreadHandler() {
           // targets a different physical member of the logical project,
           // createDraftThreadState treats the remap as a project change and
           // would otherwise wipe branch/worktree, undoing the write above.
+          const implicitRuntimeMode = resolveImplicitRuntimeMode(emptyStoredDraftThread.draftId);
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
             projectRef,
             emptyStoredDraftThread.draftId,
             {
               threadId: emptyStoredDraftThread.threadId,
+              ...(implicitRuntimeMode ? { runtimeMode: implicitRuntimeMode } : {}),
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
@@ -349,7 +360,9 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
           threadId: latestActiveDraftThread.threadId,
           createdAt: latestActiveDraftThread.createdAt,
-          runtimeMode: latestActiveDraftThread.runtimeMode,
+          runtimeMode:
+            resolveImplicitRuntimeMode(currentRouteTarget.draftId) ??
+            latestActiveDraftThread.runtimeMode,
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
@@ -392,7 +405,7 @@ export function useNewThreadHandler() {
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
             threadId: racedDraft.threadId,
             createdAt: racedDraft.createdAt,
-            runtimeMode: racedDraft.runtimeMode,
+            runtimeMode: resolveImplicitRuntimeMode(racedDraft.draftId) ?? racedDraft.runtimeMode,
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
@@ -415,7 +428,7 @@ export function useNewThreadHandler() {
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
             }),
-          runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
@@ -425,6 +438,14 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        setDraftThreadContext(draftId, {
+          runtimeMode: resolveNewThreadRuntimeMode(
+            targetServerConfig?.settings,
+            getComposerDraft(draftId)?.activeProvider ??
+              resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                ?.instanceId,
+          ),
+        });
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },
