@@ -10,7 +10,13 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
-  supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  supports: {
+    forking: true,
+    settlement: true,
+    snooze: true,
+    pinning: true,
+    titleRegeneration: true,
+  },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -31,9 +37,22 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          forking: false,
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+        },
       }),
     ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+  });
+
+  it("shows conversation forking only when the server advertises support", () => {
+    expect(ids(baseState)).toContain("fork-thread");
+    expect(
+      ids({ ...baseState, supports: { ...baseState.supports, forking: false } }),
+    ).not.toContain("fork-thread");
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -95,7 +114,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({
         ...baseState,
-        supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
+        supports: {
+          forking: false,
+          settlement: false,
+          snooze: false,
+          pinning: false,
+          titleRegeneration: false,
+        },
       }),
     ).toContain("archive");
   });

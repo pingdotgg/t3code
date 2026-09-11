@@ -20,6 +20,24 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Continue with another provider
+
+Choose **Fork conversation with another provider/model** from a thread's menu on
+web or desktop, or from its model settings on mobile. Select the target provider
+and model, then choose **Fork**. T3 opens a new thread
+with a text transcript of the conversation for the new agent to read. The original
+thread and its provider session stay intact. If a response is running, wait for it
+to finish or stop it before forking.
+
+The fork uses the same workspace, so later code changes are visible to both
+threads. It carries recorded conversation text, not the original provider's hidden
+state, checkpoint history, or attached images and files. The new provider may need
+permission to read the transcript. Once it has read the context, send your next
+request in the new thread.
+
+If the new provider fails to start, correct its setup and fork the original
+conversation again.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

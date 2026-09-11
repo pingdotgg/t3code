@@ -842,6 +842,108 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect(
+    "starts a cross-provider child handoff without reusing or stopping the source session",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          }),
+        );
+        let sent = yield* Deferred.make<void>();
+        let targetThreadId = ThreadId.make("thread-1");
+        harness.sendTurn.mockImplementation(() =>
+          Deferred.succeed(sent, undefined).pipe(
+            Effect.as({ threadId: targetThreadId, turnId: asTurnId(`turn-${targetThreadId}`) }),
+          ),
+        );
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("source-turn"),
+          threadId: targetThreadId,
+          message: {
+            messageId: asMessageId("source-message"),
+            role: "user",
+            text: "Original task",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+        yield* Deferred.await(sent);
+        yield* Effect.promise(harness.drain);
+        const sourceBefore = (yield* Effect.promise(harness.readModel)).threads[0];
+        const sourceSession = structuredClone(harness.runtimeSessions[0]);
+
+        targetThreadId = ThreadId.make("thread-2");
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        };
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("child-create"),
+          threadId: targetThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Fork of Thread",
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        const transcript = {
+          type: "file" as const,
+          id: "thread-2-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa-txt",
+          name: "conversation.txt",
+          mimeType: "text/plain",
+          sizeBytes: 150_000,
+        };
+        sent = yield* Deferred.make<void>();
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("child-handoff"),
+          threadId: targetThreadId,
+          message: {
+            messageId: asMessageId("child-message"),
+            role: "user",
+            text: "Read the attached source conversation and wait for my next request.",
+            attachments: [transcript],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+        yield* Deferred.await(sent);
+        yield* Effect.promise(harness.drain);
+
+        expect(harness.startSession).toHaveBeenCalledTimes(2);
+        expect(harness.startSession.mock.calls[1]?.[0]).toBe(targetThreadId);
+        expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({ modelSelection });
+        expect(harness.startSession.mock.calls[1]?.[1]).not.toHaveProperty("resumeCursor");
+        expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+          threadId: targetThreadId,
+          attachments: [transcript],
+        });
+        expect(harness.runtimeSessions[0]).toEqual(sourceSession);
+        expect(harness.runtimeSessions[1]?.resumeCursor).not.toEqual(sourceSession?.resumeCursor);
+        expect(
+          (yield* Effect.promise(harness.readModel)).threads.find(
+            (thread) => thread.id === sourceBefore?.id,
+          ),
+        ).toEqual(sourceBefore);
+        expect(harness.stopSession).not.toHaveBeenCalled();
+        expect(harness.interruptTurn).not.toHaveBeenCalled();
+      }),
+  );
+
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

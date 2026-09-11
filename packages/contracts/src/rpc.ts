@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadForkError, ThreadForkInput, ThreadForkResult } from "./threadFork.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -273,6 +274,7 @@ export const WS_METHODS = {
   assetsCreateUrl: "assets.createUrl",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
+  threadsFork: "threads.fork",
 
   // Provider methods
   providerUploadFeedback: "provider.uploadFeedback",
@@ -898,6 +900,12 @@ const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsThreadsForkRpc = Rpc.make(WS_METHODS.threadsFork, {
+  payload: ThreadForkInput,
+  success: ThreadForkResult,
+  error: Schema.Union([ThreadForkError, EnvironmentAuthorizationError]),
+});
+
 const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -1351,6 +1359,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  WsThreadsForkRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

@@ -22,6 +22,7 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsThreadForking,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
@@ -39,6 +40,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { openForkThreadDialog } from "../forkThreadDialog";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -130,6 +132,7 @@ export function useThreadActionMenu(input: {
         if (!thread) return;
         const now = new Date();
         const supports = {
+          forking: readEnvironmentSupportsThreadForking(threadRef.environmentId),
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
@@ -190,6 +193,9 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "fork-thread":
+            openForkThreadDialog(threadRef);
+            return;
           case "project-settings": {
             const project = projects.find(
               (candidate) =>

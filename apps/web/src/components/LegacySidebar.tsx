@@ -200,7 +200,8 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { openForkThreadDialog } from "../forkThreadDialog";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -1144,6 +1145,7 @@ interface SidebarProjectItemProps {
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
     project,
     isThreadListExpanded,
@@ -2243,6 +2245,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          ...(serverConfigs.get(thread.environmentId)?.environment.capabilities.threadForking ===
+          true
+            ? [
+                {
+                  id: "fork-thread",
+                  label: "Fork conversation with another provider/model",
+                  icon: "message-square-plus",
+                },
+              ]
+            : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2252,6 +2264,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      if (clicked === "fork-thread") {
+        openForkThreadDialog(threadRef);
+        return;
+      }
 
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
@@ -2350,6 +2367,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.projectKey,
       project.workspaceRoot,
       router,
+      serverConfigs,
       setOpenMobile,
       startThreadRename,
     ],

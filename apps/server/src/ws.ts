@@ -7,9 +7,11 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PartitionedSemaphore from "effect/PartitionedSemaphore";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -66,6 +68,7 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  ThreadForkError,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -118,6 +121,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
+import { resolveAttachmentPath } from "./attachmentStore.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -163,7 +167,18 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import {
+  makeThreadForkAttachment,
+  makeThreadForkHandoffPrompt,
+  makeThreadForkTranscript,
+  findThreadForkTranscriptAttachment,
+  threadForkCreateCommandId,
+  threadForkMessageId,
+  isSameThreadForkModelSelection,
+} from "./threadFork.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isThreadForkError = Schema.is(ThreadForkError);
+const threadForkLocks = PartitionedSemaphore.makeUnsafe<ThreadId>({ permits: 1 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -483,6 +498,8 @@ const makeWsRpcLayer = (
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       /** A reference's host-level link key; the project's own host where the ref names none. */
@@ -1247,6 +1264,229 @@ const makeWsRpcLayer = (
             ),
           );
       };
+
+      const forkThreadUnlocked = Effect.fn("WsRpc.forkThreadUnlocked")(function* (input: {
+        readonly sourceThreadId: ThreadId;
+        readonly newThreadId: ThreadId;
+        readonly modelSelection: import("@t3tools/contracts").ModelSelection;
+      }) {
+        const handoffMessageId = threadForkMessageId(input.newThreadId);
+        const existingTarget = yield* projectionSnapshotQuery.getThreadDetailById(
+          input.newThreadId,
+          { activityKinds: [] },
+        );
+        if (Option.isSome(existingTarget)) {
+          const handoff = existingTarget.value.messages.find(
+            (message) => message.id === handoffMessageId,
+          );
+          if (
+            handoff?.text.startsWith(`T3 source thread: ${input.sourceThreadId}.`) === true &&
+            findThreadForkTranscriptAttachment(existingTarget.value) !== null &&
+            isSameThreadForkModelSelection(
+              existingTarget.value.modelSelection,
+              input.modelSelection,
+            )
+          ) {
+            const { snapshotSequence } = yield* projectionSnapshotQuery.getSnapshotSequence();
+            return { threadId: input.newThreadId, sequence: snapshotSequence };
+          }
+          if (existingTarget.value.messages.length > 0) {
+            return yield* new ThreadForkError({
+              sourceThreadId: input.sourceThreadId,
+              newThreadId: input.newThreadId,
+              reason: "target_conflict",
+            });
+          }
+        }
+
+        const sourceOption = yield* projectionSnapshotQuery.getThreadDetailById(
+          input.sourceThreadId,
+          { activityKinds: [] },
+        );
+        if (Option.isNone(sourceOption)) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "source_not_found",
+          });
+        }
+        const source = sourceOption.value;
+        const [pendingTurnStart] = yield* sql<{ readonly exists: number }>`
+          SELECT EXISTS(
+            SELECT 1
+            FROM projection_turns
+            WHERE thread_id = ${input.sourceThreadId}
+              AND turn_id IS NULL
+              AND state = 'pending'
+          ) AS "exists"
+        `;
+        if (
+          pendingTurnStart?.exists === 1 ||
+          source.latestTurn?.state === "running" ||
+          source.messages.some((message) => message.streaming) ||
+          source.session?.status === "starting" ||
+          source.session?.status === "running"
+        ) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "source_busy",
+          });
+        }
+        if (
+          Option.isSome(existingTarget) &&
+          (existingTarget.value.projectId !== source.projectId ||
+            !isSameThreadForkModelSelection(
+              existingTarget.value.modelSelection,
+              input.modelSelection,
+            ) ||
+            existingTarget.value.messages.length > 0)
+        ) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "target_conflict",
+          });
+        }
+
+        const providers = yield* providerRegistry.getProviders;
+        const targetProvider = providers.find(
+          (provider) => provider.instanceId === input.modelSelection.instanceId,
+        );
+        if (
+          targetProvider === undefined ||
+          !targetProvider.enabled ||
+          !targetProvider.installed ||
+          targetProvider.status === "disabled" ||
+          targetProvider.availability === "unavailable"
+        ) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "target_provider_unavailable",
+          });
+        }
+
+        const inheritedAttachment = findThreadForkTranscriptAttachment(source);
+        const hasGeneratedHandoff = source.messages.some(
+          (message) => message.id === threadForkMessageId(source.id),
+        );
+        if (hasGeneratedHandoff && inheritedAttachment === null) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "internal",
+            detail: "The source fork's inherited transcript is missing.",
+          });
+        }
+        const inheritedTranscript = yield* inheritedAttachment === null
+          ? Effect.succeed(undefined)
+          : Effect.gen(function* () {
+              const inheritedPath = resolveAttachmentPath({
+                attachmentsDir: config.attachmentsDir,
+                attachment: inheritedAttachment,
+              });
+              if (inheritedPath === null) {
+                return yield* new ThreadForkError({
+                  sourceThreadId: input.sourceThreadId,
+                  newThreadId: input.newThreadId,
+                  reason: "internal",
+                  detail: "The source fork's inherited transcript path is invalid.",
+                });
+              }
+              return yield* fileSystem.readFileString(inheritedPath);
+            });
+        const transcript = makeThreadForkTranscript(source, inheritedTranscript);
+        const stored = makeThreadForkAttachment({
+          attachmentsDir: config.attachmentsDir,
+          threadId: input.newThreadId,
+          transcript,
+        });
+        if (stored === null) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "transcript_too_large",
+          });
+        }
+
+        const createdAt = yield* nowIso;
+        const createCommand = {
+          type: "thread.create" as const,
+          commandId: threadForkCreateCommandId(input.sourceThreadId, input.newThreadId),
+          threadId: input.newThreadId,
+          projectId: source.projectId,
+          title: `${source.title} (fork)`,
+          modelSelection: input.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          createdAt,
+        } satisfies OrchestrationCommand;
+        const created = yield* dispatchFromClient(createCommand).pipe(
+          Effect.mapError((error) =>
+            Option.isSome(existingTarget)
+              ? new ThreadForkError({
+                  sourceThreadId: input.sourceThreadId,
+                  newThreadId: input.newThreadId,
+                  reason: "target_conflict",
+                })
+              : error,
+          ),
+        );
+        yield* threadDeletionReactor.drainThrough(created.sequence);
+        const liveTarget = yield* projectionSnapshotQuery.getThreadDetailById(input.newThreadId, {
+          activityKinds: [],
+        });
+        if (Option.isNone(liveTarget)) {
+          return yield* new ThreadForkError({
+            sourceThreadId: input.sourceThreadId,
+            newThreadId: input.newThreadId,
+            reason: "target_conflict",
+          });
+        }
+        yield* fileSystem.makeDirectory(path.dirname(stored.path), { recursive: true });
+        yield* fileSystem.writeFileString(stored.path, transcript);
+        const command = {
+          type: "thread.turn.start" as const,
+          // Rejected command IDs cannot be retried. Successful retries are
+          // recognized by the persisted handoff message before reaching here.
+          commandId: yield* serverCommandId("thread-fork-turn"),
+          threadId: input.newThreadId,
+          message: {
+            messageId: handoffMessageId,
+            role: "user" as const,
+            text: makeThreadForkHandoffPrompt(source),
+            attachments: [stored.attachment],
+          },
+          modelSelection: input.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: source.interactionMode,
+          createdAt,
+        } satisfies OrchestrationCommand;
+
+        const result = yield* dispatchNormalizedCommand(command);
+        yield* recordClientCommandAnalytics(createCommand);
+        yield* recordClientCommandAnalytics(command);
+        return { threadId: input.newThreadId, sequence: result.sequence };
+      });
+      const forkThread = (input: Parameters<typeof forkThreadUnlocked>[0]) =>
+        threadForkLocks
+          .withPermit(input.newThreadId)(forkThreadUnlocked(input))
+          .pipe(
+            Effect.mapError((error) =>
+              isThreadForkError(error)
+                ? error
+                : new ThreadForkError({
+                    sourceThreadId: input.sourceThreadId,
+                    newThreadId: input.newThreadId,
+                    reason: "internal",
+                    detail:
+                      error instanceof Error ? error.message : "Failed to fork the conversation.",
+                  }),
+            ),
+          );
 
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
@@ -2426,6 +2666,10 @@ const makeWsRpcLayer = (
             deletePendingAttachment(input.attachmentId),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.threadsFork]: (input) =>
+          observeRpcEffect(WS_METHODS.threadsFork, forkThread(input), {
+            "rpc.aggregate": "orchestration",
+          }),
         [WS_METHODS.agentSessionsScan]: () =>
           observeRpcEffect(WS_METHODS.agentSessionsScan, agentSessionScanner.scan, {
             "rpc.aggregate": "workspace",

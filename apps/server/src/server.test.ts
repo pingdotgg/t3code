@@ -23,6 +23,7 @@ import {
   type OrchestrationShellStreamItem,
   OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
+  type OrchestrationThread,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
@@ -11717,4 +11718,179 @@ it.live(
       assert.deepEqual(transferBudgetViolations(runs), []);
     }).pipe(Effect.provide(NodeServices.layer)),
   120_000,
+);
+
+it.effect("forks a thread through one idempotent transcript handoff operation", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-fork-test-" });
+    const paths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+    const source: OrchestrationThread = {
+      ...makeDefaultOrchestrationReadModel().threads[0]!,
+      title: "Long source thread",
+      messages: Array.from({ length: 240 }, (_, index) => ({
+        id: MessageId.make(`source-message-${index}`),
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        text: `${index % 2 === 0 ? "Question" : "Answer"} ${index}`,
+        turnId: TurnId.make(`source-turn-${Math.floor(index / 2)}`),
+        streaming: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      })),
+    };
+    const targets = new Map<ThreadId, OrchestrationThread>();
+    const acceptedCommandIds = new Set<CommandId>();
+    const rejectedCommandIds = new Map<CommandId, OrchestrationListenerCallbackError>();
+    const commands: OrchestrationCommand[] = [];
+    let sequence = 0;
+    let failNextTurn = false;
+    const provider = {
+      instanceId: defaultModelSelection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+
+    yield* buildAppUnderTest({
+      config: { baseDir },
+      layers: {
+        providerRegistry: { getProviders: Effect.succeed([provider]) },
+        projectionSnapshotQuery: {
+          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: sequence }),
+          getThreadDetailById: (threadId) =>
+            Effect.succeed(
+              threadId === source.id
+                ? Option.some(source)
+                : Option.fromNullishOr(targets.get(threadId)),
+            ),
+        },
+        orchestrationEngine: {
+          dispatch: (command) =>
+            Effect.gen(function* () {
+              commands.push(command);
+              if (acceptedCommandIds.has(command.commandId)) return { sequence };
+              const priorRejection = rejectedCommandIds.get(command.commandId);
+              if (priorRejection) return yield* priorRejection;
+              if (command.type === "thread.create") {
+                if (targets.has(command.threadId)) {
+                  return yield* new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "thread already exists",
+                  });
+                }
+                targets.set(command.threadId, {
+                  ...source,
+                  id: command.threadId,
+                  title: command.title,
+                  modelSelection: command.modelSelection,
+                  messages: [],
+                });
+              } else if (command.type === "thread.turn.start") {
+                if (failNextTurn) {
+                  failNextTurn = false;
+                  const rejection = new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "turn dispatch failed",
+                  });
+                  rejectedCommandIds.set(command.commandId, rejection);
+                  return yield* rejection;
+                }
+                const target = targets.get(command.threadId)!;
+                targets.set(command.threadId, {
+                  ...target,
+                  messages: [
+                    {
+                      id: command.message.messageId,
+                      role: command.message.role,
+                      text: command.message.text,
+                      attachments: command.message.attachments,
+                      turnId: null,
+                      streaming: false,
+                      createdAt: command.createdAt,
+                      updatedAt: command.createdAt,
+                    },
+                  ],
+                });
+              }
+              sequence += 1;
+              acceptedCommandIds.add(command.commandId);
+              return { sequence };
+            }),
+        },
+      },
+    });
+    const wsUrl = yield* getWsServerUrl("/ws");
+    const input = {
+      sourceThreadId: source.id,
+      newThreadId: ThreadId.make("parallel-fork"),
+      modelSelection: defaultModelSelection,
+    };
+
+    const parallel = yield* Effect.all(
+      [
+        Effect.scoped(withWsRpcClient(wsUrl, (client) => client[WS_METHODS.threadsFork](input))),
+        Effect.scoped(withWsRpcClient(wsUrl, (client) => client[WS_METHODS.threadsFork](input))),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.deepEqual(
+      parallel.map(({ threadId }) => threadId),
+      [input.newThreadId, input.newThreadId],
+    );
+    assert.deepEqual(
+      commands.map(({ type }) => type),
+      ["thread.create", "thread.turn.start"],
+    );
+    const target = targets.get(input.newThreadId)!;
+    assert.equal(source.messages.length, 240);
+    assert.equal(target.projectId, source.projectId);
+    assert.deepEqual(target.modelSelection, input.modelSelection);
+    const attachment = target.messages[0]!.attachments![0]!;
+    const transcript = yield* fs.readFileString(`${paths.attachmentsDir}/${attachment.id}.md`);
+    assert.include(transcript, "Question 0");
+    assert.include(transcript, "Answer 239");
+
+    const conflict = yield* Effect.scoped(
+      withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.threadsFork]({
+          ...input,
+          sourceThreadId: ThreadId.make("different-source"),
+        }),
+      ),
+    ).pipe(Effect.result);
+    assertTrue(conflict._tag === "Failure");
+    assertTrue(conflict.failure._tag === "ThreadForkError");
+    assert.equal(conflict.failure.reason, "target_conflict");
+
+    const retryThreadId = ThreadId.make("failed-then-retried-fork");
+    failNextTurn = true;
+    const failed = yield* Effect.scoped(
+      withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.threadsFork]({ ...input, newThreadId: retryThreadId }),
+      ),
+    ).pipe(Effect.result);
+    assertTrue(failed._tag === "Failure");
+    assertTrue(failed.failure._tag === "ThreadForkError");
+    assert.isTrue(targets.has(retryThreadId));
+    assert.equal(targets.get(retryThreadId)?.messages.length, 0);
+    const retried = yield* Effect.scoped(
+      withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.threadsFork]({ ...input, newThreadId: retryThreadId }),
+      ),
+    );
+    assert.equal(retried.threadId, retryThreadId);
+    assert.equal(targets.get(retryThreadId)?.messages.length, 1);
+    const retryTurnCommands = commands.filter(
+      (command) => command.type === "thread.turn.start" && command.threadId === retryThreadId,
+    );
+    assert.equal(retryTurnCommands.length, 2);
+    assert.notEqual(retryTurnCommands[0]!.commandId, retryTurnCommands[1]!.commandId);
+  }).pipe(Effect.provide(NodeHttpServer.layerTest), Effect.provide(NodeServices.layer)),
 );
