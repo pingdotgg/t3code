@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopThreadDeepLinkPayload,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -166,6 +167,68 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
+    };
+  },
+  onDeepLink: (listener) => {
+    let active = true;
+    let deliveredGeneration = -1;
+    const parsePayload = (payload: unknown): DesktopThreadDeepLinkPayload | null => {
+      if (typeof payload !== "object" || payload === null) return null;
+      const { environmentId, threadId } = payload as {
+        environmentId?: unknown;
+        threadId?: unknown;
+      };
+      if (typeof environmentId !== "string" || typeof threadId !== "string") return null;
+      return { environmentId, threadId };
+    };
+    const deliver = (payload: unknown, generation: unknown) => {
+      if (!active) return;
+      const parsed = parsePayload(payload);
+      if (parsed !== null) {
+        if (typeof generation === "number") {
+          if (generation <= deliveredGeneration) return;
+          deliveredGeneration = generation;
+        }
+        listener(parsed);
+        if (typeof generation === "number") {
+          void ipcRenderer
+            .invoke(IpcChannels.DEEP_LINK_ACK_CHANNEL, generation)
+            .catch(() => undefined);
+        }
+      }
+    };
+    const wrappedListener = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+      generation: unknown,
+    ) => {
+      deliver(payload, generation);
+    };
+
+    ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+    // Handshake: registering tells the main process this renderer is ready
+    // for pushes, and returns the link buffered while no renderer was
+    // (cold start) — or null.
+    void ipcRenderer
+      .invoke(IpcChannels.DEEP_LINK_SUBSCRIBE_CHANNEL)
+      .then((result) => {
+        const response =
+          typeof result === "object" && result !== null && "payload" in result
+            ? (result as { payload?: unknown; generation?: unknown })
+            : { payload: result, generation: null };
+        // A reply that lands after teardown is left for the next subscriber:
+        // main keeps the link until an active listener acknowledges it.
+        if (active) {
+          deliver(response.payload, response.generation);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      ipcRenderer.removeListener(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+      // Enqueue cleanup before a replacement listener can subscribe. Waiting
+      // for the old subscribe reply would unregister that replacement.
+      void ipcRenderer.invoke(IpcChannels.DEEP_LINK_UNSUBSCRIBE_CHANNEL).catch(() => undefined);
     };
   },
   onSnapShotEvent: (listener) => {

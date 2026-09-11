@@ -113,6 +113,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
+    fromWebContentsId: () => Effect.die("unexpected webContents lookup"),
     sendAll: (_channel, state) =>
       Effect.sync(() => {
         sentStates.push(state as DesktopUpdateState);
