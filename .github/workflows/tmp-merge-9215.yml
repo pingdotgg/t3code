@@ -22,6 +22,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/pingdotgg/t3code.git 2>/dev/null || git remote set-url upstream https://github.com/pingdotgg/t3code.git
           git fetch upstream main
           set +e
