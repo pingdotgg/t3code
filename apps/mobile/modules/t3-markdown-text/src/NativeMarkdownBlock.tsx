@@ -4,7 +4,11 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
-import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
+import {
+  nativeMarkdownDocumentRuns,
+  nativeMarkdownListItemBlocks,
+  nativeMarkdownNodePosition,
+} from "./nativeMarkdownText";
 import { pendingCodeHighlight } from "./pendingCodeHighlight";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
 import type {
@@ -30,7 +34,7 @@ const MONO_FONT_FAMILY = Platform.select({
 });
 
 function nodeKey(node: MarkdownNode, index: number): string {
-  return `${node.type}:${node.beg ?? index}`;
+  return `${node.type}:${nativeMarkdownNodePosition(node, index)}`;
 }
 
 /** Code inside markdown scales with the base text size (12pt at the default 15pt body). */

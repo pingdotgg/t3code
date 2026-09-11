@@ -694,20 +694,31 @@ function containsRichBlock(node: MarkdownNode): boolean {
   return (node.children ?? []).some(containsRichBlock);
 }
 
+/**
+ * Sibling identity for React keys. A source offset survives appends while the
+ * document streams; the child index is the fallback for offset-free nodes. The
+ * two never share a namespace, so a positioned node cannot collide with an
+ * offset-free sibling whose index happens to equal its offset.
+ */
+export function nativeMarkdownNodePosition(node: MarkdownNode, index: number): string {
+  return node.beg === undefined ? `index:${index}` : `offset:${node.beg}`;
+}
+
 export function nativeMarkdownDocumentChunks(
   document: MarkdownNode,
 ): ReadonlyArray<NativeMarkdownDocumentChunk> {
   const chunks: NativeMarkdownDocumentChunk[] = [];
   let selectableNodes: MarkdownNode[] = [];
+  let selectableStart = 0;
 
   const flushSelectable = () => {
-    if (selectableNodes.length === 0) {
+    const first = selectableNodes[0];
+    if (!first) {
       return;
     }
-    const first = selectableNodes[0];
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}`,
+      key: `selectable:${nativeMarkdownNodePosition(first, selectableStart)}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -718,6 +729,9 @@ export function nativeMarkdownDocumentChunks(
 
   for (const [index, child] of (document.children ?? []).entries()) {
     if (!containsRichBlock(child)) {
+      if (selectableNodes.length === 0) {
+        selectableStart = index;
+      }
       selectableNodes.push(child);
       continue;
     }
@@ -725,7 +739,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}`,
+      key: `rich:${child.type}:${nativeMarkdownNodePosition(child, index)}`,
       node: child,
     });
   }
