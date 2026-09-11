@@ -61,7 +61,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
@@ -84,6 +83,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       const promptResult = yield* Effect.gen(function* () {
+        const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
         const started = yield* runtime.start();
         const requestedReasoningEffort = getModelSelectionStringOptionValue(
           modelSelection,
@@ -104,7 +104,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
               cause,
             }),
         });
-
         return yield* runtime.prompt({
           prompt: [{ type: "text", text: prompt }],
         });

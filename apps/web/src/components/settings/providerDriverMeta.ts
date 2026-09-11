@@ -1,14 +1,17 @@
 import {
+  AcpRegistrySettings,
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
+  PiSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import {
+  ACPRegistryIcon,
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
@@ -16,6 +19,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  PiAgentIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -33,6 +37,9 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
+  readonly environmentFields?: readonly ProviderEnvironmentFieldDefinition[];
+  /** Whether this driver has a built-in default instance backed by legacy settings. */
+  readonly hasDefaultInstance?: boolean;
   /**
    * Optional short label rendered as a `variant="warning"` badge next to
    * the instance title. Used to flag drivers that still ship under an
@@ -41,6 +48,14 @@ export interface ProviderClientDefinition {
    * built-in default or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
+}
+
+export interface ProviderEnvironmentFieldDefinition {
+  readonly name: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly placeholder?: string;
+  readonly sensitive?: boolean;
 }
 
 const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
@@ -60,15 +75,37 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     icon: CursorIcon,
-    badgeLabel: "Early Access",
     settingsSchema: CursorSettings,
+    environmentFields: [
+      {
+        name: "CURSOR_API_KEY",
+        label: "Cursor API key",
+        description: "Required by the Cursor Agent SDK.",
+        placeholder: "Paste API key",
+        sensitive: true,
+      },
+    ],
   },
   {
     value: ProviderDriverKind.make("grok"),
     label: "Grok",
     icon: GrokIcon,
-    badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    icon: ACPRegistryIcon,
+    badgeLabel: "V2 Preview",
+    settingsSchema: AcpRegistrySettings,
+    hasDefaultInstance: false,
+  },
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    icon: PiAgentIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: PiSettings,
   },
   {
     value: ProviderDriverKind.make("opencode"),

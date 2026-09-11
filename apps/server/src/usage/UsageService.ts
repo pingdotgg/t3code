@@ -113,7 +113,7 @@ const EMPTY_PRICING: UsagePricing = {
 };
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
-export const layerTest = Layer.succeed(
+const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
     readSummary: (input) =>

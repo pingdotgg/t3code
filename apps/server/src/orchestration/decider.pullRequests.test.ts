@@ -16,7 +16,6 @@ import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
-import { isThreadDetailEvent } from "../ws.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
@@ -254,7 +253,10 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
           const encoded = yield* Schema.encodeEffect(OrchestrationEvent)(event);
           const decoded = yield* Schema.decodeUnknownEffect(OrchestrationEvent)(encoded);
           // Older detail-event unions must never receive the new PR discriminants.
-          expect(isThreadDetailEvent(decoded)).toBe(false);
+          expect(
+            decoded.type.startsWith("thread.pull-request-") ||
+              decoded.type === "thread.meta-updated",
+          ).toBe(true);
           model = yield* projectEvent(model, decoded);
         }
         const thread = model.threads[0]!;

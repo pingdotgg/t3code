@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampPreviewMiniPlayerPosition,
+  defaultPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
@@ -280,6 +281,33 @@ describe("resizePreviewMiniPlayer", () => {
         container,
       }),
     ).toEqual({ x: 300, y: 200, width: 240, height: 150 });
+  });
+});
+
+describe("defaultPreviewMiniPlayerPosition", () => {
+  it("keeps the top-right fallback when the inline details panel is closed", () => {
+    expect(
+      defaultPreviewMiniPlayerPosition({
+        fallback: { x: 664, y: 16 },
+        parentRect: { left: 300, top: 60 },
+        playerWidth: 320,
+        detailsCardRect: null,
+      }),
+    ).toEqual({ x: 664, y: 16 });
+  });
+
+  it("slides under the inline details card with right edges aligned", () => {
+    expect(
+      defaultPreviewMiniPlayerPosition({
+        fallback: { x: 664, y: 16 },
+        parentRect: { left: 300, top: 60 },
+        playerWidth: 320,
+        detailsCardRect: { right: 1280, bottom: 320 },
+      }),
+    ).toEqual({
+      x: 1280 - 300 - 320,
+      y: 320 - 60 + PREVIEW_MINI_PLAYER_EDGE_GAP,
+    });
   });
 });
 

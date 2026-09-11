@@ -160,6 +160,20 @@ function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize): number {
   );
 }
 
+/** Place a new player below the inline details card when it owns the top-right corner. */
+export function defaultPreviewMiniPlayerPosition(input: {
+  readonly fallback: PreviewMiniPlayerPosition;
+  readonly parentRect: { readonly left: number; readonly top: number };
+  readonly playerWidth: number;
+  readonly detailsCardRect: { readonly right: number; readonly bottom: number } | null;
+}): PreviewMiniPlayerPosition {
+  if (input.detailsCardRect === null) return input.fallback;
+  return {
+    x: input.detailsCardRect.right - input.parentRect.left - input.playerWidth,
+    y: input.detailsCardRect.bottom - input.parentRect.top + PREVIEW_MINI_PLAYER_EDGE_GAP,
+  };
+}
+
 const clampToContainer = (
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,

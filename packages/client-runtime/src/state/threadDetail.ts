@@ -1,72 +1,20 @@
-import type {
-  OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationSession,
-  OrchestrationThread,
-  OrchestrationThreadActivity,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import type { EnvironmentThread, EnvironmentThreadShell } from "./models.ts";
-import { scopeThread } from "./models.ts";
+import {
+  deriveThreadQueueWorkflowState,
+  getUserQueuedThreadRuns,
+  type ThreadQueueWorkflowState,
+} from "./threadWorkflows.ts";
+import type { EnvironmentThread } from "./models.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
-import { parseThreadKey, threadKey } from "./entities.ts";
+import { derivePendingThreadRequests, type PendingThreadRequests } from "./threadRequests.ts";
+import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 
-const EMPTY_MESSAGES: ReadonlyArray<OrchestrationMessage> = Object.freeze([]);
-const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
-const EMPTY_PROPOSED_PLANS: ReadonlyArray<OrchestrationProposedPlan> = Object.freeze([]);
-const EMPTY_CHECKPOINTS: ReadonlyArray<OrchestrationCheckpointSummary> = Object.freeze([]);
-
-/**
- * Combine detail-only collections with the shell's authoritative thread metadata.
- *
- * Shell and detail subscriptions are intentionally independent. A cached detail can
- * therefore briefly outlive a newer shell snapshot after reconnecting. Workspace
- * consumers must use the shell branch/worktree/project fields so they do not target
- * a stale checkout while retaining messages, activities, plans, and checkpoints
- * from the detail subscription.
- */
-export function mergeEnvironmentThread(
-  detail: EnvironmentThread | null,
-  shell: EnvironmentThreadShell | null,
-): EnvironmentThread | null {
-  if (detail === null || shell === null) {
-    return detail;
-  }
-  if (detail.environmentId !== shell.environmentId || detail.id !== shell.id) {
-    return detail;
-  }
-
-  return {
-    ...detail,
-    environmentId: shell.environmentId,
-    id: shell.id,
-    projectId: shell.projectId,
-    title: shell.title,
-    modelSelection: shell.modelSelection,
-    runtimeMode: shell.runtimeMode,
-    interactionMode: shell.interactionMode,
-    branch: shell.branch,
-    worktreePath: shell.worktreePath,
-    latestTurn: shell.latestTurn,
-    createdAt: shell.createdAt,
-    updatedAt: shell.updatedAt,
-    archivedAt: shell.archivedAt,
-    settledOverride: shell.settledOverride,
-    settledAt: shell.settledAt,
-    unsettledAt: shell.unsettledAt,
-    activeOrderKey: shell.activeOrderKey,
-    snoozedUntil: shell.snoozedUntil,
-    snoozedAt: shell.snoozedAt,
-    pinnedAt: shell.pinnedAt,
-    pinOrderKey: shell.pinOrderKey,
-    session: shell.session,
-  };
-}
+const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
+  [],
+);
 
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
@@ -84,85 +32,142 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-state-value:${key}`));
   });
 
-  const threadDetailAtomFamily = Atom.family((key: string) => {
+  const threadAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
-    let previousSource: OrchestrationThread | null = null;
+    let previousProjection: OrchestrationV2ThreadProjection | null = null;
     let previousValue: EnvironmentThread | null = null;
     return Atom.make((get) => {
-      const source = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
-      if (source === previousSource) {
-        return previousValue;
-      }
-      previousSource = source;
-      previousValue = source === null ? null : scopeThread(ref.environmentId, source);
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === previousProjection) return previousValue;
+      previousProjection = projection;
+      previousValue = projection === null ? null : { environmentId: ref.environmentId, projection };
       return previousValue;
-    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-detail:${key}`));
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread:${key}`));
   });
 
-  const threadStatusAtomFamily = Atom.family((key: string) =>
+  const visibleTurnItemsAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get): OrchestrationV2ThreadProjection["visibleTurnItems"] =>
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.visibleTurnItems ??
+        EMPTY_VISIBLE_TURN_ITEMS,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`)),
+  );
+
+  const queueWorkflowAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "messages" | "providerThreads" | "providerSessions" | "providerTurns"
+    > | null = null;
+    let value: ThreadQueueWorkflowState | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        value = null;
+      } else if (
+        previous === null ||
+        projection.thread !== previous.thread ||
+        projection.runs !== previous.runs ||
+        projection.messages !== previous.messages ||
+        projection.providerThreads !== previous.providerThreads ||
+        projection.providerSessions !== previous.providerSessions ||
+        projection.providerTurns !== previous.providerTurns
+      ) {
+        value = deriveThreadQueueWorkflowState(projection);
+        const { thread, runs, messages, providerThreads, providerSessions, providerTurns } =
+          projection;
+        previous = { thread, runs, messages, providerThreads, providerSessions, providerTurns };
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue:${key}`));
+  });
+  const queuedCountAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
+    let count = 0;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        count = 0;
+      } else if (projection.runs !== previous?.runs || projection.messages !== previous?.messages) {
+        const { runs, messages } = projection;
+        previous = { runs, messages };
+        count = getUserQueuedThreadRuns(previous).length;
+      }
+      return count;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue-count:${key}`));
+  });
+
+  const worktreePathAtomFamily = Atom.family((key: string) =>
+    Atom.make(
+      (get) =>
+        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.thread.worktreePath ?? null,
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
+  );
+  const pendingRequestsAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
+      null;
+    let value: PendingThreadRequests | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        value = null;
+        return value;
+      }
+      const runtimeRequests = projection.runtimeRequests.filter(
+        (request) => request.status === "pending",
+      );
+      const ids = new Set(runtimeRequests.map((request) => request.id));
+      const turnItems =
+        ids.size === 0
+          ? []
+          : projection.turnItems.filter(
+              (item) =>
+                (item.type === "approval_request" || item.type === "user_input_request") &&
+                ids.has(item.requestId),
+            );
+      if (
+        previous === null ||
+        !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
+        !arrayElementsEqual(previous.turnItems, turnItems)
+      ) {
+        previous = { runtimeRequests, turnItems };
+        value = derivePendingThreadRequests(previous);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-pending-requests:${key}`));
+  });
+
+  const statusAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => get(threadStateValueAtomFamily(key)).status).pipe(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-thread-status:${key}`),
     ),
   );
-
-  const threadErrorAtomFamily = Atom.family((key: string) =>
+  const errorAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => Option.getOrNull(get(threadStateValueAtomFamily(key)).error)).pipe(
       Atom.setIdleTTL(0),
       Atom.withLabel(`environment-thread-error:${key}`),
     ),
   );
-
-  const threadMessagesAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationMessage> =>
-        get(threadDetailAtomFamily(key))?.messages ?? EMPTY_MESSAGES,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-messages:${key}`)),
-  );
-
-  const threadActivitiesAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationThreadActivity> =>
-        get(threadDetailAtomFamily(key))?.activities ?? EMPTY_ACTIVITIES,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-activities:${key}`)),
-  );
-
-  const threadProposedPlansAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationProposedPlan> =>
-        get(threadDetailAtomFamily(key))?.proposedPlans ?? EMPTY_PROPOSED_PLANS,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-proposed-plans:${key}`)),
-  );
-
-  const threadCheckpointsAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): ReadonlyArray<OrchestrationCheckpointSummary> =>
-        get(threadDetailAtomFamily(key))?.checkpoints ?? EMPTY_CHECKPOINTS,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoints:${key}`)),
-  );
-
-  const threadSessionAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): OrchestrationSession | null => get(threadDetailAtomFamily(key))?.session ?? null,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-session:${key}`)),
-  );
-
-  const threadLatestTurnAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): OrchestrationLatestTurn | null => get(threadDetailAtomFamily(key))?.latestTurn ?? null,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-latest-turn:${key}`)),
+  const historyAtomFamily = Atom.family((key: string) =>
+    Atom.make((get) => get(threadStateValueAtomFamily(key)).history).pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-thread-history:${key}`),
+    ),
   );
 
   return {
+    worktreePathAtom: (ref: ScopedThreadRef) => worktreePathAtomFamily(threadKey(ref)),
+    pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
+    queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
+    queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
-    detailAtom: (ref: ScopedThreadRef) => threadDetailAtomFamily(threadKey(ref)),
-    statusAtom: (ref: ScopedThreadRef) => threadStatusAtomFamily(threadKey(ref)),
-    errorAtom: (ref: ScopedThreadRef) => threadErrorAtomFamily(threadKey(ref)),
-    messagesAtom: (ref: ScopedThreadRef) => threadMessagesAtomFamily(threadKey(ref)),
-    activitiesAtom: (ref: ScopedThreadRef) => threadActivitiesAtomFamily(threadKey(ref)),
-    proposedPlansAtom: (ref: ScopedThreadRef) => threadProposedPlansAtomFamily(threadKey(ref)),
-    checkpointsAtom: (ref: ScopedThreadRef) => threadCheckpointsAtomFamily(threadKey(ref)),
-    sessionAtom: (ref: ScopedThreadRef) => threadSessionAtomFamily(threadKey(ref)),
-    latestTurnAtom: (ref: ScopedThreadRef) => threadLatestTurnAtomFamily(threadKey(ref)),
+    threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
+    visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
+    statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
+    errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),
+    historyAtom: (ref: ScopedThreadRef) => historyAtomFamily(threadKey(ref)),
   };
 }

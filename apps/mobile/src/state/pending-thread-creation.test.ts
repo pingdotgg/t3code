@@ -168,8 +168,8 @@ describe("pendingThreadCreationShell", () => {
       interactionMode: "default",
       branch: "main",
       worktreePath: null,
-      latestTurn: null,
-      session: null,
+      latestRun: null,
+      runtime: null,
       latestUserMessageAt: creation.createdAt,
     });
   });

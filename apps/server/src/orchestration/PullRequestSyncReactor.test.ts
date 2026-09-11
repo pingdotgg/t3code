@@ -3,7 +3,7 @@ import {
   ProviderInstanceId,
   PullRequestOperationError,
   ThreadId,
-  type OrchestrationCommand,
+  type OrchestrationV2Command as OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -20,15 +20,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "./Services/OrchestrationEngine.ts";
+import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
+import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 
@@ -185,35 +182,39 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       return yield* options.stack?.(input) ?? Effect.succeed(null);
     });
 
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) => {
+  const dispatch: OrchestratorV2Shape["dispatch"] = (command) => {
     if (command.type === "thread.pull-request-link.sync") {
       return Ref.update(syncCommands, (recorded) => [...recorded, command]).pipe(
-        Effect.as({ sequence: 1 }),
+        Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
     if (command.type === "thread.pull-request.link") {
       return Ref.update(linkCommands, (recorded) => [...recorded, command]).pipe(
-        Effect.as({ sequence: 1 }),
+        Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
     return Effect.die(new Error(`Unexpected command: ${command.type}`));
   };
 
   const dependencies = Layer.mergeAll(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getShellSnapshot: () =>
-        Queue.offer(snapshotReads, undefined).pipe(Effect.andThen(Ref.get(snapshots))),
-    }),
+    Layer.mock(ProjectionSnapshotQuery)({}),
     Layer.mock(PullRequestService)({
       summary,
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
     }),
-    Layer.mock(OrchestrationEngineService)({
-      readEvents: () => Stream.empty,
+    Layer.mock(OrchestratorV2)({
+      getShellSnapshot: () =>
+        Queue.offer(snapshotReads, undefined).pipe(
+          Effect.andThen(Ref.get(snapshots)),
+          Effect.map((snapshot) => ({
+            schemaVersion: 2,
+            snapshotSequence: snapshot.snapshotSequence,
+            threads: snapshot.threads.map(v2PullRequestThread),
+            archivedThreads: [],
+          })),
+        ),
       dispatch,
-      streamDomainEvents: Stream.empty,
-      latestSequence: Effect.succeed(0),
     }),
     Layer.succeed(ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),

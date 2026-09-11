@@ -131,6 +131,25 @@ export const ProviderInstanceConfig = Schema.Struct({
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
 
+/** Atomic mutation for one provider-instance map entry. */
+export const ProviderInstanceMutation = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("create"),
+    instanceId: ProviderInstanceId,
+    instance: ProviderInstanceConfig,
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("upsert"),
+    instanceId: ProviderInstanceId,
+    instance: ProviderInstanceConfig,
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("remove"),
+    instanceId: ProviderInstanceId,
+  }),
+]);
+export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
+
 /**
  * Map shape for `ServerSettings.providerInstances`. Keyed by
  * `ProviderInstanceId`, values are envelopes the registry feeds to drivers.

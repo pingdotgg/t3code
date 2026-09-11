@@ -1,4 +1,15 @@
+import * as HttpServer from "effect/unstable/http/HttpServer";
+import {
+  RelayClientAuth,
+  RelayClientPrincipal,
+  type RelayClientDeviceRecord,
+} from "@t3tools/contracts/relay";
+import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
+import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as Devices from "../agentActivity/Devices.ts";
 import { createClerkClient, verifyToken } from "@clerk/backend";
+import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
@@ -12,22 +23,21 @@ import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
+import * as Etag from "effect/unstable/http/Etag";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
-  RelayApi,
-  RelayClientAuth,
-  RelayClientPrincipal,
   RelayEnvironmentAuth,
-  type RelayClientDeviceRecord,
+  RelayEnvironmentPrincipal,
+  RelayApi,
 } from "@t3tools/contracts/relay";
 
 import {
+  RELAY_HTTP_ROUTER_CONFIG,
   RELAY_REQUEST_DEADLINE_MS,
   clientApi,
   relayCors,
@@ -36,6 +46,7 @@ import {
   relayNotFoundRoute,
   relayDpopFailureReason,
   revokeEnvironmentLinkRecord,
+  serverApi,
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
   verifyRelayClientBearerToken,
@@ -46,9 +57,8 @@ import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
-import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
-import * as RelayTokens from "../auth/RelayTokens.ts";
-import * as Devices from "../agentActivity/Devices.ts";
+import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
+import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -606,6 +616,86 @@ describe("relay request tracing", () => {
 });
 
 describe("relay routing fallback", () => {
+  it.effect("publishes activity for escaped delegated thread IDs longer than 100 characters", () =>
+    Effect.gen(function* () {
+      const environmentId = "environment-1";
+      const environmentPublicKey = "environment-public-key";
+      const published: Array<
+        Parameters<AgentActivityPublisher.AgentActivityPublisher["Service"]["publish"]>[0]
+      > = [];
+      const verified: Array<
+        Parameters<
+          EnvironmentPublishSignatures.EnvironmentPublishSignatures["Service"]["verify"]
+        >[0]
+      > = [];
+      const publisher = Layer.succeed(AgentActivityPublisher.AgentActivityPublisher, {
+        publish: (input) =>
+          Effect.sync(() => {
+            published.push(input);
+            return { ok: true as const, deliveries: [] };
+          }),
+        replayForLiveActivityRegistration: () => Effect.succeed(null),
+      });
+      const signatures = Layer.succeed(EnvironmentPublishSignatures.EnvironmentPublishSignatures, {
+        verify: (input) =>
+          Effect.sync(() => {
+            verified.push(input);
+          }),
+      });
+      const auth = Layer.succeed(RelayEnvironmentAuth, {
+        environmentBearer: (effect) =>
+          effect.pipe(
+            Effect.provideService(RelayEnvironmentPrincipal, {
+              environmentId,
+              environmentPublicKey,
+            }),
+          ),
+      });
+      const routes = HttpApiBuilder.layer(
+        HttpApi.make("RelayApi").add(RelayApi.groups.server),
+      ).pipe(
+        Layer.provide(serverApi.pipe(Layer.provide([publisher, signatures]))),
+        Layer.provide(auth),
+        Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),
+      );
+      const httpEffect = yield* HttpRouter.toHttpEffect(
+        Layer.mergeAll(routes, relayNotFoundRoute, relayCors),
+      ).pipe(Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG));
+      const threadIds = [
+        "b7c8c522-d244-43dc-875f-7224fce79912",
+        "thread:delegated-task:command%3Amcp%3Ab7c8c522-d244-43dc-875f-7224fce79912%3Adelegate-task%3Agreet-subagent-20260813",
+      ];
+      for (const threadId of threadIds) {
+        const request = HttpServerRequest.fromWeb(
+          new Request(
+            `https://relay.test/v1/environments/${environmentId}/threads/${encodeURIComponent(threadId)}/agent-activity`,
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer environment-credential",
+                "content-type": "application/json",
+              },
+              body: '{"state":null,"proof":"signed-proof"}',
+            },
+          ),
+        );
+        const response = yield* httpEffect.pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        );
+        expect(response.status).toBe(200);
+      }
+      expect(published).toEqual(
+        threadIds.map((threadId) => ({
+          environmentId,
+          environmentPublicKey,
+          threadId,
+          state: null,
+        })),
+      );
+      expect(verified.map((input) => input.threadId)).toEqual(threadIds);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("redirects the relay root to the API docs", () =>
     Effect.gen(function* () {
       const request = HttpServerRequest.fromWeb(new Request("https://relay.test/"));

@@ -12,7 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 export interface CreatedPullRequestKey {
@@ -61,15 +61,14 @@ export const linkCreatedPullRequest = <E>(input: {
   readonly threadId: ThreadId;
   readonly result: Pick<GitRunStackedActionResult, "pr">;
   readonly commandId: Effect.Effect<CommandId, E>;
-}): Effect.Effect<
-  void,
-  never,
-  OrchestrationEngine.OrchestrationEngineService | ProjectionSnapshotQuery.ProjectionSnapshotQuery
-> =>
+}): Effect.Effect<void, never, OrchestratorV2 | ProjectionSnapshotQuery.ProjectionSnapshotQuery> =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const engine = yield* OrchestratorV2;
+
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const thread = yield* snapshots.getThreadShellById(input.threadId);
+    const thread = yield* engine
+      .getThreadShell(input.threadId)
+      .pipe(Effect.map(Option.fromNullishOr));
     if (Option.isNone(thread)) return;
     const project = Option.getOrUndefined(
       yield* snapshots.getProjectShellById(thread.value.projectId),
@@ -85,7 +84,7 @@ export const linkCreatedPullRequest = <E>(input: {
         ...key,
         source: "created",
       })
-      .pipe(Effect.catchTags({ OrchestrationCommandInvariantError: () => Effect.void }));
+      .pipe(Effect.asVoid);
   }).pipe(
     Effect.withSpan("linkCreatedPullRequest"),
     Effect.catchCause((cause) =>

@@ -47,7 +47,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         data-approval-detail="complete"
         tabIndex={0}
       >
-        {approval.detail || fallbackLabel}
+        {approval.responseCapability === "not_resumable"
+          ? "Provider process is gone — interrupt or restart the run to respond."
+          : approval.detail || fallbackLabel}
       </code>
       {pendingCount > 1 ? (
         <span className="shrink-0 text-[10px] font-medium text-muted-foreground tabular-nums">

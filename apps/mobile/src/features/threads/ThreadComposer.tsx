@@ -1,10 +1,10 @@
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   MessageId,
   ModelSelection,
-  OrchestrationThreadShell,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -87,6 +87,10 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import {
+  rememberModelOptions,
+  withRememberedModelOptions,
+} from "../../state/use-model-option-memory";
+import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
@@ -115,10 +119,18 @@ export interface ThreadComposerProps {
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-  readonly selectedThread: OrchestrationThreadShell;
+  /**
+   * Message sync phase for the selected thread (drives the status pill):
+   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
+   * are on screen while they reconcile with the server.
+   */
+  readonly threadSyncPhase?: "loading" | "syncing" | null;
+  readonly selectedThread: EnvironmentThreadShell;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
+  readonly activeThreadBusy: boolean;
+  readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   /** Why sending is blocked right now (shown as the send button's label), or null. */
@@ -283,10 +295,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
-  const showStopAction =
-    !hasContent &&
-    (props.selectedThread.session?.status === "running" ||
-      props.selectedThread.session?.status === "starting");
+  const showStopAction = !hasContent && props.canStopThread;
 
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentsUploading =
@@ -514,10 +523,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       providerInstanceId: currentModelSelection.instanceId,
       providerGroups: threadProviderGroups,
       selectedModel: currentModelSelection,
-      onSelectModel: (option) => props.onUpdateModelSelection(option.selection),
+      onSelectModel: (option) =>
+        props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
       optionDescriptors: providerOptionDescriptors,
-      onUpdateOptionSelections: (options) =>
-        props.onUpdateModelSelection({ ...currentModelSelection, options }),
+      onUpdateOptionSelections: (options) => {
+        rememberModelOptions(
+          currentModelSelection.instanceId,
+          currentModelSelection.model,
+          options ?? [],
+        );
+        props.onUpdateModelSelection({ ...currentModelSelection, options });
+      },
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
     }),
@@ -807,7 +823,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
                         iconNode={
-                          <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                          <ProviderIcon
+                            iconUrl={currentModelOption?.providerIconUrl}
+                            provider={currentModelOption?.providerDriver}
+                            size={16}
+                          />
                         }
                         label={currentModelOption?.label ?? currentModelSelection.model}
                         maxWidth="100%"

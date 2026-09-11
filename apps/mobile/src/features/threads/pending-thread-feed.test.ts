@@ -17,7 +17,7 @@ describe("pending timeline messages", () => {
   it("keeps pending messages after newer agent activity in queue order", () => {
     const activity = {
       type: "thinking",
-      turnId: null,
+      runId: null,
       id: "thinking",
       createdAt: "2026-09-06T11:00:00.000Z",
     } as const;

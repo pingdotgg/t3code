@@ -12,7 +12,7 @@ import {
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -28,6 +28,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,6 +42,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -233,6 +236,7 @@ interface CreateManagerOptions {
   resolveProviderInstanceEnvironment?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
+  managedBinaryCacheDir?: string;
 }
 
 interface ManagerFixture {
@@ -281,6 +285,9 @@ const createManager = (
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
           : {}),
+        ...(options.managedBinaryCacheDir === undefined
+          ? {}
+          : { managedBinaryCacheDir: options.managedBinaryCacheDir }),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -1770,6 +1777,66 @@ it.layer(
     }),
   );
 
+  it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-terminal-acp-path-",
+      });
+      const installBin = path.join(
+        cacheDir,
+        "acp-registry",
+        "agents",
+        "example-agent",
+        "1.2.3",
+        "windows-x86_64",
+        "bin",
+      );
+      yield* fileSystem.makeDirectory(installBin, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(cacheDir, "acp-registry", "registry.json"),
+        encodeUnknownJson({
+          version: "1.0.0",
+          agents: [
+            {
+              id: "example-agent",
+              name: "Example Agent",
+              version: "1.2.3",
+              description: "ACP Registry test agent",
+              distribution: {
+                binary: {
+                  "windows-x86_64": {
+                    archive: "https://registry.test/example-agent.zip",
+                    cmd: "bin/example-agent.exe",
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        managedBinaryCacheDir: cacheDir,
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          Path: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(
+        Effect.provide(
+          Layer.merge(withHostPlatform("win32"), Layer.succeed(HostProcessArchitecture, "x64")),
+        ),
+      );
+
+      yield* manager.open(openInput());
+
+      const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
+      expect(spawnEnv?.PATH).toBeUndefined();
+      expect(spawnEnv?.Path).toBe(`C:\\Windows\\System32;${installBin}`);
+    }),
+  );
+
   it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
@@ -1807,7 +1874,8 @@ it.layer(
           [undefined, undefined, "truecolor"],
           ["", undefined, "truecolor"],
           ["24bit", undefined, "24bit"],
-          ["24bit", "", "truecolor"],
+          ["24bit", "", ""],
+          [undefined, "", ""],
           ["24bit", "custom", "custom"],
         ] as const) {
           const env = Object.freeze({ COLORTERM: parentColor });
@@ -2019,6 +2087,8 @@ it.layer(
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
         updateSettings: () => Effect.fail(settingsError),
+        updateProviderInstance: () => Effect.fail(settingsError),
+        withSettingsSnapshot: () => Effect.fail(settingsError),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
       });

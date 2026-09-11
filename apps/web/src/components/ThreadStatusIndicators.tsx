@@ -1,5 +1,10 @@
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
   resolveEnvironmentMachineKind,
@@ -8,30 +13,44 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { Atom } from "effect/unstable/reactivity";
+import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { useCallback, useMemo } from "react";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { useProject } from "../state/entities";
 import {
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
   type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
-import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
-import { useMemo, type MouseEvent } from "react";
+import { GitPullRequestArrowIcon, LayersIcon } from "lucide-react";
+import { type MouseEvent } from "react";
 import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
-import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+
 import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  resolveThreadLastVisitedAt,
+  resolveThreadStatusPill,
+  type ThreadStatusPill,
+  useRetainedValue,
+  useSidebarRowSubscriptionLease,
+} from "./Sidebar.logic";
+import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { pullRequestListLines } from "./pullRequest/pullRequestListLines";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -374,6 +393,289 @@ export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }
   );
 }
 
+export function resolveThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+}): ThreadPr | null {
+  const { threadBranch, gitStatus } = input;
+  if (gitStatus === null) {
+    return null;
+  }
+
+  if (threadBranch === null || gitStatus.refName !== threadBranch) {
+    return null;
+  }
+
+  return gitStatus.pr ?? null;
+}
+
+/**
+ * Parent-held PR snapshot for Sidebar V2. Rows remount when settlement
+ * partitions move them, so terminal PR metadata must live above the row.
+ */
+export interface ThreadChangeRequestSnapshot {
+  readonly branch: string;
+  readonly pr: NonNullable<ThreadPr>;
+  readonly sourceControlProvider: VcsStatusResult["sourceControlProvider"] | undefined;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest;
+}
+
+export const threadChangeRequestSnapshotsAtom = Atom.make<
+  ReadonlyMap<string, ThreadChangeRequestSnapshot>
+>(new Map()).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-change-request-snapshots"));
+
+function isTerminalChangeRequestState(
+  state: NonNullable<ThreadPr>["state"],
+): state is "merged" | "closed" {
+  return state === "merged" || state === "closed";
+}
+
+function sourceControlProvidersEqual(
+  left: VcsStatusResult["sourceControlProvider"] | undefined,
+  right: VcsStatusResult["sourceControlProvider"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left == null || right == null) return left == null && right == null;
+  return left.kind === right.kind && left.name === right.name && left.baseUrl === right.baseUrl;
+}
+
+function linkedPullRequestsEqual(
+  left: ThreadLinkedPullRequest | null | undefined,
+  right: ThreadLinkedPullRequest | null | undefined,
+): boolean {
+  if (left == null || right == null) return left == null && right == null;
+  return (
+    left.projectId === right.projectId &&
+    left.repository === right.repository &&
+    left.number === right.number &&
+    left.url === right.url
+  );
+}
+
+export function threadChangeRequestSnapshotsEqual(
+  left: ThreadChangeRequestSnapshot,
+  right: ThreadChangeRequestSnapshot,
+): boolean {
+  return (
+    left.branch === right.branch &&
+    left.pr.number === right.pr.number &&
+    left.pr.title === right.pr.title &&
+    left.pr.url === right.pr.url &&
+    left.pr.baseRef === right.pr.baseRef &&
+    left.pr.headRef === right.pr.headRef &&
+    left.pr.state === right.pr.state &&
+    left.pr.isDraft === right.pr.isDraft &&
+    (left.pr.updatedAt ?? null) === (right.pr.updatedAt ?? null) &&
+    sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider) &&
+    linkedPullRequestsEqual(left.linkedPullRequest, right.linkedPullRequest)
+  );
+}
+
+export function setThreadChangeRequestSnapshot(
+  threadKey: string,
+  snapshot: ThreadChangeRequestSnapshot | null,
+): void {
+  appAtomRegistry.modify(threadChangeRequestSnapshotsAtom, (current) => {
+    const existing = current.get(threadKey);
+    if (snapshot === null) {
+      if (existing === undefined) return [false, current];
+      const next = new Map(current);
+      next.delete(threadKey);
+      return [true, next];
+    }
+    if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
+      return [false, current];
+    }
+    const next = new Map(current);
+    next.set(threadKey, snapshot);
+    return [true, next];
+  });
+}
+
+/**
+ * Authoritative snapshot update from live VCS status.
+ * - `undefined`: missing status, or a local checkout retaining a terminal PR — leave the map alone
+ * - `null`: no PR (without a retained terminal snapshot), a cleared branch, or a mismatch without a terminal PR — clear
+ * - snapshot: matching branch reports a PR — store/replace
+ */
+export function nextThreadChangeRequestSnapshot(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+  linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  linkedPullRequestStatus?: LinkedThreadPullRequestStatus | null | undefined;
+}): ThreadChangeRequestSnapshot | null | undefined {
+  const {
+    threadBranch,
+    gitStatus,
+    snapshot,
+    retainTerminalOnBranchMismatch,
+    linkedPullRequest,
+    linkedPullRequestStatus,
+  } = input;
+  if (linkedPullRequest != null) {
+    if (linkedPullRequestStatus === null || linkedPullRequestStatus === undefined) {
+      return linkedPullRequestsEqual(snapshot?.linkedPullRequest, linkedPullRequest)
+        ? undefined
+        : null;
+    }
+    return {
+      branch: threadBranch ?? linkedPullRequestStatus.pr.headRef,
+      pr: linkedPullRequestStatus.pr,
+      sourceControlProvider: linkedPullRequestStatus.sourceControlProvider,
+      linkedPullRequest,
+    };
+  }
+  if (gitStatus === null) {
+    return snapshot?.linkedPullRequest === undefined ? undefined : null;
+  }
+  if (threadBranch === null) {
+    return null;
+  }
+  if (gitStatus.refName !== threadBranch) {
+    return retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      snapshot.linkedPullRequest === undefined &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+      ? undefined
+      : null;
+  }
+  if (gitStatus.pr == null) {
+    if (
+      retainTerminalOnBranchMismatch &&
+      snapshot != null &&
+      snapshot.linkedPullRequest === undefined &&
+      isTerminalChangeRequestState(snapshot.pr.state)
+    ) {
+      return undefined;
+    }
+    return null;
+  }
+  return {
+    branch: threadBranch,
+    pr: gitStatus.pr,
+    sourceControlProvider: gitStatus.sourceControlProvider,
+  };
+}
+
+/**
+ * Live PR when the checkout matches the thread branch; otherwise, for local
+ * checkouts only, a cached merged/closed PR for the thread. Local thread
+ * metadata follows the shared checkout, so the cached branch intentionally
+ * survives that metadata changing to the newly checked-out branch. Open PRs
+ * are retained only while live status is absent and the branch still matches.
+ */
+export function resolveDisplayedThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+  linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  linkedPullRequestStatus?: LinkedThreadPullRequestStatus | null | undefined;
+}): ThreadPr | null {
+  const {
+    threadBranch,
+    gitStatus,
+    snapshot,
+    retainTerminalOnBranchMismatch,
+    linkedPullRequest,
+    linkedPullRequestStatus,
+  } = input;
+  if (linkedPullRequest != null) {
+    return (
+      linkedPullRequestStatus?.pr ??
+      (linkedPullRequestsEqual(snapshot?.linkedPullRequest, linkedPullRequest)
+        ? (snapshot?.pr ?? null)
+        : null)
+    );
+  }
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
+    return gitStatus.pr;
+  }
+
+  if (
+    gitStatus === null &&
+    threadBranch !== null &&
+    snapshot?.branch === threadBranch &&
+    snapshot.linkedPullRequest === undefined
+  ) {
+    return snapshot.pr;
+  }
+
+  if (
+    threadBranch !== null &&
+    retainTerminalOnBranchMismatch &&
+    snapshot != null &&
+    snapshot.linkedPullRequest === undefined &&
+    isTerminalChangeRequestState(snapshot.pr.state)
+  ) {
+    return snapshot.pr;
+  }
+
+  return null;
+}
+
+export function resolveDisplayedThreadPrProvider(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  snapshot: ThreadChangeRequestSnapshot | null | undefined;
+  retainTerminalOnBranchMismatch: boolean;
+  linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  linkedPullRequestStatus?: LinkedThreadPullRequestStatus | null | undefined;
+}): VcsStatusResult["sourceControlProvider"] | undefined {
+  const {
+    threadBranch,
+    gitStatus,
+    snapshot,
+    retainTerminalOnBranchMismatch,
+    linkedPullRequest,
+    linkedPullRequestStatus,
+  } = input;
+  if (linkedPullRequest != null) {
+    return (
+      linkedPullRequestStatus?.sourceControlProvider ??
+      (linkedPullRequestsEqual(snapshot?.linkedPullRequest, linkedPullRequest)
+        ? snapshot?.sourceControlProvider
+        : undefined)
+    );
+  }
+  if (
+    threadBranch !== null &&
+    gitStatus !== null &&
+    gitStatus.refName === threadBranch &&
+    gitStatus.pr != null
+  ) {
+    return gitStatus.sourceControlProvider;
+  }
+
+  if (
+    gitStatus === null &&
+    threadBranch !== null &&
+    snapshot?.branch === threadBranch &&
+    snapshot.linkedPullRequest === undefined
+  ) {
+    return snapshot.sourceControlProvider;
+  }
+
+  if (
+    threadBranch !== null &&
+    retainTerminalOnBranchMismatch &&
+    snapshot != null &&
+    snapshot.linkedPullRequest === undefined &&
+    isTerminalChangeRequestState(snapshot.pr.state)
+  ) {
+    return snapshot.sourceControlProvider;
+  }
+
+  return undefined;
+}
+
 export function terminalStatusFromRunningIds(
   runningTerminalIds: ReadonlyArray<string>,
 ): TerminalStatusIndicator | null {
@@ -477,20 +779,62 @@ export function ThreadStatusLabel({
  * like the command palette. Shows the change request state icon (if present) and the
  * thread status dot, matching the sidebar's leading indicators.
  */
-export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+export function ThreadRowLeadingStatus({
+  thread,
+  snapshot,
+}: {
+  thread: SidebarThreadSummary;
+  snapshot?: ThreadChangeRequestSnapshot | undefined;
+}) {
+  const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
+  // Observe the containing title even when this thread has no badge yet.
+  const statusRef = useCallback(
+    (node: HTMLSpanElement | null) => rowRef(node?.parentElement ?? null),
+    [rowRef],
+  );
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const lastVisitedAt = useUiStateStore(
+  const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const pullRequest = useLinkedThreadPullRequest(
+  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
+  const threadProject = useProject(
+    useMemo(
+      () => scopeProjectRef(thread.environmentId, thread.projectId),
+      [thread.environmentId, thread.projectId],
+    ),
+  );
+  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
+  const gitCwd = thread.worktreePath ?? threadProjectCwd;
+  const linkedPullRequest = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
-    true,
-    thread.pullRequests,
-    thread.branchPullRequest,
+    leaseLiveStatus,
   );
-  const pr = pullRequest?.pr ?? null;
-  const prStatus = prStatusIndicator(pr, pullRequest?.sourceControlProvider);
+  const gitStatus = useEnvironmentQuery(
+    leaseLiveStatus &&
+      thread.linkedPullRequest == null &&
+      (thread.branch != null || thread.worktreePath !== null) &&
+      gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const visibleGitStatus = useRetainedValue(
+    JSON.stringify([thread.environmentId, gitCwd]),
+    gitStatus.data,
+  );
+  const displayedPrInput = {
+    threadBranch: thread.branch,
+    gitStatus: visibleGitStatus,
+    snapshot,
+    retainTerminalOnBranchMismatch: thread.worktreePath === null,
+    linkedPullRequest: thread.linkedPullRequest,
+    linkedPullRequestStatus: linkedPullRequest,
+  };
+  const pr = resolveDisplayedThreadPr(displayedPrInput);
+  const prStatus = prStatusIndicator(pr, resolveDisplayedThreadPrProvider(displayedPrInput));
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -503,12 +847,14 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     pr === null && supportsMultiplePullRequests
       ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
       : null;
-  if (!prStatus && !threadStatus && !pendingLink) {
-    return null;
-  }
 
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span
+      ref={statusRef}
+      className={
+        prStatus || threadStatus ? "inline-flex shrink-0 items-center gap-1.5" : "contents"
+      }
+    >
       {prStatus && pr ? (
         <Tooltip>
           <TooltipTrigger

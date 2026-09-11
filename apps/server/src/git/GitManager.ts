@@ -978,7 +978,7 @@ export const make = Effect.gen(function* () {
   } satisfies GitVcsDriver.GitStatusDetails;
   const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
     const details = yield* gitCore
-      .statusDetailsLocal(cwd)
+      .statusDetailsLocal(cwd, { includeDivergence: false })
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );

@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
-import { makeCli } from "../bin.ts";
+import { makeCli } from "../binCli.ts";
 
 vi.mock("node:os", async (importOriginal) => {
   const os = await importOriginal<typeof import("node:os")>();

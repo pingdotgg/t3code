@@ -1,3 +1,4 @@
+import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
@@ -20,8 +21,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { ProviderInstanceIcon } from "../../components/ProviderIcon";
-import type { ThreadRowProviderInstance } from "./thread-provider-instance";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -30,8 +30,9 @@ import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
-  resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
+  resolveThreadListV2SnoozeMenuSelection,
+  threadHasUnseenCompletion,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
@@ -354,7 +355,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
+  /** Provider drivers back to front: earlier owners first, current last.
+      Empty when the environment's config has not resolved yet. */
+  readonly providerDrivers: ReadonlyArray<string>;
+  /** Account-aware presentation for the current provider owner. */
   readonly providerInstance: ThreadRowProviderInstance | null;
+  readonly providerIconUrl?: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -445,18 +451,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     theme[materialYouStyleLayoutActive ? "--color-thread-selected" : "--color-user-bubble"];
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
-  // The provider badge's border blends into the row's own surface, which
-  // differs by pane and (for the sidebar pane) selection: the sidebar row
-  // background becomes the selected fill or the drawer surface, while the
-  // flat "screen" pane rows always sit on the screen background.
   const providerIconSurfaceColor = sidebarPane
     ? selected
       ? selectedBackgroundColor
       : drawerColor
     : screenColor;
-
   const status = resolveThreadListV2Status(thread);
-  const statusLabel = STATUS_LABEL_BY_STATUS[status];
+  // "Done" marks a completion the user has not opened yet — same emerald
+  // label as the web sidebar, sourced from the server-side visited watermark
+  // so checking a thread on any device clears it everywhere.
+  const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const statusLabel =
+    STATUS_LABEL_BY_STATUS[status] ??
+    (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);
   // Settled rows label by the same stamp they sort by, so order and label
   // can't disagree. updatedAt is always present, so the resolver never
   // returns null here.
@@ -788,7 +795,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2">
-        {status === "failed" && thread.session?.lastError ? (
+        {status === "failed" && thread.runtime?.lastError ? (
           <Text
             className={cn(
               "flex-1 text-xs",
@@ -800,7 +807,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             numberOfLines={1}
           >
-            {thread.session.lastError}
+            {thread.runtime.lastError}
           </Text>
         ) : thread.branch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
@@ -907,14 +914,25 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
         {props.providerInstance ? (
-          <ProviderInstanceIcon
-            provider={props.providerInstance.driverKind}
-            size={14}
-            displayName={props.providerInstance.displayName}
-            accentColor={props.providerInstance.accentColor}
-            showBadge={props.providerInstance.showBadge}
-            surfaceColor={providerIconSurfaceColor}
-          />
+          // Earlier owners peek out behind the current provider so a
+          // handed-off thread shows where it has been. The current owner
+          // keeps its account badge so same-driver instances stay distinct.
+          <View className="flex-row items-center">
+            {props.providerDrivers.slice(0, -1).map((driver, index) => (
+              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
+                <ProviderIcon provider={driver} size={12} />
+              </View>
+            ))}
+            <ProviderInstanceIcon
+              iconUrl={props.providerIconUrl}
+              provider={props.providerInstance.driverKind}
+              size={14}
+              displayName={props.providerInstance.displayName}
+              accentColor={props.providerInstance.accentColor}
+              showBadge={props.providerInstance.showBadge}
+              surfaceColor={providerIconSurfaceColor}
+            />
+          </View>
         ) : null}
       </View>
     </>

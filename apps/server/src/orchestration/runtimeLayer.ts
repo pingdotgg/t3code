@@ -8,7 +8,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSna
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 
-const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
+export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationEventStoreLive,
   OrchestrationCommandReceiptRepositoryLive,
 );
@@ -17,7 +17,7 @@ const OrchestrationProjectionPipelineLayerLive = OrchestrationProjectionPipeline
   Layer.provide(OrchestrationEventStoreLive),
 );
 
-const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
+export const OrchestrationInfrastructureLayerLive = Layer.mergeAll(
   OrchestrationProjectionSnapshotQueryLive,
   OrchestrationEventInfrastructureLayerLive,
   OrchestrationProjectionPipelineLayerLive,

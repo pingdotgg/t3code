@@ -1,7 +1,11 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import type { OrchestrationThread } from "@t3tools/contracts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
+import * as DateTime from "effect/DateTime";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -32,8 +36,9 @@ export function resolvePendingThreadCreation(input: {
   readonly previous: PendingThreadCreation | null;
   readonly detail: {
     readonly messages: ReadonlyArray<{ readonly id: string }>;
-    readonly latestTurn: { readonly turnId: string } | null;
-    readonly session: { readonly status: string } | null;
+    readonly runs?: ReadonlyArray<{ readonly status: string }>;
+    readonly latestTurn?: { readonly turnId: string } | null;
+    readonly session?: { readonly status: string } | null;
   } | null;
 }): PendingThreadCreation | null {
   const creation = input.pending ?? input.previous;
@@ -45,10 +50,14 @@ export function resolvePendingThreadCreation(input: {
   }
   if (creation.outcome?.kind === "failed") return creation;
   const detail = input.detail;
+  const latestRun = detail?.runs?.at(-1);
+  const terminalStatus = latestRun?.status ?? detail?.session?.status;
   if (
-    detail?.session?.status === "error" ||
-    detail?.session?.status === "stopped" ||
-    detail?.session?.status === "interrupted"
+    terminalStatus === "failed" ||
+    terminalStatus === "error" ||
+    terminalStatus === "cancelled" ||
+    terminalStatus === "stopped" ||
+    terminalStatus === "interrupted"
   )
     return null;
   // Message delivery and turn startup are separate events. The prompt alone
@@ -56,7 +65,7 @@ export function resolvePendingThreadCreation(input: {
   // the local creation if the outbox has already collected its shell outcome.
   if (
     detail !== null &&
-    detail.latestTurn !== null &&
+    (latestRun !== undefined || detail.latestTurn != null) &&
     !isPendingThreadCreationVisible({
       creationMessageId: creation.message.messageId,
       loadedMessageIds: detail.messages.map((message) => message.id),
@@ -135,11 +144,12 @@ export function pendingThreadCreationShell(
   if (!creation || !message.modelSelection) {
     return null;
   }
-  return {
-    environmentId: message.environmentId,
+  const timestamp = DateTime.makeUnsafe(message.createdAt);
+  return presentThreadShell(message.environmentId, {
     id: message.threadId,
     projectId: creation.projectId,
     title: deriveThreadTitleFromPrompt(message.text),
+    providerInstanceId: message.modelSelection.instanceId,
     modelSelection: message.modelSelection,
     runtimeMode: message.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode: message.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -147,18 +157,32 @@ export function pendingThreadCreationShell(
     pullRequests: [],
     worktreePath: creation.workspaceMode === "worktree" ? null : creation.worktreePath,
     linkedPullRequest: null,
-    latestTurn: null,
-    createdAt: message.createdAt,
-    updatedAt: message.createdAt,
+    branchPullRequest: null,
+    lineage: { rootThreadId: message.threadId, parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "mobile",
+    activeProviderThreadId: null,
+    latestRunId: null,
+    activeRunId: null,
+    status: "preparing",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: timestamp,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
+    unsettledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
-    session: null,
-    latestUserMessageAt: message.createdAt,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-  };
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    deletedAt: null,
+  });
 }

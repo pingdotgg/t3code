@@ -4,7 +4,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type GitRunStackedActionResult,
-  type OrchestrationCommand,
+  type OrchestrationV2Command as OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
@@ -13,13 +13,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../orchestration/Services/OrchestrationEngine.ts";
+  OrchestratorV2,
+  type OrchestratorV2Shape,
+  OrchestratorDispatchError,
+} from "../orchestration-v2/Orchestrator.ts";
+import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
 
@@ -77,7 +77,7 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
 }
 
 const makeDependencies = (
-  dispatch: OrchestrationEngineShape["dispatch"],
+  dispatch: OrchestratorV2Shape["dispatch"],
   threadShell: OrchestrationThreadShell | null = thread,
 ) =>
   Layer.mergeAll(
@@ -85,18 +85,18 @@ const makeDependencies = (
       getThreadShellById: () => Effect.succeed(Option.fromNullishOr(threadShell)),
       getProjectShellById: () => Effect.succeed(Option.some(project)),
     }),
-    Layer.mock(OrchestrationEngineService)({
-      readEvents: () => Stream.empty,
+    Layer.mock(OrchestratorV2)({
+      getThreadShell: () => Effect.succeed(threadShell ? v2PullRequestThread(threadShell) : null),
       dispatch,
-      streamDomainEvents: Stream.empty,
-      latestSequence: Effect.succeed(0),
     }),
   );
 
 const recordingDispatch = Effect.fn("recordingDispatch")(function* () {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
-    Ref.update(commands, (recorded) => [...recorded, command]).pipe(Effect.as({ sequence: 1 }));
+  const dispatch: OrchestratorV2Shape["dispatch"] = (command) =>
+    Ref.update(commands, (recorded) => [...recorded, command]).pipe(
+      Effect.as({ sequence: 1, storedEvents: [] }),
+    );
   return { commands, dispatch };
 });
 
@@ -203,11 +203,12 @@ describe("linkCreatedPullRequest", () => {
 
   it.effect("swallows an already-linked rejection and other dispatch failures", () =>
     Effect.gen(function* () {
-      const rejecting: OrchestrationEngineShape["dispatch"] = (command) =>
+      const rejecting: OrchestratorV2Shape["dispatch"] = (command) =>
         Effect.fail(
-          new OrchestrationCommandInvariantError({
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
             commandType: command.type,
-            detail: "already linked",
+            cause: "already linked",
           }),
         );
       const result = prResult({
