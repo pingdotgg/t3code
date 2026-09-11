@@ -26,41 +26,31 @@ jobs:
           path = Path("apps/server/src/git/GitManager.test.ts")
           text = path.read_text()
 
-          old_provider = '''      Effect.map((provider) => {
-                const sourceControlProvider = () => ({
-                  ...provider,
-          '''
-          new_provider = '''      Effect.map((provider) => {
-                const baseProvider = input?.sourceControlProvider ?? provider;
-                const sourceControlProvider = () => ({
-                  ...baseProvider,
-          '''
+          old_provider = 'Effect.map((provider) => {\n        const sourceControlProvider = () => ({\n          ...provider,'
+          new_provider = 'Effect.map((provider) => {\n        const baseProvider = input?.sourceControlProvider ?? provider;\n        const sourceControlProvider = () => ({\n          ...baseProvider,'
           if text.count(old_provider) != 1:
               raise SystemExit(f"expected one provider fixture block, found {text.count(old_provider)}")
           text = text.replace(old_provider, new_provider, 1)
 
-          old_kind = '                  : (input?.sourceControlProviderKind ?? provider.kind),\n'
-          new_kind = '                  : (input?.sourceControlProviderKind ?? baseProvider.kind),\n'
+          old_kind = ': (input?.sourceControlProviderKind ?? provider.kind),'
+          new_kind = ': (input?.sourceControlProviderKind ?? baseProvider.kind),'
           if text.count(old_kind) != 1:
               raise SystemExit(f"expected one provider-kind fallback, found {text.count(old_kind)}")
           text = text.replace(old_kind, new_kind, 1)
 
-          old_regression = '''      expect(pullRequest).toBeNull();
-                expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
-          '''
+          old_regression = '      expect(pullRequest).toBeNull();\n      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);'
           new_regression = '''      expect(pullRequest).toBeNull();
 
-                yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
+          yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
 
-                expect(
-                  yield* manager.branchPullRequest({
-                    cwd: repoDir,
-                    branch: "feature/unknown-branch-provider",
-                  }),
-                ).toBeNull();
+          expect(
+            yield* manager.branchPullRequest({
+              cwd: repoDir,
+              branch: "feature/unknown-branch-provider",
+            }),
+          ).toBeNull();
 
-                expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
-          '''
+          expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);'''
           if text.count(old_regression) != 1:
               raise SystemExit(f"expected one unknown-provider assertion block, found {text.count(old_regression)}")
           text = text.replace(old_regression, new_regression, 1)
