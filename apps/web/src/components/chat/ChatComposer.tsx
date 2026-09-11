@@ -2874,12 +2874,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // pending-answer target + selection at start (the ownerKey pins the exact
   // draft) and commits through the guarded prompt replacement, so the
   // transcript always lands as an editable draft at the captured cursor —
-  // never auto-sent. The pending-question id matters: a dictation started
-  // for an empty normal draft must not land as the answer when a pending
-  // question opens mid-recording (same empty text would otherwise look
-  // current).
+  // never auto-sent. The pending request id matters: separate requests can
+  // reuse the same question index, question id, and draft text, so a late
+  // transcript must not land on a newer request — nor may a dictation
+  // started for an empty normal draft land as the answer when a pending
+  // question opens mid-recording.
   const pendingVoiceOwnerSuffix = activePendingProgress?.activeQuestion
-    ? `pending:${activePendingProgress.questionIndex}:${activePendingProgress.activeQuestion.id}`
+    ? `pending:${activePendingUserInput?.requestId ?? "norequest"}:${activePendingProgress.questionIndex}:${activePendingProgress.activeQuestion.id}`
     : "composer";
   const readVoiceDraft = useCallback((): ComposerVoiceDraft | null => {
     const snapshot = readComposerSnapshot();

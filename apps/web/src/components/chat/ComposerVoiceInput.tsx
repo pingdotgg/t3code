@@ -57,8 +57,12 @@ export const ComposerVoiceInput = memo(function ComposerVoiceInput(props: {
   transcriberRef.current = transcriber;
 
   const sessionRef = useRef<ComposerVoiceSession | null>(null);
-  if (!sessionRef.current) {
-    sessionRef.current = new ComposerVoiceSession({
+  useEffect(() => {
+    // Constructed here (not during render) so StrictMode effect replay
+    // leaves a usable session: the replayed cleanup nulls the ref, and this
+    // setup re-creates it. All dependencies are refs, so the session always
+    // calls through to the latest props.
+    const session = new ComposerVoiceSession({
       readDraft: () => latestRef.current.readDraft(),
       commitDraft: (commit) => latestRef.current.commitDraft(commit),
       transcribe: (audio, options) => transcriberRef.current(audio, options),
@@ -69,18 +73,16 @@ export const ComposerVoiceInput = memo(function ComposerVoiceInput(props: {
         busyRef.current?.(voiceInputBlocksSubmission(next));
       },
     });
-  }
-  useEffect(
-    () => () => {
-      sessionRef.current?.dispose();
+    sessionRef.current = session;
+    return () => {
+      session.dispose();
       sessionRef.current = null;
       // The parent keys this input by draft target and lifts `busy` to gate
       // Send. dispose() emits no state change, so clear the lifted flag here;
       // otherwise a target switch mid-recording leaves Send disabled forever.
       busyRef.current?.(false);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     if (voiceState.phase !== "recording") return;

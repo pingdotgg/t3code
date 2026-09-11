@@ -19,6 +19,7 @@ import {
   checkCodexVoiceAvailability,
   requireCodexVoiceProvider,
   resolveCodexVoiceCredentials,
+  resolveVoiceDeclaredLengthError,
   transcribeCodexVoice,
 } from "./VoiceTranscription.ts";
 
@@ -327,6 +328,37 @@ it.layer(NodeServices.layer)("VoiceTranscription", (it) => {
 
         expect(result).toEqual({ transcript: "hola" });
       }),
+    );
+  });
+});
+
+describe("resolveVoiceDeclaredLengthError", () => {
+  it("accepts a matching declaration and an absent one (chunked defers to byteLength)", () => {
+    expect(resolveVoiceDeclaredLengthError("3", 3)).toBeNull();
+    expect(resolveVoiceDeclaredLengthError(undefined, 3)).toBeNull();
+    expect(
+      resolveVoiceDeclaredLengthError(String(MAX_VOICE_AUDIO_BYTES), MAX_VOICE_AUDIO_BYTES),
+    ).toBeNull();
+  });
+
+  it("rejects oversize declarations before credential reads or upstream work", () => {
+    expect(resolveVoiceDeclaredLengthError(String(MAX_VOICE_AUDIO_BYTES + 1), 3)).toBe(
+      "The recording exceeds the 25 MB voice input limit.",
+    );
+  });
+
+  it("rejects malformed and mismatched declarations", () => {
+    expect(resolveVoiceDeclaredLengthError("nope", 4)).toBe(
+      "Content-Length must match the audio size.",
+    );
+    expect(resolveVoiceDeclaredLengthError("-1", 4)).toBe(
+      "Content-Length must match the audio size.",
+    );
+    expect(resolveVoiceDeclaredLengthError("1.5", 4)).toBe(
+      "Content-Length must match the audio size.",
+    );
+    expect(resolveVoiceDeclaredLengthError("5", 4)).toBe(
+      "Content-Length must match the audio size.",
     );
   });
 });

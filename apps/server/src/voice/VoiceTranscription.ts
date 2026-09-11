@@ -190,6 +190,31 @@ export const transcribeCodexVoice = Effect.fn("VoiceTranscription.transcribeCode
   return yield* forwardToCodexTranscription(audio, mimeType ?? "audio/webm", credentials);
 });
 
+/**
+ * Pure declared-length gate for the transcribe route. Runs before credential
+ * reads and any upstream work: oversize or malformed declarations are
+ * rejected without touching the Codex subscription. An absent declaration
+ * (chunked upload) defers to the `byteLength` check in
+ * `transcribeCodexVoice`, which is the backstop for undeclared sizes.
+ */
+export function resolveVoiceDeclaredLengthError(
+  declaredLength: string | undefined,
+  actualByteLength: number,
+): string | null {
+  if (declaredLength === undefined) return null;
+  const declared = Number(declaredLength);
+  if (!Number.isInteger(declared) || declared < 0) {
+    return "Content-Length must match the audio size.";
+  }
+  if (declared > MAX_VOICE_AUDIO_BYTES) {
+    return "The recording exceeds the 25 MB voice input limit.";
+  }
+  if (declared !== actualByteLength) {
+    return "Content-Length must match the audio size.";
+  }
+  return null;
+}
+
 /** Availability probe: false for missing/rejected file login, never token material. */
 export const checkCodexVoiceAvailability = resolveCodexVoiceCredentials().pipe(
   Effect.as(true),
