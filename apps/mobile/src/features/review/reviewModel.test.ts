@@ -135,6 +135,41 @@ describe("buildReviewSectionItems", () => {
 });
 
 describe("buildReviewParsedDiff", () => {
+  it.each(["after  \n", "after\t\n", "\n"])("preserves the final added line %j", (line) => {
+    const patch = [
+      "diff --git a/example.txt b/example.txt",
+      "--- a/example.txt",
+      "+++ b/example.txt",
+      "@@ -1 +1 @@",
+      "-before",
+      `+${line}`,
+    ].join("\n");
+    const parsed = buildReviewParsedDiff(patch, "whitespace");
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+
+    expect(parsed.files[0]?.additionLines).toEqual([line]);
+  });
+
+  it.each(["", "\n\n[truncated]"])("preserves blank context before suffix %j", (suffix) => {
+    const patch = [
+      "diff --git a/example.txt b/example.txt",
+      "--- a/example.txt",
+      "+++ b/example.txt",
+      "@@ -1,2 +1,2 @@",
+      "-before",
+      "+after",
+      " \n",
+    ].join("\n");
+    const parsed = buildReviewParsedDiff(`${patch}${suffix}`, "blank-context");
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+
+    expect(parsed.files[0]?.additionLines).toEqual(["after\n", "\n"]);
+    expect(parsed.files[0]?.deletionLines).toEqual(["before\n", "\n"]);
+    expect(parsed.notice !== null).toBe(suffix.length > 0);
+  });
+
   it("builds renderable rows from a unified patch", () => {
     const parsed = buildReviewParsedDiff(
       [

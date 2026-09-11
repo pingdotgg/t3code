@@ -274,7 +274,7 @@ export function getReviewParsedDiffSourceCharacterCount(input: {
   const sourceCharacterCount = input.diff?.length ?? 0;
   const cache = appAtomRegistry.get(reviewParsedDiffCacheAtom);
   const cached = cache.entries.get(buildSectionCacheKey(input.threadKey, input.sectionId));
-  return cached && cached.diff === (input.diff?.trim() ?? null)
+  return cached && cached.diff === (input.diff ?? null)
     ? Math.max(sourceCharacterCount, cached.sourceCharacterCount)
     : sourceCharacterCount;
 }
@@ -289,10 +289,10 @@ export function getCachedReviewParsedDiff(input: {
   }
 
   const cacheKey = buildSectionCacheKey(input.threadKey, input.sectionId);
-  const normalizedDiff = input.diff?.trim() ?? null;
+  const diff = input.diff ?? null;
   const cache = appAtomRegistry.get(reviewParsedDiffCacheAtom);
   const cached = cache.entries.get(cacheKey);
-  if (cached && cached.diff === normalizedDiff) {
+  if (cached && cached.diff === diff) {
     cache.entries.delete(cacheKey);
     cache.entries.set(cacheKey, cached);
     return cached.parsed;
@@ -319,7 +319,7 @@ export function getCachedReviewParsedDiff(input: {
     cache.sourceCharacterCount -= oldest.sourceCharacterCount;
   }
   cache.entries.set(cacheKey, {
-    diff: normalizedDiff,
+    diff,
     parsed,
     sourceCharacterCount,
   });

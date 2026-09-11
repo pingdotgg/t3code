@@ -813,6 +813,28 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("preserves trailing whitespace in tracked and untracked patches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# changed  \n");
+
+        const tracked = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        assert.isTrue(
+          tracked.sources
+            .find((source) => source.kind === "working-tree")
+            ?.diff.endsWith("+# changed  \n"),
+        );
+
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\t\n");
+        const combined = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = combined.sources.find((source) => source.kind === "working-tree")?.diff;
+        assert.include(diff, "+# changed  \n\ndiff --git a/untracked.txt b/untracked.txt");
+        assert.isTrue(diff?.endsWith("+untracked\t\n"));
+      }),
+    );
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({

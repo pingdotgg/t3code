@@ -49,15 +49,26 @@ it("stores review async loading and error state in atoms", () => {
 it("reuses unchanged parsed diffs and replaces changed sections", () => {
   const parsed = getCachedReviewParsedDiff(reviewInput);
 
-  assert.strictEqual(
-    getCachedReviewParsedDiff({ ...reviewInput, diff: `\n${reviewInput.diff}\n` }),
-    parsed,
-  );
+  assert.strictEqual(getCachedReviewParsedDiff(reviewInput), parsed);
 
   const changed = { ...reviewInput, diff: reviewInput.diff.replace("value = 1", "value = 2") };
   const updated = getCachedReviewParsedDiff(changed);
   assert.notStrictEqual(updated, parsed);
   assert.strictEqual(getCachedReviewParsedDiff(changed), updated);
+});
+
+it.each([" ", "\t", "\n"])("refreshes the cached diff for a trailing %j", (suffix) => {
+  const parsed = getCachedReviewParsedDiff(reviewInput);
+  const changed = { ...reviewInput, diff: `${reviewInput.diff}${suffix}` };
+  const updated = getCachedReviewParsedDiff(changed);
+
+  assert.notStrictEqual(updated, parsed);
+  assert.strictEqual(getCachedReviewParsedDiff(changed), updated);
+  assert.strictEqual(parsed.kind, "files");
+  assert.strictEqual(updated.kind, "files");
+  if (parsed.kind !== "files" || updated.kind !== "files") return;
+  assert.notStrictEqual(updated.files[0]?.cacheKey, parsed.files[0]?.cacheKey);
+  assert.deepStrictEqual(updated.files[0]?.additionLines, [`export const value = 1;${suffix}`]);
 });
 
 it("evicts the least recently used section across threads without changing live results or IDs", () => {

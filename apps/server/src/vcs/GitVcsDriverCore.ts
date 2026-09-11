@@ -2320,7 +2320,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const dirtyUntracked = yield* readUntrackedReviewDiffs(input.cwd).pipe(
       Effect.orElseSucceed(() => ({ diff: "", truncated: false })),
     );
-    const dirtyDiff = [dirtyTrackedResult.stdout.trimEnd(), dirtyUntracked.diff.trimEnd()]
+    const dirtyDiff = [dirtyTrackedResult.stdout, dirtyUntracked.diff]
       .filter((diff) => diff.length > 0)
       .join("\n");
 

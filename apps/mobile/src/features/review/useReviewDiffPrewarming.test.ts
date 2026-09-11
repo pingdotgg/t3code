@@ -88,7 +88,7 @@ it("reserves the selected source budget and skips unloaded or oversized sections
   prepareSelection(sections, "turn:3");
 });
 
-it("reserves a larger retained source when the selected input loses whitespace", () => {
+it("replaces the retained source when the selected input loses whitespace", () => {
   const parsed = getCachedReviewParsedDiff({
     threadKey,
     sectionId: "turn:0",
@@ -98,11 +98,11 @@ it("reserves a larger retained source when the selected input loses whitespace",
 
   const selected = prepareSelection([makeSection(0), makeSection(1)], "turn:0");
 
-  assert.strictEqual(selected.parsed, parsed);
-  assert.strictEqual(selected.native, native);
+  assert.notStrictEqual(selected.parsed, parsed);
+  assert.notStrictEqual(selected.native, native);
 });
 
-it("reserves a larger retained source when a neighboring input loses whitespace", () => {
+it("replaces the retained source when a neighboring input loses whitespace", () => {
   const parsed = getCachedReviewParsedDiff({
     threadKey,
     sectionId: "turn:1",
@@ -112,14 +112,9 @@ it("reserves a larger retained source when a neighboring input loses whitespace"
 
   prepareSelection([makeSection(0), makeSection(1), makeSection(2)], "turn:0");
 
-  assert.strictEqual(
-    getCachedReviewParsedDiff({
-      threadKey,
-      sectionId: "turn:1",
-      diff: reviewDiff,
-    }),
-    parsed,
-  );
+  const updated = getCachedReviewParsedDiff({ threadKey, sectionId: "turn:1", diff: reviewDiff });
+  assert.notStrictEqual(updated, parsed);
+  assert.notStrictEqual(getCachedNativeReviewDiffData({ parsedDiff: updated }), native);
   assert.strictEqual(getCachedNativeReviewDiffData({ parsedDiff: parsed }), native);
 });
 

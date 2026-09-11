@@ -9,10 +9,10 @@ import {
 } from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
-  it("normalizes outer whitespace before hashing", () => {
+  it.each([" ", "\t", "\n"])("distinguishes a trailing %j in the patch", (suffix) => {
     const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
 
-    expect(buildPatchCacheKey(`\n${patch}\n`)).toBe(buildPatchCacheKey(patch));
+    expect(buildPatchCacheKey(`${patch}${suffix}`)).not.toBe(buildPatchCacheKey(patch));
   });
 
   it("changes when diff content changes", () => {
@@ -32,6 +32,40 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it.each(["after  \n", "after\t\n", "\n"])("preserves the final added line %j", (line) => {
+    const patch = [
+      "diff --git a/example.txt b/example.txt",
+      "--- a/example.txt",
+      "+++ b/example.txt",
+      "@@ -1 +1 @@",
+      "-before",
+      `+${line}`,
+    ].join("\n");
+    const parsed = getRenderablePatch(patch);
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    expect(parsed.files[0]?.additionLines).toEqual([line]);
+  });
+
+  it("preserves a final blank context line", () => {
+    const patch = [
+      "diff --git a/example.txt b/example.txt",
+      "--- a/example.txt",
+      "+++ b/example.txt",
+      "@@ -1,2 +1,2 @@",
+      "-before",
+      "+after",
+      " \n",
+    ].join("\n");
+    const parsed = getRenderablePatch(patch);
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    expect(parsed.files[0]?.additionLines).toEqual(["after\n", "\n"]);
+    expect(parsed.files[0]?.deletionLines).toEqual(["before\n", "\n"]);
+  });
+
   it("compacts partial hunk render offsets for virtualized review diffs", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
