@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { CommandId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -180,6 +181,45 @@ export class ThreadSettlementServiceV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadSettlementService/ThreadSettlementServiceV2") {}
 
+function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerSettings): boolean {
+  if (settings.sidebarAutoSettleOnMerge || settings.sidebarAutoSettleAfterDays !== null) {
+    return true;
+  }
+  return Object.values(settings.projectSettingsOverrides).some(
+    (entry) =>
+      entry.sidebarAutoSettleOnMerge === true ||
+      (entry.sidebarAutoSettleAfterDays !== undefined && entry.sidebarAutoSettleAfterDays !== null),
+  );
+}
+
+/** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
+/** @internal Exported for tests. */
+export function autoSettlementSettingsKey(
+  settings: import("@t3tools/contracts").ServerSettings,
+): string {
+  return JSON.stringify([
+    settings.sidebarAutoSettleOnMerge,
+    settings.sidebarAutoSettleAfterDays,
+    // Only entries that touch settlement, in a stable order, so a project
+    // override on an unrelated key does not queue a sweep. JSON drops
+    // undefined, so inherit (absent) and never (null) need distinct marks.
+    Object.entries(settings.projectSettingsOverrides)
+      .filter(
+        ([, entry]) =>
+          entry.sidebarAutoSettleOnMerge !== undefined ||
+          entry.sidebarAutoSettleAfterDays !== undefined,
+      )
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([projectId, entry]) => [
+        projectId,
+        entry.sidebarAutoSettleOnMerge ?? "inherit",
+        entry.sidebarAutoSettleAfterDays === undefined
+          ? "inherit"
+          : entry.sidebarAutoSettleAfterDays,
+      ]),
+  ]);
+}
+
 export const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const projections = yield* ProjectionStoreV2;
@@ -194,7 +234,7 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
   ) {
     const settings = yield* settingsService.getSettings;
-    if (!settings.sidebarAutoSettleOnMerge && settings.sidebarAutoSettleAfterDays === null) {
+    if (!autoSettlementConfigured(settings)) {
       return;
     }
     const threads = yield* projections.getSettlementCandidates();
@@ -209,7 +249,10 @@ export const make = Effect.gen(function* () {
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
-        const currentSettings = yield* settingsService.getSettings;
+        const currentSettings = resolveProjectSettings(
+          yield* settingsService.getSettings,
+          thread.projectId,
+        ).settings;
         const decisionNow = yield* DateTime.now;
         const settledAt = resolveAutoSettlementAt({
           thread,
@@ -403,8 +446,7 @@ export const make = Effect.gen(function* () {
     const settingsChanges = yield* settingsService.subscribeChanges;
     const mergedPullRequests = yield* pullRequests.subscribeMerges;
     const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
-    let lastAfterDays = initialSettings.sidebarAutoSettleAfterDays;
-    let lastOnMerge = initialSettings.sidebarAutoSettleOnMerge;
+    let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
         yield* worker.enqueue(undefined);
@@ -413,14 +455,11 @@ export const make = Effect.gen(function* () {
     );
     yield* forkParked(
       Stream.runForEach(settingsChanges, (settings) => {
-        if (
-          settings.sidebarAutoSettleAfterDays === lastAfterDays &&
-          settings.sidebarAutoSettleOnMerge === lastOnMerge
-        ) {
+        const key = autoSettlementSettingsKey(settings);
+        if (key === lastSettlementSettings) {
           return Effect.void;
         }
-        lastAfterDays = settings.sidebarAutoSettleAfterDays;
-        lastOnMerge = settings.sidebarAutoSettleOnMerge;
+        lastSettlementSettings = key;
         return worker.enqueue(undefined);
       }),
     );

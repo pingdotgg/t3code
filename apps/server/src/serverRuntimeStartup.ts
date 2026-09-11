@@ -9,7 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -190,7 +190,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   const workspaceRoots = [
     ...new Set(
       projects
-        .filter((project) => resolveProjectAutoPull(settings, project.id, project.autoPull))
+        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
         .map((project) => project.workspaceRoot),
     ),
   ];
@@ -281,11 +281,15 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         thread.projectId === project.id && thread.lineage.relationshipToParent !== "subagent",
     );
     if (existingThread === undefined) {
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const settings = yield* serverSettings.getSettings;
       const launched = yield* threadLaunch.launch({
         commandId: CommandId.make(yield* randomUUID),
         projectId: project.id,
         title: "New thread",
-        modelSelection: project.defaultModelSelection ?? threadModelSelection,
+        modelSelection:
+          resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
+          threadModelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         workspaceStrategy: { type: "root" },

@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ModelSelection,
   OrchestrationV2DomainEvent,
@@ -7,7 +8,6 @@ import {
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -319,29 +319,44 @@ export const layerWithOptions = (
       const idAllocator = yield* IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStoreV2;
-      const agentBrowserAccessEnabled = Effect.fn(
-        "ProviderSessionManagerV2.agentBrowserAccessEnabled",
-      )(function* (threadId: ThreadId) {
-        if (Option.isNone(serverSettings)) return true;
-        return yield* Effect.gen(function* () {
-          const settings = yield* serverSettings.value.getSettings;
-          if (Object.keys(settings.projectAgentBrowserAccessOverrides).length === 0) {
-            return settings.enableAgentBrowserAccess;
-          }
-          if (Option.isNone(projectService)) return false;
-          const thread = yield* projectionStore.getThread(threadId);
-          const project = yield* projectService.value.getById(thread.projectId);
-          if (Option.isNone(project)) return false;
-          return resolveProjectAgentBrowserAccess(settings, project.value.id);
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning(
-              "Could not resolve agent browser access; withholding it for this session.",
-              { threadId, cause },
-            ).pipe(Effect.as(false)),
-          ),
-        );
-      });
+      const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
+        function* (threadId: ThreadId) {
+          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          return yield* Effect.gen(function* () {
+            const settings = yield* serverSettings.value.getSettings;
+            const thread = yield* projectionStore.getThread(threadId);
+            const entries = Object.values(settings.projectSettingsOverrides);
+            const browserOverridden = entries.some(
+              (entry) => entry.enableAgentBrowserAccess !== undefined,
+            );
+            const deviceOverridden = entries.some(
+              (entry) => entry.enableAgentDeviceAccess !== undefined,
+            );
+            if (browserOverridden || deviceOverridden) {
+              const project = Option.isSome(projectService)
+                ? yield* projectService.value.getById(thread.projectId)
+                : Option.none();
+              if (Option.isNone(project))
+                return {
+                  browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
+                  device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
+                };
+            }
+            const effective = resolveProjectSettings(settings, thread.projectId).settings;
+            return {
+              browser: effective.enableAgentBrowserAccess,
+              device: effective.enableAgentDeviceAccess,
+            };
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning(
+                "Could not resolve agent access; withholding browser and device tools.",
+                { threadId, cause },
+              ).pipe(Effect.as({ browser: false, device: false })),
+            ),
+          );
+        },
+      );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const nextSubscriberId = yield* Ref.make(0);
@@ -405,13 +420,8 @@ export const layerWithOptions = (
                 // the credential it started with, so a thread that detaches and
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
-                const browserToolsAvailable = yield* agentBrowserAccessEnabled(threadId);
-                const deviceToolsAvailable = Option.isSome(serverSettings)
-                  ? yield* serverSettings.value.getSettings.pipe(
-                      Effect.map((settings) => settings.enableAgentDeviceAccess),
-                      Effect.orElseSucceed(() => false),
-                    )
-                  : false;
+                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
+                  yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests"]);

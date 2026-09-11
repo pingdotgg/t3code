@@ -172,6 +172,24 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it.each([
+    ["--permission-mode acceptEdits", "acceptEdits"],
+    ["--dangerously-skip-permissions", "bypassPermissions"],
+    ["--dangerously-skip-permissions --permission-mode plan", "plan"],
+  ])("folds %s into the SDK permission mode", (launchArgs, expected) => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-permission-override",
+      resume: false,
+      cwd: "/workspace",
+      permissionMode: "default",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs },
+    });
+    assert.equal(options.permissionMode, expected);
+    assert.isUndefined(options.extraArgs?.["permission-mode"]);
+    assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
+  });
+
   it("passes automatic compaction and resume-dialog controls to the SDK", () => {
     const onUserDialog = async () => ({
       behavior: "completed" as const,
