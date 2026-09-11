@@ -898,6 +898,28 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("rejects a guarded stop from a future snapshot", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-future-snapshot"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfIdle: true,
+          snapshotSequence: 1,
+          expectedProviderName: ProviderDriverKind.make("codex"),
+        },
+        readModel: makeReadModel("settled", null, {
+          ...makeSession("ready"),
+          providerName: "codex",
+        }),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
   it.effect("rejects guarded stops for the wrong provider or an active turn", () =>
     Effect.gen(function* () {
       const command = {

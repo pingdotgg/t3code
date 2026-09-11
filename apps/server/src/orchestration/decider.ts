@@ -1693,6 +1693,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (command.onlyIfIdle === true) {
         if (
           command.snapshotSequence === undefined ||
+          command.snapshotSequence > readModel.snapshotSequence ||
           !canStopThreadSessionIfIdle({
             expectedProviderName: command.expectedProviderName,
             session: thread.session,
