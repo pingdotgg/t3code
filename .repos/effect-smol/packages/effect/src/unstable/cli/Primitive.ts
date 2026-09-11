@@ -10,9 +10,6 @@
  *
  * @since 4.0.0
  */
-import * as Ini from "ini"
-import * as Toml from "toml"
-import * as Yaml from "yaml"
 import * as Config from "../../Config.ts"
 import * as Effect from "../../Effect.ts"
 import * as FileSystem from "../../FileSystem.ts"
@@ -24,6 +21,9 @@ import * as Schema from "../../Schema.ts"
 import type { Formatter } from "../../SchemaIssue.ts"
 import type * as Struct from "../../Struct.ts"
 import type { Covariant } from "../../Types.ts"
+import * as Ini from "../encoding/Ini.ts"
+import * as Toml from "../encoding/Toml.ts"
+import * as Yaml from "../encoding/Yaml.ts"
 import type { Environment } from "./Command.ts"
 
 const TypeId = "~effect/cli/Primitive"
@@ -33,25 +33,36 @@ const TypeId = "~effect/cli/Primitive"
  *
  * **Example** (Parsing values with primitives)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * // Using built-in primitives
- * const parseString = Effect.gen(function*() {
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
+ *
+ * const program = Effect.gen(function*() {
  *   const stringResult = yield* Primitive.string.parse("hello")
  *   const numberResult = yield* Primitive.integer.parse("42")
  *   const boolResult = yield* Primitive.boolean.parse("true")
- *
- *   return { stringResult, numberResult, boolResult }
+ *   return [stringResult, numberResult, boolResult] as const
  * })
  *
- * // All primitives provide parsing functionality
- * const parseDate = Effect.gen(function*() {
- *   const dateResult = yield* Primitive.date.parse("2023-12-25")
- *   const pathResult = yield* Primitive.path("file", true).parse("./package.json")
- *   return { dateResult, pathResult }
- * })
+ * await Effect.runPromise(program.pipe(Effect.provide(CliTestLayer))) // => ["hello", 42, true]
  * ```
  *
  * @category models
@@ -125,23 +136,36 @@ const makeSchemaPrimitive = <T>(
  *
  * **Example** (Parsing boolean values)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const parseBoolean = Effect.gen(function*() {
- *   const result1 = yield* Primitive.boolean.parse("true")
- *   console.log(result1) // true
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
- *   const result2 = yield* Primitive.boolean.parse("yes")
- *   console.log(result2) // true
+ * const parseBoolean = Effect.all([
+ *   Primitive.boolean.parse("true"),
+ *   Primitive.boolean.parse("yes"),
+ *   Primitive.boolean.parse("false"),
+ *   Primitive.boolean.parse("0")
+ * ])
  *
- *   const result3 = yield* Primitive.boolean.parse("false")
- *   console.log(result3) // false
- *
- *   const result4 = yield* Primitive.boolean.parse("0")
- *   console.log(result4) // false
- * })
+ * await Effect.runPromise(parseBoolean.pipe(Effect.provide(CliTestLayer))) // => [true, true, false, false]
  * ```
  *
  * @category constructors
@@ -157,20 +181,35 @@ export const boolean: Primitive<boolean> = makeSchemaPrimitive(
  *
  * **Example** (Parsing floating-point numbers)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const parseFloat = Effect.gen(function*() {
- *   const result1 = yield* Primitive.float.parse("3.14")
- *   console.log(result1) // 3.14
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
- *   const result2 = yield* Primitive.float.parse("-42.5")
- *   console.log(result2) // -42.5
+ * const parseFloat = Effect.all([
+ *   Primitive.float.parse("3.14"),
+ *   Primitive.float.parse("-42.5"),
+ *   Primitive.float.parse("0")
+ * ])
  *
- *   const result3 = yield* Primitive.float.parse("0")
- *   console.log(result3) // 0
- * })
+ * await Effect.runPromise(parseFloat.pipe(Effect.provide(CliTestLayer))) // => [3.14, -42.5, 0]
  * ```
  *
  * @category constructors
@@ -186,20 +225,35 @@ export const float: Primitive<number> = makeSchemaPrimitive(
  *
  * **Example** (Parsing integer values)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const parseInteger = Effect.gen(function*() {
- *   const result1 = yield* Primitive.integer.parse("42")
- *   console.log(result1) // 42
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
- *   const result2 = yield* Primitive.integer.parse("-123")
- *   console.log(result2) // -123
+ * const parseInteger = Effect.all([
+ *   Primitive.integer.parse("42"),
+ *   Primitive.integer.parse("-123"),
+ *   Primitive.integer.parse("0")
+ * ])
  *
- *   const result3 = yield* Primitive.integer.parse("0")
- *   console.log(result3) // 0
- * })
+ * await Effect.runPromise(parseInteger.pipe(Effect.provide(CliTestLayer))) // => [42, -123, 0]
  * ```
  *
  * @category constructors
@@ -215,20 +269,34 @@ export const integer: Primitive<number> = makeSchemaPrimitive(
  *
  * **Example** (Parsing date values)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const parseDate = Effect.gen(function*() {
- *   const result1 = yield* Primitive.date.parse("2023-12-25")
- *   console.log(result1) // Date object for December 25, 2023
- *
- *   const result2 = yield* Primitive.date.parse("2023-12-25T10:30:00Z")
- *   console.log(result2) // Date object with time
- *
- *   const result3 = yield* Primitive.date.parse("Dec 25, 2023")
- *   console.log(result3) // Date object parsed from natural format
+ *   const result = yield* Primitive.date.parse("2023-12-25")
+ *   return result.toISOString()
  * })
+ *
+ * await Effect.runPromise(parseDate.pipe(Effect.provide(CliTestLayer))) // => "2023-12-25T00:00:00.000Z"
  * ```
  *
  * @category constructors
@@ -244,20 +312,35 @@ export const date: Primitive<Date> = makeSchemaPrimitive(
  *
  * **Example** (Parsing string values)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const parseString = Effect.gen(function*() {
- *   const result1 = yield* Primitive.string.parse("hello world")
- *   console.log(result1) // "hello world"
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
- *   const result2 = yield* Primitive.string.parse("")
- *   console.log(result2) // ""
+ * const parseString = Effect.all([
+ *   Primitive.string.parse("hello world"),
+ *   Primitive.string.parse(""),
+ *   Primitive.string.parse("123")
+ * ])
  *
- *   const result3 = yield* Primitive.string.parse("123")
- *   console.log(result3) // "123"
- * })
+ * await Effect.runPromise(parseString.pipe(Effect.provide(CliTestLayer))) // => ["hello world", "", "123"]
  * ```
  *
  * @category constructors
@@ -270,9 +353,27 @@ export const string: Primitive<string> = makePrimitive("String", (value) => Effe
  *
  * **Example** (Parsing choices)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * type LogLevel = "debug" | "info" | "warn" | "error"
  *
@@ -283,13 +384,12 @@ export const string: Primitive<string> = makePrimitive("String", (value) => Effe
  *   ["error", "error"]
  * ])
  *
- * const parseLogLevel = Effect.gen(function*() {
- *   const result1 = yield* logLevelPrimitive.parse("info")
- *   console.log(result1) // "info"
+ * const parseLogLevel = Effect.all([
+ *   logLevelPrimitive.parse("info"),
+ *   logLevelPrimitive.parse("debug")
+ * ])
  *
- *   const result2 = yield* logLevelPrimitive.parse("debug")
- *   console.log(result2) // "debug"
- * })
+ * await Effect.runPromise(parseLogLevel.pipe(Effect.provide(CliTestLayer))) // => ["info", "debug"]
  * ```
  *
  * @category constructors
@@ -314,7 +414,7 @@ export const choice = <A>(
  *
  * **Example** (Choosing path validation)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Primitive } from "effect/unstable/cli"
  *
  * // Only accept files
@@ -325,6 +425,8 @@ export const choice = <A>(
  *
  * // Accept either files or directories
  * const anyPath = Primitive.path("either", false)
+ *
+ * const tags = [filePath._tag, dirPath._tag, anyPath._tag] // => ["Path", "Path", "Path"]
  * ```
  *
  * @category models
@@ -337,26 +439,38 @@ export type PathType = "file" | "directory" | "either"
  *
  * **Example** (Parsing file system paths)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const services = Layer.mergeAll(
+ *   Path.layer,
+ *   FileSystem.layerNoop({
+ *     exists: () => Effect.succeed(true),
+ *     stat: () => Effect.succeed({ type: "File" } as FileSystem.File.Info)
+ *   }),
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const program = Effect.gen(function*() {
- *   // Parse a file path that must exist
  *   const filePrimitive = Primitive.path("file", true)
  *   const filePath = yield* filePrimitive.parse("./package.json")
- *   console.log(filePath) // Absolute path to package.json
+ *   return filePath.endsWith("/package.json")
+ * }).pipe(Effect.provide(services))
  *
- *   // Parse a directory path
- *   const dirPrimitive = Primitive.path("directory", false)
- *   const dirPath = yield* dirPrimitive.parse("./src")
- *   console.log(dirPath) // Absolute path to src directory
- *
- *   // Parse any path type
- *   const anyPrimitive = Primitive.path("either", false)
- *   const anyPath = yield* anyPrimitive.parse("./some/path")
- *   console.log(anyPath) // Absolute path
- * })
+ * await Effect.runPromise(program) // => true
  * ```
  *
  * @category constructors
@@ -365,8 +479,8 @@ export type PathType = "file" | "directory" | "either"
 export const path = (
   pathType: PathType,
   mustExist?: boolean
-): Primitive<string> =>
-  makePrimitive(
+): Primitive<string> => {
+  const primitive = makePrimitive(
     "Path",
     Effect.fnUntraced(function*(value) {
       const fs = yield* FileSystem.FileSystem
@@ -404,6 +518,8 @@ export const path = (
       return absolutePath
     })
   )
+  return Object.assign(primitive, { pathType })
+}
 
 /**
  * Creates a primitive that wraps string input in `Redacted`.
@@ -415,15 +531,34 @@ export const path = (
  *
  * **Example** (Parsing redacted values)
  *
- * ```ts
- * import { Effect, Redacted } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Redacted, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const parseRedacted = Effect.gen(function*() {
  *   const result = yield* Primitive.redacted.parse("secret-password")
- *   console.log(Redacted.value(result)) // "secret-password"
- *   console.log(String(result)) // "<redacted>"
+ *   return [Redacted.value(result), String(result)] as const
  * })
+ *
+ * await Effect.runPromise(parseRedacted.pipe(Effect.provide(CliTestLayer))) // => ["secret-password", "<redacted>"]
  * ```
  *
  * @category constructors
@@ -439,27 +574,38 @@ export const redacted: Primitive<Redacted.Redacted<string>> = makePrimitive(
  *
  * **Example** (Reading file text)
  *
- * ```ts
- * import { Effect, Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const ConfigSchema = Schema.Struct({
- *   name: Schema.String,
- *   version: Schema.String,
- *   port: Schema.Number
- * })
- * const decodeConfig = Schema.decodeUnknownEffect(
- *   Schema.fromJsonString(ConfigSchema)
+ * const services = Layer.mergeAll(
+ *   Path.layer,
+ *   FileSystem.layerNoop({
+ *     exists: () => Effect.succeed(true),
+ *     stat: () => Effect.succeed({ type: "File" } as FileSystem.File.Info),
+ *     readFileString: () => Effect.succeed('{"private":true}')
+ *   }),
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
  * )
  *
  * const readConfigFile = Effect.gen(function*() {
- *   const content = yield* Primitive.fileText.parse("./config.json")
- *   console.log(content) // {"name":"my-app","version":"1.0.0","port":3000}
+ *   const content = yield* Primitive.fileText.parse("./package.json")
+ *   return JSON.parse(content) as { private: boolean }
+ * }).pipe(Effect.provide(services))
  *
- *   const config = yield* decodeConfig(content)
- *   console.log(config) // { name: "my-app", version: "1.0.0", port: 3000 }
- *   return config
- * })
+ * await Effect.runPromise(readConfigFile) // => { private: true }
  * ```
  *
  * @category constructors
@@ -536,17 +682,40 @@ const fileParsers: Record<string, (content: string) => unknown> = {
  *
  * **Example** (Parsing file content)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const tomlFilePrimitive = Primitive.fileParse({ format: "toml" })
+ * const services = Layer.mergeAll(
+ *   Path.layer,
+ *   FileSystem.layerNoop({
+ *     exists: () => Effect.succeed(true),
+ *     stat: () => Effect.succeed({ type: "File" } as FileSystem.File.Info),
+ *     readFileString: () => Effect.succeed('{"private":true}')
+ *   }),
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
+ *
+ * const jsonFilePrimitive = Primitive.fileParse({ format: "json" })
  *
  * const loadConfig = Effect.gen(function*() {
- *   const config = yield* tomlFilePrimitive.parse("./config.toml")
- *   console.log(config) // { name: "my-app", version: "1.0.0", port: 3000 }
- *   return config
- * })
+ *   const config = yield* jsonFilePrimitive.parse("./package.json")
+ *   return config as { private: boolean }
+ * }).pipe(Effect.provide(services))
+ *
+ * await Effect.runPromise(loadConfig) // => { private: true }
  * ```
  *
  * @category constructors
@@ -588,14 +757,34 @@ export type FileSchemaOptions = Struct.Simplify<
  *
  * **Example** (Parsing file content with a schema)
  *
- * ```ts
- * import { Effect, Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Schema, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const services = Layer.mergeAll(
+ *   Path.layer,
+ *   FileSystem.layerNoop({
+ *     exists: () => Effect.succeed(true),
+ *     stat: () => Effect.succeed({ type: "File" } as FileSystem.File.Info),
+ *     readFileString: () => Effect.succeed('{"private":true}')
+ *   }),
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const ConfigSchema = Schema.Struct({
- *   name: Schema.String,
- *   version: Schema.String,
- *   port: Schema.Number
+ *   private: Schema.Boolean
  * })
  *
  * const jsonConfigPrimitive = Primitive.fileSchema(ConfigSchema, {
@@ -603,10 +792,10 @@ export type FileSchemaOptions = Struct.Simplify<
  * })
  *
  * const loadConfig = Effect.gen(function*() {
- *   const config = yield* jsonConfigPrimitive.parse("./config.json")
- *   console.log(config) // { name: "my-app", version: "1.0.0", port: 3000 }
- *   return config
- * })
+ *   return yield* jsonConfigPrimitive.parse("./package.json")
+ * }).pipe(Effect.provide(services))
+ *
+ * await Effect.runPromise(loadConfig) // => { private: true }
  * ```
  *
  * @category constructors
@@ -634,20 +823,36 @@ export const fileSchema = <A>(
  *
  * **Example** (Parsing key-value pairs)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
  *
- * const parseKeyValue = Effect.gen(function*() {
- *   const result1 = yield* Primitive.keyValuePair.parse("name=john")
- *   console.log(result1) // { name: "john" }
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
- *   const result2 = yield* Primitive.keyValuePair.parse("port=3000")
- *   console.log(result2) // { port: "3000" }
+ * const parseKeyValue = Effect.all([
+ *   Primitive.keyValuePair.parse("name=john"),
+ *   Primitive.keyValuePair.parse("port=3000"),
+ *   Primitive.keyValuePair.parse("debug=true")
+ * ])
  *
- *   const result3 = yield* Primitive.keyValuePair.parse("debug=true")
- *   console.log(result3) // { debug: "true" }
- * })
+ * const result = await Effect.runPromise(parseKeyValue.pipe(Effect.provide(CliTestLayer)))
+ * result // => [{ name: "john" }, { port: "3000" }, { debug: "true" }]
  * ```
  *
  * @category constructors
@@ -681,16 +886,34 @@ export const keyValuePair: Primitive<Record<string, string>> = makePrimitive(
  *
  * **Example** (Rejecting option values)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Primitive } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const program = Effect.gen(function*() {
  *   // This will always fail - useful for boolean flags
  *   return yield* Primitive.none.parse("any-value")
  * })
  *
- * // The above effect will fail with "This option does not accept values"
+ * await Effect.runPromise(Effect.flip(program).pipe(Effect.provide(CliTestLayer))) // => "This option does not accept values"
  * ```
  *
  * @category constructors
@@ -708,20 +931,20 @@ export const none: Primitive<never> = makePrimitive("None", () => Effect.fail("T
  *
  * **Example** (Getting primitive type names)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Primitive } from "effect/unstable/cli"
  *
- * console.log(Primitive.getTypeName(Primitive.string)) // "string"
- * console.log(Primitive.getTypeName(Primitive.integer)) // "integer"
- * console.log(Primitive.getTypeName(Primitive.boolean)) // "boolean"
- * console.log(Primitive.getTypeName(Primitive.date)) // "date"
- * console.log(Primitive.getTypeName(Primitive.keyValuePair)) // "key=value"
+ * Primitive.getTypeName(Primitive.string) // => "string"
+ * Primitive.getTypeName(Primitive.integer) // => "integer"
+ * Primitive.getTypeName(Primitive.boolean) // => "boolean"
+ * Primitive.getTypeName(Primitive.date) // => "date"
+ * Primitive.getTypeName(Primitive.keyValuePair) // => "key=value"
  *
  * const logLevelChoice = Primitive.choice([
  *   ["debug", "debug"],
  *   ["info", "info"]
  * ])
- * console.log(Primitive.getTypeName(logLevelChoice)) // "choice"
+ * Primitive.getTypeName(logLevelChoice) // => "choice"
  * ```
  *
  * @category getters
@@ -763,3 +986,7 @@ export const getTypeName = <A>(primitive: Primitive<A>): string => {
 /** @internal */
 export const getChoiceKeys = (primitive: Primitive<unknown>): ReadonlyArray<string> | undefined =>
   primitive._tag === "Choice" ? (primitive as any).choiceKeys : undefined
+
+/** @internal */
+export const getPathType = (primitive: Primitive<unknown>): PathType | undefined =>
+  primitive._tag === "Path" ? (primitive as any).pathType : undefined

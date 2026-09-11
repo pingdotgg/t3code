@@ -1,6 +1,6 @@
 import { MenuView } from "@react-native-menu/menu";
 import type { ReactElement } from "react";
-import { Platform, View, type PressableProps } from "react-native";
+import { Platform, View, type PressableProps, type StyleProp, type ViewStyle } from "react-native";
 
 import type { useMediaActions } from "../lib/mediaActions";
 import { SymbolView } from "./AppSymbol";
@@ -10,6 +10,7 @@ export function MediaActionsMenu(props: {
   readonly media: ReturnType<typeof useMediaActions>;
   readonly inModal?: boolean;
   readonly children?: ReactElement<PressableProps>;
+  readonly style?: StyleProp<ViewStyle>;
 }) {
   if (props.media.actions.length === 0) return props.children ?? null;
   // Android's normal anchored menu lives in the app-root portal, behind native modals.
@@ -18,6 +19,7 @@ export function MediaActionsMenu(props: {
   return (
     <Menu
       title={props.media.title}
+      style={props.style}
       shouldOpenOnLongPress={props.children !== undefined}
       actions={props.media.actions.map(({ id, title, disabled }) => ({
         id,

@@ -1,12 +1,15 @@
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
-  readonly updatedAt: string | null;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt?: string | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 function latestTimestamp(values: ReadonlyArray<string | null | undefined>): string | null {
   let latest: string | null = null;
@@ -49,41 +52,66 @@ function pullRequestSettles(
   if (pullRequest.state !== "closed" && (pullRequest.state !== "merged" || !autoSettleOnMerge)) {
     return false;
   }
-  if (pullRequest.updatedAt === null) return false;
+  const terminalAt = pullRequest.state === "merged" ? pullRequest.mergedAt : pullRequest.closedAt;
+  if (terminalAt == null) return false;
   const userAnchor = latestTimestamp([
     thread.createdAt,
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
   ]);
   if (userAnchor === null) return false;
-  const pullRequestAt = Date.parse(pullRequest.updatedAt);
+  const pullRequestAt = Date.parse(terminalAt);
   const userAnchorAt = Date.parse(userAnchor);
   if (Number.isNaN(pullRequestAt) || Number.isNaN(userAnchorAt)) return false;
   return pullRequestAt >= userAnchorAt;
 }
 
-export function shouldAutoSettleThread(input: {
+export function resolveAutoSettlementAt(input: {
   readonly thread: OrchestrationThreadShell;
   readonly pullRequest: SettlementPullRequest | null;
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
-}): boolean {
-  const { thread, pullRequest } = input;
-  if (!isAutoSettlementCandidate(thread, input.now)) return false;
-  if (pullRequest !== null) {
-    if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) return true;
-    if (pullRequest.state === "open") return false;
+}): string | null {
+  const { thread } = input;
+  let pullRequest = input.pullRequest;
+  const links = visibleThreadPullRequests(thread.pullRequests);
+  if (links.some((link) => link.snapshot === null || link.snapshot.state === "open")) return null;
+  if (links.length > 0) {
+    const terminalTimestamp = (link: (typeof links)[number]) => {
+      const snapshot = link.snapshot;
+      const value = snapshot?.state === "merged" ? snapshot.mergedAt : snapshot?.closedAt;
+      const timestamp = Date.parse(value ?? "");
+      return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+    };
+    const latest = links.reduce((current, candidate) =>
+      terminalTimestamp(candidate) > terminalTimestamp(current) ? candidate : current,
+    );
+    pullRequest =
+      latest.snapshot === null
+        ? null
+        : {
+            state: latest.snapshot.state,
+            mergedAt: latest.snapshot.mergedAt ?? null,
+            closedAt: latest.snapshot.closedAt ?? null,
+          };
   }
-  if (input.autoSettleAfterDays === null) return false;
+  if (!isAutoSettlementCandidate(thread, input.now)) return null;
   const activityAt = latestTimestamp([
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
     thread.latestTurn?.startedAt,
     thread.latestTurn?.completedAt,
   ]);
-  if (activityAt === null) return false;
-  return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS;
+  if (pullRequest !== null) {
+    if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
+      return activityAt ?? thread.createdAt;
+    }
+  }
+  if (input.autoSettleAfterDays === null || activityAt === null) return null;
+  return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS
+    ? activityAt
+    : null;
 }
 
 /** Cheap checks that run before any source control lookup. */

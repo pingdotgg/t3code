@@ -5,7 +5,12 @@ sidebar:
   order: 6
 ---
 
-React Router v7 builds through Vite, so
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `react react-dom react-router`;
+export const devDeps = `vite @vitejs/plugin-react @vitejs/plugin-rsc`;
+
+[React Router](https://reactrouter.com) v7 builds through Vite, so
 [`Cloudflare.Website.Vite`](/cloudflare/frontend/vite) deploys it — one
 resource, no Wrangler config, no manual entrypoint. In React Server
 Components mode the build emits **multiple server environments** (`rsc`
@@ -39,10 +44,20 @@ renderer, and the Worker handler.
 React Server Components need React Router 7.16+ and the RSC Vite
 plugin:
 
-```sh
-bun add react react-dom react-router
-bun add -d vite @vitejs/plugin-react @vitejs/plugin-rsc
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 `@vitejs/plugin-rsc` is what splits the build into `client`, `ssr`, and
 `rsc` environments; `@vitejs/plugin-react` handles the usual JSX/HMR
@@ -119,15 +134,39 @@ pattern for Worker code that needs a non-`react-server` module such as
 `react-dom/server`, which must not be imported directly from the `rsc`
 entry.
 
-## Deploy with Cloudflare.Website.Vite
+## Declare the Website
 
-Yield the Vite resource from your Stack and describe the environment
-topology with `viteEnvironments`:
+Declare the site as a module-level const (rather than inline in the
+Stack) and describe the environment topology with `viteEnvironments`:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Vite("Website", {
+  viteEnvironments: {
+    entry: "rsc",
+    children: ["ssr"],
+  },
+});
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+No asset routing config is needed: the RSC build emits no
+`index.html` (HTML is server-rendered), so page requests match no
+static asset and fall through to the RSC handler, while the
+hydration bundles serve directly from the asset layer. The server
+bundle's Node APIs are covered by the `nodejs_compat` compatibility
+flag, which is enabled by default for every Worker.
+
+## Add it to the Stack
+
+Yield the Website from your Stack and return its URL:
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -137,30 +176,56 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const website = yield* Cloudflare.Website.Vite("Website", {
-      compatibility: {
-        date: "2026-03-10",
-        flags: ["nodejs_compat"],
-      },
-      assets: {
-        runWorkerFirst: true,
-      },
-      viteEnvironments: {
-        entry: "rsc",
-        children: ["ssr"],
-      },
-    });
-
+    const website = yield* Website;
     return { url: website.url };
   }),
 );
 ```
 
-These props come straight from the live-tested configuration:
-`nodejs_compat` is enabled for the server bundle, and
-`assets: { runWorkerFirst: true }` routes requests through the Worker
-before static-asset serving so the RSC handler sees every request
-instead of only the ones that miss an asset.
+## Add bindings
+
+The resource returns a plain `Worker`, so `env` accepts the full
+binding vocabulary — KV namespaces, R2 buckets, Durable Objects,
+secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export const Website = Cloudflare.Website.Vite("Website", {
++  env: {
++    UPLOADS: Uploads,
++    API_KEY: Config.redacted("API_KEY"),
++  },
+  viteEnvironments: {
+    entry: "rsc",
+    children: ["ssr"],
+  },
+});
+```
+
+`Uploads` is a description, not a deploy — Alchemy provisions the
+real bucket because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+The Worker entry receives `env` as the standard second argument of
+the module-worker `fetch` contract — type it with the inferred
+shape:
+
+```typescript
+// react-router-vite/entry.worker.tsx
+import type { WebsiteEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(request: Request, env: WebsiteEnv, ctx: ExecutionContext) {
+    // env.UPLOADS and env.API_KEY are fully typed here
+    // ... hand off to the RSC request handler
+  },
+};
+```
 
 ## How viteEnvironments maps to the deploy
 

@@ -23,6 +23,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
@@ -40,7 +41,9 @@ export function AssistantCitationChip({
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
+    onCancel?: () => void;
     onSave: (comment: string) => boolean;
+    onSaveAndSend?: (comment: string) => boolean;
   };
 }) {
   const navigate = useNavigate();
@@ -135,6 +138,7 @@ export function AssistantCitationChip({
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
+              {...composerFloatingLayerProps}
               side={sourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}
@@ -156,7 +160,22 @@ export function AssistantCitationChip({
                   commentEditor.onOpenChange(false);
                   return true;
                 }}
-                onCancel={() => commentEditor.onOpenChange(false)}
+                {...(commentEditor.onSaveAndSend
+                  ? {
+                      onSubmitAndSend: (comment: string) => {
+                        if (!commentEditor.onSaveAndSend?.(comment)) return false;
+                        commentEditor.onOpenChange(false);
+                        return true;
+                      },
+                    }
+                  : {})}
+                onCancel={() => {
+                  if (commentEditor.onCancel) {
+                    commentEditor.onCancel();
+                  } else {
+                    commentEditor.onOpenChange(false);
+                  }
+                }}
               />
             </PopoverPopup>
           ) : null}

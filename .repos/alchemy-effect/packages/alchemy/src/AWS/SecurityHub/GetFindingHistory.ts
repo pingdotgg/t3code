@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.GetFindingHistoryHttp)`.
- * @binding
- * @section Working with Findings
- * @example Audit a Finding's History
+ * ### Working with Findings
+ * **Example:** Audit a Finding's History
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getFindingHistory = yield* AWS.SecurityHub.GetFindingHistory();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   FindingIdentifier: { Id: findingId, ProductArn: productArn },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetFindingHistory extends Binding.Service<
   GetFindingHistory,

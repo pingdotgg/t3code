@@ -46,7 +46,7 @@ const unwrapSensitive = (
 export default KMSTestFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Symmetric encryption key

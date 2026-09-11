@@ -31,9 +31,8 @@ export const isEventBridgeEvent = (
  *    rule targeting the current Lambda function.
  * 2. At runtime it filters incoming Lambda events against the original event
  *    pattern and forwards matching events into the supplied `Stream`.
- * @binding
- * @section Subscribing To The Default Bus
- * @example Match User Events On The Default Bus
+ * ### Subscribing To The Default Bus
+ * **Example:** Match User Events On The Default Bus
  * ```typescript
  * yield* AWS.EventBridge.consumeBusEvents(
  *   {
@@ -47,8 +46,8 @@ export const isEventBridgeEvent = (
  * );
  * ```
  *
- * @section Subscribing To A Custom Bus
- * @example Match Orders On A Named Bus
+ * ### Subscribing To A Custom Bus
+ * **Example:** Match Orders On A Named Bus
  * ```typescript
  * const bus = yield* AWS.EventBridge.EventBus("OrdersBus", {
  *   name: "orders",
@@ -67,8 +66,8 @@ export const isEventBridgeEvent = (
  * );
  * ```
  *
- * @section Explicit Route Names
- * @example Name The Backing Rule Deterministically
+ * ### Explicit Route Names
+ * **Example:** Name The Backing Rule Deterministically
  * ```typescript
  * yield* AWS.EventBridge.consumeBusEvents(
  *   "InvoiceEvents",
@@ -86,8 +85,8 @@ export const isEventBridgeEvent = (
  * );
  * ```
  *
- * @section Processing Typed Details
- * @example Narrow The Event Detail Payload
+ * ### Processing Typed Details
+ * **Example:** Narrow The Event Detail Payload
  * ```typescript
  * type UserCreated = {
  *   userId: string;
@@ -106,6 +105,8 @@ export const isEventBridgeEvent = (
  *     ),
  * );
  * ```
+ *
+ * @binding
  */
 export const EventSource = Layer.effect(
   EventBridgeEventSource,

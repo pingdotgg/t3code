@@ -1,0 +1,363 @@
+---
+title: Services
+description: A container in a Railway Project — a public image, or an Effect program Railway builds from a generated Dockerfile.
+---
+
+A [`Service`](/providers/railway/service) is a container in a
+Railway [Project](/railway/compute/projects). Point it at a public
+image (`hashicorp/http-echo`), an Effect program (`main`), or a
+GitHub repo (`repo` + `branch`). Several Services
+share one Project. Canvas Functions — Effect-native or one TypeScript file, no
+Docker, no registry — are [`Railway.Function`](/railway/compute/functions).
+
+## Image service
+
+Pass `image` without `main`. Railway pulls the image and runs it.
+No Docker. No registry. `url` is the generated `*.up.railway.app`
+hostname.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const api = yield* Railway.Service("Api", {
+  project: site,
+  image: "hashicorp/http-echo",
+  port: 5678,
+});
+```
+
+`project` is the parent [Project](/railway/compute/projects). Pass
+the declaration directly, yielded or module-scope. Changing `project`
+replaces the Service.
+
+## Declare an Effect-native Service
+
+A Service is a class. Props describe the container. The Effect is
+the program that runs in it.
+
+```typescript
+// src/api.ts
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
+import { Site } from "./project.ts";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+`main: import.meta.url` is the bundle entrypoint. Alchemy bundles
+this file with Rolldown, generates a Dockerfile (default
+`FROM oven/bun:1`), and uploads the context. Railway builds the
+image.
+
+## Serve HTTP with `fetch`
+
+Return `fetch` from the init Effect to boot an HTTP server.
+
+```diff lang="typescript"
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Site } from "./project.ts";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("hello")),
++    };
+  }),
+) {}
+```
+
+Omit `fetch` for a [background service](#background-services).
+
+## Schemaless RPC
+
+Return methods next to `fetch`. Bind the class from another Service
+or Function with `bindService` / `bindFunction`. Calls stay on
+`{name}.railway.internal` with a shared token. Public
+`*.up.railway.app` requests to `/__rpc__/*` get 401.
+
+```typescript
+export default class Query extends Railway.Service<Query>()(
+  "Query",
+  { project: Site, main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+    };
+  }),
+) {}
+```
+
+```typescript
+const query = yield* Railway.bindService(Query);
+const greeting = yield* query.greet("sam");
+```
+
+See [Functions](/railway/compute/functions#schemaless-rpc) for the
+Function side of the same stub.
+
+## Pin a region
+
+Railway picks a default region if you omit `region`. Updating it
+is in place. See [Regions](/railway/compute/regions).
+
+```diff lang="typescript"
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+-  { project: Site, main: import.meta.url },
++  { project: Site, main: import.meta.url, region: "us-west2" },
+```
+
+## Set the port
+
+`port` is the port the process listens on. Alchemy writes it to
+`PORT` and uses it as the generated `*.up.railway.app` `targetPort`.
+Default `3000` for Effect-native Services. Pass `5678` for
+`hashicorp/http-echo`.
+
+```diff lang="typescript"
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+-  { project: Site, main: import.meta.url, region: "us-west2" },
++  { project: Site, main: import.meta.url, region: "us-west2", port: 3000 },
+```
+
+## The public URL
+
+Yield the Service in the Stack. `api.url` is
+`https://{name}.up.railway.app`. Alchemy creates that hostname with
+`serviceDomainCreate`.
+
+```typescript
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Railway.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }),
+);
+```
+
+There is no IpAssignment resource. Railway's edge terminates TLS on
+443 and forwards to `port`.
+
+## Healthcheck
+
+`healthcheck` / `healthcheckPath` is the HTTP path Railway probes.
+`healthcheckTimeout` is seconds. Railway load-balances public traffic
+across whatever replicas are running. Alchemy does not pin a count.
+
+```typescript
+const api = yield* Railway.Service("Api", {
+  project: site,
+  image: "hashicorp/http-echo",
+  port: 5678,
+  healthcheck: "/health",
+  healthcheckTimeout: 30,
+});
+```
+
+## GitHub source, build, start, cron
+
+`repo` is the third source, next to `image` and `main`. Requires a
+GitHub connection on the Railway account. `buildCommand` /
+`startCommand` are Railway's build/start (distinct from hosted
+`build.install`). `cronSchedule` runs the service on a cron
+expression.
+
+```typescript
+const api = yield* Railway.Service("Api", {
+  project: site,
+  repo: "acme/web",
+  branch: "main",
+  rootDirectory: "apps/api",
+  buildCommand: "pnpm build",
+  startCommand: "pnpm start",
+  healthcheck: "/health",
+});
+```
+
+## Canvas groups
+
+[`Railway.Group`](/providers/railway/group) organizes services,
+databases, volumes, and buckets on the canvas. IaC:
+`group("Backend", [api, worker, db])`.
+
+```typescript
+const backend = yield* Railway.Group("Backend", {
+  project: site,
+  resources: [api, worker, db],
+});
+```
+
+## What a deploy does
+
+For an image Service, Alchemy sets `source.image` and deploys with
+`serviceInstanceDeployV2`. Docker is not required.
+
+For an Effect-native Service, Alchemy bundles `main` with Rolldown
+and generates a Dockerfile (`FROM oven/bun:1` unless you pass
+`image`). If the hash matches the last successful deploy, it skips
+the upload. Otherwise it tars the context and uploads it the same
+way `railway up` does. Railway builds and deploys. No local Docker
+daemon. No registry.
+
+Changed code is a new Railway build and an in-place update.
+Unchanged code is a no-op.
+
+`build.install: ["pg"]` ships `pg` unbundled. Rolldown's CJS interop
+turns `pg.Client` into a namespace (`The superclass is not a
+constructor`) if you bundle it.
+
+```typescript
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    build: { install: ["pg"] },
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Override the base image with `image` (must still run bun when `main`
+is set).
+
+## Config
+
+Yield `Config` in init. Alchemy reads the value from the env of
+whoever deploys and writes it onto the Service. Do not pass
+`env: { ... }` on a Service unless you are packing a known-plain
+value.
+
+```typescript
+import * as Config from "effect/Config";
+import * as Redacted from "effect/Redacted";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    port: 3000,
+  },
+  Effect.gen(function* () {
+    const apiKey = yield* Config.redacted("API_KEY");
+
+    return {
+      fetch: Effect.gen(function* () {
+        const token = Redacted.value(apiKey);
+        // ...
+      }),
+    };
+  }),
+) {}
+```
+
+`Config.redacted("API_KEY")` is `Redacted<string>`. Unwrap with
+`Redacted.value` only where you need the raw string.
+
+Alchemy also injects `PORT` (when `port` is set) and stack metadata.
+For a secret Railway should own and inject into services, use
+[`Railway.Variable`](/railway/data/variables).
+
+## Background services
+
+Omit `fetch`. Use `ServerHost.run` for a long-running loop:
+
+```typescript
+// src/worker.ts
+import * as Railway from "alchemy/Railway";
+import { ServerHost } from "alchemy/Server";
+import * as Effect from "effect/Effect";
+import { Site } from "./project.ts";
+
+export default class Worker extends Railway.Service<Worker>()(
+  "Worker",
+  {
+    project: Site,
+    main: import.meta.url,
+    region: "us-west2",
+  },
+  Effect.gen(function* () {
+    const host = yield* ServerHost;
+
+    yield* host.run(
+      Effect.gen(function* () {
+        return yield* Effect.never;
+      }).pipe(Effect.orDie),
+    );
+  }),
+) {}
+```
+
+If the process exits, Railway restarts it.
+
+## Multiple Services, one Project
+
+Each Service has its own image, env, and lifecycle. Point several
+at the same `project`.
+
+```typescript
+class Api extends Railway.Service<Api>()(
+  "Api",
+  { project: Site, main: import.meta.url, port: 3000 },
+  /* HTTP */
+) {}
+
+class Worker extends Railway.Service<Worker>()(
+  "Worker",
+  { project: Site, main: import.meta.url },
+  /* mounts a disk, writes files */
+) {}
+```
+
+A Volume attaches to one Service. See
+[Volumes](/railway/data/volumes).
+
+## Logs
+
+Service logs live in the Railway dashboard. `alchemy logs` /
+`alchemy tail` don't support Railway Services yet.
+
+## Where next
+
+The [tutorial](/railway/tutorial/part-2) builds a Service step by
+step. [Functions](/railway/compute/functions) covers Effect-native
+and canvas Functions, including [schemaless RPC](/railway/compute/functions#schemaless-rpc).
+[Volumes](/railway/data/volumes) covers `MountVolume`.
+[Postgres](/railway/data/postgres) binds with `ConnectPostgres`.
+[MySQL](/railway/data/mysql) and [Mongo](/railway/data/mongo) are the
+same shape.
+[Redis](/railway/data/redis) binds with `ReadWriteRedis`.
+[Buckets](/railway/data/buckets) bind with `PutObject` / `GetObject`.
+[Variables](/railway/data/variables) covers `Config.redacted`,
+`Railway.Variable`, and `Railway.ref`.
+The [`Service` reference](/providers/railway/service) lists every
+prop.
+[Example: railway-project](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-project)
+is an image Service.
+[Example: railway-service](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-service)
+is an Effect-native Service bound to Postgres, MySQL, Redis, an
+Effect Function, and a Group.

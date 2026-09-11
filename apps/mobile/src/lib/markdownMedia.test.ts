@@ -61,6 +61,17 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 
+  it("serves a linked T3 attachment file in place like any other host path", () => {
+    const path = "/home/demo/.t3/userdata/attachments/11111111-1111-4111-8111-111111111111-mp4.mp4";
+    expect(resolveMarkdownMediaPreview(path, input)).toMatchObject({
+      kind: "video",
+      source: {
+        resource: { _tag: "media-file", threadId: input.threadId, path },
+        actionsSource: { resource: { _tag: "media-file", path } },
+      },
+    });
+  });
+
   it("resolves protocol-relative media for native APIs without rewriting its signed query", () => {
     expect(
       resolveMarkdownMediaPreview("//cdn.example.com/clip.mp4?signature=a%2fb#t=2", input),

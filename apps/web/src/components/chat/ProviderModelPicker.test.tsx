@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ANTIGRAVITY_DEFAULT_MODEL,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -45,17 +50,54 @@ function renderPicker(input: {
 }
 
 describe("ProviderModelPicker", () => {
-  it("shows a missing model slug for a custom OpenCode instance", () => {
-    const markup = renderPicker({
-      instanceId: "team_runtime",
-      driver: "opencode",
-      model: "openrouter/missing-model",
-      options: [{ slug: "openrouter/fallback", name: "Fallback model" }],
-    });
+  it.each(["", ANTIGRAVITY_DEFAULT_MODEL])(
+    "shows a choice prompt before Antigravity has an account catalog for %s",
+    (model) => {
+      const markup = renderPicker({
+        instanceId: "antigravity",
+        driver: "antigravity",
+        model,
+        options: [],
+      });
 
-    expect(markup).toContain("openrouter/missing-model");
-    expect(markup).not.toContain("Fallback model");
-  });
+      expect(markup).toContain("Choose model");
+      expect(markup).not.toContain(ANTIGRAVITY_DEFAULT_MODEL);
+    },
+  );
+
+  it.each([{ aliases: [ANTIGRAVITY_DEFAULT_MODEL] }, { isDefault: true }])(
+    "shows the actual default model for an Antigravity marker with %j",
+    (defaultMetadata) => {
+      const markup = renderPicker({
+        instanceId: "google_work",
+        driver: "antigravity",
+        model: ANTIGRAVITY_DEFAULT_MODEL,
+        options: [
+          { slug: "gemini-fast", name: "Gemini Fast" },
+          { slug: "gemini-pro", name: "Gemini Pro", ...defaultMetadata },
+        ],
+      });
+
+      expect(markup).toContain("Gemini Pro");
+      expect(markup).not.toContain("Gemini Fast");
+      expect(markup).not.toContain(ANTIGRAVITY_DEFAULT_MODEL);
+    },
+  );
+
+  it.each(["opencode", "antigravity"])(
+    "keeps the selected model label when the %s account catalog does not contain it",
+    (driver) => {
+      const markup = renderPicker({
+        instanceId: "team_runtime",
+        driver,
+        model: "missing-model",
+        options: [{ slug: "fallback", name: "Fallback model" }],
+      });
+
+      expect(markup).toContain("missing-model");
+      expect(markup).not.toContain("Fallback model");
+    },
+  );
 
   it.each(["codex", "claudeAgent", "cursor", "grok"])(
     "uses the first option label for a missing %s model",
@@ -98,5 +140,25 @@ describe("ProviderModelPicker", () => {
 
     expect(markup).toContain("Fallback model");
     expect(markup).not.toContain(">missing-model<");
+  });
+
+  it("keeps instance initials visible in the resting trigger", () => {
+    const activeEntry = providerEntry("codex_personal", "codex");
+    const markup = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={activeEntry.instanceId}
+        model="gpt-5"
+        lockedProvider={null}
+        instanceEntries={[providerEntry("codex", "codex"), activeEntry]}
+        modelOptionsByInstance={new Map()}
+        size="xs"
+        onInstanceModelChange={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(">CP</span>");
+    expect(markup).toContain("size-4");
+    expect(markup).toContain("h-3");
+    expect(markup).toContain("text-[7px]");
   });
 });

@@ -15,15 +15,16 @@ export interface ListReadSetImportJobsRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.ListReadSetImportJobsHttp)`.
- * @binding
- * @section Read Sets
- * @example Bind ListReadSetImportJobs to a SequenceStore
+ * ### Read Sets
+ * **Example:** Bind ListReadSetImportJobs to a SequenceStore
  * ```typescript
  * // init
  * const listReadSetImportJobs = yield* AWS.Omics.ListReadSetImportJobs(store);
  * // runtime
  * const result = yield* listReadSetImportJobs({});
  * ```
+ *
+ * @binding
  */
 export interface ListReadSetImportJobs extends Binding.Service<
   ListReadSetImportJobs,

@@ -324,6 +324,19 @@ describe("assetResponseHeaders", () => {
       "X-Content-Type-Options": "nosniff",
     });
   });
+  it("serves inline attachment documents with their declared mime type", () => {
+    expect(
+      assetResponseHeaders("/attachments/upload.bin", { mimeType: "application/pdf" }),
+    ).toMatchObject({
+      "Content-Type": "application/pdf",
+    });
+    expect(
+      assetResponseHeaders("/attachments/upload.bin", { mimeType: "text/html" }),
+    ).toMatchObject({
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals",
+    });
+  });
   it("serves HTML assets as utf-8 inside a sandboxed origin", () => {
     for (const path of ["/workspace/page.html", "/workspace/PAGE.HTM", "/tmp/report.html"]) {
       expect(assetResponseHeaders(path)).toMatchObject({

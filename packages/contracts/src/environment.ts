@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  ForwardCompatibleOptional,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 export const ExecutionEnvironmentPlatformOs = Schema.Literals([
   "darwin",
@@ -14,9 +20,31 @@ export type ExecutionEnvironmentPlatformOs = typeof ExecutionEnvironmentPlatform
 export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
+/**
+ * The curated set of machine shapes and OS identities an environment can wear as its icon.
+ * Servers detect one from the hardware they run on (`platform.machine`), and
+ * the `environmentIcon` server setting lets a user pick one instead.
+ */
+export const ENVIRONMENT_MACHINE_KINDS = [
+  "server",
+  "cloud",
+  "linux",
+  "desktop",
+  "laptop",
+  "mac-mini",
+  "mac-studio",
+] as const;
+export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
+export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
+export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
+
 export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
+  /** Hardware shape detected at startup. Absent when the host gives no usable
+      signal (containers, Windows, unknown DMI), on servers that predate it, or
+      when a newer server names a kind this build cannot draw. */
+  machine: ForwardCompatibleOptional(EnvironmentMachineKind),
 });
 
 /**
@@ -52,6 +80,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
+  /** Uploaded files may accompany question answers. */
+  questionAttachments: Schema.optionalKey(Schema.Boolean),
   /** Missing on servers that only accept image attachments. */
   fileAttachments: Schema.optionalKey(
     Schema.Struct({
@@ -67,6 +97,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
+  /** Server persists the opt-in for continuing interrupted threads after restarts. */
+  threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
@@ -75,17 +107,30 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       client reconnecting to one must drop published themes rather than keep
       showing a set nothing will ever update. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
+  /** Server streams quota from configured usage-limit sources. Same
+      version-skew contract as environmentThemes. */
+  usageLimitSources: Schema.optionalKey(Schema.Boolean),
+  /** Server persists custom model rates and applies them to usage summaries. */
+  usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin.reorder (and orderKey on thread.pin).
       Same version-skew contract as threadSettlement. */
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
+  /** Server persists manual Active order through thread.active.reorder. */
+  threadActiveReorder: Schema.optionalKey(Schema.Boolean),
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
-  /** Server persists a pull request reference on thread.meta.update. */
+  /** Server supports legacy linkedPullRequest updates through thread.meta.update.
+      Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pull-request.link / .unlink, exposes `pullRequests` on
+      threads, and routes PullRequestRef.host across projects on the same host. Same
+      version-skew contract as threadSettlement. */
+  threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
@@ -102,6 +147,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       this is false — no update would ever repaint it. Absent on older
       servers, which may still publish, so only an explicit false skips. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  /** Server detects `platform.machine` and persists the `environmentIcon`
+      setting. Older servers drop the key on write, so clients show the
+      picker inert rather than offering a choice that would never stick. */
+  environmentIcon: Schema.optionalKey(Schema.Boolean),
   /** The desktop app supervising this server can be driven over RPC:
       server.updateServer runs its check -> download -> relaunch. Absent on
       desktop servers whose app predates the remote trigger, where clients

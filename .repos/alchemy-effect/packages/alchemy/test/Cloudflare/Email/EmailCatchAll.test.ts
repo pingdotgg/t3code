@@ -9,6 +9,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import { emailRoutingScoped } from "./scope.ts";
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const logLevel = Effect.provideService(
@@ -51,7 +52,7 @@ const getCatchAll = (zoneId: string) =>
 // behind: Email Routing enabled, catch-all back at the Cloudflare default
 // (disabled, drop, no name).
 const setBaseline = (zoneId: string) =>
-  emailRouting.enableEmailRouting({ zoneId, body: {} }).pipe(
+  emailRouting.enableEmailRouting({ zoneId }).pipe(
     Effect.andThen(
       emailRouting.putRuleCatchAll({
         zoneId,
@@ -68,7 +69,7 @@ const setBaseline = (zoneId: string) =>
     }),
   );
 
-describe.sequential("EmailCatchAll", () => {
+describe.sequential.skipIf(!emailRoutingScoped)("EmailCatchAll", () => {
   test.provider(
     "configures the catch-all rule and restores the baseline on destroy",
     (stack) =>

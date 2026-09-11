@@ -1,4 +1,4 @@
-import { Maximize2Icon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import { RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
@@ -14,11 +14,13 @@ interface MediaVideoPlayerProps {
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
+  readonly autoPlay?: boolean | undefined;
   readonly className?: string | undefined;
   readonly videoClassName?: string | undefined;
+  /** Styles the loading and failure panels, which otherwise assume an inline light surface. */
+  readonly stateClassName?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly copyMarkdown?: string | undefined;
-  readonly onExpand?: ((src: string) => void) | undefined;
   readonly onRetry?: (() => Promise<void>) | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
 }
@@ -31,11 +33,12 @@ export function MediaVideoPlayer({
   originalUrl,
   revision = null,
   preload = "visible",
+  autoPlay = false,
   className,
   videoClassName,
+  stateClassName,
   style,
   copyMarkdown,
-  onExpand,
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
@@ -90,11 +93,19 @@ export function MediaVideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     const pauseWhenHidden = () => {
-      if (document.hidden) video.pause();
+      // Native fullscreen can hide the inline page while this video is still visible.
+      const fullscreen =
+        document.fullscreenElement?.contains(video) ||
+        ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
+      if (document.hidden && !fullscreen) video.pause();
     };
     document.addEventListener("visibilitychange", pauseWhenHidden);
+    document.addEventListener("fullscreenchange", pauseWhenHidden);
+    video.addEventListener("webkitendfullscreen", pauseWhenHidden);
     return () => {
       document.removeEventListener("visibilitychange", pauseWhenHidden);
+      document.removeEventListener("fullscreenchange", pauseWhenHidden);
+      video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
     };
   }, [src, failed, loadAttempt]);
@@ -114,23 +125,6 @@ export function MediaVideoPlayer({
     }
   };
 
-  const expandButton =
-    onExpand && src !== null ? (
-      <Button
-        type="button"
-        variant="secondary"
-        size="icon-xs"
-        className={failed ? undefined : "absolute right-2 top-2"}
-        aria-label={`Expand ${label || "video"}`}
-        onClick={() => {
-          videoRef.current?.pause();
-          onExpand(latestSrc ?? src);
-        }}
-      >
-        <Maximize2Icon />
-      </Button>
-    ) : null;
-
   const player = (
     <span
       className={cn("relative inline-block align-middle", className)}
@@ -140,7 +134,12 @@ export function MediaVideoPlayer({
       {failed ? (
         <span
           role="alert"
-          className="flex min-h-28 flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground"
+          className={cn(
+            // Same 16:9 slot as the loading and playing states, so a failed or
+            // retried video does not move the rows below it.
+            "flex aspect-video max-h-full min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            stateClassName,
+          )}
         >
           <span className="inline-flex items-center gap-1.5">
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
@@ -159,7 +158,6 @@ export function MediaVideoPlayer({
               </Button>
             ) : null}
             <OpenMediaLink originalUrl={originalUrl} src={latestSrc ?? src} fileName={label} />
-            {expandButton}
           </span>
         </span>
       ) : src !== null ? (
@@ -168,6 +166,7 @@ export function MediaVideoPlayer({
           ref={videoRef}
           src={src}
           aria-label={label || "Video preview"}
+          autoPlay={autoPlay}
           controls
           playsInline
           preload={preload === "metadata" || preloadedSrc === src ? "metadata" : "none"}
@@ -186,11 +185,10 @@ export function MediaVideoPlayer({
         <span
           role="status"
           aria-label="Loading video"
-          className="block aspect-video w-full rounded-lg bg-muted/60"
+          className={cn("block aspect-video w-full rounded-lg bg-muted/60", stateClassName)}
           style={style}
         />
       )}
-      {!failed && expandButton}
     </span>
   );
   return actionsSource ? <MediaActions source={actionsSource}>{player}</MediaActions> : player;

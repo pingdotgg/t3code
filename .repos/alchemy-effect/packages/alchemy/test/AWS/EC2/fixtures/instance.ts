@@ -28,30 +28,10 @@ export const keyPair = AWS.EC2.KeyPair("Ec2E2EKeyPair", {
 export default class TestInstance extends AWS.EC2.Instance<TestInstance>()(
   "Ec2E2EInstance",
   Effect.gen(function* () {
-    // Props (image AMI lookup, networking) are only needed at plan/deploy
-    // time. Inside the deployed instance the resource already exists and only
-    // `exports.program` is used, so short-circuit before the infra-resolving
-    // calls — `__ALCHEMY_RUNTIME__` is folded to `true` in the bundle, so this
-    // branch (and the AWS SDK it pulls in) is dead-code-eliminated from the
-    // image.
-    if (globalThis.__ALCHEMY_RUNTIME__) {
-      // Only the required props need a value here; the infra-derived ones
-      // (subnetId / securityGroupIds / …) are unused at runtime and are left
-      // unset so the stub still satisfies `InstanceProps`.
-      return {
-        main: import.meta.filename,
-        imageId: "",
-        instanceType: "t3.small",
-        port: 3000,
-      };
-    }
-
-    const imageId = yield* AWS.EC2.amazonLinux2023();
-    if (!imageId) {
-      return yield* Effect.die(
-        new Error("could not resolve an Amazon Linux 2023 AMI"),
-      );
-    }
+    // This composition is re-executed inside the deployed instance's bundle:
+    // the AMI lookup is an `Output` resolved at plan/deploy time only, and
+    // resource yields resolve to references at runtime, so no runtime guard
+    // is needed.
     const network = yield* AWS.EC2.Network("Ec2E2ENetwork", {
       cidrBlock: "10.81.0.0/16",
       availabilityZones: 1,
@@ -89,7 +69,7 @@ export default class TestInstance extends AWS.EC2.Instance<TestInstance>()(
 
     return {
       main: import.meta.filename,
-      imageId,
+      imageId: AWS.EC2.amazonLinux2023(),
       instanceType: "t3.small",
       subnetId: network.publicSubnetIds[0],
       securityGroupIds: [securityGroup.groupId],

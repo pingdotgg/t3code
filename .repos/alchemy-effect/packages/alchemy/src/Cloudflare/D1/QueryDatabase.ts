@@ -12,7 +12,7 @@ import type { Database } from "./Database.ts";
  * Context tag, its type, and the callable —
  * `yield* Cloudflare.D1.QueryDatabase(db)`.
  *
- * @example Querying a database inside a Worker
+ * **Example:** Querying a database inside a Worker
  * ```typescript
  * const db = yield* Cloudflare.D1.QueryDatabase(MyDatabase);
  * const rows = yield* db.prepare("SELECT * FROM users").all();

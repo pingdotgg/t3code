@@ -25,7 +25,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestReadError>()(
+export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
     command: Schema.Literal("az"),
@@ -44,7 +44,7 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<Azu
 }
 
 /** Not a decode failure: az answered, the account it answered for just has no name. */
-export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<AzureDevOpsViewerUnavailableError>()(
+export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
     command: Schema.Literal("az"),
@@ -64,7 +64,7 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<A
  * Not a decode failure either: az answered with a well-formed pull request that simply carries
  * no branch or link, which is a response this cannot place rather than one it cannot read.
  */
-export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestIncompleteError>()(
+export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
     command: Schema.Literal("az"),
@@ -86,7 +86,7 @@ export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorCla
  * reviewers travel as argv rather than in a request body — `az repos pr reviewer` takes them no
  * other way — so anything that could leave the value position is refused rather than sent.
  */
-export class AzureDevOpsReviewerNameError extends Schema.TaggedErrorClass<AzureDevOpsReviewerNameError>()(
+export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOpsReviewerNameError>()(
   "AzureDevOpsReviewerNameError",
   {
     command: Schema.Literal("az"),
@@ -224,7 +224,13 @@ function actionArgs(
     // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
     // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
     case "enable-auto-merge":
-      return ["--auto-complete", "true", "--squash", mergeMethod === "squash" ? "true" : "false"];
+      return [
+        "--auto-complete",
+        "true",
+        ...(mergeMethod === undefined
+          ? []
+          : ["--squash", mergeMethod === "squash" ? "true" : "false"]),
+      ];
     case "disable-auto-merge":
       return ["--auto-complete", "false"];
     case "ready":
@@ -238,6 +244,10 @@ function actionArgs(
       return [];
     case "reopen":
       return ["--status", "active"];
+    // Never reached: this host does not declare the action, so the service refuses it first.
+    case "revert":
+    case "approve-workflows":
+      throw new Error(`Azure DevOps pull request action ${action} is unsupported`);
   }
 }
 
@@ -251,6 +261,7 @@ function isReviewerName(value: string): boolean {
   return name.length > 0 && !name.startsWith("-");
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 

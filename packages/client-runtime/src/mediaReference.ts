@@ -1,5 +1,7 @@
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
+import { safeDecodeURIComponent } from "./markdownLinks.ts";
+
 /** The authored media location, never the temporary URL used to load its bytes. */
 export type MediaReference =
   | {
@@ -86,10 +88,5 @@ export function mediaReferenceFileName(reference: MediaReference): string | unde
   } catch {
     return undefined;
   }
-  if (!basename) return undefined;
-  try {
-    return decodeURIComponent(basename);
-  } catch {
-    return basename;
-  }
+  return basename ? safeDecodeURIComponent(basename) : undefined;
 }

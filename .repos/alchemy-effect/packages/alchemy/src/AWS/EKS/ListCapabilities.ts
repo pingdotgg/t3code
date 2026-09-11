@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:ListCapabilities` is granted on the cluster's ARN.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.ListCapabilitiesHttp)`.
- * @binding
- * @section Cluster Capabilities
- * @example List Installed Capabilities
+ * ### Cluster Capabilities
+ * **Example:** List Installed Capabilities
  * ```typescript
  * // init
  * const listCapabilities = yield* AWS.EKS.ListCapabilities(cluster);
@@ -20,6 +19,8 @@ import type { Cluster } from "./Cluster.ts";
  * // runtime
  * const { capabilities } = yield* listCapabilities();
  * ```
+ *
+ * @binding
  */
 export interface ListCapabilities extends Binding.Service<
   ListCapabilities,

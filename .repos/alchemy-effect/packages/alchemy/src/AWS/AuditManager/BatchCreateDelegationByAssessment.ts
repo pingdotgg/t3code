@@ -15,9 +15,8 @@ export interface BatchCreateDelegationByAssessmentRequest extends Omit<
  * Creates a batch of delegations — handing control sets of the bound
  * assessment to reviewers. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.BatchCreateDelegationByAssessmentHttp)`.
- * @binding
- * @section Delegations
- * @example Delegate Control Sets for Review
+ * ### Delegations
+ * **Example:** Delegate Control Sets for Review
  * ```typescript
  * const batchCreateDelegationByAssessment = yield* AWS.AuditManager.BatchCreateDelegationByAssessment(assessment);
  * const result = yield* batchCreateDelegationByAssessment({
@@ -28,6 +27,8 @@ export interface BatchCreateDelegationByAssessmentRequest extends Omit<
  *   }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchCreateDelegationByAssessment extends Binding.Service<
   BatchCreateDelegationByAssessment,

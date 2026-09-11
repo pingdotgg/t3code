@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.DescribeEffectivePolicyHttp)`.
- * @binding
- * @section Policies & Effective Policy
- * @example Read an Account's Effective Tag Policy
+ * ### Policies & Effective Policy
+ * **Example:** Read an Account's Effective Tag Policy
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeEffectivePolicy = yield* AWS.Organizations.DescribeEffectivePolicy();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   TargetId: accountId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeEffectivePolicy extends Binding.Service<
   DescribeEffectivePolicy,

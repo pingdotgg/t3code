@@ -16,9 +16,8 @@ export interface ListQAppSessionDataRequest extends Omit<
  *
  * Lists the per-user data collected in a shared Q App session. Provide the implementation with
  * `Effect.provide(AWS.QApps.ListQAppSessionDataHttp)`.
- * @binding
- * @section Sessions
- * @example List Session Data
+ * ### Sessions
+ * **Example:** List Session Data
  * ```typescript
  * // init — bind the operation to the Q App
  * const listQAppSessionData = yield* AWS.QApps.ListQAppSessionData(app);
@@ -27,6 +26,8 @@ export interface ListQAppSessionDataRequest extends Omit<
  * const data = yield* listQAppSessionData({ sessionId });
  * console.log(data.sessionData?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListQAppSessionData extends Binding.Service<
   ListQAppSessionData,
