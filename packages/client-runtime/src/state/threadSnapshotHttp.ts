@@ -45,12 +45,13 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, `/api/orchestration/threads/${input.threadId}`),
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
-      client.orchestration.threadSnapshot({
+      client.threadSnapshot({
         params: { threadId: input.threadId },
         payload: {
           ...(input.window !== undefined ? { turnLimit: input.window.turnLimit } : {}),

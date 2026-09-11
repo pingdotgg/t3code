@@ -50,10 +50,11 @@ export const fetchEnvironmentPullRequestDiff = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "pullRequests",
     method: "POST",
     url: (httpBaseUrl) => makeEnvironmentHttpApiUrlBuilder(httpBaseUrl).pullRequests.diff(),
     timeoutMs: input.timeoutMs ?? DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS,
-    request: ({ client, headers }) => client.pullRequests.diff({ payload: input.diff, headers }),
+    request: ({ client, headers }) => client.diff({ payload: input.diff, headers }),
   }).pipe(
     Effect.mapError((error) =>
       error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential"

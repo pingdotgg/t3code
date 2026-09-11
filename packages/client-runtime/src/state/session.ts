@@ -49,10 +49,11 @@ export const fetchEnvironmentSessionState = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "auth",
     method: "GET",
     url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/session"),
     timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
-    request: ({ client, headers }) => client.auth.session({ headers }),
+    request: ({ client, headers }) => client.session({ headers }),
     // This endpoint returns 200 with authenticated:false for expired credentials.
     isUnauthorizedResponse: (response) => !response.authenticated,
   });

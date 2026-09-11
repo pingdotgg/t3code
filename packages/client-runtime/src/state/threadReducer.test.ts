@@ -526,6 +526,54 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.message-sent", () => {
+    it.each([
+      ["first", ["first+", "middle", "last"]],
+      ["middle", ["first", "middle+", "last"]],
+      ["last", ["first", "middle", "last+"]],
+      ["new", ["first", "middle", "last", "+"]],
+    ] as const)("applies a delta to %s without changing other messages", (id, texts) => {
+      const messages = Object.freeze(
+        ["first", "middle", "last"].map((name) =>
+          Object.freeze({
+            id: MessageId.make(name),
+            role: "assistant" as const,
+            text: name,
+            turnId: null,
+            streaming: false,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          }),
+        ),
+      );
+      const result = applyThreadDetailEvent(
+        { ...baseThread, messages },
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: baseThread.updatedAt,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.message-sent",
+          payload: {
+            threadId: baseThread.id,
+            messageId: MessageId.make(id),
+            role: "assistant",
+            text: "+",
+            turnId: null,
+            streaming: true,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+      );
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.messages.map((message) => message.text)).toEqual(texts);
+      for (const [index, message] of messages.entries()) {
+        if (message.id !== id) expect(result.thread.messages[index]).toBe(message);
+      }
+    });
+
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,
