@@ -245,7 +245,11 @@ const startup = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
-  yield* shellEnvironment.installIntoProcess;
+  const startupSettings = yield* desktopSettings.load;
+  yield* shellEnvironment.installIntoProcess({
+    mode: startupSettings.shellEnvironmentMode,
+    names: startupSettings.shellEnvironmentNames,
+  });
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =
@@ -269,7 +273,6 @@ const startup = Effect.gen(function* () {
   const userDataPath = yield* appIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
-  yield* desktopSettings.load;
 
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {

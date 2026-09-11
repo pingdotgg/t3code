@@ -9,6 +9,11 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import {
+  isImportableEnvironmentName,
+  type ShellEnvironmentHarvest,
+  type ShellEnvironmentMode,
+} from "./shellEnvironmentHarvest.ts";
 
 type EnvironmentPatch = Record<string, string>;
 
@@ -16,10 +21,12 @@ interface ShellEnvironmentConfig {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
   readonly userShell: Option.Option<string>;
+  readonly harvest: ShellEnvironmentHarvest;
 }
 
 interface WindowsProbeOptions {
   readonly loadProfile: boolean;
+  readonly mode: ShellEnvironmentMode;
 }
 
 const DesktopShellEnvironmentProbe = Schema.Literals([
@@ -63,7 +70,7 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    readonly installIntoProcess: Effect.Effect<void>;
+    readonly installIntoProcess: (harvest: ShellEnvironmentHarvest) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
@@ -235,18 +242,39 @@ const logShellEnvironmentCommandError = (
     }),
   );
 
-const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  names
-    .map((name) => {
-      return [
-        `printf '%s\\n' '${startMarker(name)}'`,
-        `printenv ${name} || true`,
-        `printf '%s\\n' '${endMarker(name)}'`,
-      ].join("; ");
-    })
-    .join("; ");
+const FULL_ENVIRONMENT_MARKER = "*";
+const POSIX_ENTRY_DELIMITER = "\0";
+const WINDOWS_ENTRY_DELIMITER = "\n";
 
-const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
+const capturePosixEnvironmentCommand = (
+  names: ReadonlyArray<string>,
+  mode: ShellEnvironmentMode,
+) => {
+  const blocks = names.map((name) => {
+    return [
+      `printf '%s\\n' '${startMarker(name)}'`,
+      `printenv ${name} || true`,
+      `printf '%s\\n' '${endMarker(name)}'`,
+    ].join("; ");
+  });
+
+  if (mode === "all") {
+    blocks.push(
+      [
+        `printf '%s\\n' '${startMarker(FULL_ENVIRONMENT_MARKER)}'`,
+        "env -0 || true",
+        `printf '\\n%s\\n' '${endMarker(FULL_ENVIRONMENT_MARKER)}'`,
+      ].join("; "),
+    );
+  }
+
+  return blocks.join("; ");
+};
+
+const captureWindowsEnvironmentCommand = (
+  names: ReadonlyArray<string>,
+  mode: ShellEnvironmentMode,
+) =>
   [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
@@ -257,24 +285,59 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
         `Write-Output '${endMarker(name)}'`,
       ];
     }),
+    ...(mode === "all"
+      ? [
+          `Write-Output '${startMarker(FULL_ENVIRONMENT_MARKER)}'`,
+          "Get-ChildItem Env: | ForEach-Object { Write-Output ($_.Name + '=' + $_.Value) }",
+          `Write-Output '${endMarker(FULL_ENVIRONMENT_MARKER)}'`,
+        ]
+      : []),
   ].join("; ");
 
-const extractEnvironment = (output: string, names: ReadonlyArray<string>): EnvironmentPatch => {
+const extractMarkedSection = (output: string, name: string): string | null => {
+  const start = output.indexOf(startMarker(name));
+  if (start === -1) return null;
+
+  const valueStart = start + startMarker(name).length;
+  const end = output.indexOf(endMarker(name), valueStart);
+  if (end === -1) return null;
+
+  return output
+    .slice(valueStart, end)
+    .replace(/^\r?\n/, "")
+    .replace(/\r?\n$/, "");
+};
+
+const extractFullEnvironment = (output: string, delimiter: string): EnvironmentPatch => {
+  const section = extractMarkedSection(output, FULL_ENVIRONMENT_MARKER);
+  if (section === null) return {};
+
   const environment: EnvironmentPatch = {};
+  for (const entry of section.split(delimiter)) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) continue;
+
+    const value = entry.slice(separator + 1).replace(/\r$/, "");
+    if (value.length > 0) {
+      environment[entry.slice(0, separator)] = value;
+    }
+  }
+
+  return environment;
+};
+
+const extractEnvironment = (
+  output: string,
+  names: ReadonlyArray<string>,
+  mode: ShellEnvironmentMode,
+  delimiter: string,
+): EnvironmentPatch => {
+  const environment: EnvironmentPatch =
+    mode === "all" ? extractFullEnvironment(output, delimiter) : {};
 
   for (const name of names) {
-    const start = output.indexOf(startMarker(name));
-    if (start === -1) continue;
-
-    const valueStart = start + startMarker(name).length;
-    const end = output.indexOf(endMarker(name), valueStart);
-    if (end === -1) continue;
-
-    const value = output
-      .slice(valueStart, end)
-      .replace(/^\r?\n/, "")
-      .replace(/\r?\n$/, "");
-    if (value.length > 0) {
+    const value = extractMarkedSection(output, name);
+    if (value !== null && value.length > 0) {
       environment[name] = value;
     }
   }
@@ -334,15 +397,18 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
+  mode: ShellEnvironmentMode,
 ): Effect.Effect<EnvironmentPatch, never, ChildProcessSpawner.ChildProcessSpawner> =>
   names.length === 0
     ? Effect.succeed({})
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        args: ["-ilc", capturePosixEnvironmentCommand(names, mode)],
         timeout: LOGIN_SHELL_TIMEOUT,
-      }).pipe(Effect.map((output) => extractEnvironment(output, names)));
+      }).pipe(
+        Effect.map((output) => extractEnvironment(output, names, mode, POSIX_ENTRY_DELIMITER)),
+      );
 
 const readLaunchctlPath = runCommandOutput({
   probe: "launchctl-path",
@@ -363,7 +429,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       ...(options.loadProfile ? ([] as const) : (["-NoProfile"] as const)),
       "-NonInteractive",
       "-Command",
-      captureWindowsEnvironmentCommand(names),
+      captureWindowsEnvironmentCommand(names, options.mode),
     ];
 
     for (const command of WINDOWS_SHELL_CANDIDATES) {
@@ -373,7 +439,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         args,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
-      const environment = extractEnvironment(output, names);
+      const environment = extractEnvironment(output, names, options.mode, WINDOWS_ENTRY_DELIMITER);
       if (Object.keys(environment).length > 0) {
         return environment;
       }
@@ -382,6 +448,18 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
     return {};
   },
 );
+
+const applyHarvestedEnvironment = (input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly shellEnvironment: EnvironmentPatch;
+  readonly governed: ReadonlyArray<string>;
+}): void => {
+  const governed = new Set(input.governed);
+  for (const [name, value] of Object.entries(input.shellEnvironment)) {
+    if (governed.has(name) || !isImportableEnvironmentName(name) || value.length === 0) continue;
+    input.env[name] = value;
+  }
+};
 
 const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
   function* (
@@ -394,8 +472,11 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     // startup span, of which desktop.bootstrap is ~30ms.
     const [noProfile, profile] = yield* Effect.all(
       [
-        readWindowsEnvironment(["PATH"], { loadProfile: false }),
-        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+        readWindowsEnvironment(["PATH"], { loadProfile: false, mode: "allowlist" }),
+        readWindowsEnvironment([...WINDOWS_PROFILE_ENV_NAMES, ...config.harvest.names], {
+          loadProfile: true,
+          mode: config.harvest.mode,
+        }),
       ],
       { concurrency: 2 },
     );
@@ -415,6 +496,12 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     if (!config.env.FNM_MULTISHELL_PATH && profile.FNM_MULTISHELL_PATH) {
       config.env.FNM_MULTISHELL_PATH = profile.FNM_MULTISHELL_PATH;
     }
+
+    applyHarvestedEnvironment({
+      env: config.env,
+      shellEnvironment: profile,
+      governed: WINDOWS_PROFILE_ENV_NAMES,
+    });
   },
 );
 
@@ -429,10 +516,11 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
 
+    const probeNames = [...LOGIN_SHELL_ENV_NAMES, ...config.harvest.names];
     for (const shell of listLoginShellCandidates(config)) {
       Object.assign(
         shellEnvironment,
-        yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
+        yield* readLoginShellEnvironment(shell, probeNames, config.harvest.mode),
       );
       if (shellEnvironment.PATH) break;
     }
@@ -518,6 +606,12 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+
+    applyHarvestedEnvironment({
+      env: config.env,
+      shellEnvironment,
+      governed: LOGIN_SHELL_ENV_NAMES,
+    });
   },
 );
 
@@ -538,15 +632,18 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
+  const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] = (harvest) =>
     installShellEnvironment({
       env: process.env,
       platform: environment.platform,
       userShell: Option.none(),
+      harvest,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+      Effect.withSpan("desktop.shellEnvironment.installIntoProcess", {
+        attributes: { mode: harvest.mode, extraNameCount: harvest.names.length },
+      }),
     );
 
   return DesktopShellEnvironment.of({ installIntoProcess });

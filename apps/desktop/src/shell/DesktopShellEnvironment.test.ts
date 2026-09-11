@@ -12,6 +12,10 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
+import {
+  DEFAULT_SHELL_ENVIRONMENT_HARVEST,
+  type ShellEnvironmentHarvest,
+} from "./shellEnvironmentHarvest.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -27,6 +31,17 @@ function envOutput(values: Readonly<Record<string, string>>): string {
       `__T3CODE_ENV_${name}_END__`,
     ])
     .join("\n");
+}
+
+function fullEnvOutput(values: Readonly<Record<string, string>>, delimiter = "\0"): string {
+  const body = Object.entries(values)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(delimiter);
+  return ["__T3CODE_ENV_*_START__", body, "__T3CODE_ENV_*_END__"].join("\n");
+}
+
+function commandLine(command: ChildProcess.Command): string {
+  return command._tag === "StandardCommand" ? command.args.join(" ") : "";
 }
 
 function makeProcess(output: string): ChildProcessSpawner.ChildProcessHandle {
@@ -69,6 +84,7 @@ function runShellEnvironment(input: {
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
+  readonly harvest?: ShellEnvironmentHarvest;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -87,7 +103,7 @@ function runShellEnvironment(input: {
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
-    yield* shellEnvironment.installIntoProcess;
+    yield* shellEnvironment.installIntoProcess(input.harvest ?? DEFAULT_SHELL_ENVIRONMENT_HARVEST);
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
@@ -394,6 +410,191 @@ describe("DesktopShellEnvironment", () => {
       });
 
       assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
+    }),
+  );
+
+  it.effect("leaves the probe untouched when no harvest is configured", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/usr/bin" });
+        },
+      });
+
+      const args = commandLine(commands[0] as ChildProcess.Command);
+      assert.equal(args.includes("env -0"), false);
+      assert.equal(args.includes("printenv OPENAI_API_KEY"), false);
+    }),
+  );
+
+  it.effect("restores configured extra names from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "allowlist", names: ["OPENAI_API_KEY"] },
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/usr/bin", OPENAI_API_KEY: "sk-test" });
+        },
+      });
+
+      assert.equal(
+        commandLine(commands[0] as ChildProcess.Command).includes("printenv OPENAI_API_KEY"),
+        true,
+      );
+      assert.equal(env.OPENAI_API_KEY, "sk-test");
+    }),
+  );
+
+  it.effect("lets the login shell win over an inherited value for configured names", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        OPENAI_API_KEY: "sk-stale",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "allowlist", names: ["OPENAI_API_KEY"] },
+        handler: () => envOutput({ PATH: "/usr/bin", OPENAI_API_KEY: "sk-fresh" }),
+      });
+
+      assert.equal(env.OPENAI_API_KEY, "sk-fresh");
+    }),
+  );
+
+  it.effect("restores the whole login shell environment in all mode", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "all", names: [] },
+        handler: (command) => {
+          commands.push(command);
+          return [
+            envOutput({ PATH: "/usr/bin" }),
+            fullEnvOutput({
+              PATH: "/usr/bin",
+              OPENAI_API_KEY: "sk-test",
+              CARGO_HOME: "/home/test/.local/share/cargo",
+              GREETING: "line one\nline two",
+              CONNECTION: "key=value=more",
+            }),
+          ].join("\n");
+        },
+      });
+
+      assert.equal(commandLine(commands[0] as ChildProcess.Command).includes("env -0"), true);
+      assert.equal(env.OPENAI_API_KEY, "sk-test");
+      assert.equal(env.CARGO_HOME, "/home/test/.local/share/cargo");
+      assert.equal(env.GREETING, "line one\nline two");
+      assert.equal(env.CONNECTION, "key=value=more");
+    }),
+  );
+
+  it.effect("does not import process identity names in all mode", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        HOME: "/home/desktop",
+        PWD: "/",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "all", names: [] },
+        handler: () =>
+          [
+            envOutput({ PATH: "/usr/bin" }),
+            fullEnvOutput({
+              HOME: "/home/shell",
+              PWD: "/home/shell/projects",
+              OLDPWD: "/tmp",
+              SHLVL: "3",
+              _: "/usr/bin/env",
+            }),
+          ].join("\n"),
+      });
+
+      assert.equal(env.HOME, "/home/desktop");
+      assert.equal(env.PWD, "/");
+      assert.equal(env.OLDPWD, undefined);
+      assert.equal(env.SHLVL, undefined);
+      assert.equal(env._, undefined);
+    }),
+  );
+
+  it.effect("keeps PATH merging and locale precedence in all mode", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        harvest: { mode: "all", names: [] },
+        handler: () =>
+          [
+            envOutput({ PATH: "/opt/homebrew/bin" }),
+            fullEnvOutput({ PATH: "/only/from/dump", LANG: "de_DE.UTF-8" }),
+          ].join("\n"),
+      });
+
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
+      assert.equal(env.LANG, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("restores configured extra names from the PowerShell profile on Windows", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        harvest: { mode: "all", names: ["OPENAI_API_KEY"] },
+        handler: (command) => {
+          commands.push(command);
+          if (command._tag !== "StandardCommand") return "";
+          return command.args.includes("-NoProfile")
+            ? envOutput({ PATH: "C:\\Windows\\System32" })
+            : [
+                envOutput({ PATH: "C:\\Windows\\System32", OPENAI_API_KEY: "sk-test" }),
+                fullEnvOutput({ CARGO_HOME: "C:\\Users\\test\\.cargo" }, "\n"),
+              ].join("\n");
+        },
+      });
+
+      const profileCommand = commands.find(
+        (command) => command._tag === "StandardCommand" && !command.args.includes("-NoProfile"),
+      );
+      assert.equal(
+        commandLine(profileCommand as ChildProcess.Command).includes("Get-ChildItem Env:"),
+        true,
+      );
+      assert.equal(env.OPENAI_API_KEY, "sk-test");
+      assert.equal(env.CARGO_HOME, "C:\\Users\\test\\.cargo");
     }),
   );
 

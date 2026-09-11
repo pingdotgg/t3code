@@ -26,6 +26,8 @@ const DesktopSettingsPatch = Schema.Struct({
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
+  shellEnvironmentMode: Schema.optionalKey(Schema.String),
+  shellEnvironmentNames: Schema.optionalKey(Schema.Array(Schema.String)),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
@@ -109,6 +111,8 @@ describe("DesktopSettings", () => {
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
+        shellEnvironmentMode: "allowlist",
+        shellEnvironmentNames: [],
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         updateChannel: "nightly",
@@ -127,6 +131,8 @@ describe("DesktopSettings", () => {
         yield* writeSettingsPatch({
           linuxPasswordStore: "gnome-libsecret",
           serverExposureMode: "network-accessible",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -138,6 +144,8 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -245,6 +253,8 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -301,6 +311,8 @@ describe("DesktopSettings", () => {
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
+            shellEnvironmentMode: "allowlist",
+            shellEnvironmentNames: [],
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
             updateChannel: "nightly",
@@ -349,6 +361,8 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "nightly",
@@ -377,6 +391,8 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "latest",
@@ -404,6 +420,8 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          shellEnvironmentMode: "allowlist",
+          shellEnvironmentNames: [],
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,
           updateChannel: "latest",
@@ -487,6 +505,43 @@ describe("DesktopSettings", () => {
         const loaded = yield* settings.load;
         assert.equal(loaded.wslBackendEnabled, true);
         assert.equal(loaded.wslDistro, "Ubuntu-22.04");
+      }),
+    ),
+  );
+
+  it.effect("defaults to the fixed login-shell allowlist", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const loaded = yield* settings.load;
+        assert.equal(loaded.shellEnvironmentMode, "allowlist");
+        assert.deepEqual(loaded.shellEnvironmentNames, []);
+      }),
+    ),
+  );
+
+  it.effect("loads the shell environment harvest and drops unusable names", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          shellEnvironmentMode: "all",
+          shellEnvironmentNames: ["OPENAI_API_KEY", "FOO; rm -rf /", "HOME", "OPENAI_API_KEY"],
+        });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.shellEnvironmentMode, "all");
+        assert.deepEqual(loaded.shellEnvironmentNames, ["OPENAI_API_KEY"]);
+      }),
+    ),
+  );
+
+  it.effect("falls back to the allowlist for an unrecognized harvest mode", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({ shellEnvironmentMode: "everything" });
+        const loaded = yield* settings.load;
+        assert.equal(loaded.shellEnvironmentMode, "allowlist");
       }),
     ),
   );
