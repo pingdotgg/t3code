@@ -38,7 +38,7 @@ describe("desktop update repository input", () => {
 
 describe("desktop update track", () => {
   it("shows Custom for persisted and in-progress custom source selection", () => {
-    expect(resolveDesktopUpdateTrack("nightly", "saphid/t3code")).toBe("custom");
+    expect(resolveDesktopUpdateTrack("nightly", "example/t3code")).toBe("custom");
     expect(resolveDesktopUpdateTrack("latest", null, true)).toBe("custom");
   });
 

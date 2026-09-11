@@ -46,6 +46,9 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeRuntimeConnectionCatalogDocumentJson = Schema.decodeUnknownEffect(
+  RuntimeConnectionCatalogDocumentJson,
+);
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -523,7 +526,7 @@ export const make = Effect.gen(function* () {
             candidate !== catalogPath &&
             catalogs.some((catalog) => catalog.path === catalogPath)
           ) {
-            yield* Schema.decodeUnknownEffect(RuntimeConnectionCatalogDocumentJson)(decrypted).pipe(
+            yield* decodeRuntimeConnectionCatalogDocumentJson(decrypted).pipe(
               Effect.mapError(
                 (cause) =>
                   new DesktopConnectionCatalogStoreDocumentDecodeError({
@@ -555,7 +558,7 @@ export const make = Effect.gen(function* () {
       let decrypted = first.value;
       if (catalogs.length > 1) {
         const documents = yield* Effect.forEach(catalogs, (catalog) =>
-          Schema.decodeUnknownEffect(RuntimeConnectionCatalogDocumentJson)(catalog.value).pipe(
+          decodeRuntimeConnectionCatalogDocumentJson(catalog.value).pipe(
             Effect.mapError(
               (cause) =>
                 new DesktopConnectionCatalogStoreDocumentDecodeError({
@@ -600,6 +603,10 @@ export const make = Effect.gen(function* () {
           remoteDpopTokens: unique(
             documents.flatMap((d) => d.remoteDpopTokens),
             (v) => v.environmentId,
+          ),
+          disabledEnvironmentIds: unique(
+            documents.flatMap((d) => d.disabledEnvironmentIds),
+            (v) => v,
           ),
         }).pipe(
           Effect.mapError(
