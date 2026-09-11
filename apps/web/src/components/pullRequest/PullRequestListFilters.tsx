@@ -114,6 +114,17 @@ export function PullRequestSearchInput({
         type="search"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          if (event.nativeEvent.isComposing || event.keyCode === 229) {
+            event.stopPropagation();
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.blur();
+          if (value) onChange("");
+        }}
         placeholder="Search pull requests, or label:bug"
         aria-label="Search pull requests"
       />
