@@ -177,6 +177,61 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("keeps a slash command active after an otherwise empty line", () => {
+    const text = "\n/rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: 1,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps commands available when only terminal context precedes the slash", () => {
+    const text = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}\n/rev`;
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: 2,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("uses a bare inline slash name to search skills without reopening commands", () => {
+    const text = "Use /unslop";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-skill",
+      query: "unslop",
+      rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it.each(["Use /tmp/build.sh", "Use /etc/hosts"])(
+    "keeps the absolute path in %s as ordinary text",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toBeNull();
+    },
+  );
+
+  it("keeps later-line slashes skill-only when the draft already has text", () => {
+    const text = "Use a skill\n/";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-skill",
+      query: "",
+      rangeStart: "Use a skill\n".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);
