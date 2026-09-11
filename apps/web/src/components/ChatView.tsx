@@ -8493,8 +8493,8 @@ export default function ChatView(props: ChatViewProps) {
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 onCiteAssistantText={paintOnlyDisplayedTimeline ? undefined : citeAssistantText}
-                agentPanelModel={agentPanelModel}
-                onOpenAgents={addAgentsSurface}
+                agentPanelModel={paintOnlyDisplayedTimeline ? undefined : agentPanelModel}
+                onOpenAgents={paintOnlyDisplayedTimeline ? undefined : addAgentsSurface}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
