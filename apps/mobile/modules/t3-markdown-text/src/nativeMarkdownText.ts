@@ -705,10 +705,9 @@ export function nativeMarkdownDocumentChunks(
       return;
     }
     const first = selectableNodes[0];
-    const last = selectableNodes.at(-1);
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}:${last?.end ?? "end"}`,
+      key: `selectable:${first?.beg ?? "start"}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -726,7 +725,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}:${child.end ?? index}`,
+      key: `rich:${child.type}:${child.beg ?? index}`,
       node: child,
     });
   }

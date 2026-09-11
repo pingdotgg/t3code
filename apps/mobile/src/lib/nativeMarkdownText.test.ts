@@ -536,7 +536,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     ).toEqual([
       {
         kind: "rich",
-        key: "rich:blockquote:0:120",
+        key: "rich:blockquote:0",
         node: blockquote,
       },
     ]);
@@ -663,7 +663,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:code_block:11:35",
+      key: "rich:code_block:11",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -700,7 +700,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(nativeMarkdownDocumentChunks(document)).toEqual([
       {
         kind: "rich",
-        key: "rich:list:0:45",
+        key: "rich:list:0",
         node: document.children?.[0],
       },
     ]);
@@ -728,7 +728,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:horizontal_rule:1:1",
+      key: "rich:horizontal_rule:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -774,7 +774,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:list:1:1",
+      key: "rich:list:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });

@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useState } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
+import { pendingCodeHighlight } from "./pendingCodeHighlight";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
 import type {
   MarkdownCodeHighlighter,
@@ -29,7 +30,7 @@ const MONO_FONT_FAMILY = Platform.select({
 });
 
 function nodeKey(node: MarkdownNode, index: number): string {
-  return `${node.type}:${node.beg ?? index}:${node.end ?? index}`;
+  return `${node.type}:${node.beg ?? index}`;
 }
 
 /** Code inside markdown scales with the base text size (12pt at the default 15pt body). */
@@ -93,6 +94,7 @@ function loadHighlightedCode(
   language: string | undefined,
   theme: "light" | "dark",
   highlightCode: MarkdownCodeHighlighter,
+  session: object,
 ): Promise<HighlightedCode> {
   const key = codeHighlightCacheKey(code, language, theme);
   const cached = highlightedCodeCache.get(key);
@@ -105,7 +107,7 @@ function loadHighlightedCode(
     return pending;
   }
 
-  const promise = highlightCode({ code, language, theme })
+  const promise = highlightCode({ code, language, theme, session })
     .then((tokens) => {
       cacheHighlightedCode(key, tokens);
       highlightedCodePromiseCache.delete(key);
@@ -125,116 +127,130 @@ function useHighlightedCode(
   theme: "light" | "dark",
   highlightCode: MarkdownCodeHighlighter,
 ): HighlightedCode | null {
+  const [session] = useState(() => ({}));
   const key = codeHighlightCacheKey(code, language, theme);
+  const ready = useMemo(
+    () => highlightedCodeCache.get(key) ?? highlightCode.read?.({ code, language, theme, session }),
+    [code, language, theme, key, highlightCode, session],
+  );
   const [highlighted, setHighlighted] = useState<{
     readonly key: string;
+    readonly code: string;
+    readonly language: string | undefined;
+    readonly theme: "light" | "dark";
     readonly tokens: HighlightedCode | null;
   }>(() => ({
+    code,
+    language,
+    theme,
     key,
     tokens: highlightedCodeCache.get(key) ?? null,
   }));
 
   useEffect(() => {
+    if (ready) return;
     let active = true;
     const cached = highlightedCodeCache.get(key);
     if (cached) {
       cacheHighlightedCode(key, cached);
-      setHighlighted({ key, tokens: cached });
+      setHighlighted({ code, language, theme, key, tokens: cached });
       return () => {
         active = false;
       };
     }
 
-    void loadHighlightedCode(code, language, theme, highlightCode)
+    void loadHighlightedCode(code, language, theme, highlightCode, session)
       .then((tokens) => {
         if (active) {
-          setHighlighted({ key, tokens });
+          setHighlighted({ code, language, theme, key, tokens });
         }
       })
       .catch(() => {
         if (active) {
-          setHighlighted({ key, tokens: null });
+          setHighlighted({ code, language, theme, key, tokens: null });
         }
       });
     return () => {
       active = false;
     };
-  }, [code, highlightCode, key, language, theme]);
+  }, [code, highlightCode, key, language, theme, ready, session]);
 
-  return highlighted.key === key ? highlighted.tokens : null;
+  if (ready) return ready;
+  if (highlighted.key === key) return highlighted.tokens;
+  if (highlighted.tokens && highlighted.language === language && highlighted.theme === theme) {
+    return pendingCodeHighlight(highlighted.code, code, highlighted.tokens);
+  }
+  return null;
 }
+
+const HighlightedCodeLine = memo(function HighlightedCodeLine(props: {
+  readonly tokens: ReadonlyArray<MarkdownHighlightedToken>;
+  readonly color: string;
+  readonly newline: boolean;
+}) {
+  let offset = 0;
+  const children = [];
+  for (const token of props.tokens) {
+    if (!token.content) continue;
+    children.push(
+      <MarkdownTextPrimitive
+        key={offset}
+        style={{
+          color: token.color ?? props.color,
+          fontFamily: MONO_FONT_FAMILY,
+          fontStyle: token.fontStyle !== null && (token.fontStyle & 1) === 1 ? "italic" : "normal",
+          fontWeight: token.fontStyle !== null && (token.fontStyle & 2) === 2 ? "700" : "400",
+        }}
+      >
+        {token.content}
+      </MarkdownTextPrimitive>,
+    );
+    offset += token.content.length;
+  }
+  return (
+    <MarkdownTextPrimitive>
+      {children}
+      {props.newline ? "\n" : ""}
+    </MarkdownTextPrimitive>
+  );
+});
 
 function HighlightedCodeText(props: {
   readonly content: string;
   readonly highlighted: HighlightedCode | null;
   readonly textStyle: NativeMarkdownTextStyle;
 }) {
-  if (!props.highlighted) {
-    return (
-      <MarkdownTextPrimitive
-        uiTextView
-        selectable
-        style={{
-          color: props.textStyle.codeColor,
-          fontFamily: MONO_FONT_FAMILY,
-          fontSize: codeBlockFontSize(props.textStyle),
-          lineHeight: codeBlockLineHeight(props.textStyle),
-        }}
-      >
-        {props.content}
-      </MarkdownTextPrimitive>
-    );
+  // The text root provides inherited styles through context. A new style object
+  // would rerender every token even when its completed line is unchanged.
+  const fontSize = codeBlockFontSize(props.textStyle);
+  const lineHeight = codeBlockLineHeight(props.textStyle);
+  const style = useMemo(
+    () => ({
+      color: props.textStyle.codeColor,
+      fontFamily: MONO_FONT_FAMILY,
+      fontSize,
+      lineHeight,
+    }),
+    [props.textStyle.codeColor, fontSize, lineHeight],
+  );
+  let offset = 0;
+  const lines = [];
+  if (props.highlighted) {
+    for (const tokens of props.highlighted) {
+      lines.push(
+        <HighlightedCodeLine
+          key={offset}
+          tokens={tokens}
+          color={props.textStyle.codeColor}
+          newline={lines.length + 1 < props.highlighted.length}
+        />,
+      );
+      offset += tokens.reduce((length, token) => length + token.content.length, 0) + 1;
+    }
   }
-  const highlighted = props.highlighted;
-  let sourceOffset = 0;
-  const keyOccurrences = new Map<string, number>();
-  const keyedLines = highlighted.map((line) => {
-    const lineStart = sourceOffset;
-    const tokens = line.map((token) => {
-      const start = sourceOffset;
-      sourceOffset += token.content.length;
-      const signature = `${start}:${token.content}:${token.color ?? ""}:${token.fontStyle ?? ""}`;
-      const occurrence = keyOccurrences.get(signature) ?? 0;
-      keyOccurrences.set(signature, occurrence + 1);
-      return { key: `${signature}:${occurrence}`, token };
-    });
-    sourceOffset += 1;
-    return {
-      key: `line:${lineStart}:${line.map((token) => token.content).join("")}`,
-      tokens,
-    };
-  });
-
   return (
-    <MarkdownTextPrimitive
-      uiTextView
-      selectable
-      style={{
-        color: props.textStyle.codeColor,
-        fontFamily: MONO_FONT_FAMILY,
-        fontSize: codeBlockFontSize(props.textStyle),
-        lineHeight: codeBlockLineHeight(props.textStyle),
-      }}
-    >
-      {keyedLines.map((line, lineIndex) => (
-        <MarkdownTextPrimitive key={line.key}>
-          {line.tokens.map(({ key, token }) => (
-            <MarkdownTextPrimitive
-              key={key}
-              style={{
-                color: token.color ?? props.textStyle.codeColor,
-                fontFamily: MONO_FONT_FAMILY,
-                fontStyle:
-                  token.fontStyle !== null && (token.fontStyle & 1) === 1 ? "italic" : "normal",
-                fontWeight: token.fontStyle !== null && (token.fontStyle & 2) === 2 ? "700" : "400",
-              }}
-            >
-              {token.content}
-            </MarkdownTextPrimitive>
-          ))}
-          {lineIndex + 1 < keyedLines.length ? "\n" : ""}
-        </MarkdownTextPrimitive>
-      ))}
+    <MarkdownTextPrimitive uiTextView selectable style={style}>
+      {props.highlighted ? lines : props.content}
     </MarkdownTextPrimitive>
   );
 }
