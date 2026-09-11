@@ -37,13 +37,13 @@ describe("timeline minimap previews", () => {
     ]);
     const items = deriveTimelineMinimapItems(source);
     expect(items).toHaveLength(2);
-    expect(resolveTimelineMinimapPreview(items[0])).toEqual({
+    expect(resolveTimelineMinimapPreview(items[0]!)).toEqual({
       ...items[0],
       userText: "Inspect this",
       assistantText: "Done now",
     });
     expect(source[items[0]!.rowIndex]!.id).toBe(items[0]!.id);
-    expect(resolveTimelineMinimapPreview(items[1])?.assistantText).toBe("Second answer");
+    expect(resolveTimelineMinimapPreview(items[1]!)?.assistantText).toBe("Second answer");
     expect(items[0]?.assistantText).toBe(" Done\t now ");
   });
 
