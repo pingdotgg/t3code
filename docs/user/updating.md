@@ -25,11 +25,11 @@ to allow recovery without a connected client.
 
 The offered action depends on how the server runs:
 
-| Action                     | What to do                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
-| **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
+| Action                     | What to do                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host.                                                                                                                                             |
+| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                                                                                                                                                                         |
+| **Copy update command**    | Stop the command-line server on its host first, then run the copied command. It matches how that server was installed: a global npm, pnpm, or bun install is upgraded in place and started again as usual, while a server started through `npx`, `pnpm dlx`, or `bunx` is relaunched by the command itself with your usual startup options. |
 
 For a background service, run the matching version's CLI on the host:
 
@@ -42,7 +42,13 @@ Replace `<client-version>` with the version shown in the notice. Using
 service launcher may require this local update before it supports remote updates
 and rollback.
 
-For a foreground server, the copied command is `npx t3@<client-version>`. Add
+For a foreground server, the copied command matches how it was installed. A
+global install gets its package manager's upgrade command, such as
+`npm i -g t3@<client-version>`, `pnpm add -g t3@<client-version>`, or
+`bun add -g t3@<client-version>`: run it, then start the server again as usual.
+A server started through a package runner gets that runner again,
+`npx t3@<client-version>`, `pnpm dlx t3@<client-version>`, or
+`bunx t3@<client-version>`, which relaunches it at the matching version. Add
 `serve` if you normally run without a browser, and preserve options such as
 `--host` or `--tailscale-serve`. See
 [background services](./background-service.md) for service management.
@@ -54,7 +60,8 @@ update can roll back to the previous version. If the update still fails:
 
 1. Retry the offered action once.
 2. Check that you updated the server's machine, not only the device you are using.
-3. For a command-line server, stop it and relaunch the exact version shown in the notice.
+3. For a command-line server, stop it, run the copied update command, and make sure it is running
+   again on the exact version shown in the notice.
 
 ## Mobile updates
 

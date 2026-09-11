@@ -12,6 +12,7 @@ import {
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
+  resolveServerInstall,
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
@@ -65,6 +66,7 @@ export function useAutoBalanceUpdateBanner(
         selfUpdate,
         desktopAppUpdate,
         threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
+        install: resolveServerInstall(environment.serverConfig),
         continueThreadsAfterServerUpdate:
           environment.serverConfig?.settings.continueThreadsAfterServerUpdate ?? false,
         targetVersion: state.status === "idle" ? mismatch!.clientVersion : state.targetVersion,

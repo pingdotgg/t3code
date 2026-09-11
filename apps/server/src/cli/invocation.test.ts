@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { formatCliCommand } from "./invocation.ts";
+import { detectServerInstall, formatCliCommand } from "./invocation.ts";
 
 it("formats package runner commands from their cache entry paths", () => {
   for (const [entryPath, expected] of [
@@ -40,6 +40,33 @@ it("treats stable installs as direct invocations", () => {
       formatCliCommand({ subcommand: "serve", entryPath, version: "0.0.31" }),
       "t3 serve",
     );
+  }
+});
+
+it("tells package runners, global installs, and everything else apart", () => {
+  for (const [entryPath, expected] of [
+    ["/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs", "npx"],
+    ["/home/theo/.cache/pnpm/dlx/abc/node_modules/t3/dist/bin.mjs", "pnpm-dlx"],
+    ["/tmp/bunx-1000-t3@latest/node_modules/t3/dist/bin.mjs", "bunx"],
+    ["/usr/local/lib/node_modules/t3/dist/bin.mjs", "npm-global"],
+    ["/home/theo/.nvm/versions/node/v24.13.1/lib/node_modules/t3/dist/bin.mjs", "npm-global"],
+    ["C:\\Users\\theo\\AppData\\Roaming\\npm\\node_modules\\t3\\dist\\bin.mjs", "npm-global"],
+    [
+      "/home/theo/.local/share/pnpm/global/5/.pnpm/t3@0.0.35/node_modules/t3/dist/bin.mjs",
+      "pnpm-global",
+    ],
+    ["/home/theo/.bun/install/global/node_modules/t3/dist/bin.mjs", "bun-global"],
+  ] as const) {
+    assert.equal(detectServerInstall(entryPath), expected);
+  }
+  // Nothing global updates these, so no command is suggested.
+  for (const entryPath of [
+    "/srv/project/node_modules/t3/dist/bin.mjs",
+    "/home/theo/.t3/runtime/0.0.31/node_modules/t3/dist/bin.mjs",
+    "/home/theo/Code/work/t3code/apps/server/dist/bin.mjs",
+    "",
+  ]) {
+    assert.isNull(detectServerInstall(entryPath));
   }
 });
 
