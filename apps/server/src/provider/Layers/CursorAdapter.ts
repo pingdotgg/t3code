@@ -182,6 +182,12 @@ interface CursorSessionContext {
   readonly promptActivity: PromptActivity;
   /** Settled by `interruptTurn` so a pending transport-failure retry settles as cancelled. */
   turnInterrupted: Deferred.Deferred<void>;
+  /**
+   * Bumped by every sendTurn. A transport-failure retry replays its prompt
+   * only while no later prompt (a steer) has arrived; `promptsInFlight` is
+   * transient and can be back at 1 by then.
+   */
+  promptSequence: number;
   stopped: boolean;
 }
 
@@ -505,6 +511,7 @@ export function makeCursorAdapter(
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* Deferred.succeed(ctx.turnInterrupted, undefined);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
@@ -837,6 +844,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            promptSequence: 0,
             assistantReply: new CursorTransportFailure(),
             promptActivity,
             turnInterrupted: yield* Deferred.make<void>(),
@@ -990,6 +998,8 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
+        ctx.promptSequence += 1;
+        const promptSequence = ctx.promptSequence;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -1127,7 +1137,7 @@ export function makeCursorAdapter(
           // a steer, a cancel, or any work leaves the failure to the check below.
           for (const delay of TRANSPORT_FAILURE_RETRY_DELAYS) {
             if (
-              ctx.promptsInFlight !== 1 ||
+              ctx.promptSequence !== promptSequence ||
               result.stopReason === "cancelled" ||
               failure === undefined ||
               !promptDidNoWork(ctx.promptActivity)
@@ -1147,12 +1157,13 @@ export function makeCursorAdapter(
               Effect.as(true),
               Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.succeed(false) }),
             );
-            // A stop or a steer that landed during the backoff owns the turn now.
-            if (ctx.stopped || ctx.promptsInFlight !== 1) {
-              break;
-            }
+            // interruptTurn and stopSession both settle the wait as cancelled.
             if (interrupted) {
               result = { stopReason: "cancelled" };
+              break;
+            }
+            // A steer that landed during the backoff owns the turn now.
+            if (ctx.promptSequence !== promptSequence) {
               break;
             }
             resetPromptActivity(ctx.promptActivity);

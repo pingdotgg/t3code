@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -143,6 +144,19 @@ async function makeTransportFailureWrapper(extraEnv?: Record<string, string>) {
 async function countPromptRequests(requestLogPath: string) {
   const requests = await readJsonLines(requestLogPath);
   return requests.filter((entry) => entry.method === "session/prompt").length;
+}
+
+// Captures the warning the adapter logs right before it starts waiting to
+// retry, so a test can act while that backoff is pending. Provide `layer` to
+// the sendTurn under test.
+function watchForRetryWait() {
+  const waiting = Deferred.makeUnsafe<void>();
+  const logger = Logger.make(({ message }) => {
+    if (String(message).includes("retrying the prompt")) {
+      Deferred.doneUnsafe(waiting, Effect.void);
+    }
+  });
+  return { waiting, layer: Logger.layer([logger]) };
 }
 
 // Transport-failure retries back off on the clock. Pump it in small hops until
@@ -320,13 +334,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         Stream.runCollect,
         Effect.forkChild,
       );
-      const sawDiagnostic = yield* Deferred.make<void>();
-      yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId && event.type === "content.delta"),
-        Stream.take(1),
-        Stream.runForEach(() => Deferred.succeed(sawDiagnostic, undefined).pipe(Effect.asVoid)),
-        Effect.forkChild,
-      );
+      const retryWait = watchForRetryWait();
       yield* adapter.startSession({
         threadId,
         provider: ProviderDriverKind.make("cursor"),
@@ -335,21 +343,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
       const sendTurnFiber = yield* adapter
         .sendTurn({ threadId, input: "continue", attachments: [] })
-        .pipe(Effect.forkChild);
-      // The diagnostic is projected right before the adapter starts its backoff;
-      // 10ms hops stay well short of the first delay, so the interrupt below
-      // lands while the adapter is waiting to retry.
-      yield* Effect.gen(function* () {
-        for (let attempt = 0; attempt < 200; attempt += 1) {
-          if (yield* Deferred.isDone(sawDiagnostic)) {
-            return;
-          }
-          yield* TestClock.adjust("10 millis");
-        }
-        throw new Error("Timed out waiting for the mock agent's transport diagnostic.");
-      });
+        .pipe(Effect.provide(retryWait.layer), Effect.forkChild);
+      yield* Deferred.await(retryWait.waiting);
       yield* adapter.interruptTurn(threadId);
-      const turn = yield* pumpRetryClock(Fiber.join(sendTurnFiber));
+      // No clock pumping: the interrupt itself has to wake the waiting retry.
+      const turn = yield* Fiber.join(sendTurnFiber);
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const completed = runtimeEvents.filter((event) => event.type === "turn.completed");
       assert.equal(completed.length, 1);
@@ -359,6 +357,79 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         stopReason: "cancelled",
       });
       assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 1);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("settles as cancelled when the session stops while waiting to retry", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-stop");
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper(),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const retryWait = watchForRetryWait();
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "continue", attachments: [] })
+        .pipe(Effect.provide(retryWait.layer), Effect.forkChild);
+      yield* Deferred.await(retryWait.waiting);
+      yield* adapter.stopSession(threadId);
+      // No clock pumping: stopping the session has to wake the waiting retry.
+      const turn = yield* Fiber.join(sendTurnFiber);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(String(completed[0]?.turnId), String(turn.turnId));
+      assert.deepStrictEqual(completed[0]?.payload, {
+        state: "cancelled",
+        stopReason: "cancelled",
+      });
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 1);
+    }),
+  );
+
+  it.effect("lets a steer during the backoff take the turn instead of replaying the prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-steer");
+      // Only the first prompt fails, so the steer's own prompt completes at once.
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper({ T3_ACP_PROMPT_RESPONSE_TEXT_PROMPT_LIMIT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const retryWait = watchForRetryWait();
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const originalFiber = yield* adapter
+        .sendTurn({ threadId, input: "continue", attachments: [] })
+        .pipe(Effect.provide(retryWait.layer), Effect.forkChild);
+      yield* Deferred.await(retryWait.waiting);
+      // The steer finishes well inside the backoff, so the in-flight count is
+      // back at 1 by the time the original attempt would retry.
+      yield* adapter.sendTurn({ threadId, input: "actually do this", attachments: [] });
+      const error = yield* pumpRetryClock(Fiber.join(originalFiber).pipe(Effect.flip));
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      // The original attempt and the steer, with no replay of the original prompt.
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 2);
       yield* adapter.stopSession(threadId);
     }),
   );
