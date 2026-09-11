@@ -429,18 +429,31 @@ const make = Effect.gen(function* () {
       return;
     }
     const session = thread.session;
+    // A failed spawn is a fresh failure with its own text, so any previous
+    // failure classification (and its window) is stale — the usage-limit card
+    // must not render against an unrelated error.
+    const {
+      lastErrorKind: _staleKind,
+      lastErrorResetsAt: _staleResetsAt,
+      ...carriedSession
+    } = session ?? {
+      threadId: input.threadId,
+      providerName: null,
+      providerInstanceId: thread.modelSelection.instanceId,
+      runtimeMode: thread.runtimeMode,
+      status: "ready" as const,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: input.createdAt,
+    };
     yield* setThreadSession({
       threadId: input.threadId,
       session: {
-        ...(session ?? {
-          threadId: input.threadId,
-          providerName: null,
-          providerInstanceId: thread.modelSelection.instanceId,
-          runtimeMode: thread.runtimeMode,
-        }),
+        ...carriedSession,
         status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
         lastError: input.detail,
+        lastErrorResetsAt: null,
         updatedAt: input.createdAt,
       },
       createdAt: input.createdAt,

@@ -38,9 +38,16 @@ function UsageLimitAutoResumeAction(input: {
       size="xs"
       variant="ghost"
       onClick={armed ? onCancelAutoResume : onArmAutoResume}
+      // An expired window can't fire an arm the server would reject, but an
+      // armed thread must stay cancellable even then; only the unarmed
+      // expired case disables the button.
       disabled={windowPassed && !autoResumeArmed}
     >
-      {armed ? "Auto-resume on — cancel" : "Continue when tokens return"}
+      {armed
+        ? "Auto-resume on — cancel"
+        : windowPassed
+          ? "Window passed — send a message to continue"
+          : "Continue when tokens return"}
     </Button>
   );
 }

@@ -51,8 +51,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <Alert variant="info" controlAlignment="first-line" className="alert-glass">
           <HourglassIcon />
           <AlertDescription>
-            Reached your plan's usage limit · tokens return{" "}
-            <UsageLimitCountdown resetsAt={usageLimitResetsAt} />
+            Reached your plan's usage limit · tokens return in{" "}
+            <UsageLimitCountdown resetsAt={usageLimitResetsAt} prefix={null} />
           </AlertDescription>
           {onDismiss && (
             <AlertAction>

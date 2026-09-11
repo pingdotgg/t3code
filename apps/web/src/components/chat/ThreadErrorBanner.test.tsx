@@ -81,7 +81,9 @@ describe("ThreadErrorBanner", () => {
     );
 
     expect(markup).toContain("Reached your plan&#x27;s usage limit");
-    expect(markup).toContain("resets in");
+    expect(markup).toContain("tokens return in");
+    // The countdown's own label, without a doubled prefix.
+    expect(markup).toMatch(/tokens return in <span[^>]*>\d+h \d+m<\/span>/);
     expect(markup).not.toContain(error);
     expect(markup).not.toContain('aria-label="Dismiss error"');
   });
@@ -93,6 +95,15 @@ describe("ThreadErrorBanner", () => {
 
     expect(markup).toContain("Provider crashed");
     expect(markup).not.toContain("usage limit");
+  });
+
+  it("shows the raw error when the usage-limit class is replaced by another error", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner error="Provider crashed" usageLimitResetsAt={null} />,
+    );
+
+    expect(markup).toContain("Provider crashed");
+    expect(markup).not.toContain("Reached your plan");
   });
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(

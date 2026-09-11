@@ -28,7 +28,7 @@ export function UsageLimitCountdown({
   const remaining = targetMs - Date.now();
   let label: ReactNode;
   if (remaining <= 0) {
-    label = "ready soon";
+    label = prefix === null ? "now" : "ready soon";
   } else {
     const totalMinutes = Math.ceil(remaining / 60_000);
     label =

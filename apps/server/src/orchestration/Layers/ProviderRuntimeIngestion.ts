@@ -1571,7 +1571,19 @@ const make = Effect.gen(function* () {
             case "turn.started":
               return "running";
             case "session.exited":
-              return "stopped";
+              // A graceful exit right after a classified usage-limit failure
+              // (the stream-end path completes the parked turn, then stops the
+              // session) must keep the failure visible: downgrading to stopped
+              // would hide the failure from every consumer — the decider's arm
+              // invariant, the composer card, and the calm banner — and leave
+              // an armed resume unable to fire. The classification clears when
+              // the session genuinely recovers (ready/interrupted) or a fresh
+              // failure replaces it, not when the process merely stops.
+              return thread.session?.status === "error" &&
+                thread.session?.lastErrorKind === "usage_limit" &&
+                thread.session?.lastErrorResetsAt != null
+                ? "error"
+                : "stopped";
             case "turn.aborted":
               return "interrupted";
             case "turn.completed":
