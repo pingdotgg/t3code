@@ -219,12 +219,11 @@ export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSumma
   const comparison = compareUsageDays(sinceDay, untilDay);
   if (comparison === null) throw new RangeError("Usage window bounds must be YYYY-MM-DD dates");
   const [first, last] = comparison <= 0 ? [sinceDay, untilDay] : [untilDay, sinceDay];
-  const maxLast = new Date(Date.parse(`${first}T00:00:00Z`) + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
+  const maxLastMs = Date.parse(`${first}T00:00:00Z`) + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS;
+  const capped = Date.parse(`${last}T00:00:00Z`) > maxLastMs;
   return {
     sinceDay: UsageDay.make(first),
-    untilDay: UsageDay.make(last > maxLast ? maxLast : last),
+    untilDay: UsageDay.make(capped ? new Date(maxLastMs).toISOString().slice(0, 10) : last),
     timeZone: viewerDayFormat().timeZone,
     resolution: "day",
   };

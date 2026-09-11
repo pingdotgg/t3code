@@ -107,6 +107,7 @@ describe("makeCustomWindow", () => {
 
   it("caps ranges at 90 days", () => {
     expect(makeCustomWindow("2026-01-01", "2026-12-31").untilDay).toBe("2026-03-31");
+    expect(makeCustomWindow("9999-12-31", "9999-12-31").untilDay).toBe("9999-12-31");
   });
 
   it("rejects invalid bounds", () => {
