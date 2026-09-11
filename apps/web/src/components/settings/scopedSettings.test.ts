@@ -9,8 +9,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   persistScopedSettingsPatch,
+  planScopedSettingsClear,
   planScopedSettingsPatch,
+  resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
+  scopedSettingsSource,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -21,6 +24,7 @@ function environment(
     connected?: boolean;
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
+    projectOverrides?: boolean;
   } = {},
 ) {
   return {
@@ -32,7 +36,12 @@ function environment(
     serverConfig:
       options.loaded === false
         ? null
-        : { settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings } },
+        : {
+            settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
+            environment: {
+              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
+            },
+          },
   };
 }
 
@@ -41,11 +50,11 @@ const server = environment("Server");
 const offline = environment("Offline", { connected: false });
 const loading = environment("Loading", { loaded: false });
 const environments = [laptop, server, offline, loading];
-const all = resolveSettingsScope({ scope: "all" }, [], environments);
-const device = resolveSettingsScope({ scope: "device" }, [], environments);
+const all = resolveSettingsScope({}, [], environments);
 const named = resolveSettingsScope({ machine: server.environmentId }, [], environments);
 
 const projectId = ProjectId.make("project");
+const laptopProjectId = ProjectId.make("laptop-project");
 const member = {
   id: projectId,
   environmentId: server.environmentId,
@@ -58,18 +67,34 @@ const member = {
   createdAt: "2026-09-07T00:00:00.000Z",
   updatedAt: "2026-09-07T00:00:00.000Z",
 };
+const laptopMember = {
+  ...member,
+  id: laptopProjectId,
+  environmentId: laptop.environmentId,
+  physicalProjectKey: `${laptop.environmentId}:/repo`,
+  environmentLabel: laptop.label,
+};
 const group: SidebarProjectSnapshot = {
   ...member,
   projectKey: "project-group",
   displayName: "Project",
-  memberProjects: [member],
-  memberProjectRefs: [{ environmentId: server.environmentId, projectId }],
-  groupedProjectCount: 1,
+  memberProjects: [member, laptopMember],
+  memberProjectRefs: [
+    { environmentId: server.environmentId, projectId },
+    { environmentId: laptop.environmentId, projectId: laptopProjectId },
+  ],
+  groupedProjectCount: 2,
   environmentPresence: "remote-only",
   allRemoteMembersAreDesktopLocal: false,
   allRemoteMembersAreWsl: false,
-  remoteEnvironmentLabels: [server.label],
+  remoteEnvironmentLabels: [server.label, laptop.label],
 };
+const project = resolveSettingsScope({ project: group.projectKey }, [group], environments);
+const checkout = resolveSettingsScope(
+  { project: group.projectKey, machine: server.environmentId, checkout: member.physicalProjectKey },
+  [group],
+  environments,
+);
 
 describe("scoped settings targets", () => {
   it("uses the named environment even when a different primary is available", () => {
@@ -97,6 +122,24 @@ describe("scoped settings targets", () => {
     expect(selected.environment).toBe(server);
     expect(selected.environments).toEqual(environments);
     expect(selected.connectedEnvironments).toEqual([laptop, server]);
+  });
+
+  it("resolves each member's effective settings and source at project scope", () => {
+    const overridden = environment("Server", {
+      settings: {
+        defaultAutoPull: false,
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      },
+    });
+    const targets = resolveScopedSettingsTargets(project, [laptop, overridden]);
+    expect(targets.map((target) => [target.projectId, target.settings.defaultAutoPull])).toEqual([
+      [projectId, true],
+      [laptopProjectId, false],
+    ]);
+    expect(scopedSettingsSource(targets, ["defaultAutoPull"])).toBe("mixed");
+    expect(scopedSettingsSource([targets[0]!], ["defaultAutoPull"])).toBe("project");
+    expect(scopedSettingsSource(targets, ["enableProviderUpdateChecks"])).toBe("environment");
+    expect(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(true);
   });
 });
 
@@ -135,11 +178,11 @@ describe("scoped settings writes", () => {
     expect(persistClient).not.toHaveBeenCalled();
   });
 
-  it("persists only client keys for this device, including patches that contain server keys", async () => {
-    const persistServer = vi.fn();
+  it("persists client keys locally at any scope alongside server keys", async () => {
+    const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
     const persistClient = vi.fn();
     await persistScopedSettingsPatch(
-      planScopedSettingsPatch(device, environments, {
+      planScopedSettingsPatch(named, environments, {
         diffIgnoreWhitespace: false,
         enableProviderUpdateChecks: false,
       }),
@@ -147,26 +190,85 @@ describe("scoped settings writes", () => {
       persistClient,
     );
     expect(persistClient).toHaveBeenCalledExactlyOnceWith({ diffIgnoreWhitespace: false });
-    expect(persistServer).not.toHaveBeenCalled();
-  });
-
-  it("rejects a client preference while an environment is selected", () => {
-    expect(
-      planScopedSettingsPatch(named, environments, { diffIgnoreWhitespace: false }),
-    ).toMatchObject({
-      clientPatch: {},
-      hasClientWrite: false,
-      serverWrites: [],
-      unavailableReason: "Select This device to change this preference.",
+    expect(persistServer).toHaveBeenCalledExactlyOnceWith({
+      environmentId: server.environmentId,
+      input: { patch: { enableProviderUpdateChecks: false } },
     });
   });
 
-  it.each([
-    { project: group.projectKey },
-    { project: group.projectKey, checkout: member.physicalProjectKey },
-    { machine: "removed" },
-  ])("never substitutes an environment-default write for project or invalid scope %j", (search) => {
-    const scope = resolveSettingsScope(search, [group], environments);
+  it("writes project overrides into each member's entry on its environment", () => {
+    const withExisting = environment("Server", {
+      settings: {
+        projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } },
+      },
+    });
+    const plan = planScopedSettingsPatch(project, [laptop, withExisting], {
+      defaultAutoPull: true,
+    });
+    expect(plan.unavailableReason).toBeNull();
+    expect(plan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: { enableAgentBrowserAccess: false, defaultAutoPull: true },
+          },
+        },
+      },
+      {
+        environmentId: laptop.environmentId,
+        label: laptop.label,
+        patch: { projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } } },
+      },
+    ]);
+    expect(
+      planScopedSettingsPatch(checkout, [laptop, server], { defaultAutoPull: true }),
+    ).toMatchObject({
+      serverWrites: [{ environmentId: server.environmentId }],
+    });
+  });
+
+  it("refuses environment-wide keys and older servers at project scope", () => {
+    expect(
+      planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
+    ).toMatchObject({
+      serverWrites: [],
+      unavailableReason: "This setting is environment-wide and cannot be overridden by a project.",
+    });
+    const legacy = environment("Server", { projectOverrides: false });
+    expect(
+      planScopedSettingsPatch(checkout, [laptop, legacy], { defaultAutoPull: true }),
+    ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
+  });
+
+  it("clears overrides per member and removes an emptied entry", () => {
+    const withOverrides = environment("Server", {
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: { defaultAutoPull: true, enableAgentBrowserAccess: false },
+        },
+      },
+    });
+    const plan = planScopedSettingsClear(checkout, [laptop, withOverrides], ["defaultAutoPull"]);
+    expect(plan.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        patch: { projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } } },
+      },
+    ]);
+    expect(
+      planScopedSettingsClear(
+        checkout,
+        [laptop, withOverrides],
+        ["defaultAutoPull", "enableAgentBrowserAccess"],
+      ).serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
+  });
+
+  it("never substitutes an environment-default write for an invalid scope", () => {
+    const scope = resolveSettingsScope({ machine: "removed" }, [group], environments);
     const plan = planScopedSettingsPatch(scope, environments, { enableAgentBrowserAccess: false });
     expect(plan.serverWrites).toEqual([]);
     expect(plan.hasClientWrite).toBe(false);
@@ -177,7 +279,7 @@ describe("scoped settings writes", () => {
     const third = environment("Third");
     const fourth = environment("Fourth");
     const selected = [...environments, third, fourth];
-    const scope = resolveSettingsScope({ scope: "all" }, [], selected);
+    const scope = resolveSettingsScope({}, [], selected);
     const persistServer = vi
       .fn()
       .mockResolvedValueOnce({ _tag: "Success" })
@@ -199,38 +301,23 @@ describe("scoped settings writes", () => {
 });
 
 describe("scoped settings mixed values", () => {
-  it("compares only requested settings and ignores disconnected configurations", () => {
+  it("compares only requested settings across connected targets", () => {
     const changed = environment("Changed", { settings: { enableAgentBrowserAccess: false } });
-    const disconnected = environment("Disconnected", {
-      connected: false,
-      settings: { enableProviderUpdateChecks: false },
-    });
-    expect(scopedSettingsAreMixed([laptop, changed], ["enableAgentBrowserAccess"])).toBe(true);
-    expect(
-      scopedSettingsAreMixed([laptop, changed, disconnected], ["enableProviderUpdateChecks"]),
-    ).toBe(false);
-    expect(scopedSettingsAreMixed([offline, loading], ["enableAgentBrowserAccess"])).toBe(false);
+    const targets = resolveScopedSettingsTargets(all, [laptop, changed]);
+    expect(scopedSettingsAreMixed(targets, ["enableAgentBrowserAccess"])).toBe(true);
+    expect(scopedSettingsAreMixed(targets, ["enableProviderUpdateChecks"])).toBe(false);
+    expect(scopedSettingsAreMixed([], ["enableAgentBrowserAccess"])).toBe(false);
   });
 
   it("treats independently decoded equal nested settings as the same value", () => {
-    const first = environment("First", {
-      settings: {
-        sourceControlWritingStyle: {
-          ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
-          mode: "custom",
-          customInstructions: "Use plain language",
-        },
-      },
-    });
-    const second = environment("Second", {
-      settings: {
-        sourceControlWritingStyle: {
-          ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
-          mode: "custom",
-          customInstructions: "Use plain language",
-        },
-      },
-    });
-    expect(scopedSettingsAreMixed([first, second], ["sourceControlWritingStyle"])).toBe(false);
+    const style = {
+      ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+      mode: "custom" as const,
+      customInstructions: "Use plain language",
+    };
+    const first = environment("First", { settings: { sourceControlWritingStyle: { ...style } } });
+    const second = environment("Second", { settings: { sourceControlWritingStyle: { ...style } } });
+    const targets = resolveScopedSettingsTargets(all, [first, second]);
+    expect(scopedSettingsAreMixed(targets, ["sourceControlWritingStyle"])).toBe(false);
   });
 });

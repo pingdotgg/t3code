@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { selectScopedSettingsEnvironments } from "./scopedSettings";
+import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
 function useResolvedSettingsScope(search: SettingsScopeSearch) {
@@ -11,10 +11,21 @@ function useResolvedSettingsScope(search: SettingsScopeSearch) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useMemo(() => {
     const scope = resolveSettingsScope(search, groups, availableEnvironments);
-    return {
+    const selected = selectScopedSettingsEnvironments(
       scope,
-      ...selectScopedSettingsEnvironments(scope, availableEnvironments, primaryEnvironmentId),
-    };
+      availableEnvironments,
+      primaryEnvironmentId,
+    );
+    const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments);
+    // The representative target supplies display values; project scopes
+    // prefer the member on the primary environment, like environments do.
+    const target =
+      targets.find(
+        (candidate) => candidate.environmentId === selected.environment?.environmentId,
+      ) ??
+      targets[0] ??
+      null;
+    return { scope, ...selected, targets, target };
   }, [availableEnvironments, groups, primaryEnvironmentId, search]);
 }
 

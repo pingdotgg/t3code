@@ -1,4 +1,3 @@
-import type { EnvironmentId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -13,51 +12,75 @@ import { Button } from "../ui/button";
 import { ProjectActionsList } from "./ProjectActionsList";
 import { useProjectScriptSettings } from "./ProjectSettingsPanel";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
+import { useScopedSettingSource } from "./useScopedSettings";
 
-export function ProjectDefaultActionsSettings({
-  environmentId,
-}: {
-  environmentId: EnvironmentId | null;
-}) {
+/**
+ * Environment scopes edit the actions every inheriting project gets; project
+ * scopes edit that project's override on each selected environment. Shortcuts
+ * are environment-wide, so the same action id shares its binding on an environment.
+ */
+export function ProjectDefaultActionsSettings() {
+  const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
-  const targets = environments.filter(
-    (environment) =>
-      (environmentId === null || environment.environmentId === environmentId) &&
-      environment.connection.phase === "connected" &&
-      environment.serverConfig !== null,
-  );
-  const representative = targets[0]?.serverConfig;
-  const scripts = representative?.settings.defaultProjectScripts ?? [];
-  const keybindings = representative?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const source = useScopedSettingSource(["defaultProjectScripts"]);
+  const representativeConfig = target
+    ? environments.find((environment) => environment.environmentId === target.environmentId)
+        ?.serverConfig
+    : undefined;
+  const scripts = target?.settings.defaultProjectScripts ?? [];
+  const keybindings = representativeConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const mixed = targets.some(
-    (target) =>
-      JSON.stringify(target.serverConfig?.settings.defaultProjectScripts) !==
-      JSON.stringify(scripts),
+    (candidate) =>
+      JSON.stringify(candidate.settings.defaultProjectScripts) !== JSON.stringify(scripts),
   );
   const [request, setRequest] = useState<ProjectScriptEditorRequest | null>(null);
+  const memberById = new Map(
+    isProjectScope ? scope.members.map((member) => [member.id, member]) : [],
+  );
   const { saving, persist, submit } = useProjectScriptSettings(
-    targets.flatMap(({ environmentId, serverConfig }) =>
-      serverConfig
-        ? [
-            {
-              environmentId,
-              settings: serverConfig.settings,
-              keybindings: serverConfig.keybindings,
-            },
-          ]
-        : [],
-    ),
+    targets.flatMap((candidate) => {
+      const environment = environments.find(
+        (entry) => entry.environmentId === candidate.environmentId,
+      );
+      if (!environment?.serverConfig) return [];
+      const member = candidate.projectId ? memberById.get(candidate.projectId) : undefined;
+      return [
+        {
+          environmentId: candidate.environmentId,
+          // Writes read the raw environment settings so an override entry is
+          // extended, not derived from already-resolved values.
+          settings: environment.serverConfig.settings,
+          keybindings: environment.serverConfig.keybindings,
+          ...(member ? { project: member } : {}),
+        },
+      ];
+    }),
   );
 
   return (
     <SettingsSection id="project-actions" title="Actions">
       <SettingsRow
-        title="Default actions"
-        description="Available in every inheriting checkout. Commands run in that checkout or its worktree."
+        title={isProjectScope ? "Project actions" : "Default actions"}
+        description={
+          isProjectScope
+            ? source === "project"
+              ? "Overridden for this project. Commands run in the checkout or its worktree."
+              : "Inherited from the environment's default actions. Adding an action creates an independent list for this project."
+            : "Available in every inheriting checkout. Commands run in that checkout or its worktree."
+        }
         resetAction={
-          targets.some(
-            (target) => (target.serverConfig?.settings.defaultProjectScripts.length ?? 0) > 0,
-          ) ? (
+          isProjectScope ? (
+            source === "project" || source === "mixed" ? (
+              <SettingResetButton
+                label="project actions"
+                tooltip="Reset to inherited actions"
+                disabled={saving}
+                onClick={() => void persist(() => null)}
+              />
+            ) : null
+          ) : targets.some((candidate) => candidate.settings.defaultProjectScripts.length > 0) ? (
             <SettingResetButton
               label="default actions"
               disabled={saving}
@@ -80,7 +103,7 @@ export function ProjectDefaultActionsSettings({
       {mixed ? (
         <SettingsRow
           title="Different actions across environments"
-          description="Select an environment to edit its actions. Adding an action applies to all selected connected environments."
+          description="Select one environment to edit its actions. Adding an action applies to every selected environment."
         />
       ) : (
         <ProjectActionsList

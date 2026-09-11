@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ProjectScopedServerSettingKey,
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
@@ -13,20 +14,23 @@ import {
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
-import { useSettingsScope } from "./SettingsScopeContext";
+import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
+  scopedSettingsSource,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
+/** Effective settings for the representative target: project overrides applied on top of its environment. */
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  const { environment } = useSettingsScope();
+  const { target } = useSettingsScope();
   const clientSettings = useClientSettings();
-  const serverSettings = environment?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
+  const serverSettings = target?.settings ?? DEFAULT_SERVER_SETTINGS;
   const settings = useMemo(
     () => mergeEnvironmentSettings(serverSettings, clientSettings),
     [clientSettings, serverSettings],
@@ -35,16 +39,20 @@ export function useScopedSettings<T = UnifiedSettings>(
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
-  const { connectedEnvironments } = useSettingsScope();
-  return scopedSettingsAreMixed(connectedEnvironments, keys);
+  const { targets } = useSettingsScope();
+  return scopedSettingsAreMixed(targets, keys);
 }
 
-export function useUpdateScopedSettings() {
-  const { scope, environments } = useSettingsScope();
+/** Where the keys' effective values come from across the selected targets. */
+export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
+  const { targets } = useSettingsScope();
+  return scopedSettingsSource(targets, keys);
+}
+
+function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return useCallback(
-    (patch: ScopedSettingsPatch) => {
-      const plan = planScopedSettingsPatch(scope, environments, patch);
+    (plan: ReturnType<typeof planScopedSettingsPatch>) => {
       if (plan.unavailableReason) {
         toastManager.add({
           type: "warning",
@@ -67,6 +75,32 @@ export function useUpdateScopedSettings() {
         },
       );
     },
-    [environments, persistServer, scope],
+    [persistServer],
+  );
+}
+
+export function useUpdateScopedSettings() {
+  const { scope, environments } = useSettingsScope();
+  const run = useRunScopedPlan();
+  return useCallback(
+    (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch)),
+    [environments, run, scope],
+  );
+}
+
+/**
+ * Drop the project overrides for `keys` so the selected checkouts inherit
+ * again. Rows also render outside the settings layout (provider cards,
+ * dialogs), where there is no scope and nothing to clear.
+ */
+export function useClearScopedSettings() {
+  const context = useOptionalSettingsScope();
+  const run = useRunScopedPlan();
+  return useCallback(
+    (keys: readonly ProjectScopedServerSettingKey[]) => {
+      if (context === null) return;
+      run(planScopedSettingsClear(context.scope, context.environments, keys));
+    },
+    [context, run],
   );
 }

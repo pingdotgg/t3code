@@ -17,7 +17,7 @@ const checkoutSearch = {
   checkout: "remote-server:/home/user/T3 Code",
 };
 
-function createSettingsRouter(initialEntry = "/settings/general?scope=device") {
+function createSettingsRouter(initialEntry = "/settings/general") {
   const root = createRootRoute();
   const settings = createRoute({
     getParentRoute: () => root,
@@ -67,7 +67,7 @@ function createSettingsRouter(initialEntry = "/settings/general?scope=device") {
 }
 
 describe("settings scope navigation", () => {
-  it("replaces device scope with an explicit environment, then replaces it with a project", async () => {
+  it("replaces the default scope with an explicit environment, then replaces it with a project", async () => {
     const router = createSettingsRouter();
     await router.load();
     await router.navigate({
@@ -80,11 +80,16 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual({ project: "another-project" });
   });
 
-  it.each(["device", "all"] as const)("clears a checkout when selecting %s", async (scope) => {
+  it("clears a checkout when selecting all environments and all projects", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch, hash: "old-setting" });
-    await router.navigate({ to: "/settings/general", search: { scope }, hash: "" });
-    expect(router.state.location.search).toEqual({ scope });
+    // The scope selects send every axis explicitly so "all" does not read as "unchanged".
+    await router.navigate({
+      to: "/settings/general",
+      search: { project: undefined, machine: undefined, checkout: undefined },
+      hash: "",
+    });
+    expect(router.state.location.search).toEqual({});
     expect(router.state.location.hash).toBe("");
   });
 

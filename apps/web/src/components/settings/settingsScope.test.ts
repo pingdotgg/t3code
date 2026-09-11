@@ -60,19 +60,12 @@ function group(
 const groups = [group("t3code", [first, second, third]), group("other", [other])];
 
 describe("settings scope search", () => {
-  it.each(["device", "all"] as const)(
-    "clears narrower targets for an explicit %s selection",
-    (scope) => {
-      expect(
-        validateSettingsScopeSearch({
-          scope,
-          project: "t3code",
-          machine: laptopId,
-          checkout: first.physicalProjectKey,
-        }),
-      ).toEqual({ scope });
-    },
-  );
+  it("ignores the retired scope key from older links", () => {
+    expect(validateSettingsScopeSearch({ scope: "device", project: "t3code" })).toEqual({
+      project: "t3code",
+    });
+    expect(validateSettingsScopeSearch({ scope: "all" })).toEqual({});
+  });
 
   it("retains legacy project and machine links without inventing an explicit broad scope", () => {
     expect(
@@ -96,15 +89,11 @@ describe("settings scope search", () => {
 });
 
 describe("settings scope resolution", () => {
-  it("distinguishes this device from the default aggregate target", () => {
+  it("defaults to every environment with no project", () => {
     expect(resolveSettingsScope({}, groups, environments)).toMatchObject({
       kind: "all",
-      environmentIds: [laptopId, serverId],
-    });
-    expect(resolveSettingsScope({ scope: "device" }, groups, environments)).toMatchObject({
-      kind: "device",
       members: [],
-      environmentIds: [],
+      environmentIds: [laptopId, serverId],
     });
   });
 

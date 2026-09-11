@@ -16,7 +16,7 @@ export function SettingsScopeNotice({
   eligibleEnvironmentIds,
 }: {
   children: string;
-  target: "device" | "environment" | "all" | "project" | "checkout";
+  target: "environment" | "all" | "project" | "checkout";
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
@@ -60,13 +60,7 @@ export function SettingsScopeNotice({
                   : entry.label,
                 search: { machine: entry.environmentId },
               }))
-          : [
-              {
-                label:
-                  target === "device" ? "Open settings for this device" : "Open all environments",
-                search: { scope: target },
-              },
-            ];
+          : [{ label: "Open all environments", search: {} }];
   return (
     <SettingsPageContainer>
       <Alert role="status">

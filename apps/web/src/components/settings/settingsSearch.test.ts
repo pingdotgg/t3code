@@ -295,17 +295,17 @@ describe("settings search targets", () => {
     "days-before-auto-settle",
   ])("retains the capability requirement for %s", (targetId) => {
     expect(getSettingsSearchTargetScope(targetId)).toMatchObject({
-      scope: "environment-defaults",
+      scope: "project-defaults",
       requiresThreadAutoSettlement: true,
     });
   });
 
-  it("identifies the owning scope without changing the requested target", () => {
+  it("treats device-local rows as reachable from every selection", () => {
     const setting = getSettingsSearchTargetScope("time-format")!;
-    expect(setting).toEqual({ title: "Time format", scope: "device" });
-    expect(isSettingsSearchScopeAvailable(setting.scope, "project")).toBe(false);
-    expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(true);
-    expect(getSettingsSearchTargetScope("appearance")).toMatchObject({ scope: "device" });
+    expect(setting).toEqual({ title: "Time format", scope: null });
+    expect(isSettingsSearchScopeAvailable(setting.scope, "project")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(setting.scope, "all")).toBe(true);
+    expect(getSettingsSearchTargetScope("appearance")).toMatchObject({ scope: null });
     expect(getSettingsSearchTargetScope("missing-setting")).toBeNull();
   });
 
@@ -314,7 +314,6 @@ describe("settings search targets", () => {
     (kind) => {
       const setting = getSettingsSearchTargetScope("agent-browser-access")!;
       expect(isSettingsSearchScopeAvailable(setting.scope, kind)).toBe(true);
-      expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(false);
       expect(isSettingsSearchScopeAvailable(setting.scope, "unavailable")).toBe(false);
     },
   );
@@ -328,18 +327,17 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(model.scope, "environment")).toBe(true);
   });
 
-  it("separates the server-owned legacy streaming control from device legacy preferences", () => {
+  it("keeps environment-wide settings out of project scopes", () => {
+    const updates = getSettingsSearchTargetScope("provider-update-checks")!;
+    expect(updates.scope).toBe("environment-defaults");
+    expect(isSettingsSearchScopeAvailable(updates.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(updates.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(updates.scope, "project")).toBe(false);
     const streaming = getSettingsSearchTargetScope("legacy-token-streaming")!;
-    expect(streaming.scope).toBe("environment-defaults");
-    expect(isSettingsSearchScopeAvailable(streaming.scope, "environment")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(streaming.scope, "all")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(streaming.scope, "device")).toBe(false);
-    expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(false);
+    expect(streaming.scope).toBe("project-defaults");
+    expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
     for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "legacy-sidebar"]) {
-      const setting = getSettingsSearchTargetScope(id)!;
-      expect(setting.scope).toBe("device");
-      expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(true);
-      expect(isSettingsSearchScopeAvailable(setting.scope, "environment")).toBe(false);
+      expect(getSettingsSearchTargetScope(id)!.scope).toBeNull();
     }
   });
 });
@@ -409,17 +407,14 @@ describe("auto-settlement search availability", () => {
     },
   );
 
-  it.each(["device", "project", "checkout"] as const)(
-    "offers a capable environment instead of a dead target at %s scope",
-    (kind) => {
-      expect(
-        getThreadAutoSettlementSearchAvailability(environments, {
-          kind,
-          environmentIds: [capable.environmentId],
-        }),
-      ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
-    },
-  );
+  it("offers a capable environment instead of a dead target at an unavailable scope", () => {
+    expect(
+      getThreadAutoSettlementSearchAvailability(environments, {
+        kind: "unavailable",
+        environmentIds: [capable.environmentId],
+      }),
+    ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
+  });
 
   it("ignores offline and unloaded targets when all connected targets support the setting", () => {
     const selected = [capable, offline, loading];
@@ -446,7 +441,6 @@ describe("auto-settlement search availability", () => {
 describe("settings sidebar scope", () => {
   it("shows Overview only for project and checkout targets", () => {
     expect(isSettingsOverviewVisible({})).toBe(false);
-    expect(isSettingsOverviewVisible({ scope: "device", project: "old" })).toBe(false);
     expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
     expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
     expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);

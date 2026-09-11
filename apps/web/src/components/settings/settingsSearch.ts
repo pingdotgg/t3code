@@ -21,8 +21,12 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/archived";
 
+/**
+ * Where a setting can be edited. Device-local rows have no scope: they render
+ * at every selection. `project-defaults` rows accept project overrides, so
+ * they are reachable from any server-backed selection.
+ */
 export type SettingsSearchScope =
-  | "device"
   | "environment"
   | "environment-defaults"
   | "project-defaults"
@@ -205,7 +209,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["sidebar inactivity days no activity automatically"],
     requiresThreadAutoSettlement: true,
-    scope: "environment-defaults",
+    scope: "project-defaults",
   },
   {
     id: "auto-settle-merged-threads",
@@ -213,7 +217,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["pull request merge closed automatically sidebar"],
     requiresThreadAutoSettlement: true,
-    scope: "environment-defaults",
+    scope: "project-defaults",
   },
   {
     id: "days-before-auto-settle",
@@ -222,7 +226,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "auto-settle-inactive-threads",
     searchTerms: ["thread timeout activity sidebar"],
     requiresThreadAutoSettlement: true,
-    scope: "environment-defaults",
+    scope: "project-defaults",
   },
   {
     id: "time-format",
@@ -271,7 +275,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
-    scope: "environment-defaults",
+    scope: "project-defaults",
     searchTerms: [
       "resume running active interrupted work restart reboot machine crash desktop update automatically",
     ],
@@ -296,7 +300,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "start-from-origin",
     title: "Start from origin",
     to: "/settings/general",
-    scope: "environment-defaults",
+    scope: "project-defaults",
     searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
@@ -361,7 +365,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "legacy-token-streaming",
     title: "Stream token by token (legacy)",
     to: "/settings/general",
-    scope: "environment-defaults",
+    scope: "project-defaults",
     searchTerms: ["response output old compatibility"],
   },
   {
@@ -570,7 +574,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       "override generated commit change request pr titles descriptions branch bookmark",
     ],
     environmentOnly: true,
-    scope: "environment",
+    scope: "project-defaults",
   },
   {
     id: "project-actions",
@@ -673,14 +677,14 @@ export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
-const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope>> = {
+const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/projects": "project",
-  "/settings/general": "device",
-  "/settings/appearance": "device",
-  "/settings/snap-shot": "device",
+  "/settings/general": null,
+  "/settings/appearance": null,
+  "/settings/snap-shot": null,
   "/settings/keybindings": "environment",
   "/settings/providers": "environment",
-  "/settings/integrations": "device",
+  "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/actions": "project-defaults",
   "/settings/connections": "connections",
@@ -733,20 +737,21 @@ export function getThreadAutoSettlementSearchAvailability(
   return {
     eligibleEnvironmentIds,
     isTargetAvailable:
-      (scope?.kind === "all" || scope?.kind === "environment") &&
+      scope !== undefined &&
+      scope.kind !== "unavailable" &&
       selected.length > 0 &&
       selected.every((environment) => eligibleEnvironmentIds.includes(environment.environmentId)),
   };
 }
 
 export function isSettingsSearchScopeAvailable(
-  requiredScope: SettingsSearchScope,
+  requiredScope: SettingsSearchScope | null,
   scopeKind: ResolvedSettingsScope["kind"],
 ): boolean {
   switch (requiredScope) {
+    case null:
     case "connections":
       return true;
-    case "device":
     case "environment":
     case "checkout":
       return requiredScope === scopeKind;
@@ -766,10 +771,9 @@ export function isSettingsSearchScopeAvailable(
 
 function settingsScopeKindFromSearch(search: SettingsScopeSearch): ResolvedSettingsScope["kind"] {
   const target = validateSettingsScopeSearch({ ...search });
-  if (target.scope) return target.scope;
   if (target.checkout && !target.project) return "unavailable";
   if (target.project) return target.checkout ? "checkout" : "project";
-  return target.machine ? "environment" : "device";
+  return target.machine ? "environment" : "all";
 }
 
 export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean {

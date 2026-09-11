@@ -15,22 +15,18 @@ import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
-import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import {
   SettingsScopeProvider,
   useSettingsScope,
 } from "../components/settings/SettingsScopeContext";
-import { SettingsScopePicker } from "../components/settings/SettingsScopePicker";
+import { SettingsScopeSelects } from "../components/settings/SettingsScopeSelects";
 import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
-import { SettingsRowScopeProvider } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
-import { ProjectsSettings } from "../components/settings/ProjectsSettings";
-import type { ProjectSettingsCategory } from "../components/settings/ProjectSettingsPanel";
 import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
@@ -52,58 +48,8 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
   );
 }
 
-function SettingsTargetBar() {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const {
-    search,
-    scope,
-    selectScope,
-    environments: selected,
-    connectedEnvironments,
-  } = useSettingsScope();
-  const groups = useSettingsProjectGroups();
-  const { environments } = useEnvironments();
-  if (pathname === "/settings/connections") {
-    return (
-      <WorkspacePageContainer className="pb-0">
-        <p className="text-xs text-muted-foreground">
-          Manage this client's connections. Environment controls below name the server they affect.
-        </p>
-      </WorkspacePageContainer>
-    );
-  }
-  return (
-    <div className="scrollbar-gutter-both shrink-0 overflow-y-auto">
-      <WorkspacePageContainer className="items-start gap-2 pb-0">
-        <SettingsScopePicker
-          value={search}
-          groups={groups}
-          environments={environments}
-          onChange={selectScope}
-          includeDevice
-        />
-        <p className="text-xs text-muted-foreground">
-          {scope.kind === "device"
-            ? "Preferences saved on this device."
-            : scope.kind === "all"
-              ? `Changes apply to ${connectedEnvironments.length} connected environment${connectedEnvironments.length === 1 ? "" : "s"}. Offline environments keep their current settings.`
-              : scope.kind === "environment"
-                ? `Defaults for projects on ${scope.label}.${connectedEnvironments.length === 0 ? " Reconnect to make changes." : ""}`
-                : scope.kind === "project"
-                  ? `Changes apply to ${scope.members.length} checkout${scope.members.length === 1 ? "" : "s"} across ${selected.length} environment${selected.length === 1 ? "" : "s"}.`
-                  : scope.kind === "checkout"
-                    ? scope.checkout.workspaceRoot
-                    : scope.kind === "unavailable"
-                      ? scope.message
-                      : ""}
-        </p>
-      </WorkspacePageContainer>
-    </div>
-  );
-}
-
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
-  const { scope, search, connectedEnvironments } = useSettingsScope();
+  const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
   const searchTarget = getSettingsSearchTargetScope(hash);
@@ -134,59 +80,29 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     !isSettingsSearchScopeAvailable(searchTarget.scope, scope.kind)
   ) {
     const target =
-      searchTarget.scope === "environment-defaults" ||
-      searchTarget.scope === "project-defaults" ||
-      searchTarget.scope === "connections"
-        ? "all"
-        : searchTarget.scope;
+      searchTarget.scope === "environment" ||
+      searchTarget.scope === "project" ||
+      searchTarget.scope === "checkout"
+        ? searchTarget.scope
+        : "all";
     return (
       <SettingsScopeNotice target={target} targetId={hash}>
         {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
       </SettingsScopeNotice>
     );
   }
-  if (pathname === "/settings/snap-shot" && scope.kind !== "device") {
-    return (
-      <SettingsScopeNotice target="device">
-        SnapShots are configured on this device.
-      </SettingsScopeNotice>
-    );
+  // Device-local pages ignore the scope entirely; the project page follows
+  // remembered members while a grouping change replaces its URL key.
+  if (
+    pathname === "/settings/projects" ||
+    pathname === "/settings/connections" ||
+    pathname === "/settings/appearance" ||
+    pathname === "/settings/snap-shot"
+  ) {
+    return children;
   }
-  const projectCategory: ProjectSettingsCategory | null =
-    pathname === "/settings/general"
-      ? "general"
-      : pathname === "/settings/integrations"
-        ? "integrations"
-        : pathname === "/settings/source-control"
-          ? "source-control"
-          : pathname === "/settings/actions"
-            ? "actions"
-            : pathname === "/settings/projects"
-              ? "overview"
-              : null;
-  // Keep the project editor mounted while a grouping change replaces its URL key.
-  if (pathname === "/settings/projects" || pathname === "/settings/connections") return children;
-  if (search.project && scope.kind !== "all" && scope.kind !== "device" && projectCategory)
-    return <ProjectsSettings category={projectCategory} />;
   if (scope.kind === "unavailable")
     return <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>;
-  if (pathname === "/settings/archived" && scope.kind !== "device") return children;
-  if (scope.kind === "project" || scope.kind === "checkout") {
-    return pathname === "/settings/appearance" ? (
-      <SettingsScopeNotice target="device">Appearance is saved on this device.</SettingsScopeNotice>
-    ) : (
-      <SettingsScopeNotice target="environment">
-        Choose an environment to manage these settings. They cannot be overridden by a project.
-      </SettingsScopeNotice>
-    );
-  }
-  if (pathname === "/settings/appearance" && scope.kind !== "device") {
-    return (
-      <SettingsScopeNotice target="device">
-        These preferences belong to this device, not an environment or project.
-      </SettingsScopeNotice>
-    );
-  }
   if (
     ["/settings/providers", "/settings/keybindings", "/settings/diagnostics"].includes(pathname) &&
     scope.kind !== "environment"
@@ -197,16 +113,6 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
       </SettingsScopeNotice>
     );
   }
-  if (
-    ["/settings/source-control", "/settings/archived", "/settings/actions"].includes(pathname) &&
-    scope.kind === "device"
-  ) {
-    return (
-      <SettingsScopeNotice target="all">
-        Choose an environment to view these settings.
-      </SettingsScopeNotice>
-    );
-  }
   if (scope.kind === "environment" && connectedEnvironments.length === 0) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
@@ -214,19 +120,18 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
       </p>
     );
   }
-  return pathname === "/settings/general" || pathname === "/settings/source-control" ? (
-    <SettingsRowScopeProvider>{children}</SettingsRowScopeProvider>
-  ) : (
-    children
-  );
+  return children;
 }
 
 function SettingsContentLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
-  const { search, scope } = useSettingsScope();
+  const { search, selectScope } = useSettingsScope();
+  const groups = useSettingsProjectGroups();
+  const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
+  const showScope = location.pathname !== "/settings/connections";
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -262,17 +167,24 @@ function SettingsContentLayout() {
         <WorkspacePageHeader electron={isElectron}>
           <div className="flex w-full items-center gap-3">
             <SettingsBreadcrumb pathname={location.pathname} />
-            {location.pathname === "/settings/general" && scope.kind === "device" ? (
-              <div className="ms-auto">
+            <div className="ms-auto flex min-w-0 items-center gap-2">
+              {location.pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
-              </div>
-            ) : null}
+              ) : null}
+              {showScope ? (
+                <SettingsScopeSelects
+                  value={search}
+                  groups={groups}
+                  environments={environments}
+                  onChange={selectScope}
+                />
+              ) : null}
+            </div>
           </div>
         </WorkspacePageHeader>
 
-        <SettingsTargetBar />
         <div
           key={`${JSON.stringify(search)}:${restoreSignal}`}
           className="min-h-0 flex flex-1 flex-col"
@@ -290,14 +202,22 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const search = Object.values(rawSearch).some((value) => value !== undefined)
-    ? rawSearch
-    : { scope: "device" as const };
   return (
     <SettingsScopeProvider
-      search={search}
+      search={rawSearch}
       onChange={(next) => {
-        void navigate({ to: pathname, search: () => next, hash: "", resetScroll: false });
+        // Send every axis so the retain middleware sees an explicit target
+        // even when the choice is "all", which is the absence of a key.
+        void navigate({
+          to: pathname,
+          search: () => ({
+            project: next.project,
+            machine: next.machine,
+            checkout: next.checkout,
+          }),
+          hash: "",
+          resetScroll: false,
+        });
       }}
     >
       <SettingsContentLayout />

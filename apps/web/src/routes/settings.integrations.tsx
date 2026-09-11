@@ -1,24 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { IntegrationsSettingsPanel } from "../components/settings/IntegrationsSettings";
-import { useSettingsScope } from "../components/settings/SettingsScopeContext";
-import { ProjectDefaultsSettings } from "../components/settings/ProjectDefaultsSettings";
-import { SettingsPageContainer } from "../components/settings/settingsLayout";
-
-function SettingsIntegrationsRoute() {
-  const { scope } = useSettingsScope();
-  return scope.kind === "device" ? (
-    <IntegrationsSettingsPanel />
-  ) : (
-    <SettingsPageContainer>
-      <ProjectDefaultsSettings
-        environmentId={scope.kind === "environment" ? scope.environmentId : null}
-        category="integrations"
-      />
-    </SettingsPageContainer>
-  );
-}
 
 export const Route = createFileRoute("/settings/integrations")({
-  component: SettingsIntegrationsRoute,
+  component: IntegrationsSettingsPanel,
 });

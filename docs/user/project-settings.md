@@ -1,37 +1,36 @@
 # Settings and project overrides
 
-In web and desktop Settings, choose a target at the top before editing. That target stays selected
-as you move between categories or search for a setting. Settings that belong to another target
-explain where to change them; opening a category does not change your selection.
+Settings has two selectors in the header: an environment and a project. They start at
+**All environments** and **All projects** and stay selected as you move between categories or
+search for a setting.
 
-Choose **This device** for preferences such as appearance, confirmations, and browser profiles.
-These are saved in the current client. Choose an environment for defaults stored on that server,
-shared by clients connected to it. Providers and keybindings require a single environment.
+Preferences saved on this device, such as appearance, confirmations and browser profiles, always
+show and ignore the selection. Everything else is stored on a server. Choose one environment to
+edit its settings, or leave **All environments** to edit every connected environment at once.
+Offline environments keep their current values; this is a bulk edit, not a synced global default.
+Providers, keybindings and diagnostics need a single environment.
 
-**All environments** applies edits to connected environments only. Offline environments keep their
-current settings. This is a bulk edit, not a synchronized global default: connecting another
-environment later does not apply previous edits to it.
-
-To override defaults, select a project's **All checkouts** target or a specific checkout.
-**All checkouts** updates the project's currently known checkouts, not a permanent default
-for future copies of that repository. Offline checkouts cannot be updated. Mixed values mean the
-selected environments or checkouts disagree.
+Choose a project to override settings for it. Where a repository is registered more than once on
+the selected environments, the project can be narrowed to one checkout. Each row shows whether the
+value is inherited from the environment or overridden for the project, and an override can be
+reset to inherit again. Settings that cannot be overridden by a project are shown read-only while
+a project is selected. Mixed values mean the selected environments or checkouts disagree.
 
 ## Defaults and inheritance
 
-General contains the default model and workspace. Integrations controls agent browser access,
-Source Control contains automatic pull, and Actions manages commands. The same categories contain
-project overrides when a project is selected. Overview contains project identity and checkout
-management.
+General contains the model and workspace for new threads. Integrations controls agent browser
+access, Source Control contains automatic pull and text generation, and Actions manages commands.
+The same rows edit environment defaults or project overrides depending on the project selector.
+The Overview category, shown while a project is selected, holds the project's name, icon,
+checkouts and default merge method.
 
-Rows show whether a value is overridden or inherited. Reset an override to use its environment's
-default again. Changing an environment default preserves explicit project overrides. For workspace
-mode, a project's `t3.json` preference takes precedence over the environment default when there is
-no explicit project override. Browser access changes apply when an agent session next starts.
+Changing an environment default preserves explicit project overrides. For workspace mode, a
+project's `t3.json` preference applies when the project has no override. Browser access changes
+apply when an agent session next starts.
 
-Environment actions are available to inheriting checkouts. Editing a checkout's actions creates an
-independent list; reset that list to inherit again. Select a checkout to import actions from its
-`t3.json`. Project grouping has a device-wide default with individual checkout overrides.
+Environment actions are available to inheriting checkouts. Editing a project's actions creates an
+independent list; reset that list to inherit again. Select a single checkout to import actions
+from its `t3.json`. Project grouping has a device-wide default with individual checkout overrides.
 
 ## Project icons
 

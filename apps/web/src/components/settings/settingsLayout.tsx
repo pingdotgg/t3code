@@ -21,15 +21,14 @@ import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePag
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
-import { scopedSettingsAreMixed } from "./scopedSettings";
+import {
+  isProjectScopedSettingKey,
+  scopedSettingsAreMixed,
+  scopedSettingsSource,
+} from "./scopedSettings";
+import { useClearScopedSettings } from "./useScopedSettings";
 
-const SettingsRowScopeContext = createContext(false);
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
-
-/** Mixed client/server panels opt in; project and environment-specific editors already scope their rows. */
-export function SettingsRowScopeProvider({ children }: { children: ReactNode }) {
-  return <SettingsRowScopeContext value>{children}</SettingsRowScopeContext>;
-}
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -285,45 +284,83 @@ export function SettingsRow({
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
-  const filterByScope = useContext(SettingsRowScopeContext);
+  const clearOverrides = useClearScopedSettings();
   const [editingMixed, setEditingMixed] = useState(false);
+  const isProjectScope =
+    context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
+  const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
+  // A project scope can only edit keys that support overrides; the rest stay
+  // visible so the user sees the inherited value, but cannot change it here.
+  const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
-    mixedOverride ??
-    (context !== null && scopedSettingsAreMixed(context.connectedEnvironments, settingKeys));
+    mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+  const source =
+    context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
     serverScoped &&
     !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
-  if (filterByScope && context && (context.scope.kind === "device") === serverScoped) return null;
-  const renderedReset = unavailable ? null : resetAction;
+  const inheritedFrom =
+    source === "environment" && context?.scope.kind === "checkout"
+      ? (context.environments.find(
+          (environment) => environment.environmentId === context.scope.environmentIds[0],
+        )?.label ?? "environment")
+      : "environment";
+  const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
+    source === "project" || source === "mixed" ? (
+      <SettingResetButton
+        label={typeof title === "string" ? title : "override"}
+        tooltip="Reset to inherited value"
+        onClick={() => clearOverrides(scopedKeys)}
+      />
+    ) : null
+  ) : (
+    resetAction
+  );
+  const inertControl = (message: string) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          // Focusable so keyboard users can still reach the explanation.
+          <span
+            tabIndex={0}
+            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
+          />
+        }
+      >
+        <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
+          {control}
+        </div>
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-72">
+        {message}
+      </TooltipPopup>
+    </Tooltip>
+  );
   const renderedControl =
     mixed && !editingMixed && control ? (
       <Button size="sm" variant="outline" onClick={() => setEditingMixed(true)}>
         Set for all...
       </Button>
     ) : unavailable && control ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            // Focusable so keyboard users can still reach the explanation.
-            <span
-              tabIndex={0}
-              className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
-            />
-          }
-        >
-          <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
-            {control}
-          </div>
-        </TooltipTrigger>
-        <TooltipPopup side="top" className="max-w-72">
-          {context
-            ? "Reconnect the selected environment to change this setting."
-            : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
-        </TooltipPopup>
-      </Tooltip>
+      inertControl(
+        context
+          ? "Reconnect the selected environment to change this setting."
+          : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+      )
+    ) : environmentWide && control ? (
+      inertControl("Environment-wide setting. Select an environment to change it.")
     ) : (
       control
     );
+  const renderedStatus = mixed
+    ? isProjectScope
+      ? "Mixed across selected checkouts"
+      : "Mixed across selected environments"
+    : source === "project"
+      ? "Overridden for this project"
+      : source === "environment" && scopedKeys.length > 0
+        ? `Inherited from ${inheritedFrom}`
+        : status;
 
   return (
     <div
@@ -350,10 +387,8 @@ export function SettingsRow({
               {description}
             </p>
           ) : null}
-          {mixed || status ? (
-            <div className="pt-0.5 text-xs text-muted-foreground">
-              {mixed ? "Mixed across selected environments" : status}
-            </div>
+          {renderedStatus ? (
+            <div className="pt-0.5 text-xs text-muted-foreground">{renderedStatus}</div>
           ) : null}
         </div>
         {renderedControl ? (
