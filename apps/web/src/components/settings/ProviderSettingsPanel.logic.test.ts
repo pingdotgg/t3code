@@ -1,9 +1,16 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
+  getProviderAccountLabel,
+  getDuplicateProviderAccountIds,
   isProviderSettingsEnvironmentAvailable,
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
@@ -19,6 +26,82 @@ const environments = [
   { environmentId: relayId, label: "Alpha Relay" },
   { environmentId: primaryId, label: "This device" },
 ] as const;
+
+describe("provider account labels", () => {
+  const driver = ProviderDriverKind.make("codex");
+
+  it("distinguishes unnamed custom accounts from the default account", () => {
+    expect(getProviderAccountLabel(ProviderInstanceId.make("codex"), { driver })).toBe("Default");
+    expect(getProviderAccountLabel(ProviderInstanceId.make("codex_work"), { driver })).toBe(
+      "codex_work",
+    );
+    expect(getProviderAccountLabel(ProviderInstanceId.make("codex_personal"), { driver })).toBe(
+      "codex_personal",
+    );
+  });
+
+  it("uses the account's display name when set", () => {
+    expect(
+      getProviderAccountLabel(ProviderInstanceId.make("codex_work"), {
+        driver,
+        displayName: " Work ",
+      }),
+    ).toBe("Work");
+  });
+
+  it("qualifies all duplicate names within their own provider family", () => {
+    const accounts = [
+      {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        instance: { driver, displayName: "Work" },
+      },
+      {
+        instanceId: ProviderInstanceId.make("codex_other"),
+        instance: { driver, displayName: " work " },
+      },
+      {
+        instanceId: ProviderInstanceId.make("codex_third"),
+        instance: { driver, displayName: "Work" },
+      },
+      {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        instance: { driver: ProviderDriverKind.make("claude"), displayName: "Work" },
+      },
+      {
+        instanceId: ProviderInstanceId.make("codex_personal"),
+        instance: { driver, displayName: "Personal" },
+      },
+    ];
+    expect(getDuplicateProviderAccountIds(accounts)).toEqual(
+      new Set(accounts.slice(0, 3).map((account) => account.instanceId)),
+    );
+    expect(getDuplicateProviderAccountIds(accounts.slice(2))).toEqual(new Set());
+  });
+
+  it("also disambiguates names that collide with a default label or an unnamed account ID", () => {
+    const accounts = [
+      { instanceId: ProviderInstanceId.make("codex"), instance: { driver } },
+      {
+        instanceId: ProviderInstanceId.make("codex_custom"),
+        instance: { driver, displayName: "Default" },
+      },
+      { instanceId: ProviderInstanceId.make("codex_work"), instance: { driver } },
+      {
+        instanceId: ProviderInstanceId.make("codex_other"),
+        instance: { driver, displayName: "codex_work" },
+      },
+    ];
+    expect(getDuplicateProviderAccountIds(accounts)).toEqual(
+      new Set(accounts.map((account) => account.instanceId)),
+    );
+  });
+
+  it("does not call an instance Default when its driver differs from its ID", () => {
+    expect(getProviderAccountLabel(ProviderInstanceId.make("opencode"), { driver })).toBe(
+      "opencode",
+    );
+  });
+});
 
 describe("provider environment selection", () => {
   it("requires a connected environment with server config for searchable provider settings", () => {

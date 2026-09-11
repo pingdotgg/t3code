@@ -35,25 +35,35 @@ export function UsageProviderSettings({
 
   return (
     <>
-      <SettingsSection
-        {...searchableSetting("usage-providers")}
-        headerAction={
-          !readOnly ? (
-            <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
+      <SettingsSection {...searchableSetting("usage-providers")} hideTitle variant="plain">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <h2 className="text-base font-semibold">Usage providers</h2>
+            <p className="text-sm text-muted-foreground">
+              Track account quotas from your CLIProxyAPI hubs in Limits.
+            </p>
+          </div>
+          {!readOnly ? (
+            <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
               Add hub
             </Button>
-          ) : null
-        }
-      >
+          ) : null}
+        </div>
         {entries.length === 0 ? (
-          <SettingsRow title="No usage providers configured." />
+          <div className="space-y-1.5 border-y border-border/60 py-6">
+            <p className="text-sm font-medium">No hubs connected</p>
+            <p className="text-sm text-muted-foreground">
+              Add a hub to see the limits for the accounts it manages.
+            </p>
+          </div>
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
             return (
               <SettingsRow
                 key={id}
+                className="rounded-none border-t border-border/60 px-0 last:border-b sm:px-0"
                 title={label}
                 description={
                   <span className="break-all">

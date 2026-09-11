@@ -1,4 +1,7 @@
 import type { ReactElement } from "react";
+import { PrimaryConnectionTarget, RelayConnectionTarget } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
+import type { EnvironmentPresentation } from "../../state/environments";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -17,11 +20,13 @@ const atoms = vi.hoisted(() => ({
   providersAtom: Symbol("providers"),
   refreshProviders: Symbol("refreshProviders"),
   updateProvider: Symbol("updateProvider"),
+  deleteSettings: Symbol("deleteSettings"),
 }));
 
 const commands = vi.hoisted(() => ({
   refresh: vi.fn(),
   updateProvider: vi.fn(),
+  deleteSettings: vi.fn(),
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -72,12 +77,17 @@ vi.mock("../../state/server", () => ({
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
+    updateSettings: atoms.deleteSettings,
   },
 }));
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: symbol) =>
-    atom === atoms.refreshProviders ? commands.refresh : commands.updateProvider,
+    atom === atoms.refreshProviders
+      ? commands.refresh
+      : atom === atoms.deleteSettings
+        ? commands.deleteSettings
+        : commands.updateProvider,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -99,11 +109,62 @@ vi.mock("../../state/session", () => ({
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
 }));
 
-import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { EnvironmentProviderSettings, ProviderSettingsPanel } from "./ProviderSettingsPanel";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
 const customId = ProviderInstanceId.make("codex_work");
+
+const primaryId = EnvironmentId.make("primary");
+const environments: EnvironmentPresentation[] = [primaryId, environmentId].map((id) => ({
+  environmentId: id,
+  label: id,
+  displayUrl: null,
+  relayManaged: id !== primaryId,
+  entry: {
+    target:
+      id === primaryId
+        ? new PrimaryConnectionTarget({
+            environmentId: id,
+            label: id,
+            httpBaseUrl: "http://localhost",
+            wsBaseUrl: "ws://localhost",
+          })
+        : new RelayConnectionTarget({ environmentId: id, label: id }),
+    profile: Option.none(),
+  },
+  connection: { phase: "connected", error: null, traceId: null },
+  serverConfig: null,
+}));
+
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments, isReady: true }),
+  usePrimaryEnvironmentId: () => primaryId,
+}));
+
+function renderPage() {
+  hooks.beginRender();
+  const content = visitElements(
+    ProviderSettingsPanel({}),
+    (element) =>
+      typeof element.type === "function" && element.type.name === "ProviderSettingsPanelContent",
+  );
+  if (!content) throw new Error("Provider page content missing");
+  const render = content.type as (
+    props: Record<string, unknown>,
+  ) => ReactElement<Record<string, unknown>>;
+  return render(content.props);
+}
+
+function selectedEnvironment(page: ReturnType<typeof renderPage>) {
+  const selected = visitElements(page, (element) => element.props.environment !== undefined);
+  if (!selected) throw new Error("Selected environment missing");
+  return selected as ReactElement<{
+    environment: EnvironmentPresentation;
+    view: Parameters<typeof EnvironmentProviderSettings>[0]["view"];
+    deviceTabs: ReactElement;
+  }>;
+}
 
 function provider(): ServerProvider {
   return {
@@ -132,12 +193,14 @@ function provider(): ServerProvider {
 
 function renderPanel(options?: {
   readonly readOnly?: boolean;
+  readonly view?: "accounts" | "usage" | "health";
   readonly targetInstanceId?: ProviderInstanceId;
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
   return EnvironmentProviderSettings({
     environmentId,
     environmentLabel: "Remote device",
+    view: { value: options?.view ?? "accounts", onValueChange: vi.fn() },
     ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
     ...(options?.targetInstanceId === undefined
       ? {}
@@ -179,6 +242,7 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.updateSettings.mockReset();
     settingsSearchState.targetId = null;
     settingsSearchState.effects = [];
+    commands.deleteSettings.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
@@ -237,6 +301,65 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
+  it("groups an instance occupying another driver's default ID only under its actual driver", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const driver = ProviderDriverKind.make("cursor");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [instanceId]: { driver, enabled: true } },
+    };
+    atoms.providers = [
+      { ...provider(), instanceId: ProviderInstanceId.make("cursor"), driver },
+      { ...provider(), instanceId, driver },
+    ];
+
+    const panel = renderPanel();
+    let matchingRows = 0;
+    visitElements(panel, (element) => {
+      if (element.props.mode === "list" && element.props.instanceId === instanceId) {
+        matchingRows += 1;
+      }
+      return false;
+    });
+    expect(matchingRows).toBe(1);
+    const cursorGroup = visitElements(
+      panel,
+      (element) => element.props["aria-label"] === "Cursor accounts",
+    );
+    const row = visitElements(
+      cursorGroup,
+      (element) => element.props.mode === "list" && element.props.instanceId === instanceId,
+    );
+    expect(row).not.toBeNull();
+  });
+
+  it("keeps unknown driver accounts selectable without offering an unsupported creation form", () => {
+    const instanceId = ProviderInstanceId.make("fork_work");
+    const driver = ProviderDriverKind.make("fork-driver");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [instanceId]: { driver, enabled: true } },
+    };
+    const panel = renderPanel();
+    const group = visitElements(
+      panel,
+      (element) => element.props["aria-label"] === "fork-driver accounts",
+    );
+    expect(group).not.toBeNull();
+    expect(
+      visitElements(group, (element) => element.props["aria-label"] === "Add fork-driver account"),
+    ).toBeNull();
+    expect(
+      visitElements(panel, (element) => element.props["aria-label"] === "Add Codex account"),
+    ).not.toBeNull();
+
+    const row = visitElements(group, (element) => element.props.instanceId === instanceId);
+    (row?.props.onSelect as (() => void) | undefined)?.();
+    const editor = visitElements(renderPanel(), (element) => element.props.mode === "editor");
+    expect(editor?.props.instanceId).toBe(instanceId);
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("keeps provider selection available while write controls are read only", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
@@ -249,9 +372,6 @@ describe("EnvironmentProviderSettings routing", () => {
     };
     atoms.providers = [provider()];
     let panel = renderPanel({ readOnly: true });
-
-    const inertWrapper = visitElements(panel, (element) => element.props.inert === true);
-    expect(inertWrapper).not.toBeNull();
 
     const customRow = visitElements(
       panel,
@@ -273,6 +393,10 @@ describe("EnvironmentProviderSettings routing", () => {
 
     expect(visitElements(panel, isRefreshButton)).toBeNull();
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
+
+    panel = renderPanel({ readOnly: true, view: "health" });
+    const inertWrapper = visitElements(panel, (element) => element.props.inert === true);
+    expect(inertWrapper).not.toBeNull();
   });
 
   it("keeps the editable layout interactive when not read only", () => {
@@ -286,22 +410,60 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
   });
 
-  it("keeps Advanced visible when search targets the provider health interval", () => {
-    let panel = renderPanel();
-    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
-    expect(
-      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
-    ).not.toBeNull();
+  it.each([
+    ["provider-health-check-interval", "health"],
+    ["usage-providers", "usage"],
+  ])("keeps the destination selected after a search jump to %s", (targetId, view) => {
+    renderPage();
+    settingsSearchState.targetId = targetId;
+    // The hook harness needs an explicit render for React's render-time state adjustment.
+    renderPage();
+    expect(selectedEnvironment(renderPage()).props.view.value).toBe(view);
 
-    settingsSearchState.targetId = "provider-health-check-interval";
-    panel = renderPanel();
-    expect(visitElements(panel, (element) => element.props.title === "Advanced")).not.toBeNull();
-    expect(
-      visitElements(panel, (element) => element.props.id === "provider-health-check-interval"),
-    ).not.toBeNull();
+    settingsSearchState.targetId = null;
+    renderPage();
+    expect(selectedEnvironment(renderPage()).props.view.value).toBe(view);
   });
 
-  it("deletes and resets provider configuration without erasing shared preferences", () => {
+  it.each(["usage", "health"] as const)("keeps %s selected when switching devices", (view) => {
+    selectedEnvironment(renderPage()).props.view.onValueChange(view);
+    const before = selectedEnvironment(renderPage());
+    const devices = visitElements(
+      before.props.deviceTabs,
+      (element) => element.props["aria-label"] === "Devices",
+    );
+    if (!devices) throw new Error("Device selector missing");
+    (devices.props.onValueChange as (ids: EnvironmentId[]) => void)([environmentId]);
+    const after = selectedEnvironment(renderPage());
+    expect(before.props.environment.environmentId).toBe(primaryId);
+    expect(after.props.environment.environmentId).toBe(environmentId);
+    expect(after.key).not.toBe(before.key);
+    expect(after.props.view.value).toBe(view);
+  });
+
+  it.each([
+    ["opencode", "fork-driver"],
+    ["opencode", "cursor"],
+    ["fork-driver", "fork-driver"],
+  ])("can remove custom %s accounts with the %s driver", async (rawId, rawDriver) => {
+    const instanceId = ProviderInstanceId.make(rawId);
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make(rawDriver), enabled: true },
+      },
+    };
+    const panel = renderPanel({ targetInstanceId: instanceId });
+    const editor = visitElements(panel, (element) => element.props.mode === "editor");
+    if (!editor) throw new Error("Account editor missing");
+    await (editor.props.onDelete as () => Promise<void>)();
+    expect(commands.deleteSettings).toHaveBeenCalledWith({
+      environmentId,
+      input: { patch: { providerInstances: {} } },
+    });
+  });
+
+  it("deletes and resets provider configuration without erasing shared preferences", async () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -331,11 +493,16 @@ describe("EnvironmentProviderSettings routing", () => {
       (element) => element.props.instanceId === customId && element.props.mode === "editor",
     );
     expect(customCard).not.toBeNull();
-    (customCard?.props.onDelete as (() => void) | undefined)?.();
+    await (customCard?.props.onDelete as (() => Promise<void>) | undefined)?.();
 
-    expect(settingsState.updateSettings).toHaveBeenLastCalledWith({
-      providerInstances: {
-        [codexId]: settingsState.value.providerInstances?.[codexId],
+    expect(commands.deleteSettings).toHaveBeenLastCalledWith({
+      environmentId,
+      input: {
+        patch: {
+          providerInstances: {
+            [codexId]: settingsState.value.providerInstances?.[codexId],
+          },
+        },
       },
     });
 

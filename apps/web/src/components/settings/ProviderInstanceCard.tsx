@@ -4,6 +4,8 @@ import { Spinner } from "~/components/ui/spinner";
 
 import {
   ArrowUpCircleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
   LockIcon,
@@ -14,7 +16,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
@@ -43,6 +45,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
+import { getProviderAccountLabel } from "./ProviderSettingsPanel.logic";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -342,6 +345,29 @@ function ProviderEnvironmentSection(props: {
   );
 }
 
+function ProviderDetailsSection({
+  title,
+  description,
+  children,
+}: {
+  readonly title: string;
+  readonly description: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <details className="group/provider-section border-t border-border/60">
+      <summary className="flex cursor-pointer list-none items-center gap-3 rounded-md py-3 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{title}</span>
+          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+        </span>
+        <ChevronDownIcon className="size-4 shrink-0 -rotate-90 text-muted-foreground group-open/provider-section:rotate-0" />
+      </summary>
+      <div className="pb-4">{children}</div>
+    </details>
+  );
+}
+
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
@@ -349,6 +375,7 @@ interface ProviderInstanceCardProps {
   readonly liveProvider: ServerProvider | undefined;
   readonly mode: "list" | "editor";
   readonly selected?: boolean | undefined;
+  readonly showInstanceId?: boolean | undefined;
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
@@ -404,6 +431,7 @@ export function ProviderInstanceCard({
   liveProvider,
   mode,
   selected = false,
+  showInstanceId = false,
   onSelect,
   readOnly = false,
   onUpdate,
@@ -419,6 +447,7 @@ export function ProviderInstanceCard({
   onRunUpdate,
   isUpdating = false,
 }: ProviderInstanceCardProps) {
+  const statusDescriptionId = useId();
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
@@ -427,7 +456,7 @@ export function ProviderInstanceCard({
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
-    ? getProviderSummary(liveProvider)
+    ? getProviderSummary(liveProvider, { includeAuthLabel: mode !== "list" })
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
@@ -441,6 +470,8 @@ export function ProviderInstanceCard({
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+  const accountName = getProviderAccountLabel(instanceId, instance);
+  const providerName = driverOption?.label ?? String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -558,22 +589,22 @@ export function ProviderInstanceCard({
   ) : null;
 
   const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+    <code className="max-w-48 truncate text-xs text-muted-foreground">{versionLabel}</code>
   ) : null;
 
-  // Healthy and disabled rows read fine from their text; only trouble gets a dot.
+  // List rows always show status dots; the editor only needs one for trouble.
   const statusDotNode =
     statusKey === "warning" || statusKey === "error" ? (
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
-  // Trouble states carry the server's explanation (a failed probe, a shadow
-  // home entry that is not a symlink, a missing binary). Show it wherever the
-  // headline shows so the user can act without opening the editor.
+  // Compact rows keep the headline visible and leave full error explanations
+  // to the editor and the row's accessible description.
   const needsAttention = statusKey === "warning" || statusKey === "error";
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
         {needsAttention ? statusDotNode : null}
+        {needsAttention ? <span>{summary.headline} ·</span> : null}
         <span>Authenticated as</span>
         <ProviderAuthEmail email={authEmail} />
         {authLabel ? <span>· {authLabel}</span> : null}
@@ -592,99 +623,78 @@ export function ProviderInstanceCard({
     );
   if (mode === "list") {
     return (
-      <div
-        data-slot="settings-row"
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-label={`Select ${providerName} account ${accountName}${showInstanceId ? ` (${instanceId})` : ""}`}
+        aria-describedby={statusDescriptionId}
+        aria-pressed={selected}
         className={cn(
-          "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
-          selected ? "bg-muted/45" : "hover:bg-muted/25",
+          "flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring @max-[48rem]/providers:min-h-11 @max-[48rem]/providers:items-center",
+          selected ? "bg-accent text-accent-foreground" : "hover:bg-muted/40",
+          !enabled && !selected && "text-muted-foreground",
         )}
       >
-        <div
-          className={cn(
-            "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
-            !enabled && !selected && "opacity-60 group-hover:opacity-100",
-          )}
-        >
-          <button
-            type="button"
-            className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={onSelect}
-            aria-label={`Select ${displayName}`}
-            aria-pressed={selected}
-          />
-          {titleIconNode}
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
-              {String(instanceId) !== String(instance.driver) ? (
-                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
-              {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
-                  {versionLabel}
-                </code>
-              ) : null}
-              {versionAdvisory ? (
-                updateCommand ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-micro"
-                          variant="ghost-muted"
-                          className="pointer-events-auto relative shrink-0"
-                          aria-label={`Copy ${displayName} update command`}
-                          onClick={() =>
-                            copyToClipboard(updateCommand, { providerName: displayName })
-                          }
-                        >
-                          <ArrowUpCircleIcon className="size-3.5" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Copy update command</TooltipPopup>
-                  </Tooltip>
-                ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                )
-              ) : null}
-            </span>
-            <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
-              {statusDotNode ? (
-                <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-              ) : null}
-              <span className="line-clamp-2 [overflow-wrap:anywhere]">
-                {summary.headline}
-                {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
-              </span>
-            </span>
-          </span>
-        </div>
-        <span className="flex h-5 shrink-0 items-center">
-          <Switch
-            checked={enabled}
-            disabled={readOnly}
-            onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-            aria-label={`Enable ${displayName}`}
-          />
+        <span id={statusDescriptionId} className="sr-only">
+          {[
+            summary.headline,
+            needsAttention ? summary.detail : null,
+            versionAdvisory ? "Update available" : null,
+          ]
+            .filter(Boolean)
+            .join(". ")}
         </span>
-      </div>
+        <span
+          aria-hidden
+          className={cn(
+            "mt-1.5 size-1.5 shrink-0 rounded-full @max-[48rem]/providers:mt-0",
+            statusStyle.dot,
+          )}
+        />
+        <span className="min-w-0 flex-1 @max-[48rem]/providers:flex @max-[48rem]/providers:items-center @max-[48rem]/providers:gap-3">
+          <span className="block break-words text-[13px] font-medium leading-5 @max-[48rem]/providers:min-w-0 @max-[48rem]/providers:flex-1">
+            {accountName}
+            {showInstanceId ? (
+              <span className="block text-[11px] font-normal leading-4 text-muted-foreground [overflow-wrap:anywhere]">
+                {instanceId}
+              </span>
+            ) : null}
+          </span>
+          <span className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground @max-[48rem]/providers:mt-0 @max-[48rem]/providers:max-w-[45%] @max-[48rem]/providers:shrink-0 @max-[48rem]/providers:text-right">
+            {summary.headline}
+            {needsAttention && summary.detail ? (
+              <span className="@max-[48rem]/providers:hidden"> · {summary.detail}</span>
+            ) : null}
+          </span>
+        </span>
+        {versionAdvisory ? (
+          <ArrowUpCircleIcon className="mt-1 size-3.5 shrink-0 text-warning" aria-hidden />
+        ) : null}
+        <ChevronRightIcon
+          aria-hidden
+          className="size-3.5 shrink-0 text-muted-foreground @min-[48rem]/providers:hidden"
+        />
+      </button>
     );
   }
 
   const editorHeaderAction = (
-    <div className="flex shrink-0 items-center gap-1.5">
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
         </Badge>
       ) : null}
       {versionCodeNode}
+      <div className="ml-2 flex items-center gap-2 text-xs text-muted-foreground">
+        {enabled ? "Enabled" : "Disabled"}
+        <Switch
+          checked={enabled}
+          disabled={readOnly}
+          onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
+          aria-label={`Enable ${displayName}`}
+        />
+      </div>
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
@@ -801,12 +811,38 @@ export function ProviderInstanceCard({
 
   return (
     <>
-      <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="flex min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight">
+              {titleIconNode}
+              {accountName !== providerName ? (
+                <span className="font-normal text-muted-foreground">{providerName} /</span>
+              ) : null}
+              <span className="break-words">{accountName}</span>
+            </h2>
+            {showInstanceId ? (
+              <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {instanceId}
+              </p>
+            ) : null}
+          </div>
+          {editorHeaderAction}
+        </div>
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs leading-relaxed text-muted-foreground",
+            needsAttention && "rounded-md bg-warning/5 p-3",
+          )}
+        >
+          {editorStatusNode}
+        </div>
+      </div>
+      <SettingsSection title="Account" hideTitle variant="plain">
         <SettingsRow
           title="Display name"
-          status={
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">{editorStatusNode}</div>
-          }
+          description="Name and color shown in the model picker."
+          className="px-0 sm:px-0"
           control={
             <div
               inert={readOnly}
@@ -838,80 +874,102 @@ export function ProviderInstanceCard({
       </SettingsSection>
 
       {setup ? (
-        <SettingsSection title="Setup">
+        <SettingsSection title="Setup" variant="plain">
           <div className="px-3 py-3 sm:px-4">{setup}</div>
         </SettingsSection>
       ) : null}
 
-      <SettingsSection
-        title="Runtime"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={readOnly ? "opacity-50 select-none" : undefined}
-      >
-        {driverOption ? (
-          <ProviderSettingsForm
-            definition={driverOption}
-            value={instance.config}
-            idPrefix={`provider-instance-${instanceId}`}
-            variant="settings"
-            onChange={updateConfig}
-          />
-        ) : (
-          <SettingsRow
-            title="Driver"
-            description={
-              <span>
-                This instance uses{" "}
-                <code className="text-foreground">{String(instance.driver)}</code>, which is not
-                available in this build. Its configuration is preserved.
-              </span>
-            }
-          />
-        )}
-      </SettingsSection>
-
-      <SettingsSection
-        title="Environment"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={readOnly ? "opacity-50 select-none" : undefined}
-      >
-        <SettingsRow
-          title="Variables"
-          description="API keys, base URLs, and other per-instance CLI settings."
+      <div>
+        {driverOption !== undefined ? (
+          <ProviderDetailsSection
+            title="Models"
+            description={`${modelsForDisplay.length} models · Visibility, favorites and custom models`}
+          >
+            <SettingsSection
+              title="Models"
+              hideTitle
+              variant="plain"
+              inert={readOnly}
+              aria-disabled={readOnly || undefined}
+              className={readOnly ? "opacity-50 select-none" : undefined}
+            >
+              <div className="px-3 py-3 sm:px-4">
+                <ProviderModelsSection
+                  instanceId={instanceId}
+                  driverKind={driverKind}
+                  models={modelsForDisplay}
+                  customModels={customModels}
+                  hiddenModels={hiddenModels}
+                  favoriteModels={favoriteModels}
+                  modelOrder={modelOrder}
+                  onChange={updateCustomModels}
+                  onHiddenModelsChange={onHiddenModelsChange}
+                  onFavoriteModelsChange={onFavoriteModelsChange}
+                  onModelOrderChange={onModelOrderChange}
+                />
+              </div>
+            </SettingsSection>
+          </ProviderDetailsSection>
+        ) : null}
+        <ProviderDetailsSection
+          title="Runtime"
+          description="Binary path, home directories and launch arguments"
         >
-          <ProviderEnvironmentSection
-            environment={instance.environment ?? []}
-            onChange={updateEnvironment}
-          />
-        </SettingsRow>
-      </SettingsSection>
+          <SettingsSection
+            title="Runtime"
+            hideTitle
+            variant="plain"
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            {driverOption ? (
+              <ProviderSettingsForm
+                definition={driverOption}
+                value={instance.config}
+                idPrefix={`provider-instance-${instanceId}`}
+                variant="settings"
+                onChange={updateConfig}
+              />
+            ) : (
+              <SettingsRow
+                title="Driver"
+                description={
+                  <span>
+                    This instance uses{" "}
+                    <code className="text-foreground">{String(instance.driver)}</code>, which is not
+                    available in this build. Its configuration is preserved.
+                  </span>
+                }
+              />
+            )}
+          </SettingsSection>
+        </ProviderDetailsSection>
 
-      {driverOption !== undefined ? (
-        <SettingsSection
-          title="Models"
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
+        <ProviderDetailsSection
+          title="Environment variables"
+          description={`${instance.environment?.length ?? 0} variables · API keys and other overrides`}
         >
-          <div className="px-3 py-3 sm:px-4">
-            <ProviderModelsSection
-              instanceId={instanceId}
-              driverKind={driverKind}
-              models={modelsForDisplay}
-              customModels={customModels}
-              hiddenModels={hiddenModels}
-              favoriteModels={favoriteModels}
-              modelOrder={modelOrder}
-              onChange={updateCustomModels}
-              onHiddenModelsChange={onHiddenModelsChange}
-              onFavoriteModelsChange={onFavoriteModelsChange}
-              onModelOrderChange={onModelOrderChange}
-            />
-          </div>
-        </SettingsSection>
-      ) : null}
+          <SettingsSection
+            title="Environment"
+            hideTitle
+            variant="plain"
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            <SettingsRow
+              title="Variables"
+              description="API keys, base URLs, and other per-instance CLI settings."
+            >
+              <ProviderEnvironmentSection
+                environment={instance.environment ?? []}
+                onChange={updateEnvironment}
+              />
+            </SettingsRow>
+          </SettingsSection>
+        </ProviderDetailsSection>
+      </div>
     </>
   );
 }

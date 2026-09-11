@@ -1,9 +1,47 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
   type AuthSessionState,
   type EnvironmentId,
+  type ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
+
+/** Prefer the account name, using the instance ID for unnamed custom accounts. */
+export function getProviderAccountLabel(
+  instanceId: ProviderInstanceId,
+  instance: Pick<ProviderInstanceConfig, "driver" | "displayName">,
+): string {
+  return (
+    instance.displayName?.trim() ||
+    (instanceId === defaultInstanceIdForDriver(instance.driver) ? "Default" : String(instanceId))
+  );
+}
+
+/** Only ambiguous names within the same provider family need an ID qualifier. */
+export function getDuplicateProviderAccountIds(
+  accounts: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly instance: Pick<ProviderInstanceConfig, "driver" | "displayName">;
+  }>,
+): ReadonlySet<ProviderInstanceId> {
+  const namesByDriver = new Map<ProviderDriverKind, Map<string, ProviderInstanceId>>();
+  const duplicates = new Set<ProviderInstanceId>();
+  for (const { instanceId, instance } of accounts) {
+    const names = namesByDriver.get(instance.driver) ?? new Map<string, ProviderInstanceId>();
+    namesByDriver.set(instance.driver, names);
+    const name = getProviderAccountLabel(instanceId, instance).toLocaleLowerCase();
+    const previousId = names.get(name);
+    if (previousId !== undefined) {
+      duplicates.add(previousId);
+      duplicates.add(instanceId);
+    }
+    names.set(name, instanceId);
+  }
+  return duplicates;
+}
 
 export interface ProviderEnvironmentOptionLike {
   readonly environmentId: EnvironmentId;

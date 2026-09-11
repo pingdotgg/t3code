@@ -18,6 +18,25 @@ const provider: ServerProvider = {
 };
 
 describe("getProviderSummary", () => {
+  it.each([
+    { state: "ready", overrides: {}, headline: "Authenticated" },
+    { state: "error", overrides: { status: "error" }, headline: "Unavailable" },
+    { state: "warning", overrides: { status: "warning" }, headline: "Needs attention" },
+    { state: "disabled", overrides: { status: "disabled" }, headline: "Disabled" },
+    { state: "missing", overrides: { installed: false }, headline: "Not found" },
+  ] as const)(
+    "keeps $state status accurate when hiding the subscription label",
+    ({ overrides, headline }) => {
+      expect(
+        getProviderSummary({ ...provider, ...overrides }, { includeAuthLabel: false }).headline,
+      ).toBe(headline);
+    },
+  );
+
+  it("includes the subscription label by default", () => {
+    expect(getProviderSummary(provider).headline).toBe("Authenticated · ChatGPT");
+  });
+
   it("reports ready providers with unknown authentication as available", () => {
     expect(getProviderSummary({ ...provider, auth: { status: "unknown" } })).toEqual({
       headline: "Available",
