@@ -47,6 +47,7 @@ export interface ThreadRunSummary {
 export interface ThreadRuntimeSummary {
   readonly status: OrchestrationV2RunStatus | "idle";
   readonly activeRunId: RunId | null;
+  readonly activityStartedAt?: string | null | undefined;
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerName: string | null;
   readonly lastError: string | null;
@@ -163,6 +164,10 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   return {
     status,
     activeRunId: thread.activeRunId,
+    activityStartedAt:
+      thread.activityRunStartedAt === undefined
+        ? undefined
+        : nullableIso(thread.activityRunStartedAt),
     providerInstanceId: thread.providerInstanceId,
     providerName: null,
     lastError: thread.lastError ?? null,
@@ -274,4 +279,23 @@ export function resolveThreadProviderStack(
   const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
   return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
+}
+
+/** Both shell and detail timers use the activity-owning run, never last activity. */
+export function resolveThreadWorkingStartedAt(input: {
+  readonly latestRun: Pick<
+    ThreadRunSummary,
+    "runId" | "startedAt" | "requestedAt" | "completedAt"
+  > | null;
+  readonly runtime: Pick<ThreadRuntimeSummary, "activeRunId" | "activityStartedAt"> | null;
+}): string | null {
+  const valid = (value: string | null | undefined) =>
+    value != null && Number.isFinite(Date.parse(value)) ? value : null;
+  if (input.runtime?.activityStartedAt !== undefined) return valid(input.runtime.activityStartedAt);
+  // Older servers can supply a timestamp only if the newest run owns the work.
+  const run = input.latestRun;
+  if (run?.completedAt === null && run.runId === input.runtime?.activeRunId) {
+    return valid(run.startedAt) ?? valid(run.requestedAt);
+  }
+  return null;
 }
