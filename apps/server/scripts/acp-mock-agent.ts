@@ -599,6 +599,18 @@ const program = Effect.gen(function* () {
           },
         });
       }
+      if (emitTaskSubagent) {
+        yield* Effect.sync(() => {
+          writeJsonRpcNotification("session/update", {
+            sessionId: cancelledSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-call-1",
+              status: "completed",
+            },
+          });
+        });
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -619,7 +631,7 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
 
-      if (emitTaskSubagent) {
+      if (emitTaskSubagent && promptCount === 1) {
         const toolCallId = "task-call-1";
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -636,19 +648,29 @@ const program = Effect.gen(function* () {
             },
           },
         });
-        yield* Effect.sync(() => {
-          setTimeout(() => {
-            writeJsonRpcNotification("session/update", {
-              sessionId: requestedSessionId,
-              update: {
-                sessionUpdate: "tool_call_update",
-                toolCallId,
-                status: "completed",
-                rawOutput: "PASS",
-              },
-            });
-          }, 80);
-        });
+        if (!hangPromptForever) {
+          const completeAfterMs =
+            Number.isFinite(promptDelayMs) && promptDelayMs > 0 ? promptDelayMs + 200 : 80;
+          yield* Effect.sync(() => {
+            setTimeout(() => {
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId,
+                  status: "completed",
+                },
+              });
+            }, completeAfterMs);
+          });
+        }
+        if (hangPromptForever) {
+          return yield* Effect.never;
+        }
+        if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
+          yield* Effect.sleep(`${promptDelayMs} millis`);
+          return { stopReason: "cancelled" };
+        }
         return { stopReason: "end_turn" };
       }
 

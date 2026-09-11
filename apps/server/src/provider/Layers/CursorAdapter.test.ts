@@ -1660,6 +1660,231 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         assert.equal(started.payload.title, "Ship reviewer-subagent");
       }
 
+      const completed = turnEvents.find((event) => event.type === "task.completed");
+      assert.isDefined(completed);
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.title, "Ship reviewer-subagent");
+        assert.equal(completed.payload.role, "reviewer-subagent");
+        assert.equal(completed.payload.status, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("keeps live tasks running when a superseded prompt is cancelled", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-task-steer-cancel");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const turnSettled = yield* Deferred.make<void>();
+      const taskStarted = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TASK_SUBAGENT: "1",
+          T3_ACP_PROMPT_DELAY_MS: "400",
+        }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          runtimeEvents.push(event);
+          if (event.type === "task.started") {
+            yield* Deferred.succeed(taskStarted, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnSettled, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "spawn a reviewer",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(taskStarted).pipe(Effect.timeout("10 seconds"));
+
+      const steered = yield* adapter.sendTurn({
+        threadId,
+        input: "keep going",
+        attachments: [],
+      });
+      const firstTurn = yield* Fiber.join(firstTurnFiber);
+      yield* Deferred.await(turnSettled).pipe(Effect.timeout("10 seconds"));
+
+      assert.equal(String(steered.turnId), String(firstTurn.turnId));
+      const turnEvents = runtimeEvents.filter(
+        (event) => String(event.turnId) === String(firstTurn.turnId),
+      );
+      const completed = turnEvents.filter((event) => event.type === "task.completed");
+      assert.equal(completed.length, 1);
+      if (completed[0]?.type === "task.completed") {
+        assert.equal(completed[0].payload.status, "completed");
+        assert.equal(completed[0].payload.title, "Ship reviewer-subagent");
+        assert.equal(completed[0].payload.role, "reviewer-subagent");
+      }
+      const types = turnEvents.map((event) => event.type);
+      assert.isFalse(turnEvents.some((event) => event.type === "item.updated"), types.join(","));
+      const settledAt = types.lastIndexOf("turn.completed");
+      const completedAt = types.lastIndexOf("task.completed");
+      assert.isBelow(completedAt, settledAt);
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("wakes every sendTurn waiting on the same live task", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-task-drain-waiters");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const turnSettled = yield* Deferred.make<void>();
+      const taskStarted = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_TASK_SUBAGENT: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          runtimeEvents.push(event);
+          if (event.type === "task.started") {
+            yield* Deferred.succeed(taskStarted, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnSettled, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "spawn a reviewer",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(taskStarted).pipe(Effect.timeout("10 seconds"));
+
+      const steered = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "also wait for the reviewer",
+          attachments: [],
+        })
+        .pipe(Effect.timeout("10 seconds"));
+      const firstTurn = yield* Fiber.join(firstTurnFiber).pipe(Effect.timeout("10 seconds"));
+      yield* Deferred.await(turnSettled).pipe(Effect.timeout("10 seconds"));
+
+      assert.equal(String(steered.turnId), String(firstTurn.turnId));
+      const types = runtimeEvents
+        .filter((event) => String(event.turnId) === String(firstTurn.turnId))
+        .map((event) => event.type);
+      assert.includeMembers(types, ["task.started", "task.completed", "turn.completed"]);
+      assert.isBelow(types.lastIndexOf("task.completed"), types.lastIndexOf("turn.completed"));
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("ignores native task completion after interrupt teardown", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-task-interrupt-tombstone");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const taskStarted = yield* Deferred.make<void>();
+      const taskCompleted = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TASK_SUBAGENT: "1",
+          T3_ACP_HANG_PROMPT_FOREVER: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          runtimeEvents.push(event);
+          if (event.type === "task.started") {
+            yield* Deferred.succeed(taskStarted, undefined).pipe(Effect.ignore);
+          }
+          if (event.type === "task.completed") {
+            yield* Deferred.succeed(taskCompleted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      yield* adapter
+        .sendTurn({
+          threadId,
+          input: "spawn a reviewer",
+          attachments: [],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(taskStarted).pipe(Effect.timeout("10 seconds"));
+      yield* adapter.interruptTurn(threadId);
+      yield* Deferred.await(taskCompleted).pipe(Effect.timeout("10 seconds"));
+      yield* Effect.sleep("200 millis");
+
+      const taskEvents = runtimeEvents.filter(
+        (event) => event.type === "task.started" || event.type === "task.completed",
+      );
+      assert.equal(taskEvents.filter((event) => event.type === "task.completed").length, 1);
+      const stopped = taskEvents.find((event) => event.type === "task.completed");
+      if (stopped?.type === "task.completed") {
+        assert.equal(stopped.payload.status, "stopped");
+        assert.equal(stopped.payload.title, "Ship reviewer-subagent");
+        assert.equal(stopped.payload.role, "reviewer-subagent");
+      }
+      assert.isFalse(
+        runtimeEvents.some(
+          (event) => event.type === "item.updated" || event.type === "item.completed",
+        ),
+      );
+
       yield* adapter.stopSession(threadId);
     }).pipe(TestClock.withLive),
   );
