@@ -68,6 +68,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -194,6 +195,8 @@ import {
   useSidebarPendingFileDropStore,
 } from "../sidebarPendingFileDropStore";
 import {
+  browserMiniPlayerSource,
+  previewMiniPlayerSourceKey,
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
@@ -304,7 +307,6 @@ import {
   environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
@@ -567,6 +569,8 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
+  settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -1517,7 +1521,6 @@ export default function ChatView(props: ChatViewProps) {
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const settings = useEnvironmentSettings(environmentId);
-  const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -1699,8 +1702,6 @@ export default function ChatView(props: ChatViewProps) {
     [],
   );
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
-  const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
-  const composerOverlayHeightRef = useRef(0);
   // Space the timeline keeps clear above its end. Tracks the overlay while the
   // composer is expanded and holds that height while it rests, so the resting
   // composer never exposes rows that its expansion will cover.
@@ -1810,17 +1811,14 @@ export default function ChatView(props: ChatViewProps) {
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ??
-              settings.defaultModelSelection ??
-              NO_PROVIDER_MODEL_SELECTION,
+            resolveProjectSettings(
+              settings,
+              fallbackDraftProject?.id ?? null,
+              fallbackDraftProject ?? undefined,
+            ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
           )
         : undefined,
-    [
-      draftThread,
-      fallbackDraftProject?.defaultModelSelection,
-      settings.defaultModelSelection,
-      threadId,
-    ],
+    [draftThread, fallbackDraftProject, settings, threadId],
   );
   // Promotion is data-driven: the draft route keeps rendering while the
   // server thread (same pre-allocated ref) starts, so live state must not
@@ -1970,7 +1968,7 @@ export default function ChatView(props: ChatViewProps) {
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
-    activePreviewMiniPlayer?.tabId ?? null,
+    activePreviewMiniPlayer?.source ?? null,
     renderedRightPanelSurface,
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
@@ -1986,8 +1984,10 @@ export default function ChatView(props: ChatViewProps) {
   }, [activePreviewState.sessions, activeThreadRef]);
 
   useEffect(() => {
-    if (!activeThreadRef || !activePreviewMiniPlayer) return;
-    const miniTabStillExists = Boolean(activePreviewState.sessions[activePreviewMiniPlayer.tabId]);
+    if (!activeThreadRef || activePreviewMiniPlayer?.source.kind !== "browser") return;
+    const miniTabStillExists = Boolean(
+      activePreviewState.sessions[activePreviewMiniPlayer.source.tabId],
+    );
     if (!miniTabStillExists) {
       usePreviewMiniPlayerStore.getState().close(activeThreadRef);
     }
@@ -2041,12 +2041,16 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  // Environment settings with the active project's overrides applied.
+  const activeProjectSettings = useMemo(
+    () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
+    [activeProject, settings],
+  );
   const activeProjectScripts = useMemo(
     () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
     [activeProject, settings],
   );
-  const activeProjectDefaultModelSelection =
-    activeProject?.defaultModelSelection ?? settings.defaultModelSelection;
+  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -3953,6 +3957,9 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const supportsProjectSettingsOverrides =
+    environmentById.get(environmentId)?.serverConfig?.environment.capabilities
+      .projectSettingsOverrides === true;
   const persistProjectScripts = useCallback(
     async (input: {
       projectId: ProjectId;
@@ -3966,11 +3973,22 @@ export default function ChatView(props: ChatViewProps) {
         await updateProjectScriptSettings({
           environmentId,
           input: {
-            patch: {
-              projectScriptOverrides: {
-                [input.projectId]: input.nextScripts,
-              },
-            },
+            // The canonical key on servers that understand it; the legacy
+            // per-project map is still translated on older ones.
+            patch: supportsProjectSettingsOverrides
+              ? {
+                  projectSettingsOverrides: {
+                    [input.projectId]: {
+                      ...settings.projectSettingsOverrides[input.projectId],
+                      defaultProjectScripts: input.nextScripts,
+                    },
+                  },
+                }
+              : {
+                  projectScriptOverrides: {
+                    [input.projectId]: input.nextScripts,
+                  },
+                },
           },
         }),
         () => undefined,
@@ -3995,7 +4013,13 @@ export default function ChatView(props: ChatViewProps) {
       }
       return updateResult;
     },
-    [environmentId, updateProjectScriptSettings, upsertKeybinding],
+    [
+      environmentId,
+      settings.projectSettingsOverrides,
+      supportsProjectSettingsOverrides,
+      updateProjectScriptSettings,
+      upsertKeybinding,
+    ],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
@@ -4203,9 +4227,13 @@ export default function ChatView(props: ChatViewProps) {
     }
     useRightPanelStore.getState().open(activeThreadRef, "device");
   }, [activeThreadRef, deviceState.onboardingCompleted, deviceState.hostStatus]);
-  // Reconcile new server sessions into separate tabs, including sessions opened
-  // by an agent or another client. The first snapshot is a baseline: persisted
-  // tabs restore themselves, and existing sessions must not resurrect closed tabs.
+  // A device the agent opens floats over chat like an agent-driven browser,
+  // or becomes a panel tab when floating previews are off. Sessions opened by
+  // another client arrive the same way; sheet layouts get neither. The first
+  // snapshot is a baseline: persisted tabs restore themselves, and existing
+  // sessions must not resurrect closed tabs. A session whose device summary
+  // has not arrived yet stays out of the baseline so a later snapshot opens it.
+  const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
   const previousDeviceSessions = useRef(new Map<string, Set<string>>());
   useEffect(() => {
     if (!activeThreadRef || !deviceStateLoaded) return;
@@ -4214,11 +4242,30 @@ export default function ChatView(props: ChatViewProps) {
       (session) => session.threadId === activeThreadRef.threadId,
     );
     const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
+    const deviceFor = (session: (typeof sessions)[number]) =>
+      deviceState.devices.find(
+        (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
+      );
     const previous = previousDeviceSessions.current.get(threadKey);
-    previousDeviceSessions.current.set(threadKey, new Set(sessions.map(key)));
+    previousDeviceSessions.current.set(
+      threadKey,
+      new Set(sessions.filter((session) => deviceFor(session) !== undefined).map(key)),
+    );
     if (!previous || shouldUseRightPanelSheet) return;
     for (const session of sessions) {
-      if (previous?.has(key(session))) continue;
+      if (previous.has(key(session))) continue;
+      const device = deviceFor(session);
+      if (!device) continue;
+      const target = {
+        hostId: session.hostId,
+        deviceId: session.deviceId,
+        platform: device.platform,
+        name: device.name,
+      };
+      if (autoShowFloatingPreview) {
+        usePreviewMiniPlayerStore.getState().open(activeThreadRef, { kind: "device", ...target });
+        continue;
+      }
       const existing = useRightPanelStore
         .getState()
         .byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces.some(
@@ -4228,28 +4275,30 @@ export default function ChatView(props: ChatViewProps) {
             surface.target.deviceId === session.deviceId,
         );
       if (existing) continue;
-      const device = deviceState.devices.find(
-        (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
-      );
-      if (!device) continue;
-      useRightPanelStore.getState().openDevice(
-        activeThreadRef,
-        {
-          hostId: session.hostId,
-          deviceId: session.deviceId,
-          platform: device.platform,
-          name: device.name,
-        },
-        true,
-      );
+      useRightPanelStore.getState().openDevice(activeThreadRef, target, true);
     }
   }, [
     activeThreadRef,
+    autoShowFloatingPreview,
     deviceStateLoaded,
     shouldUseRightPanelSheet,
     deviceState.sessions,
     deviceState.devices,
   ]);
+  // A floating device follows its session: once the agent or another client
+  // closes the device there is nothing left to stream.
+  useEffect(() => {
+    if (!activeThreadRef || !deviceStateLoaded) return;
+    const source = activePreviewMiniPlayer?.source;
+    if (source?.kind !== "device") return;
+    const sessionStillExists = deviceState.sessions.some(
+      (session) =>
+        session.threadId === activeThreadRef.threadId &&
+        session.hostId === source.hostId &&
+        session.deviceId === source.deviceId,
+    );
+    if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+  }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4409,10 +4458,15 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
+      // Closing the panel on a live browser or device floats it instead of dropping it.
       if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
         usePreviewMiniPlayerStore
           .getState()
-          .open(activeThreadRef, activeRightPanelSurface.resourceId);
+          .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
+      } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
+        usePreviewMiniPlayerStore
+          .getState()
+          .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
       }
       setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
@@ -5404,7 +5458,7 @@ export default function ChatView(props: ChatViewProps) {
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
-        primaryServerSettings.newWorktreesStartFromOrigin)
+        activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
@@ -5445,11 +5499,6 @@ export default function ChatView(props: ChatViewProps) {
     (height: number) => {
       const nextHeight = Math.ceil(height);
       if (nextHeight <= 0) return;
-      const previousHeight = composerOverlayHeightRef.current;
-      if (previousHeight !== nextHeight) {
-        composerOverlayHeightRef.current = nextHeight;
-        setComposerOverlayHeight(nextHeight);
-      }
       const nextInset = resolveComposerTimelineInset({
         currentInset: composerTimelineInsetRef.current,
         overlayHeight: nextHeight,
@@ -8067,7 +8116,7 @@ export default function ChatView(props: ChatViewProps) {
           envMode: mode,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
-            newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+            newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
           }),
           ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
         });
@@ -8079,7 +8128,7 @@ export default function ChatView(props: ChatViewProps) {
       composerDraftTarget,
       draftThread?.worktreePath,
       isLocalDraftThread,
-      primaryServerSettings.newWorktreesStartFromOrigin,
+      activeProjectSettings.settings.newWorktreesStartFromOrigin,
       setPendingServerThreadEnvMode,
       scheduleComposerFocus,
       setDraftThreadContext,
@@ -8624,7 +8673,10 @@ export default function ChatView(props: ChatViewProps) {
                 ref={attachDraftHeroTransitionGroupRef}
                 className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
               >
-                <div className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl">
+                <div
+                  data-chat-composer-stack="true"
+                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl"
+                >
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
                       <div
@@ -8836,10 +8888,10 @@ export default function ChatView(props: ChatViewProps) {
 
             {activeThreadRef && activePreviewMiniPlayer && previewMiniPlayerVisible ? (
               <ThreadPreviewMiniPlayer
-                key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
+                key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
                 threadRef={activeThreadRef}
-                tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : composerOverlayHeight}
+                miniPlayer={activePreviewMiniPlayer}
+                composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
               />
             ) : null}
 

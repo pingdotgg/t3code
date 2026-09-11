@@ -27,6 +27,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
@@ -150,11 +151,13 @@ export function DraftHeroHeadline({
             );
             if (!hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
-              const defaultModelSelection =
-                project.defaultModelSelection ??
-                environments.find(
-                  (environment) => environment.environmentId === project.environmentId,
-                )?.serverConfig?.settings.defaultModelSelection;
+              const environmentSettings = environments.find(
+                (environment) => environment.environmentId === project.environmentId,
+              )?.serverConfig?.settings;
+              const defaultModelSelection = environmentSettings
+                ? resolveProjectSettings(environmentSettings, project.id, project).settings
+                    .defaultModelSelection
+                : project.defaultModelSelection;
               if (defaultModelSelection) {
                 setModelSelection(draftId, defaultModelSelection, {
                   replaceOptions: true,
