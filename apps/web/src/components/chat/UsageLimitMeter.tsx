@@ -1,3 +1,4 @@
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -19,7 +20,10 @@ import { remainingPercent } from "@t3tools/shared/usageLimits";
  */
 export function UsageLimitMeter(props: { model: UsageLimitMeterModel; now?: number }) {
   const { model } = props;
-  const now = props.now ?? Date.now();
+  // Minute clock: reset countdowns only ever read to the minute, and the
+  // shared store keeps this pure across re-renders.
+  const nowMinute = useNowMinute();
+  const now = props.now ?? Date.parse(`${nowMinute}:00Z`);
   const headline = selectHeadlineUsageWindow(model.limits.windows, now);
   const remaining = headline ? remainingPercent(headline) : 100;
   const isLow = headline !== null && remaining <= USAGE_LIMIT_METER_WARNING_PERCENT;
