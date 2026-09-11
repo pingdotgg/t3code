@@ -16,7 +16,7 @@
  * In production `import.meta.env.DEV` is a static false, so the fixture import
  * and every branch below drop out of the bundle.
  */
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
@@ -39,19 +39,35 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/**
- * Runs on every render, so production must not pay for it: `import.meta.env.DEV`
- * is a static false there, folding this to a constant return.
- */
-function readScenarioParam(): string {
-  if (!import.meta.env.DEV || typeof window === "undefined") {
-    return "";
-  }
-  return new URLSearchParams(window.location.search).get(DEV_AGENTS_PARAM) ?? "";
+interface DevAgentsActivation {
+  readonly scenario: string;
+  /** Wall clock at activation, so fixture elapsed timers start from zero. */
+  readonly now: number;
 }
 
-function readServerScenarioParam(): string {
-  return "";
+const NO_ACTIVATION: DevAgentsActivation = { scenario: "", now: 0 };
+let activation: DevAgentsActivation = NO_ACTIVATION;
+
+/**
+ * Store snapshot for `useSyncExternalStore`: the same object is returned until
+ * the scenario param changes, and each change stamps a fresh clock so the
+ * panel's self-ticking elapsed timers reset per activation rather than per
+ * render. Production must not pay for it: `import.meta.env.DEV` is a static
+ * false there, folding this to a constant return.
+ */
+function readActivation(): DevAgentsActivation {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return NO_ACTIVATION;
+  }
+  const scenario = new URLSearchParams(window.location.search).get(DEV_AGENTS_PARAM) ?? "";
+  if (scenario !== activation.scenario) {
+    activation = { scenario, now: Date.now() };
+  }
+  return activation;
+}
+
+function readServerActivation(): DevAgentsActivation {
+  return NO_ACTIVATION;
 }
 
 /** Writes the param without a reload so switching scenarios keeps the view. */
@@ -69,16 +85,12 @@ function setScenarioParam(scenario: string | null): void {
 export function useDevSubagentActivities(
   actual: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const raw = useSyncExternalStore(subscribe, readScenarioParam, readServerScenarioParam);
+  const { scenario: raw, now } = useSyncExternalStore(
+    subscribe,
+    readActivation,
+    readServerActivation,
+  );
   const scenario = import.meta.env.DEV && isDevSubagentScenario(raw) ? raw : null;
-
-  // One clock per scenario activation. Rebuilding on every render would reset
-  // the panel's elapsed timers to zero each commit.
-  const clock = useRef<{ scenario: string | null; now: number }>({ scenario: null, now: 0 });
-  if (clock.current.scenario !== scenario) {
-    clock.current = { scenario, now: Date.now() };
-  }
-  const now = clock.current.now;
 
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === "undefined") {

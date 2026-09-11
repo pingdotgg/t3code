@@ -213,6 +213,7 @@ import {
   deriveAgentPanelModel,
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { useDevSubagentActivities } from "../dev/useDevSubagentActivities";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -2633,7 +2634,10 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeThread?.session ?? null);
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  // Dev-only: `?dev-agents=<scenario>` swaps in fabricated subagent activities
+  // so the Agents panel and the chat's spawn CTA can be worked on without
+  // running a real fleet. No-op (and tree-shaken) in production builds.
+  const threadActivities = useDevSubagentActivities(activeThread?.activities ?? EMPTY_ACTIVITIES);
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
   const workspaceMutationId = useMemo(() => {
     const activityId = latestWorkspaceMutationId(threadActivities);
