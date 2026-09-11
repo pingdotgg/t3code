@@ -3,10 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ThreadPinAction from "./threadPinAction";
 
 describe("pin action ownership", () => {
-  it("does not revive the first Undo after a later pin and unpin finish", () => {
+  it("does not revive the first Undo after a later pin and unpin", () => {
     const firstUnpin = ThreadPinAction.begin("env/thread");
-    const pin = ThreadPinAction.begin("env/thread");
-    pin.finish();
+    ThreadPinAction.invalidate("env/thread");
     const secondUnpin = ThreadPinAction.begin("env/thread");
     expect(firstUnpin.isCurrent()).toBe(false);
     expect(secondUnpin.isCurrent()).toBe(true);
@@ -16,12 +15,10 @@ describe("pin action ownership", () => {
     expect(firstUnpin.isCurrent()).toBe(false);
   });
 
-  it("rejects late completion after a newer action has already completed", () => {
+  it("rejects a late unpin completion after a newer pin started", () => {
     const pendingUnpin = ThreadPinAction.begin("env/late");
-    const newerPin = ThreadPinAction.begin("env/late");
-    newerPin.finish();
+    ThreadPinAction.invalidate("env/late");
     expect(pendingUnpin.isCurrent()).toBe(false);
-    pendingUnpin.finish();
   });
 
   it("expires an Undo without invalidating another environment or thread", () => {

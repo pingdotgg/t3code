@@ -578,18 +578,14 @@ export function useThreadActions() {
       const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
         ? (opts.orderKey ?? topOfPinnedRunOrderKey())
         : undefined;
-      const action = ThreadPinAction.begin(scopedThreadKey(target));
-      try {
-        return await pinThreadMutation({
-          environmentId: target.environmentId,
-          input: {
-            threadId: target.threadId,
-            ...(orderKey !== undefined ? { orderKey } : {}),
-          },
-        });
-      } finally {
-        action.finish();
-      }
+      ThreadPinAction.invalidate(scopedThreadKey(target));
+      return pinThreadMutation({
+        environmentId: target.environmentId,
+        input: {
+          threadId: target.threadId,
+          ...(orderKey !== undefined ? { orderKey } : {}),
+        },
+      });
     },
     [pinThreadMutation],
   );
@@ -691,15 +687,11 @@ export function useThreadActions() {
           ),
         );
       }
-      const action = ThreadPinAction.begin(scopedThreadKey(target));
-      try {
-        return await reorderPinnedThreadMutation({
-          environmentId: target.environmentId,
-          input: { threadId: target.threadId, orderKey },
-        });
-      } finally {
-        action.finish();
-      }
+      ThreadPinAction.invalidate(scopedThreadKey(target));
+      return reorderPinnedThreadMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, orderKey },
+      });
     },
     [reorderPinnedThreadMutation],
   );
