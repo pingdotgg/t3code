@@ -2,7 +2,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { useEnvironments } from "../../state/environments";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { SettingsScopePicker } from "./SettingsScopePicker";
+import { SettingsScopeSelects } from "./SettingsScopeSelects";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
@@ -25,8 +25,8 @@ export function ProjectsSettings({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="scrollbar-gutter-both shrink-0 overflow-y-auto">
-        <WorkspacePageContainer className="items-start pb-0">
-          <SettingsScopePicker
+        <WorkspacePageContainer className="items-end pb-0">
+          <SettingsScopeSelects
             value={value}
             groups={groups}
             environments={environments}
@@ -42,10 +42,6 @@ export function ProjectsSettings({
         />
       ) : scope.kind === "unavailable" ? (
         <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>
-      ) : scope.kind === "device" ? (
-        <p className="p-8 text-sm text-muted-foreground">
-          Select an environment or project to configure project settings.
-        </p>
       ) : (
         <ProjectDefaultsSettings
           environmentId={scope.kind === "environment" ? scope.environmentId : null}
