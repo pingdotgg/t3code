@@ -1,18 +1,26 @@
 /**
  * Which of the four states wins, and which of them offer to ask the hosts again. The component is
- * called as a plain function and its tree read for text: the elements are walked rather than
- * invoked, so the button's own hooks never run outside a render.
+ * statically rendered and its emitted text read, so its hooks (useI18n) run inside a real render.
  */
-import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { i18n } from "@t3tools/shared/i18n";
 
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 
-function textOf(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join(" ");
-  if (!isValidElement(node)) return "";
-  return textOf((node as ReactElement<{ children?: ReactNode }>).props.children);
+// The global i18n defaults to zh-CN; assert against the English catalog so the
+// copy-based expectations below stay deterministic English strings.
+beforeAll(() => i18n.setLocale("en"));
+afterAll(() => i18n.setLocale("zh-CN"));
+
+function textOf(markup: string): string {
+  // Strip tags and attributes, then collapse whitespace; the assertions below
+  // match against that plain text.
+  return markup
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 const baseProps = {
@@ -29,7 +37,9 @@ const baseProps = {
 };
 
 function render(props: Partial<typeof baseProps>): string {
-  return textOf(PullRequestListEmptyState({ ...baseProps, ...props }));
+  return textOf(
+    renderToStaticMarkup(createElement(PullRequestListEmptyState, { ...baseProps, ...props })),
+  );
 }
 
 describe("PullRequestListEmptyState", () => {

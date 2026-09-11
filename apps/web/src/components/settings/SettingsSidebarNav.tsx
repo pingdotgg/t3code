@@ -24,7 +24,9 @@ import {
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import type { MessageKey } from "@t3tools/shared/i18n";
 
+import { useI18n } from "../../hooks/useI18n";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
@@ -39,12 +41,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
-import {
-  searchSettings,
-  SETTINGS_SECTION_LABELS,
-  type SettingsPath,
-  type SettingsSearchItem,
-} from "./settingsSearch";
+import { searchSettings, type SettingsPath, type SettingsSearchItem } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -85,13 +82,27 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
+/** Section-label i18n keys, in sidebar order. */
+const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
+  "/settings/general": "settings.section.general",
+  "/settings/appearance": "settings.section.appearance",
+  "/settings/projects": "settings.section.projects",
+  "/settings/keybindings": "settings.section.keybindings",
+  "/settings/snap-shot": "settings.section.snapShot",
+  "/settings/providers": "settings.section.providers",
+  "/settings/integrations": "settings.section.integrations",
+  "/settings/source-control": "settings.section.sourceControl",
+  "/settings/connections": "settings.section.connections",
+  "/settings/archived": "settings.section.archive",
+};
+
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
-  label: string;
+  labelKey: MessageKey;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
+}> = (Object.keys(SETTINGS_SECTION_LABEL_KEYS) as SettingsPath[]).map((to) => ({
   to,
-  label: SETTINGS_SECTION_LABELS[to],
+  labelKey: SETTINGS_SECTION_LABEL_KEYS[to],
   icon: SETTINGS_SECTION_ICONS[to],
 }));
 
@@ -102,6 +113,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const currentHash = useLocation({ select: (location) => location.hash });
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -245,8 +257,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 setActiveResultIndex(0);
               }}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Search"
-              aria-label="Search settings"
+              placeholder={t("settings.search.placeholder")}
+              aria-label={t("settings.search.settings")}
               role="combobox"
               aria-autocomplete="list"
               aria-expanded={isSearching && hasResults}
@@ -264,7 +276,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 size="icon-micro"
                 variant="ghost"
                 className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
-                aria-label="Clear settings search"
+                aria-label={t("settings.search.clearSettings")}
                 onClick={() => {
                   clearSearch();
                   searchInputRef.current?.focus();
@@ -281,7 +293,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               role="status"
               className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
             >
-              No settings found
+              {t("settings.search.noResults")}
             </p>
           ) : null}
           {isSearching ? (
@@ -289,7 +301,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               className="ps-px"
               id={hasResults ? "settings-search-results" : undefined}
               role={hasResults ? "listbox" : undefined}
-              aria-label={hasResults ? "Settings search results" : undefined}
+              aria-label={hasResults ? t("settings.search.results") : undefined}
             >
               {results.map((item, index) => (
                 <SidebarMenuItem key={item.id} role="presentation">
@@ -310,7 +322,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         {item.title}
                       </span>
                       <span className="block truncate text-[11px] text-sidebar-muted-foreground/75">
-                        {SETTINGS_SECTION_LABELS[item.to]}
+                        {t(SETTINGS_SECTION_LABEL_KEYS[item.to])}
                       </span>
                     </span>
                   </SidebarMenuButton>
@@ -329,7 +341,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       onClick={() => handleSectionClick(item.to)}
                     >
                       <Icon />
-                      <span className="truncate">{item.label}</span>
+                      <span className="truncate">{t(item.labelKey)}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

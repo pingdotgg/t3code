@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import { DesktopSnapShotId } from "@t3tools/contracts";
+import { i18n } from "@t3tools/shared/i18n";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -519,8 +520,12 @@ describe("DesktopWindow", () => {
           );
           const imageMenu = (yield* Queue.take(menus)).input;
           assert.isUndefined(imageMenu.frame);
-          const copyImage = imageMenu.template.find((item) => item.label === "Copy Image");
-          const copyLink = imageMenu.template.find((item) => item.label === "Copy Link");
+          const copyImage = imageMenu.template.find(
+            (item) => item.label === i18n.t("desktop.contextMenu.copyImage"),
+          );
+          const copyLink = imageMenu.template.find(
+            (item) => item.label === i18n.t("desktop.contextMenu.copyLink"),
+          );
           assert.isDefined(copyImage?.click);
           assert.isDefined(copyLink?.click);
           copyImage.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
