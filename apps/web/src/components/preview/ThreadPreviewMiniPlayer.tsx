@@ -35,9 +35,11 @@ import type { DeviceScreenSize } from "../device/deviceStream";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
+  NO_PREVIEW_MINI_PLAYER_OBSTACLES,
   PREVIEW_MINI_PLAYER_CORNER_RADIUS,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
+  type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
   resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
@@ -56,7 +58,49 @@ interface PointerGesture {
 interface Props {
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
-  readonly bottomInset: number;
+  /** The docked composer overlay; null while the composer floats mid-screen. */
+  readonly composerOverlayElement: HTMLElement | null;
+}
+
+interface Layout {
+  readonly container: PreviewMiniPlayerSize;
+  readonly obstacles: PreviewMiniPlayerObstacles;
+}
+
+const sameLayout = (a: Layout, b: Layout) =>
+  a.container.width === b.container.width &&
+  a.container.height === b.container.height &&
+  (a.obstacles.composer === b.obstacles.composer ||
+    (a.obstacles.composer !== null &&
+      b.obstacles.composer !== null &&
+      a.obstacles.composer.left === b.obstacles.composer.left &&
+      a.obstacles.composer.right === b.obstacles.composer.right &&
+      a.obstacles.composer.height === b.obstacles.composer.height));
+
+/**
+ * Measures the chat column and the composer in the column's coordinates. The
+ * composer's columns come from its centered stack, not the full-width overlay,
+ * so the margins beside it stay open to the player.
+ */
+function measureLayout(container: HTMLElement, composerOverlay: HTMLElement | null): Layout {
+  const containerRect = container.getBoundingClientRect();
+  const stackRect = composerOverlay
+    ?.querySelector('[data-chat-composer-stack="true"]')
+    ?.getBoundingClientRect();
+  const overlayRect = composerOverlay?.getBoundingClientRect();
+  return {
+    container: { width: container.clientWidth, height: container.clientHeight },
+    obstacles: {
+      composer:
+        overlayRect && stackRect && overlayRect.height > 0
+          ? {
+              left: Math.floor(stackRect.left - containerRect.left),
+              right: Math.ceil(stackRect.right - containerRect.left),
+              height: Math.ceil(overlayRect.height),
+            }
+          : null,
+    },
+  };
 }
 
 const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
@@ -77,7 +121,7 @@ const RESIZE_HANDLES: ReadonlyArray<{
 ];
 
 /** Floats the thread's browser tab or device stream over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, bottomInset }: Props) {
+export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
   const { source } = miniPlayer;
   return source.kind === "browser" ? (
     <BrowserMiniPlayer
@@ -85,7 +129,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, bottomInset }: 
       threadRef={threadRef}
       tabId={source.tabId}
       miniPlayer={miniPlayer}
-      bottomInset={bottomInset}
+      composerOverlayElement={composerOverlayElement}
     />
   ) : (
     <DeviceMiniPlayer
@@ -93,7 +137,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, bottomInset }: 
       threadRef={threadRef}
       source={source}
       miniPlayer={miniPlayer}
-      bottomInset={bottomInset}
+      composerOverlayElement={composerOverlayElement}
     />
   );
 }
@@ -102,7 +146,7 @@ function BrowserMiniPlayer({
   threadRef,
   tabId,
   miniPlayer,
-  bottomInset,
+  composerOverlayElement,
 }: Props & { readonly tabId: string }) {
   const previewState = useThreadPreviewState(threadRef);
   const snapshot = previewState.sessions[tabId] ?? null;
@@ -143,7 +187,7 @@ function BrowserMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      bottomInset={bottomInset}
+      composerOverlayElement={composerOverlayElement}
       label="Floating browser preview"
       onOpenInPanel={openInPanel}
       pillActions={
@@ -200,7 +244,7 @@ function DeviceMiniPlayer({
   threadRef,
   source,
   miniPlayer,
-  bottomInset,
+  composerOverlayElement,
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
@@ -230,7 +274,7 @@ function DeviceMiniPlayer({
       threadRef={threadRef}
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
-      bottomInset={bottomInset}
+      composerOverlayElement={composerOverlayElement}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
@@ -266,7 +310,7 @@ function MiniPlayerShell({
   threadRef,
   miniPlayer,
   sourceSize,
-  bottomInset,
+  composerOverlayElement,
   label,
   onOpenInPanel,
   pillActions,
@@ -276,7 +320,7 @@ function MiniPlayerShell({
   readonly threadRef: ScopedThreadRef;
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
-  readonly bottomInset: number;
+  readonly composerOverlayElement: HTMLElement | null;
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
@@ -286,7 +330,9 @@ function MiniPlayerShell({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const gestureRef = useRef<PointerGesture | null>(null);
-  const [container, setContainer] = useState<PreviewMiniPlayerSize | null>(null);
+  const [layout, setLayout] = useState<Layout | null>(null);
+  const container = layout?.container ?? null;
+  const obstacles = layout?.obstacles ?? NO_PREVIEW_MINI_PLAYER_OBSTACLES;
   const sourceKey = previewMiniPlayerSourceKey(miniPlayer.source);
   const frame = container
     ? resolvePreviewMiniPlayerFrame({
@@ -294,7 +340,7 @@ function MiniPlayerShell({
         position: miniPlayer.position,
         source: sourceSize,
         container,
-        bottomInset,
+        obstacles,
       })
     : null;
 
@@ -306,22 +352,21 @@ function MiniPlayerShell({
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
+  // The composer grows on its own (drafts, banners), so it is observed alongside the column.
   useLayoutEffect(() => {
     const element = containerRef.current;
     if (!element) return;
     const measure = () => {
-      setContainer((current) =>
-        current?.width === element.clientWidth && current.height === element.clientHeight
-          ? current
-          : { width: element.clientWidth, height: element.clientHeight },
-      );
+      const next = measureLayout(element, composerOverlayElement);
+      setLayout((current) => (current && sameLayout(current, next) ? current : next));
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    if (composerOverlayElement) observer.observe(composerOverlayElement);
     return () => observer.disconnect();
-  }, []);
+  }, [composerOverlayElement]);
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
@@ -353,7 +398,7 @@ function MiniPlayerShell({
           { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
           container,
           gesture.frame,
-          bottomInset,
+          obstacles,
         ),
       );
       return;
@@ -364,7 +409,7 @@ function MiniPlayerShell({
       delta,
       source: sourceSize,
       container,
-      bottomInset,
+      obstacles,
     });
     store.resize(threadRef, sourceKey, next.width);
     store.move(threadRef, sourceKey, { x: next.x, y: next.y });
