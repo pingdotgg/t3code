@@ -88,3 +88,61 @@ transcript renderer moves to records.
 [contract]: ../../packages/contracts/src/composerContext.ts
 [shared]: ../../packages/shared/src/composerContextReferences.ts
 [legacy]: ../../packages/shared/src/composerContextLegacy.ts
+
+## Editor model (web and desktop)
+
+`ComposerContextReferenceNode` (`apps/web/src/components/ComposerContextReferenceNode.tsx`) is
+the one inline Lexical node for every context kind. It stores `kind`, `contextId`, `label`, and a
+per-occurrence `referenceId`, and its text content is the canonical link. Because the composer's
+prompt string is built from node text, the string carries identity, and rebuilding the editor from
+the string restores the same chips. Old drafts that used the U+FFFC ordinal placeholder migrate on
+hydration: placeholders bind to the terminal contexts in array order, then any context the prompt
+does not mention is prepended as a link.
+
+Records stay in the draft store's typed arrays for now. The editor builds a `Map` keyed by
+`contextId` from them (`composerContextRecordsFromDraft`) and provides it through
+`ComposerContextRecordsContext`. `ComposerContextReferenceChip` looks the record up and renders
+the kind's chip; an unknown kind or a missing record renders the unresolved chip instead of
+vanishing. Removing a chip removes only that occurrence; the composer's change handler compares
+the referenced ids against the draft array and drops records no chip points at.
+
+Send time is unchanged for terminal context: the link is replaced by the readable
+`@terminal-1:509-514` label and the full excerpt trails in `<terminal_context>`. Unifying this
+with the provider projection above is the next step.
+
+## Sending and reading messages
+
+The composer sends `message.text` as canonical prose with reference links and
+`message.context.records` built from the draft (`buildMessageContext` in
+`apps/web/src/lib/composerContextRecords.ts`). Expired terminal excerpts are dropped from both.
+The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
+message stays readable and the provider receives markers plus one envelope.
+
+Review comments and preview annotations enter the draft through store mutators that append a
+reference at the end of the prompt, because the diff and preview panels do not know the caret.
+Terminal excerpts insert at the caret through the composer handle. Removing a chip in the editor
+removes the record; removing a preview screenshot thumbnail removes its annotation and chip.
+
+The transcript resolves a message with `resolveUserMessageContext`: structured context is used as
+is, older messages are upgraded in memory. `ChatMarkdown` renders `t3-context://` links through
+`renderContextReference`, which the timeline maps to chips: terminal and element show a tooltip,
+review comments and preview annotations open a popover with the card, unknown kinds render the
+unresolved chip. Mobile renders context links as their labels.
+
+## Attachments
+
+Image and file records use the draft attachment's local id as `contextId` and carry an
+`attachmentId` binding. The composer sends the upload's pending id (or the local id on the
+data-URL path, via the optional `id` on `UploadChatImageAttachment`); the server's `Normalizer`
+rewrites every image and file record to the persisted id it assigns, so the stored message binds
+records to real resources. Optimistic rows bind to local ids and are replaced by the server copy.
+
+In the composer, attaching a file or image inserts a chip at the caret (appended when the editor
+cannot take input). Files exist only as chips: a file whose last chip is deleted is removed and
+its upload released, and drafts that predate references get a chip appended on hydration. Images
+keep the thumbnail shelf as their inventory; deleting a chip leaves the image, and removing a
+thumbnail that is still referenced asks for confirmation before removing both. Old drafts do not
+gain image chips.
+
+In the transcript an image chip opens the gallery preview and a file chip opens or downloads the
+file. The gallery still shows every image; file rows remain only for files no chip references.

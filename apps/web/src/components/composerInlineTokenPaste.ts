@@ -16,6 +16,11 @@ import { collectComposerPromptInlineTokens } from "../composer-editor-mentions";
 interface ComposerInlineTokenPasteOptions {
   createMentionNode: (path: string) => LexicalNode;
   createCitationNode: (citation: AssistantCitation, source: string) => LexicalNode;
+  createContextReferenceNode: (reference: {
+    kind: string;
+    contextId: string;
+    label: string;
+  }) => LexicalNode;
   getExpandedAbsoluteOffsetForPoint: (node: LexicalNode, pointOffset: number) => number;
 }
 
@@ -40,7 +45,10 @@ export function registerComposerInlineTokenPaste(
       // mention at the very end of the pasted text still parse.
       const tokens = collectComposerPromptInlineTokens(`${text}\n`).filter(
         (token) =>
-          (token.type === "mention" || token.type === "citation") && token.end <= text.length,
+          (token.type === "mention" ||
+            token.type === "citation" ||
+            token.type === "context-reference") &&
+          token.end <= text.length,
       );
       if (tokens.length === 0) {
         return false;
@@ -91,7 +99,13 @@ export function registerComposerInlineTokenPaste(
         nodes.push(
           token.type === "citation"
             ? options.createCitationNode(token.citation, token.source)
-            : options.createMentionNode(token.value),
+            : token.type === "context-reference"
+              ? options.createContextReferenceNode({
+                  kind: token.kind,
+                  contextId: token.contextId,
+                  label: token.label,
+                })
+              : options.createMentionNode(token.value),
         );
         cursor = token.end;
       }

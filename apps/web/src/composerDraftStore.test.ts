@@ -77,9 +77,11 @@ import {
   DraftId,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import { insertInlineContextReference } from "./lib/composerContextReferences";
+import { terminalContextReference } from "./lib/composerContextRecords";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-  insertInlineTerminalContextPlaceholder,
+  formatTerminalContextReference,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDeferredStorage } from "./lib/storage";
@@ -799,6 +801,60 @@ describe("composerDraftStore terminal contexts", () => {
     expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-1"]);
   });
 
+  it("inserts terminal selections at the caret without overwriting the updated prompt", () => {
+    const store = useComposerDraftStore.getState();
+    const context = makeTerminalContext({ id: "caret-context" });
+    const reference = formatTerminalContextReference(context);
+    store.setPrompt(threadRef, "before after");
+    const unregister = store.setContextInsertionHandler(threadRef, () => {
+      store.setPrompt(threadRef, `before ${reference} after`);
+      return true;
+    });
+    store.addTerminalContexts(threadRef, [context]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`before ${reference} after`);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.terminalContexts).toHaveLength(1);
+    unregister?.();
+  });
+
+  it.each([false, true])(
+    "appends terminal selections with insertAtCaret=%s when not placed",
+    (insertAtCaret) => {
+      const store = useComposerDraftStore.getState();
+      const context = makeTerminalContext({ id: "append-context" });
+      const handler = vi.fn(() => false);
+      const unregister = store.setContextInsertionHandler(threadRef, handler);
+      store.setPrompt(threadRef, "before");
+      store.addTerminalContexts(threadRef, [context], { insertAtCaret });
+      expect(handler).toHaveBeenCalledTimes(insertAtCaret ? 1 : 0);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+        `before ${formatTerminalContextReference(context)} `,
+      );
+      unregister?.();
+    },
+  );
+
+  it("normalizes legacy terminal ids before storing and removing their references", () => {
+    const store = useComposerDraftStore.getState();
+    store.setTerminalContexts(threadRef, [makeTerminalContext({ id: "old terminal:one" })]);
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+    const id = draft.terminalContexts[0]!.id;
+    expect(id).toMatch(/^[a-z0-9_-]+$/i);
+    expect(draft.prompt).toContain(`/terminal/terminal_${id})`);
+    store.removeTerminalContext(threadRef, id);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it.each(["replace", "remove", "clear"])("removes terminal links on %s", (operation) => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Explain");
+    store.addTerminalContext(threadRef, makeTerminalContext({ id: "ctx-1" }));
+    if (operation === "replace") store.setTerminalContexts(threadRef, []);
+    else if (operation === "remove") store.removeTerminalContext(threadRef, "ctx-1");
+    else store.clearTerminalContexts(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Explain");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.terminalContexts).toEqual([]);
+  });
+
   it("clears terminal contexts when clearing composer content", () => {
     useComposerDraftStore
       .getState()
@@ -810,36 +866,38 @@ describe("composerDraftStore terminal contexts", () => {
   });
 
   it("inserts terminal contexts at the requested inline prompt position", () => {
-    const firstInsertion = insertInlineTerminalContextPlaceholder("alpha beta", 6);
-    const secondInsertion = insertInlineTerminalContextPlaceholder(firstInsertion.prompt, 0);
+    const first = makeTerminalContext({ id: "ctx-1" });
+    const second = makeTerminalContext({
+      id: "ctx-2",
+      terminalLabel: "Terminal 2",
+      lineStart: 9,
+      lineEnd: 10,
+    });
+    const firstInsertion = insertInlineContextReference(
+      "alpha beta",
+      6,
+      terminalContextReference(first),
+    );
+    const secondInsertion = insertInlineContextReference(
+      firstInsertion.prompt,
+      0,
+      terminalContextReference(second),
+    );
 
     expect(
       useComposerDraftStore
         .getState()
-        .insertTerminalContext(
-          threadRef,
-          firstInsertion.prompt,
-          makeTerminalContext({ id: "ctx-1" }),
-          firstInsertion.contextIndex,
-        ),
+        .insertTerminalContext(threadRef, firstInsertion.prompt, first, 0),
     ).toBe(true);
     expect(
-      useComposerDraftStore.getState().insertTerminalContext(
-        threadRef,
-        secondInsertion.prompt,
-        makeTerminalContext({
-          id: "ctx-2",
-          terminalLabel: "Terminal 2",
-          lineStart: 9,
-          lineEnd: 10,
-        }),
-        secondInsertion.contextIndex,
-      ),
+      useComposerDraftStore
+        .getState()
+        .insertTerminalContext(threadRef, secondInsertion.prompt, second, 0),
     ).toBe(true);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.prompt).toBe(
-      `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} alpha ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} beta`,
+      `${formatTerminalContextReference(second)} alpha ${formatTerminalContextReference(first)} beta`,
     );
     expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
   });
@@ -906,6 +964,9 @@ describe("composerDraftStore terminal contexts", () => {
       useComposerDraftStore.getInitialState(),
     );
 
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(
+      "[Terminal 1 lines 4-5](t3-context://v1/terminal/terminal_ctx-rehydrated)",
+    );
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.terminalContexts).toMatchObject([
       {
         id: "ctx-rehydrated",
@@ -947,96 +1008,6 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
     expect(mergedState.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
-  });
-});
-
-describe("composerDraftStore element contexts", () => {
-  const threadId = ThreadId.make("thread-element");
-  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
-  const baseSelection = {
-    pageUrl: "https://example.com/dashboard",
-    pageTitle: "Dashboard",
-    tagName: "button",
-    selector: "button.submit",
-    htmlPreview: "<button>Save</button>",
-    componentName: "SubmitButton",
-    source: {
-      functionName: "SubmitButton",
-      fileName: "/repo/Button.tsx",
-      lineNumber: 12,
-      columnNumber: 5,
-    },
-    styles: ".submit { color: white; }",
-  } as const;
-
-  beforeEach(() => {
-    resetComposerDraftStore();
-  });
-
-  it("adds an element context and stamps id + threadId + pickedAt", () => {
-    const accepted = useComposerDraftStore.getState().addElementContext(threadRef, baseSelection);
-    expect(accepted).toBe(true);
-    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.elementContexts).toHaveLength(1);
-    const entry = draft?.elementContexts[0]!;
-    expect(entry.id.startsWith("el_")).toBe(true);
-    expect(entry.threadId).toBe(threadId);
-    expect(entry.pickedAt.length).toBeGreaterThan(0);
-    expect(entry.componentName).toBe("SubmitButton");
-  });
-
-  it("dedupes by selector + tag + componentName + pageUrl signature", () => {
-    const store = useComposerDraftStore.getState();
-    expect(store.addElementContext(threadRef, baseSelection)).toBe(true);
-    const second = store.addElementContext(threadRef, {
-      ...baseSelection,
-      htmlPreview: "<button>Save 2</button>",
-    });
-    expect(second).toBe(false);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.elementContexts).toHaveLength(1);
-  });
-
-  it("removeElementContext drops by id + leaves siblings intact", () => {
-    const store = useComposerDraftStore.getState();
-    store.addElementContext(threadRef, baseSelection);
-    store.addElementContext(threadRef, { ...baseSelection, selector: "button.cancel" });
-    const ids = draftFor(threadId, TEST_ENVIRONMENT_ID)!.elementContexts.map((c) => c.id);
-    store.removeElementContext(threadRef, ids[0]!);
-    const remaining = draftFor(threadId, TEST_ENVIRONMENT_ID)?.elementContexts;
-    expect(remaining?.map((c) => c.id)).toEqual([ids[1]]);
-  });
-
-  it("setElementContexts replaces the slice and clearComposerContent wipes it", () => {
-    const store = useComposerDraftStore.getState();
-    store.addElementContext(threadRef, baseSelection);
-    store.setElementContexts(threadRef, []);
-    // Fully empty draft should be removed via shouldRemoveDraft.
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
-
-    store.addElementContext(threadRef, baseSelection);
-    store.clearComposerContent(threadRef);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
-  });
-
-  it("persists element contexts via the partializer (round-trippable)", () => {
-    useComposerDraftStore.getState().addElementContext(threadRef, baseSelection);
-    const persisted = partializeComposerDraftStoreState(
-      useComposerDraftStore.getState(),
-    ) as unknown as {
-      draftsByThreadKey?: Record<string, { elementContexts?: Array<Record<string, unknown>> }>;
-    };
-    const entry =
-      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
-        ?.elementContexts?.[0];
-    expect(entry).toMatchObject({
-      pageUrl: baseSelection.pageUrl,
-      tagName: baseSelection.tagName,
-      selector: baseSelection.selector,
-      componentName: baseSelection.componentName,
-    });
-    // Persistence does NOT include htmlPreview / styles oversize-clamping —
-    // that happens at normalization time, before the value reaches the store.
-    expect(typeof entry?.htmlPreview).toBe("string");
   });
 });
 
@@ -2772,5 +2743,435 @@ describe("createDeferredStorage", () => {
     vi.advanceTimersByTime(300);
     expect(base.setItem).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledWith("key", "s:v2");
+  });
+});
+
+describe("composerDraftStore inline context references", () => {
+  const threadId = ThreadId.make("thread-inline-context");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const reviewComment = {
+    id: "rc-1",
+    sectionId: "file:a/b.ts",
+    sectionTitle: "File comment",
+    filePath: "a/b.ts",
+    startIndex: 3,
+    endIndex: 3,
+    rangeLabel: "L4",
+    text: "Why?",
+    diff: "const x = 1;",
+  };
+  const reviewLink = "[b.ts L4](t3-context://v1/review-comment/review-comment_rc-1)";
+  const annotation = {
+    id: "ann-1",
+    pageUrl: "http://localhost:3000/",
+    pageTitle: "Home",
+    comment: "Bigger",
+    elements: [],
+    regions: [],
+    strokes: [],
+    styleChanges: [],
+    screenshot: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+  const annotationLink = "[Bigger](t3-context://v1/preview-annotation/preview-annotation_ann-1)";
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("appends a link when a review comment is added and strips it on removal", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "look");
+    store.addReviewComment(threadRef, reviewComment);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
+    // Re-adding the same comment replaces the record without a second link.
+    store.addReviewComment(threadRef, { ...reviewComment, text: "edited" });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
+    store.removeReviewComment(threadRef, "rc-1");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
+  });
+
+  it("can add another reference while upserting one backing review record", () => {
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(threadRef, reviewComment);
+    const insertionHandler = vi.fn(() => true);
+    store.setContextInsertionHandler(threadRef, insertionHandler);
+    store.addReviewComment(
+      threadRef,
+      { ...reviewComment, text: "edited" },
+      {
+        allowDuplicateReference: true,
+        insertAtCaret: false,
+      },
+    );
+
+    expect(insertionHandler).not.toHaveBeenCalled();
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`${reviewLink} ${reviewLink} `);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([
+      { ...reviewComment, text: "edited" },
+    ]);
+  });
+
+  it("keeps bulk-set review records and their inline references in sync", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Explain this pull request.");
+    store.setReviewComments(threadRef, [reviewComment]);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      `Explain this pull request. ${reviewLink} `,
+    );
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([reviewComment]);
+
+    store.setReviewComments(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Explain this pull request.");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([]);
+  });
+
+  it("hands new review comments to a registered caret handler instead of appending", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "look");
+    const seen: string[] = [];
+    store.setContextInsertionHandler(threadRef, (references) => {
+      seen.push(...references.map((reference) => reference.contextId));
+      return true;
+    });
+    store.addReviewComment(threadRef, reviewComment);
+    expect(seen).toEqual(["review-comment_rc-1"]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("look");
+    store.setContextInsertionHandler(threadRef, null);
+    store.addReviewComment(threadRef, { ...reviewComment, id: "rc-2" });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      "look [b.ts L4](t3-context://v1/review-comment/review-comment_rc-2) ",
+    );
+  });
+
+  it("does not overwrite a prompt update made by the caret handler", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "before after");
+    store.setContextInsertionHandler(threadRef, (references) => {
+      const reference = references[0];
+      if (!reference) return false;
+      useComposerDraftStore
+        .getState()
+        .setPrompt(
+          threadRef,
+          `before [${reference.label}](t3-context://v1/${reference.kind}/${reference.contextId}) after`,
+        );
+      return true;
+    });
+
+    store.addReviewComment(threadRef, reviewComment);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`before ${reviewLink} after`);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.reviewComments).toEqual([reviewComment]);
+    store.setContextInsertionHandler(threadRef, null);
+  });
+
+  it("appends a link when a preview annotation is added and strips it on removal", () => {
+    const store = useComposerDraftStore.getState();
+    store.addPreviewAnnotation(threadRef, annotation);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`${annotationLink} `);
+    store.removePreviewAnnotation(threadRef, "ann-1");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("keeps bulk-set preview annotations and their inline references in sync", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Explain this preview.");
+    store.setPreviewAnnotations(threadRef, [annotation]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      `Explain this preview. ${annotationLink} `,
+    );
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.previewAnnotations).toEqual([annotation]);
+
+    const edited = { ...annotation, comment: "Updated comment" };
+    store.setPreviewAnnotations(threadRef, [edited]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      `Explain this preview. ${annotationLink} `,
+    );
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.previewAnnotations).toEqual([edited]);
+
+    store.setPreviewAnnotations(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Explain this preview.");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.previewAnnotations).toEqual([]);
+  });
+
+  it("removes an annotation-only draft when bulk-cleared", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPreviewAnnotations(threadRef, [annotation]);
+    store.setPreviewAnnotations(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("keeps links for retained context when clearing text and attachments", () => {
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(threadRef, reviewComment);
+    store.addPreviewAnnotation(threadRef, annotation);
+    store.clearComposerPromptAndImages(threadRef);
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toContain(reviewLink);
+    expect(draft?.prompt).toContain(annotationLink);
+    expect(draft?.reviewComments).toEqual([reviewComment]);
+    expect(draft?.previewAnnotations).toEqual([annotation]);
+  });
+
+  it("rehydrates annotation-only drafts with their references", () => {
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId)]: {
+            prompt: "",
+            attachments: [],
+            previewAnnotations: [annotation],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(merged.draftsByThreadKey[threadKeyFor(threadId)]?.previewAnnotations).toEqual([
+      annotation,
+    ]);
+    expect(merged.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toContain(annotationLink);
+  });
+
+  it("adds links for persisted review comments that predate references", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "old draft",
+            attachments: [],
+            reviewComments: [reviewComment],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(
+      `old draft ${reviewLink} `,
+    );
+  });
+});
+
+describe("composerDraftStore attachment references", () => {
+  const threadId = ThreadId.make("thread-attachment-refs");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const fileLink = "[notes.txt](t3-context://v1/file/file_file-1)";
+  const imageLink = "[shot.png](t3-context://v1/image/image_img-1)";
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("reports which attachments it accepted so only those get chips", () => {
+    const store = useComposerDraftStore.getState();
+    const file = {
+      type: "file" as const,
+      id: "file-1",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 3,
+      file: null,
+      uploadedAttachmentId: "p",
+      uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+    };
+    expect(store.addFiles(threadRef, [file])).toEqual(["file-1"]);
+    expect(store.addFiles(threadRef, [{ ...file, id: "file-2" }])).toEqual([]);
+    const image = makeImage({ id: "img-1", previewUrl: "blob:img-1", name: "shot.png" });
+    expect(store.addImages(threadRef, [image])).toEqual(["img-1"]);
+    expect(
+      store.addImages(threadRef, [
+        makeImage({ id: "img-2", previewUrl: "blob:img-2", name: "shot.png" }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("strips references when an image or file is removed", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, `see ${imageLink} and ${fileLink} ok`);
+    store.addImages(threadRef, [
+      makeImage({ id: "img-1", previewUrl: "blob:img-1", name: "shot.png" }),
+    ]);
+    store.addFiles(threadRef, [
+      {
+        type: "file",
+        id: "file-1",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 3,
+        file: null,
+        uploadedAttachmentId: "pending-1",
+        uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+      },
+    ]);
+    store.removeImage(threadRef, "img-1");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`see and ${fileLink} ok`);
+    store.removeFile(threadRef, "file-1");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("see and ok");
+  });
+
+  it("moves a needs-reattach marker's chip to the re-picked file", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "see [notes.txt](t3-context://v1/file/file_marker-1) ok");
+    store.addFiles(threadRef, [
+      {
+        type: "file",
+        id: "marker-1",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 3,
+        file: null,
+      },
+    ]);
+    const acceptedIds = store.addFiles(threadRef, [
+      {
+        type: "file",
+        id: "fresh-1",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 3,
+        file: new File(["abc"], "notes.txt", { type: "text/plain" }),
+      },
+    ]);
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(acceptedIds).toEqual([]);
+    expect(draft?.files.map((file) => file.id)).toEqual(["fresh-1"]);
+    expect(draft?.prompt).toBe("see [notes.txt](t3-context://v1/file/file_fresh-1) ok");
+  });
+
+  it("restores a file-only draft with a reference and preserves it through prompt edits", () => {
+    const store = useComposerDraftStore.getState();
+    store.addFiles(
+      threadRef,
+      [
+        {
+          type: "file",
+          id: "restored",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 3,
+          file: null,
+          uploadedAttachmentId: "uploaded",
+          uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+        },
+      ],
+      { appendReference: true },
+    );
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+    expect(restored.prompt).toBe("[notes.txt](t3-context://v1/file/file_restored) ");
+    store.setPrompt(threadRef, `${restored.prompt}explain this`);
+    const edited = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+    expect(edited.files.map((file) => file.id)).toEqual(["restored"]);
+    expect(edited.prompt).toContain("t3-context://v1/file/file_restored");
+  });
+
+  it.each(["old.file:1", "file-1"])(
+    "rewrites persisted attachment references before removal: %s",
+    (id) => {
+      const merged = useComposerDraftStore.persist.getOptions().merge!(
+        {
+          draftsByThreadKey: {
+            [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+              prompt: `before [notes.txt](t3-context://v1/file/${id}) after`,
+              attachments: [],
+              files: [{ id, name: "notes.txt", mimeType: "text/plain", sizeBytes: 3 }],
+            },
+          },
+        },
+        useComposerDraftStore.getInitialState(),
+      );
+      useComposerDraftStore.setState(merged);
+      const draft = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+      expect(draft.prompt.match(/t3-context:/g)).toHaveLength(1);
+      expect(draft.prompt).not.toContain(`/file/${id})`);
+      useComposerDraftStore.getState().removeFile(threadRef, id);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("before after");
+    },
+  );
+
+  it("appends chips for persisted files that predate references", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "old",
+            attachments: [],
+            files: [{ id: "file-1", name: "notes.txt", mimeType: "text/plain", sizeBytes: 3 }],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toBe(`old ${fileLink} `);
+  });
+
+  it("migrates legacy image references without doubling their image marker", () => {
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+            prompt: "see ![shot.png](t3-context://v1/image/img-1) after",
+            attachments: [
+              {
+                id: "img-1",
+                name: "shot.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                dataUrl: "data:image/png;base64,YQ==",
+              },
+            ],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
+      "see ![shot.png](t3-context://v1/image/image_img-1) after",
+    );
+  });
+
+  it("preserves canonical references when another producer ID matches their namespace", () => {
+    const prompt =
+      "![x.png](t3-context://v1/image/image_x) ![image_x.png](t3-context://v1/image/image_image_x)";
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+            prompt,
+            attachments: ["x", "image_x"].map((id) => ({
+              id,
+              name: `${id}.png`,
+              mimeType: "image/png",
+              sizeBytes: 1,
+              dataUrl: "data:image/png;base64,YQ==",
+            })),
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
+      prompt,
+    );
   });
 });

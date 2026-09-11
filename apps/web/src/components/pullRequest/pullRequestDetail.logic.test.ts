@@ -7,6 +7,8 @@ import {
   type PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { formatInlineContextReference } from "~/lib/composerContextReferences";
+import { reviewCommentContextReference } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -17,6 +19,7 @@ import {
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
   isThreadOwnPullRequest,
@@ -1046,6 +1049,8 @@ describe("asking about a change rather than working on it", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
   };
 
   it("leaves the composer empty, and everything the agent needs in the chip", () => {
@@ -1056,6 +1061,15 @@ describe("asking about a change rather than working on it", () => {
         // What the chip reads as: which pull request, and what it is called.
         filePath: "PR #42",
         rangeLabel: "Add the pull requests page",
+        pullRequest: {
+          number: 42,
+          title: "Add the pull requests page",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+        },
       }),
     ]);
     const chip = handoff.reviewComments[0]!;
@@ -1123,6 +1137,24 @@ describe("a second ask into the same composer", () => {
   it("empties what the last ask left, so the two are never sent as one question", () => {
     const handed = "Explain this pull request.";
     expect(handoffPrompt({ prompt: handed, lastHandoffPrompt: handed }, "")).toBe("");
+  });
+
+  it("removes the previous handoff chip before replacing its prompt", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = `Explain this pull request. ${formatInlineContextReference(
+      reviewCommentContextReference(previous),
+    )} `;
+    expect(stripPullRequestHandoffReferences(prompt, [previous])).toBe(
+      "Explain this pull request.",
+    );
+  });
+
+  it("keeps a handoff reference when the next action deliberately repeats it", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = formatInlineContextReference(reviewCommentContextReference(previous));
+    expect(stripPullRequestHandoffReferences(prompt, [previous], new Set([previous.id]))).toBe(
+      prompt,
+    );
   });
 
   it("replaces the last ask's prompt with this one's", () => {

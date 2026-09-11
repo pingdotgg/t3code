@@ -52,6 +52,7 @@ function createCitationEditor(text = "") {
   registerComposerInlineTokenPaste(editor, {
     createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
     createCitationNode: $createComposerCitationNode,
+    createContextReferenceNode: (reference) => $createTextNode(`<context:${reference.contextId}>`),
     getExpandedAbsoluteOffsetForPoint: (_node, offset) => offset,
   });
   return editor;
@@ -113,6 +114,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createContextReferenceNode: (reference) =>
+        $createTextNode(`<context:${reference.contextId}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -159,6 +162,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createContextReferenceNode: (reference) =>
+        $createTextNode(`<context:${reference.contextId}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -194,6 +199,8 @@ describe("registerComposerInlineTokenPaste", () => {
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
+      createContextReferenceNode: (reference) =>
+        $createTextNode(`<context:${reference.contextId}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
@@ -482,6 +489,17 @@ describe("registerComposerInlineTokenPaste", () => {
       });
     },
   );
+});
+
+describe("context reference paste", () => {
+  it("turns pasted context links into reference nodes", () => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    const editor = createCitationEditor("see ");
+    pasteText(editor, "[Terminal 1 line 4](t3-context://v1/terminal/ctx-1) now");
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
+      "see <context:ctx-1> now",
+    );
+  });
 });
 
 describe("citation comment opening", () => {

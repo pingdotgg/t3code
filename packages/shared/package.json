@@ -207,6 +207,10 @@
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"
     },
+    "./composerContextLegacySend": {
+      "types": "./src/composerContextLegacySend.ts",
+      "import": "./src/composerContextLegacySend.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

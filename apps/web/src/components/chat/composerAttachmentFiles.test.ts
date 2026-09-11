@@ -6,6 +6,7 @@ import { isVideoAttachment, videoMimeType } from "../../types";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   classifyComposerAttachmentFile,
+  composerOtherFilesForPresentation,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   inferImageMimeTypeFromName,
@@ -15,6 +16,32 @@ import {
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
+  it("keeps inline non-media files out of the legacy attachment row", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const files = [
+      {
+        type: "file" as const,
+        id: "inline-file",
+        name: "inline.txt",
+        mimeType: "text/plain",
+        sizeBytes: 12,
+        file: new File(["inline"], "inline.txt", { type: "text/plain" }),
+      },
+      {
+        type: "file" as const,
+        id: "legacy-file",
+        name: "legacy.zip",
+        mimeType: "application/zip",
+        sizeBytes: 24,
+        file: new File(["legacy"], "legacy.zip", { type: "application/zip" }),
+      },
+    ];
+
+    expect(
+      composerOtherFilesForPresentation(files, environmentId, new Set(["inline-file"])),
+    ).toEqual([files[1]]);
+  });
+
   it("keeps supported images and HEIC photos on the image path", () => {
     expect(classifyComposerAttachmentFile({ name: "photo.png", type: "image/png" })).toBe("image");
     expect(classifyComposerAttachmentFile({ name: "photo.heic", type: "" })).toBe("image");

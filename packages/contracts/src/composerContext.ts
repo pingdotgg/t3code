@@ -37,8 +37,10 @@ export const COMPOSER_CONTEXT_LABEL_MAX_CHARS = 200;
 const COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS = 64_000;
 const COMPOSER_CONTEXT_ELEMENT_HTML_MAX_CHARS = 8_000;
 const COMPOSER_CONTEXT_ELEMENT_STYLES_MAX_CHARS = 8_000;
-const COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS = 16_000;
-const COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS = 32_000;
+/** Exported so producers can clamp to the same boundary the schema enforces, rather than
+    minting a record the send path would fail to encode. */
+export const COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS = 16_000;
+export const COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS = 32_000;
 const COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS = 8_000;
 
 /** Durable identity of one payload. Shared by every chip that points at it. */

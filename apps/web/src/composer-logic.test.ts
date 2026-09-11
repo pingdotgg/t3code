@@ -17,7 +17,14 @@ import {
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { formatTerminalContextReference } from "./lib/terminalContext";
+
+const terminalReference = formatTerminalContextReference({
+  id: "ctx-1",
+  terminalLabel: "Terminal 1",
+  lineStart: 3,
+  lineEnd: 4,
+});
 
 const citation: AssistantCitation = {
   version: 1,
@@ -376,7 +383,7 @@ describe("assistant citation cursor offsets", () => {
     const prefix = "👋(";
     const between = "),雪";
     const after = " @AGENTS.md $review ";
-    const text = `${prefix}${citationSource}${between}${citationSource}${after}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}!`;
+    const text = `${prefix}${citationSource}${between}${citationSource}${after}${terminalReference}!`;
     const collapsedLength = `${prefix}□${between}□ □ □ □!`.length;
     const boundaries = [
       [prefix.length, prefix.length],
@@ -479,8 +486,8 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart - 1, "right")).toBe(false);
   });
 
-  it("treats terminal pills as inline tokens for adjacency checks", () => {
-    const text = `open ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} next`;
+  it("treats context reference pills as inline tokens for adjacency checks", () => {
+    const text = `open ${terminalReference} next`;
     const tokenStart = "open ".length;
     const tokenEnd = tokenStart + 1;
 

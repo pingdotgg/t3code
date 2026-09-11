@@ -72,6 +72,48 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe("ChatMarkdown context references", () => {
+  it("renders text and image references through the chip renderer, with readable fallback", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text =
+      "See [Terminal output](t3-context://v1/terminal/term-1) and ![Error image](t3-context://v1/image/img-1).";
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            renderContextReference={({ kind, label }) => (
+              <button>
+                {kind}: {label}
+              </button>
+            )}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+      ).toEqual(["terminal: Terminal output", "image: Error image"]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} />);
+      });
+      expect(renderer!.root.findAllByType("span").map((span) => span.children.join(""))).toEqual([
+        "Terminal output",
+        "Error image",
+      ]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

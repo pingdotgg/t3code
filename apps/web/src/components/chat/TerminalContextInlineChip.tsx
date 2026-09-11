@@ -26,6 +26,7 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
               COMPOSER_INLINE_CHIP_CLASS_NAME,
               expired && "border-destructive/35 bg-destructive/8 text-destructive",
             )}
+            aria-label={`Terminal excerpt, ${label}${expired ? ", expired" : ""}`}
             data-terminal-context-expired={expired ? "true" : undefined}
           >
             <TerminalIcon
