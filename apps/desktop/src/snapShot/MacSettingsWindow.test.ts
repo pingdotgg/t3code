@@ -28,7 +28,8 @@ it("places the helper inside small and large Settings windows across displays", 
 });
 it("decodes partial updates and stops the one watcher process on disposal", () => {
   const changed = vi.fn();
-  const stop = watchMacSettingsWindow(changed);
+  const unavailable = vi.fn();
+  const stop = watchMacSettingsWindow(changed, unavailable);
   const state = { x: 10, y: 20, width: 723, height: 719, frontmost: true };
   const line = JSON.stringify(state);
   child.stdout.emit("data", line.slice(0, 8));
@@ -40,12 +41,15 @@ it("decodes partial updates and stops the one watcher process on disposal", () =
   child.emit("exit", 0);
   expect(changed).toHaveBeenCalledTimes(2);
 });
-it("clears the anchor when the watcher fails or emits invalid bounds", () => {
+it("distinguishes unavailable tracking from a valid absent window", () => {
   const changed = vi.fn();
-  const stop = watchMacSettingsWindow(changed);
+  const unavailable = vi.fn();
+  const stop = watchMacSettingsWindow(changed, unavailable);
   child.stdout.emit("data", '{"x":"bad"}\n');
-  expect(changed).toHaveBeenLastCalledWith(null);
+  expect(changed).not.toHaveBeenCalled();
+  expect(unavailable).toHaveBeenCalledOnce();
   child.emit("error", new Error("spawn failed"));
-  expect(changed).toHaveBeenCalledTimes(2);
+  expect(changed).not.toHaveBeenCalled();
+  expect(unavailable).toHaveBeenCalledTimes(2);
   stop();
 });

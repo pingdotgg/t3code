@@ -139,10 +139,15 @@ export class MacPermissionHelper {
     };
     let settingsWindow: SettingsWindow = null;
     let foundSettings = false;
+    let trackingAvailable = true;
     const syncPosition = () => {
       if (window.isDestroyed()) return;
+      if (!trackingAvailable) {
+        window.hide();
+        return;
+      }
       if (!settingsWindow && foundSettings) {
-        window.close();
+        finish();
         return;
       }
       if (!settingsWindow || (!settingsWindow.frontmost && !window.isFocused())) {
@@ -181,11 +186,18 @@ export class MacPermissionHelper {
         `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(permission, icon.toDataURL()))}`,
       );
       if (!window.isDestroyed()) {
-        stopTracking = watchMacSettingsWindow((current) => {
-          settingsWindow = current;
-          if (current) foundSettings = true;
-          syncPosition();
-        });
+        stopTracking = watchMacSettingsWindow(
+          (current) => {
+            trackingAvailable = true;
+            settingsWindow = current;
+            if (current) foundSettings = true;
+            syncPosition();
+          },
+          () => {
+            trackingAvailable = false;
+            syncPosition();
+          },
+        );
       }
     } catch (error) {
       if (!window.isDestroyed()) window.destroy();

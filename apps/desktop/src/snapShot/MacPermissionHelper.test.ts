@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   loadURL: vi.fn(),
   stopTracking: vi.fn(),
+  trackingFailed: undefined as (() => void) | undefined,
   settingsChanged: undefined as ((state: SettingsWindow) => void) | undefined,
 }));
 const windows = vi.hoisted(
@@ -81,8 +82,12 @@ vi.mock("./MacSettingsWindow.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./MacSettingsWindow.ts")>();
   return {
     ...actual,
-    watchMacSettingsWindow: (onChange: (state: SettingsWindow) => void) => {
+    watchMacSettingsWindow: (
+      onChange: (state: SettingsWindow) => void,
+      onUnavailable: () => void,
+    ) => {
       mocks.settingsChanged = onChange;
+      mocks.trackingFailed = onUnavailable;
       return mocks.stopTracking;
     },
   };
@@ -231,4 +236,24 @@ it("docks inside Settings and hides when it is covered or closed", async () => {
   expect(window.destroyed).toBe(true);
   helper.close();
   expect(mocks.stopTracking).toHaveBeenCalledOnce();
+});
+
+it("returns to onboarding when the Settings window disappears", async () => {
+  const owner = new Electron.BrowserWindow({});
+  owner.hide();
+  await helper.show("accessibility", "/preload.cjs", owner, iconPaths);
+  mocks.settingsChanged!({ x: 100, y: 100, width: 723, height: 719, frontmost: true });
+  mocks.settingsChanged!(null);
+  expect(owner.show).toHaveBeenCalledOnce();
+  expect(owner.focus).toHaveBeenCalledOnce();
+});
+it("hides on tracking failure and resumes on a valid update", async () => {
+  await open();
+  const state = { x: 100, y: 100, width: 723, height: 719, frontmost: true };
+  mocks.settingsChanged!(state);
+  mocks.trackingFailed!();
+  expect(windows[0]!.destroyed).toBe(false);
+  expect(windows[0]!.hide).toHaveBeenCalledOnce();
+  mocks.settingsChanged!(state);
+  expect(windows[0]!.showInactive).toHaveBeenCalledTimes(2);
 });

@@ -70,7 +70,10 @@ export function settingsHelperBounds(settings: NonNullable<SettingsWindow>): Ele
 }
 
 /** Track only metadata; this does not request Accessibility or Screen Recording. */
-export function watchMacSettingsWindow(onChange: (window: SettingsWindow) => void): () => void {
+export function watchMacSettingsWindow(
+  onChange: (window: SettingsWindow) => void,
+  onUnavailable: () => void,
+): () => void {
   const child = NodeChildProcess.spawn(
     "/usr/bin/osascript",
     ["-l", "JavaScript", "-e", SETTINGS_WINDOW_SCRIPT],
@@ -88,15 +91,18 @@ export function watchMacSettingsWindow(onChange: (window: SettingsWindow) => voi
       const line = pending.slice(0, end);
       pending = pending.slice(end + 1);
       if (closed) return;
+      let settings: SettingsWindow;
       try {
-        onChange(decodeSettingsWindow(line));
+        settings = decodeSettingsWindow(line);
       } catch {
-        onChange(null);
+        onUnavailable();
+        continue;
       }
+      onChange(settings);
     }
   });
   const onExit = () => {
-    if (!closed) onChange(null);
+    if (!closed) onUnavailable();
   };
   child.on("error", onExit);
   child.on("exit", onExit);
