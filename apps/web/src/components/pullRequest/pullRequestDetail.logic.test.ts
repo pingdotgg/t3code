@@ -14,6 +14,7 @@ import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
@@ -1052,6 +1053,15 @@ describe("asking about a change rather than working on it", () => {
     state: "open" as const,
     isDraft: false,
   };
+
+  it("builds a neutral composer reference without prescribing an action", () => {
+    const context = buildPullRequestReferenceContext(base);
+
+    expect(context.pullRequest).toEqual(expect.objectContaining({ number: 42, state: "open" }));
+    expect(context.text).toContain("https://github.com/pingdotgg/t3code/pull/42");
+    expect(context.text).not.toContain("Do not change any code");
+    expect(context.text).not.toContain("Walk through this pull request");
+  });
 
   it("leaves the composer empty, and everything the agent needs in the chip", () => {
     const handoff = buildAskAboutPullRequestHandoff(base);

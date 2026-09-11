@@ -8,7 +8,7 @@ import {
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
-export type ComposerTriggerKind = "path" | "slash-command" | "skill";
+export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background";
 
@@ -17,6 +17,47 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+export interface ComposerPullRequestMatch {
+  readonly number: number;
+  readonly projectId: string;
+  readonly repository: string;
+  readonly updatedAt: string;
+}
+
+/**
+ * Pull requests matching the numeric fragment typed after `#`, de-duplicated. An exact number
+ * match always outranks a substring match so the result limit can never drop the pull request
+ * the user typed in full; the rest stay newest first.
+ */
+export function filterComposerPullRequestMatches<Entry extends ComposerPullRequestMatch>(input: {
+  readonly entries: ReadonlyArray<Entry>;
+  readonly projectId: string;
+  readonly repository: string;
+  readonly query: string;
+  readonly limit: number;
+}): ReadonlyArray<Entry> {
+  const repository = input.repository.trim().toLowerCase();
+  const matchingEntries = input.entries.filter(
+    (entry) =>
+      entry.projectId === input.projectId &&
+      entry.repository.trim().toLowerCase() === repository &&
+      String(entry.number).includes(input.query),
+  );
+  const uniqueEntries = new Map<number, Entry>();
+  for (const entry of matchingEntries) {
+    if (!uniqueEntries.has(entry.number)) {
+      uniqueEntries.set(entry.number, entry);
+    }
+  }
+  const isExactMatch = (entry: Entry) => String(entry.number) === input.query;
+  return [...uniqueEntries.values()]
+    .toSorted((left, right) => {
+      const exactness = Number(isExactMatch(right)) - Number(isExactMatch(left));
+      return exactness !== 0 ? exactness : right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, input.limit);
 }
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
@@ -226,6 +267,15 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
+  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (pullRequestMatch) {
+    return {
+      kind: "pull-request",
+      query: pullRequestMatch[1] ?? "",
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
   if (token.startsWith("$")) {
     return {
       kind: "skill",

@@ -10,6 +10,8 @@ import type {
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
+  ProjectId,
+  PullRequestListInput,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -53,6 +55,7 @@ import {
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  filterComposerPullRequestMatches,
   formatAssistantCitationForComposer,
   replaceTextRange,
 } from "../../composer-logic";
@@ -198,6 +201,7 @@ import {
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
   reviewCommentContextId,
+  reviewCommentContextReference,
   reviewCommentContextRecord,
   reviewCommentFromRecord,
   terminalContextDraftFromRecord,
@@ -211,6 +215,13 @@ import { resolveAssetUrl } from "~/assets/assetUrls";
 import { assetEnvironment } from "~/state/assets";
 import { readPreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import {
+  pullRequestEnvironment,
+  usePullRequestList,
+  type EnvironmentQueryTarget,
+} from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
@@ -226,6 +237,11 @@ import {
   ComposerSelectControl,
 } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
+import {
+  matchesPullRequestQuery,
+  rankPullRequestMatches,
+} from "../pullRequest/pullRequestList.logic";
 import {
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
@@ -347,6 +363,11 @@ function SnapShotAttachmentFrame({
     />
   );
 }
+
+const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
+const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
+const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
+  [];
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
@@ -1350,6 +1371,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  pullRequestProjectId: ProjectId | null;
+  pullRequestRepository: string | null;
   restingControlsHost: HTMLDivElement | null;
   restingControlsHaveLeadingContext: boolean;
   onRestingControlsVisibilityChange: (visible: boolean) => void;
@@ -1465,6 +1488,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    pullRequestProjectId,
+    pullRequestRepository,
     restingControlsHost,
     restingControlsHaveLeadingContext,
     onRestingControlsVisibilityChange,
@@ -1569,7 +1594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [composerImages, composerPreviewAnnotations]);
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
-  const openPrLink = useOpenPrLink(routeKind === "server" ? routeThreadRef : undefined);
+  const openPrLink = useOpenPrLink(routeThreadRef);
   const composerContextActions = useMemo(
     () => ({
       expandImage: (imageId: string) => {
@@ -2105,6 +2130,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const pullRequestTriggerQuery =
+    composerTrigger?.kind === "pull-request" ? composerTrigger.query : "";
+  const pullRequestTextQuery =
+    composerTriggerKind === "pull-request" &&
+    pullRequestTriggerQuery.length > 0 &&
+    !/^\d+$/u.test(pullRequestTriggerQuery)
+      ? pullRequestTriggerQuery
+      : null;
+  const debouncedPullRequestTextQuery = useDebouncedValue(pullRequestTextQuery, 180);
+  const settledPullRequestTextQuery =
+    pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
   const workspaceEntries = useComposerPathSearch({
     environmentId,
@@ -2121,6 +2157,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+
+  const pullRequestListTargets = useMemo(
+    () =>
+      composerTriggerKind !== "pull-request" ||
+      pullRequestProjectId === null ||
+      (pullRequestTextQuery !== null && settledPullRequestTextQuery === null)
+        ? EMPTY_PULL_REQUEST_LIST_TARGETS
+        : [
+            {
+              environmentId,
+              input: {
+                state: "all" as const,
+                projectId: pullRequestProjectId,
+                limit: COMPOSER_PULL_REQUEST_LIST_LIMIT,
+                ...(settledPullRequestTextQuery === null
+                  ? {}
+                  : { query: settledPullRequestTextQuery }),
+              },
+            },
+          ],
+    [
+      composerTriggerKind,
+      environmentId,
+      pullRequestProjectId,
+      pullRequestTextQuery,
+      settledPullRequestTextQuery,
+    ],
+  );
+  const pullRequestLookup = usePullRequestList(pullRequestListTargets);
+  const pullRequestTriggerNumber = useMemo(() => {
+    if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
+      return null;
+    }
+    const number = Number(composerTrigger.query);
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  }, [composerTrigger]);
+  const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
+  const settledPullRequestNumber =
+    pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
+  const recentHasExactPullRequest =
+    settledPullRequestNumber !== null &&
+    pullRequestLookup.data?.entries.some(
+      (entry) =>
+        entry.projectId === pullRequestProjectId &&
+        entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
+        entry.number === settledPullRequestNumber,
+    ) === true;
+  const exactPullRequestLookup = useEnvironmentQuery(
+    settledPullRequestNumber === null ||
+      pullRequestProjectId === null ||
+      pullRequestRepository === null ||
+      recentHasExactPullRequest
+      ? null
+      : pullRequestEnvironment.detail({
+          environmentId,
+          input: {
+            projectId: pullRequestProjectId,
+            repository: pullRequestRepository,
+            number: settledPullRequestNumber,
+          },
+        }),
+  );
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
@@ -2211,11 +2309,67 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
+    if (
+      composerTrigger.kind === "pull-request" &&
+      pullRequestProjectId !== null &&
+      pullRequestRepository !== null
+    ) {
+      const exactPullRequest =
+        exactPullRequestLookup.data?.number === pullRequestTriggerNumber
+          ? [exactPullRequestLookup.data]
+          : [];
+      const matches = /^\d*$/u.test(composerTrigger.query)
+        ? filterComposerPullRequestMatches({
+            entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
+            projectId: pullRequestProjectId,
+            repository: pullRequestRepository,
+            query: composerTrigger.query,
+            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+          })
+        : rankPullRequestMatches(
+            (pullRequestLookup.data?.entries ?? []).filter((entry) => {
+              if (
+                entry.projectId !== pullRequestProjectId ||
+                entry.repository.trim().toLowerCase() !== pullRequestRepository.trim().toLowerCase()
+              ) {
+                return false;
+              }
+              const provider = pullRequestLookup.data?.providers.find(
+                (candidate) => candidate.host === entry.host,
+              );
+              return (
+                provider?.searchesOnHost === true ||
+                matchesPullRequestQuery(entry, composerTrigger.query)
+              );
+            }),
+            composerTrigger.query,
+          ).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
+      return matches.map((pullRequest) => ({
+        id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+        type: "pull-request",
+        pullRequest: {
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          headBranch: pullRequest.headBranch,
+          baseBranch: pullRequest.baseBranch,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+        },
+        label: `#${pullRequest.number}`,
+        description: pullRequest.title,
+      }));
+    }
     return [];
   }, [
     compactSlashCommandAvailable,
     composerTrigger,
+    exactPullRequestLookup.data,
     planModeUiEnabled,
+    pullRequestLookup.data,
+    pullRequestProjectId,
+    pullRequestRepository,
+    pullRequestTriggerNumber,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -2292,15 +2446,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "pull-request" &&
+      pullRequestProjectId !== null &&
+      pullRequestRepository !== null &&
+      (pullRequestLookup.isPending ||
+        pullRequestTextQuery !== debouncedPullRequestTextQuery ||
+        pullRequestTriggerNumber !== debouncedPullRequestNumber ||
+        exactPullRequestLookup.isPending));
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }
+    if (composerTriggerKind === "pull-request") {
+      if (pullRequestProjectId === null || pullRequestRepository === null) {
+        return "Pull requests are not available for this project.";
+      }
+      if (
+        pullRequestLookup.error !== null ||
+        pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
+      ) {
+        return "Pull requests could not be read for this project.";
+      }
+      return composerTrigger?.query
+        ? `No pull request matches ${composerTrigger.query}.`
+        : "No pull requests found in this repository.";
+    }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind]);
+  }, [
+    composerTrigger,
+    composerTriggerKind,
+    pullRequestLookup.data?.errors,
+    pullRequestLookup.error,
+    pullRequestProjectId,
+    pullRequestRepository,
+  ]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -3336,9 +3518,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      if (item.type === "pull-request") {
+        if (
+          trigger.kind !== "pull-request" ||
+          !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+        ) {
+          return;
+        }
+        const comment = buildPullRequestReferenceContext(item.pullRequest);
+        const replacement = `${formatInlineContextReference(
+          reviewCommentContextReference(comment),
+        )} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          addComposerDraftReviewComment(composerDraftTarget, comment, {
+            appendReference: false,
+          });
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
     },
     [
+      addComposerDraftReviewComment,
       applyPromptReplacement,
+      composerDraftTarget,
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,

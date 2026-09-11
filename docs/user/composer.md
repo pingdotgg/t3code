@@ -127,7 +127,11 @@ excerpt, Terminal 1 lines 3-4" and similar to screen readers.
 
 A pull request appears as its icon and number. Its color reflects whether it was open, draft,
 merged, or closed when it was attached. Hover it to see the title and branches, or select it to
-open that pull request beside the current thread.
+open that pull request beside the current thread. On web and desktop, type `#` to browse the newest
+pull requests in the current project's repository. Continue typing digits to filter the recent list
+by any part of its pull request numbers. A complete number is also resolved directly, even when that
+pull request is older than the recent list. Type a single word after `#` to search pull requests in
+the repository by text. Choose a result to insert it as a chip.
 
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
