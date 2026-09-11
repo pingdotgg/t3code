@@ -10,7 +10,11 @@ const hostArch = process.arch;
 const hostPlatform = process.platform;
 
 const { values } = NodeUtil.parseArgs({
-  options: { output: { type: "string" }, arch: { type: "string", default: hostArch } },
+  options: {
+    output: { type: "string" },
+    arch: { type: "string", default: hostArch },
+    required: { type: "boolean", default: false },
+  },
 });
 
 if (hostPlatform === "linux") {
@@ -37,28 +41,38 @@ if (hostPlatform === "linux") {
     try {
       flags = NodeChildProcess.execFileSync("pkg-config", ["--cflags", "--libs", "libsecret-1"], {
         encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
       })
         .trim()
         .split(/\s+/);
     } catch (cause) {
-      throw new Error(
-        "Building the Linux browser import helper requires pkg-config and libsecret development headers (Ubuntu/Debian: libsecret-1-dev).",
-        { cause },
-      );
+      if (!values.required) {
+        console.warn(
+          "Skipping Linux browser import helper because pkg-config cannot find libsecret-1. Install pkg-config and libsecret-1-dev to enable Chromium cookie import.",
+        );
+        flags = undefined;
+      } else {
+        throw new Error(
+          "Building the Linux browser import helper requires pkg-config and libsecret development headers (Ubuntu/Debian: libsecret-1-dev).",
+          { cause },
+        );
+      }
     }
-    NodeFS.mkdirSync(NodePath.dirname(output), { recursive: true });
-    const temporary = `${output}.${process.pid}.tmp`;
-    try {
-      NodeChildProcess.execFileSync(
-        process.env.CC || "cc",
-        ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", source, "-o", temporary, ...flags],
-        { stdio: "inherit" },
-      );
-      if (!matchesArchitecture(temporary))
-        throw new Error(`C compiler did not produce a Linux ${values.arch} executable.`);
-      NodeFS.renameSync(temporary, output);
-    } finally {
-      NodeFS.rmSync(temporary, { force: true });
+    if (flags !== undefined) {
+      NodeFS.mkdirSync(NodePath.dirname(output), { recursive: true });
+      const temporary = `${output}.${process.pid}.tmp`;
+      try {
+        NodeChildProcess.execFileSync(
+          process.env.CC || "cc",
+          ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", source, "-o", temporary, ...flags],
+          { stdio: "inherit" },
+        );
+        if (!matchesArchitecture(temporary))
+          throw new Error(`C compiler did not produce a Linux ${values.arch} executable.`);
+        NodeFS.renameSync(temporary, output);
+      } finally {
+        NodeFS.rmSync(temporary, { force: true });
+      }
     }
   }
 }

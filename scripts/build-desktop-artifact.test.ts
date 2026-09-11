@@ -1116,6 +1116,50 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
+  it.effect("builds the Linux browser secret helper for a concrete architecture", () => {
+    const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        commands.push(command as unknown as (typeof commands)[number]);
+        return Effect.succeed(mockProcess(0));
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // `universal` is a mac-only arch the option type still admits. The helper
+      // script only knows x64 and arm64, so the request maps to x64, the same
+      // concrete target the Linux resource monitor resolves it to.
+      yield* stageBrowserSecret({
+        repoRoot: "/repo",
+        stageResourcesDir: "/stage/resources",
+        platform: "linux",
+        arch: "universal",
+        verbose: false,
+      });
+      const helper = commands.find((command) =>
+        command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
+      );
+      assert.isDefined(helper);
+      assert.include(helper.args, "--required");
+      const path = yield* Path.Path;
+      assert.deepStrictEqual(helper.args.slice(-4), [
+        "--arch",
+        "x64",
+        "--output",
+        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          spawnerLayer,
+          Layer.succeed(HostProcess.Platform, "linux"),
+          Layer.succeed(HostProcess.Architecture, "x64"),
+        ),
+      ),
+    );
+  });
+
   it.effect("refuses a Linux build on a host that cannot build the browser secret helper", () => {
     const commands: Array<{ readonly command: string }> = [];
     const spawnerLayer = Layer.succeed(

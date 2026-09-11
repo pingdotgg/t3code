@@ -9,8 +9,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 const hostArch = process.arch;
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Native compilation only runs on the actual Linux host.
 const hostPlatform = process.platform;
+const hasLibsecret =
+  hostPlatform === "linux" &&
+  NodeChildProcess.spawnSync("pkg-config", ["--exists", "libsecret-1"]).status === 0;
 
-describe.skipIf(hostPlatform !== "linux")("bundled libsecret helper", () => {
+describe.skipIf(hostPlatform !== "linux" || !hasLibsecret)("bundled libsecret helper", () => {
   let directory;
   let executable;
   beforeAll(() => {
