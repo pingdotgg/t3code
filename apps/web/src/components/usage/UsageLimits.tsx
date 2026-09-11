@@ -316,17 +316,17 @@ export function ResetCredits({
 
 /**
  * Subscription quota across every connected environment's providers and hubs,
- * pooled per provider. Countdowns anchor to render time rather than ticking: a
- * live clock would repaint the page every minute for no decision-changing gain.
+ * pooled per provider. The page advances `now` on explicit refresh rather than
+ * ticking: a live clock would repaint the page for no decision-changing gain.
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
+  now,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly now: number;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  // Anchored once per mount on purpose: countdowns must not tick (see above).
-  const [now] = useState(() => Date.now());
   const selected =
     selectedEnvironmentIds === null
       ? presentations
