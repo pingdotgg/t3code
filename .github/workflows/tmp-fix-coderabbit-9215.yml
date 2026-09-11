@@ -32,11 +32,12 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           core_path = Path("apps/server/src/vcs/GitVcsDriverCore.ts")
           core = core_path.read_text()
 
-          helper_anchor = '''export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {'''
+          helper_anchor = 'export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {'
           helper = '''const boundReviewDiffOutput = (
             diff: string,
             maxOutputBytes: number,
@@ -63,26 +64,33 @@ jobs:
                   raise SystemExit("makeGitVcsDriverCore anchor not found")
               core = core.replace(helper_anchor, helper + helper_anchor, 1)
 
-          old = '''          Effect.map(([tracked, untracked]) => ({
-            diff: [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
-              .filter((diff) => diff.length > 0)
-              .join("\\n"),
-            truncated: tracked.truncated || untracked.truncated,
-          })),'''
-          new = '''          Effect.map(([tracked, untracked]) => {
-            const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
-              .filter((diff) => diff.length > 0)
-              .join("\\n");
-            const bounded = boundReviewDiffOutput(combinedDiff, REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES);
-            return {
-              diff: bounded.diff,
-              truncated: tracked.truncated || untracked.truncated || bounded.truncated,
-            };
-          }),'''
-          if old in core:
-              core = core.replace(old, new, 1)
-          elif new not in core:
-              raise SystemExit("fallback join block not found")
+          pattern = re.compile(
+              r'Effect\.map\(\(\[tracked, untracked\]\) => \(\{\s*'
+              r'diff:\s*\[tracked\.diff\.trimEnd\(\), untracked\.diff\.trimEnd\(\)\]\s*'
+              r'\.filter\(\(diff\) => diff\.length > 0\)\s*'
+              r'\.join\("\\n"\),\s*'
+              r'truncated:\s*tracked\.truncated \|\| untracked\.truncated,\s*'
+              r'\}\)\),'
+          )
+          replacement = (
+              'Effect.map(([tracked, untracked]) => {\n'
+              '            const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]\n'
+              '              .filter((diff) => diff.length > 0)\n'
+              '              .join("\\n");\n'
+              '            const bounded = boundReviewDiffOutput(\n'
+              '              combinedDiff,\n'
+              '              REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,\n'
+              '            );\n'
+              '            return {\n'
+              '              diff: bounded.diff,\n'
+              '              truncated: tracked.truncated || untracked.truncated || bounded.truncated,\n'
+              '            };\n'
+              '          }),'
+          )
+          if "const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]" not in core:
+              core, count = pattern.subn(lambda _: replacement, core, count=1)
+              if count != 1:
+                  raise SystemExit(f"fallback join block replacements: {count}")
           core_path.write_text(core)
 
           test_path = Path("apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts")
