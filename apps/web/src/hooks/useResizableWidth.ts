@@ -29,14 +29,12 @@ export interface UseResizableWidthOptions {
   readonly edge: "left" | "right";
 }
 
-/** Everything a drag handle for this panel needs; spread onto the handle. */
 export interface ResizableWidthHandlers {
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
-  /** Restores `defaultWidth` and forgets the user's stored width. */
   readonly onDoubleClick: () => void;
 }
 
@@ -47,8 +45,7 @@ export interface ResizableWidthHandlers {
  *
  * The hook updates an internal `width` state during drag (so the panel
  * follows the cursor live) and only commits to localStorage when the user
- * lifts the pointer. Double-clicking the handle restores `defaultWidth`,
- * matching the app sidebar's rail.
+ * lifts the pointer. Double-clicking the handle restores `defaultWidth`.
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -192,11 +189,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [cancelDrag],
   );
 
-  // Fires after the second pointer release, so the pair of no-op drags a
-  // double-click produces has already settled and this write wins. The stored
-  // width is cleared rather than overwritten with `defaultWidth`: a forgotten
-  // preference keeps tracking the caller's default, which some surfaces derive
-  // from the viewport.
   const onDoubleClick = useCallback(() => {
     try {
       removeLocalStorageItem(storageKey);
