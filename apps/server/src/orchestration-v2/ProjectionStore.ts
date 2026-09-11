@@ -139,6 +139,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "latestRunCompletedAt"
   | "latestUserMessageAt"
   | "status"
+  | "activityRunStartedAt"
   | "activityRunStatus"
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
@@ -702,6 +703,7 @@ type ShellThreadRow = {
   readonly latest_run_completed_at: string | null;
   readonly active_run_id: string | null;
   readonly activity_run_status: string | null;
+  readonly activity_run_started_at: string | null;
   readonly last_error: string | null;
   readonly pending_request_payload_json: string | null;
   readonly latest_user_message_at: string | null;
@@ -1155,6 +1157,7 @@ export function threadShellFromProjection(
     latestRunCompletedAt: latestRun?.completedAt ?? null,
     activeRunId: activeRun?.id ?? null,
     activityRunStatus: activityRun?.status ?? null,
+    activityRunStartedAt: activityRun?.startedAt ?? activityRun?.requestedAt ?? null,
     status: latestRun?.status ?? "idle",
     lastError: providerSession?.lastError ?? null,
     pendingRuntimeRequest:
@@ -1244,6 +1247,7 @@ type ShellThreadState = {
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly activeRunId: RunId | null;
   readonly activityRunStatus: ShellActivityRunStatus | null;
+  readonly activityRunStartedAt: DateTime.Utc | null;
   readonly lastError: string | null;
   readonly pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null;
   readonly latestUserMessageAt: DateTime.Utc | null;
@@ -1377,6 +1381,7 @@ function shellFromState(input: {
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
+    activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
     lastError: input.state.lastError,
     pendingRuntimeRequest:
@@ -3864,6 +3869,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS activity_run_status,
               (
+                SELECT COALESCE(json_extract(r.payload_json, '$.startedAt'), r.requested_at)
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                  AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+                ORDER BY r.ordinal DESC, r.run_id DESC
+                LIMIT 1
+              ) AS activity_run_started_at,
+              (
                 SELECT json_extract(session.payload_json, '$.lastError')
                 FROM orchestration_v2_projection_provider_sessions session
                 INNER JOIN orchestration_v2_projection_provider_session_bindings binding
@@ -4123,6 +4136,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_message_at),
                   activityRunStatus: null,
+                  activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
@@ -4202,6 +4216,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? null
               : DateTime.makeUnsafe(row.latest_run_completed_at),
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
+          activityRunStartedAt:
+            row.activity_run_started_at === null
+              ? null
+              : DateTime.makeUnsafe(row.activity_run_started_at),
           activityRunStatus:
             row.activity_run_status === "preparing" ||
             row.activity_run_status === "starting" ||
