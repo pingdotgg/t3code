@@ -9,6 +9,7 @@ public struct DevicesView: View {
     @State private var errorMessage: String?
     @State private var revokeTarget: FeatureDeviceSession?
     @State private var showingRevokeOthers = false
+    @State private var operationGeneration: UInt64 = 0
 
     public init(manager: any FeatureDeviceManaging) {
         self.manager = manager
@@ -174,43 +175,65 @@ public struct DevicesView: View {
 
     @MainActor
     private func reload() async {
+        guard !isRevoking else { return }
+        operationGeneration &+= 1
+        let generation = operationGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if operationGeneration == generation { isLoading = false }
+        }
         do {
-            sessions = FeatureDeviceSession.sortedForDisplay(
+            let loaded = FeatureDeviceSession.sortedForDisplay(
                 try await manager.loadDeviceSessions()
             )
+            guard operationGeneration == generation else { return }
+            sessions = loaded
             errorMessage = nil
         } catch {
+            guard operationGeneration == generation else { return }
             errorMessage = DeviceManagementErrorCopy.message(for: error)
         }
     }
 
     @MainActor
     private func revoke(_ session: FeatureDeviceSession) async {
+        operationGeneration &+= 1
+        let generation = operationGeneration
+        isLoading = false
         isRevoking = true
         defer {
-            isRevoking = false
-            revokeTarget = nil
+            if operationGeneration == generation {
+                isRevoking = false
+                revokeTarget = nil
+            }
         }
         do {
             try await manager.revokeDeviceSession(id: session.id)
+            guard operationGeneration == generation else { return }
             sessions.removeAll { $0.id == session.id }
             errorMessage = nil
         } catch {
+            guard operationGeneration == generation else { return }
             errorMessage = DeviceManagementErrorCopy.message(for: error)
         }
     }
 
     @MainActor
     private func revokeOthers() async {
+        operationGeneration &+= 1
+        let generation = operationGeneration
+        isLoading = false
         isRevoking = true
-        defer { isRevoking = false }
+        defer {
+            if operationGeneration == generation { isRevoking = false }
+        }
         do {
             try await manager.revokeOtherDeviceSessions()
+            guard operationGeneration == generation else { return }
             sessions.removeAll { !$0.isCurrent }
             errorMessage = nil
         } catch {
+            guard operationGeneration == generation else { return }
             errorMessage = DeviceManagementErrorCopy.message(for: error)
         }
     }
