@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { OrchestrationV2DomainEvent, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -32,7 +33,8 @@ import {
 
 const readTranscript = Effect.fn("readOrchestratorReplayTranscript")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
   return yield* decodeProviderReplayNdjson(text);
 }, Effect.provide(NodeServices.layer));
 

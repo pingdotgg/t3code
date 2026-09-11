@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OrchestrationV2Command, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -18,7 +19,8 @@ import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationV2Command);
 const readTranscript = Effect.fn("readOrchestratorReplayContractTranscript")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
   return yield* decodeProviderReplayNdjson(text);
 }, Effect.provide(NodeServices.layer));
 

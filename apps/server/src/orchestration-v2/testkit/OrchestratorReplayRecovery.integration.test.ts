@@ -55,7 +55,8 @@ const decodeCodexTranscript = Schema.decodeUnknownEffect(
 );
 const readRawTranscript = Effect.fn("readRecoveryTranscript")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
   return yield* decodeProviderReplayNdjson(text);
 });
 const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (workspace: string) {

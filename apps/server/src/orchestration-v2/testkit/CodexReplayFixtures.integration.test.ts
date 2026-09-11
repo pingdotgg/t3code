@@ -4,6 +4,7 @@ import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
@@ -328,7 +329,8 @@ const decodeCodexTranscript = Schema.decodeUnknownEffect(
 );
 const readTranscript = Effect.fn("readCodexReplayFixture")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
   return yield* decodeProviderReplayNdjson(text);
 }, Effect.provide(NodeServices.layer));
 

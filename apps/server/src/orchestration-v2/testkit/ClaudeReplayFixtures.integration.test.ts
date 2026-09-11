@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
 import {
@@ -31,7 +32,8 @@ import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 const readTranscript = Effect.fn("readClaudeReplayFixture")(function* (file: URL) {
   const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
   return yield* decodeProviderReplayNdjson(text);
 }, Effect.provide(NodeServices.layer));
 
