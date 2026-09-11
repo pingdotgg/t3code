@@ -698,7 +698,7 @@ const collectOutput = Effect.fnUntraced(function* (
     bytes += chunkToDecode.byteLength;
     truncated = appendTruncationMarker && nextBytes > maxOutputBytes;
 
-    const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
+    const decoded = decoder.decode(chunkToDecode, { stream: true });
     text += decoded;
     lineBuffer += decoded;
     yield* emitCompleteLines(false);
@@ -2284,14 +2284,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
         const separator = diff.length > 0 ? "\n" : "";
         const next = `${separator}${result.stdout}`;
-        const nextBytes =
-          encoder.encode(separator).byteLength +
-          (result.stdoutTruncated
-            ? REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES
-            : encoder.encode(result.stdout).byteLength);
-        // A truncated result consumed exactly the per-file byte cap before decoding. Re-encoding
-        // a split UTF-8 code point can expand the replacement character and must not make the
-        // aggregate budget reject the only capped file.
+        const nextBytes = encoder.encode(next).byteLength;
         if (totalBytes + nextBytes > REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES) {
           truncated = true;
           aggregateLimitReached = true;
