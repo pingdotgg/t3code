@@ -1576,6 +1576,33 @@ it.layer(
       yield* cleared.manager.close({ threadId: "thread-1" });
       const afterCleared = yield* cleared.manager.open(openInput());
       assert.equal(afterCleared.history, "\u001b[>7u\u001b[=7;3u");
+
+      // libghostty-vt ignores set modes other than 1, 2, and 3, so the flags stay.
+      const unsupported = yield* createManager();
+      yield* unsupported.manager.open(openInput());
+      unsupported.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=0;4u");
+      yield* unsupported.manager.close({ threadId: "thread-1" });
+      const afterUnsupported = yield* unsupported.manager.open(openInput());
+      assert.equal(afterUnsupported.history, "\u001b[>7u\u001b[=0;4u\u001b[=0;1u");
+    }),
+  );
+
+  it.effect("ignores the 8-bit CSI byte like the client's replay parser does", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // A U+009B introducer is not a sequence to libghostty-vt, so a "clear"
+      // written that way never happened and the push still needs its reset.
+      process.emitData("\u001b[>7u\u009b=0;1u");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "\u001b[>7u\u009b=0;1u\u001b[=0;1u");
     }),
   );
 
