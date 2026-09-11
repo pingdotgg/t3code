@@ -98,6 +98,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
+import { ComposerThreadCostIndicator } from "./ThreadCostIndicator";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
@@ -1114,6 +1115,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
+  threadCost: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly createdAt: string;
+    readonly refreshKey: string | null;
+  } | null;
   activeContextWindow: ContextWindowSnapshot | null;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
@@ -1155,6 +1162,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.threadCost ? <ComposerThreadCostIndicator {...props.threadCost} /> : null}
       <ComposerPrimaryActions
         compact={props.compact}
         pendingAction={props.pendingAction}
@@ -1481,6 +1489,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const threadCostId = activeThread?.id;
+  const threadCostCreatedAt = activeThread?.createdAt;
+  const threadCostRefreshKey = activeContextWindow?.updatedAt ?? null;
+  const threadCost = useMemo(
+    () =>
+      threadCostId === undefined || threadCostCreatedAt === undefined
+        ? null
+        : {
+            environmentId,
+            threadId: threadCostId,
+            createdAt: threadCostCreatedAt,
+            refreshKey: threadCostRefreshKey,
+          },
+    [environmentId, threadCostId, threadCostCreatedAt, threadCostRefreshKey],
+  );
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -5846,6 +5869,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
+                    threadCost={threadCost}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
                     }

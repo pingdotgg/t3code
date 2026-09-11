@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import {
+  readCodexTranscriptIdentity,
+  readTranscriptRecords,
+  readTranscriptTitle,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -40,6 +44,31 @@ function codexMetaLine(): string {
     payload: { type: "session_meta", id: "codex-session-1" },
   })}\n`;
 }
+
+describe("readCodexTranscriptIdentity", () => {
+  it("reads session and cwd from the bounded rollout preamble", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    await NodeFSP.writeFile(
+      path,
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: "codex-session-1", cwd: "/work/app/.wt/thread-1" },
+      })}\n${"not valid usage json\n".repeat(1_000)}`,
+    );
+
+    assert.deepStrictEqual(await readCodexTranscriptIdentity(path), {
+      sessionId: "codex-session-1",
+      cwd: "/work/app/.wt/thread-1",
+    });
+  });
+
+  it("stops after the bounded preamble when metadata is absent", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    await NodeFSP.writeFile(path, `${JSON.stringify({ type: "other" })}\n`.repeat(101));
+
+    assert.isNull(await readCodexTranscriptIdentity(path));
+  });
+});
 
 function codexModelLine(model: string): string {
   return `${JSON.stringify({
@@ -206,5 +235,93 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("readTranscriptTitle", () => {
+  it("keeps a real prompt that begins with an angle bracket", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: "<3 ship this today" } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "<3 ship this today");
+  });
+
+  it("skips a known injected preamble and reads the next user prompt", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<system-reminder>generated context</system-reminder>" },
+        },
+        { type: "user", message: { content: "Fix the real bug" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Fix the real bug");
+  });
+
+  it("skips a user shell command wrapper", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "user",
+          message: { content: "<user_shell_command>git status</user_shell_command>" },
+        },
+        { type: "user", message: { content: "Explain the failing check" } },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), "Explain the failing check");
+  });
+
+  it("uses the child prompt instead of copied parent history for a forked Codex rollout", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    const message = (timestamp: string, text: string) => ({
+      type: "event_msg",
+      timestamp,
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+    });
+    await NodeFSP.writeFile(
+      file,
+      [
+        {
+          type: "session_meta",
+          timestamp: "2026-08-01T05:00:00.000Z",
+          payload: { type: "session_meta", id: "child", forked_from_id: "parent" },
+        },
+        message("2026-08-01T05:00:00.600Z", "First copied parent prompt"),
+        message("2026-08-01T05:00:01.100Z", "Second copied parent prompt"),
+        message("2026-08-01T05:00:02.500Z", "Investigate the child task"),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "codex"), "Investigate the child task");
+  });
+
+  it("truncates titles without splitting a Unicode code point", async () => {
+    const file = NodePath.join(dir, "session.jsonl");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({ type: "user", message: { content: `${"a".repeat(78)}🙂more` } }),
+    );
+
+    assert.strictEqual(await readTranscriptTitle(file, "claude"), `${"a".repeat(78)}🙂…`);
+  });
+
+  it("returns null when the title stream cannot be read", async () => {
+    assert.isNull(await readTranscriptTitle(NodePath.join(dir, "missing.jsonl"), "claude"));
   });
 });

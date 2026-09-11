@@ -18,7 +18,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -129,10 +129,17 @@ export function UsageRouteScreen() {
     }
     refreshingRef.current = true;
     setRefreshingUsage(true);
-    void refresh(nextWindow).finally(() => {
-      refreshingRef.current = false;
-      setRefreshingUsage(false);
-    });
+    void refresh(nextWindow)
+      .catch((error: unknown) => {
+        Alert.alert(
+          "Could not refresh usage",
+          error instanceof Error ? error.message : "Try again.",
+        );
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setRefreshingUsage(false);
+      });
   };
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
@@ -408,14 +415,14 @@ function ChartCard(props: {
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
-          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+          {metric === "cost" ? "Local public-list estimate" : "Processed tokens"}
         </Text>
         <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {metric === "cost"
-            ? "* if billed at full API rate"
+            ? "* estimated from local transcripts at public list rates"
             : `Across ${formatCount(merged.sessions)} sessions`}
         </Text>
       </View>
@@ -552,7 +559,16 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         <MetricCell
           label="Uncached input"
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail="fresh input tokens"
+        />
+        <MetricCell
+          label="Cache writes, estimated"
+          value={
+            merged.costQuality.cacheWriteUsd === null
+              ? "Unavailable"
+              : formatUsd(merged.costQuality.cacheWriteUsd)
+          }
+          detail={`${formatTokens(merged.cacheCreationTokens)} tokens · not an expiry measure`}
         />
         <MetricCell
           label="Output"
