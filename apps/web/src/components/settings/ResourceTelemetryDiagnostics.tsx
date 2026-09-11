@@ -889,7 +889,11 @@ export function ResourceTelemetryDiagnostics({
   const signalProcess = useCallback(
     async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
-      if (targetEnvironmentId === null || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
+      if (
+        targetEnvironmentId === null ||
+        !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+      )
+        return;
       const identityKey = processIdentityKey(process);
       if (signalingKeysRef.current.has(identityKey)) return;
       const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
@@ -923,7 +927,10 @@ export function ResourceTelemetryDiagnostics({
           return;
         }
       }
-      if (environmentIdRef.current !== targetEnvironmentId || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) {
+      if (
+        environmentIdRef.current !== targetEnvironmentId ||
+        !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+      ) {
         clearSignaling();
         return;
       }

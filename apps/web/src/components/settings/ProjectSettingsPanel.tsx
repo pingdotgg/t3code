@@ -1,3 +1,4 @@
+import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
@@ -172,14 +173,20 @@ function ProjectDetail({
     [environments],
   );
   const editableIds = useEnvironmentsWithScope(group.memberProjects, AuthOrchestrationOperateScope);
-  const canEditGroup = group.memberProjects.every((member) => editableIds.has(member.environmentId));
+  const canEditGroup = group.memberProjects.every((member) =>
+    editableIds.has(member.environmentId),
+  );
   const representative =
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
   const threads = useThreadShells();
-  const updateProject = useOrchestrationCommand(projectEnvironment.update, { reportFailure: false });
-  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, { reportFailure: false });
+  const updateProject = useOrchestrationCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
+  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
   const projectNameEditedRef = useRef(false);
 
   const faviconPath = representative.faviconPath ?? null;

@@ -213,16 +213,19 @@ export function ProjectActionsSettings() {
           className="text-warning"
         />
       ) : null}
-      <ProjectScriptEditorDialog
-        editScope={AuthSettingsWriteScope}
-        request={request}
-        scripts={scripts}
-        onSubmit={submit}
-        onDelete={(id) =>
-          void persist((current) => current.filter((script) => script.id !== id), id, null)
-        }
-        onClose={() => setRequest(null)}
-      />
+      {target && (
+        <ProjectScriptEditorDialog
+          environmentId={target.environmentId}
+          editScope={AuthSettingsWriteScope}
+          request={request}
+          scripts={scripts}
+          onSubmit={submit}
+          onDelete={(id) =>
+            void persist((current) => current.filter((script) => script.id !== id), id, null)
+          }
+          onClose={() => setRequest(null)}
+        />
+      )}
     </SettingsSection>
   );
 }
