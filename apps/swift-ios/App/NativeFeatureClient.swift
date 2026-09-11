@@ -3777,7 +3777,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 environment: environment, client: client, shell: shell, config: nil
             ))
             if membershipChanged { owner.rebuildEntityIndexes(saved) }
-            owner.publishAggregateSnapshot(saved, changedEnvironmentID: environment.id)
+            owner.publishAggregateSnapshot(saved)
             guard let shell else { return failureInterval }
             return changed || NativeFeatureClient.shellNeedsFrequentAggregateRefresh(shell)
                 ? fastInterval : idleInterval
@@ -3808,20 +3808,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         func applyCatalogue(_ config: ServerConfigSnapshot, environment: Environment, saved: [Environment]) {
             guard let owner, isCurrent else { return }
             owner.setServerConfig(config, environmentID: environment.id)
-            owner.publishAggregateSnapshot(saved, changedEnvironmentID: environment.id)
+            owner.publishAggregateSnapshot(saved)
         }
     }
 
-    private func publishAggregateSnapshot(
-        _ environments: [Environment], changedEnvironmentID: String? = nil
-    ) {
+    private func publishAggregateSnapshot(_ environments: [Environment]) {
         guard let activeEnvironment else { return }
         let connection = latestSnapshot?.connection
         publish(makeSnapshot(
             environments: environments, activeEnvironment: activeEnvironment,
             connectionState: connection?.state ?? .disconnected,
-            connectionDetail: connection?.detail,
-            changedEnvironmentID: changedEnvironmentID
+            connectionDetail: connection?.detail
         ))
     }
 
@@ -5141,29 +5138,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         environments: [Environment],
         activeEnvironment: Environment,
         connectionState: FeatureConnection.State,
-        connectionDetail: String? = nil,
-        changedEnvironmentID: String? = nil
+        connectionDetail: String? = nil
     ) -> FeatureSnapshot {
         let enabledEnvironments = environments.filter(\.isEnabled)
         let enabledIDs = Set(enabledEnvironments.map(\.id))
         shellProjectionCache = shellProjectionCache.filter { enabledIDs.contains($0.key) }
         var threads: [FeatureThread] = []
         var projects: [FeatureProject] = []
-        let previousThreads = changedEnvironmentID == nil ? [:]
-            : Dictionary(grouping: latestSnapshot?.threads ?? [], by: \.environmentID)
-        let previousProjects = changedEnvironmentID == nil ? [:]
-            : Dictionary(grouping: latestSnapshot?.projects ?? [], by: \.environmentID)
-        let previousEnvironments = Dictionary(uniqueKeysWithValues:
-            (latestSnapshot?.environments ?? []).map { ($0.id, $0) }
-        )
         for environment in enabledEnvironments {
-            if let changedEnvironmentID, environment.id != changedEnvironmentID,
-               previousEnvironments[environment.id]
-                == mapEnvironment(environment, activeID: activeEnvironment.id) {
-                threads.append(contentsOf: previousThreads[environment.id] ?? [])
-                projects.append(contentsOf: previousProjects[environment.id] ?? [])
-                continue
-            }
             // Take ownership while updating so the cache does not copy its
             // retained arrays when one row changes.
             var projection = shellProjectionCache.removeValue(forKey: environment.id)
@@ -5230,11 +5212,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let providersByEnvironment = enabledEnvironments.reduce(
             into: [String: [FeatureProvider]]()
         ) { catalogues, environment in
-            if let changedEnvironmentID, environment.id != changedEnvironmentID,
-               let previous = latestSnapshot?.providersByEnvironment?[environment.id] {
-                catalogues[environment.id] = previous
-                return
-            }
             guard let shell = shellsByEnvironmentID[environment.id] else { return }
             catalogues[environment.id] = mapProviders(
                 environmentID: environment.id,
