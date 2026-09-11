@@ -6,7 +6,7 @@ need a separate branch and working directory.
 ## Reveal the sidebar sky
 
 On web and desktop builds with sky artwork, pull down at the top of the thread
-list to reveal it. The clouds stay still. Release to return the list to rest.
+list to reveal it. Release to return the list to rest.
 On touch screens, reversing the pull or moving sideways cancels the reveal;
 lift your finger and start a new gesture to scroll the list. Browsers without
 support for detecting the end of a scroll keep the ordinary thread list.

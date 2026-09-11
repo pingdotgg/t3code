@@ -46,10 +46,6 @@ export function SidebarPullSurface({
       setDistance(0);
       touch = undefined;
     };
-    const listViewport = viewport();
-    const previousOverscroll = listViewport?.style.overscrollBehaviorY ?? "";
-    if (listViewport) listViewport.style.overscrollBehaviorY = "auto";
-    scroller.scrollTop = 720;
     const onScroll = () => {
       if (!hasArtwork() || !atTop()) {
         release();
@@ -127,7 +123,6 @@ export function SidebarPullSurface({
       release();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("scrollend", onScrollEnd);
-      if (listViewport) listViewport.style.overscrollBehaviorY = previousOverscroll;
       surface.removeEventListener("wheel", onWheel);
       surface.removeEventListener("touchstart", onTouchStart);
       surface.removeEventListener("touchmove", onTouchMove);
