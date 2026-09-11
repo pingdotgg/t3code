@@ -1076,14 +1076,7 @@ function ProjectDetail({
               }
               control={
                 <div className="flex items-center gap-2">
-                  <ProjectFavicon
-                    environmentId={representative.environmentId}
-                    cwd={representative.workspaceRoot}
-                    projectName={representative.title}
-                    faviconPath={faviconPath}
-                    projectIcon={projectIcon}
-                    className="size-6"
-                  />
+                  <ProjectFavicon project={representative} className="size-6" />
                   <Button
                     size="sm"
                     variant="outline"
@@ -1299,8 +1292,12 @@ function ProjectDetail({
                   <SelectPopup align="end" alignItemWithTrigger={false}>
                     <SelectItem value="inherit">Last selected</SelectItem>
                     <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
-                    <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
-                    <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
+                    <SelectItem value="squash">
+                      {PULL_REQUEST_MERGE_METHOD_LABELS.squash}
+                    </SelectItem>
+                    <SelectItem value="rebase">
+                      {PULL_REQUEST_MERGE_METHOD_LABELS.rebase}
+                    </SelectItem>
                   </SelectPopup>
                 </Select>
               }
