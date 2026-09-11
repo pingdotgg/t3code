@@ -204,6 +204,35 @@ describe("resizePreviewMiniPlayer", () => {
     ).toEqual({ x: 12, y: 300, width: 620, height: 388 });
   });
 
+  it("lets a player beside a tall composer keep its height on an edge drag", () => {
+    // A portrait player parked in the margin left of the composer, already
+    // taller than the rows above the composer, nudged from its right edge.
+    const phone = { width: 390, height: 844 };
+    const start = { x: 12, y: 100, width: 240, height: 519 };
+    const beside = { composer: { left: 300, right: 900, height: 300 } };
+    expect(
+      resizePreviewMiniPlayer({
+        start,
+        direction: "east",
+        delta: { x: 10, y: 0 },
+        source: phone,
+        container,
+        obstacles: beside,
+      }),
+    ).toEqual({ x: 12, y: 100, width: 250, height: 541 });
+    // The same drag with the composer under the player is still held above it.
+    expect(
+      resizePreviewMiniPlayer({
+        start: { ...start, x: 400 },
+        direction: "east",
+        delta: { x: 10, y: 0 },
+        source: phone,
+        container,
+        obstacles: beside,
+      }),
+    ).toMatchObject({ height: 376 });
+  });
+
   it("stops growing downward at the composer beneath the player's columns", () => {
     expect(
       resizePreviewMiniPlayer({

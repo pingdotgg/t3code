@@ -276,23 +276,23 @@ export function resizePreviewMiniPlayer(input: {
   const west = direction.includes("west");
   const north = direction.includes("north");
   const south = direction.includes("south");
-  const available = availableArea(container, obstacles);
   const right = start.x + start.width;
   const bottom = start.y + start.height;
-  // Growth stops where the player's current columns meet the composer. A wider
-  // player may reach new columns; the clamp below slides it clear of those.
+  // Growth stops where the player's current columns meet the composer, and a
+  // plain edge drag lets the free axis use everything those columns have. A
+  // wider player may reach new columns; the clamp below slides it clear.
   const floor = floorFor(spanOf(start.x, start.width), container, obstacles);
   const max = {
     width: west
       ? right - PREVIEW_MINI_PLAYER_EDGE_GAP
       : east
         ? container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - start.x
-        : available.width,
+        : container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
     height: north
       ? bottom - PREVIEW_MINI_PLAYER_EDGE_GAP
       : south
         ? floor - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
-        : available.height,
+        : floor - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
   };
   const desiredWidth = start.width + (east ? delta.x : west ? -delta.x : 0);
   const desiredHeight = start.height + (south ? delta.y : north ? -delta.y : 0);
