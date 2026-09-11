@@ -127,6 +127,7 @@ import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { MarkdownMermaidBlock } from "./MarkdownMermaidBlock";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -892,14 +893,17 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   children,
+  preview,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
   children: ReactNode;
+  preview?: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const [showSource, setShowSource] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -958,6 +962,18 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
+          {preview != null && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="chat-markdown-chrome-action"
+              aria-label={showSource ? "Show preview" : "Show source"}
+              onClick={() => setShowSource((value) => !value)}
+            >
+              {showSource ? "Preview" : "Source"}
+            </Button>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -995,7 +1011,7 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {preview != null && !showSource ? preview : children}
     </div>
   );
 }
@@ -3096,6 +3112,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
+        preview={
+          language.toLowerCase() === "mermaid" && !isStreaming ? (
+            <MarkdownMermaidBlock code={codeBlock.code} theme={resolvedTheme} />
+          ) : undefined
+        }
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}

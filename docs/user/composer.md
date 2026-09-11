@@ -6,6 +6,22 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Mermaid diagrams
+
+On web and desktop, use a `mermaid` fence to display a diagram:
+
+````markdown
+```mermaid
+flowchart LR
+  Draft --> Review --> Merge
+```
+````
+
+These previews work in sent messages and agent replies. You can switch between
+source and preview; copying a block preserves its original code. Diagrams appear
+after a reply finishes streaming. Invalid diagrams stay readable as source.
+Mobile displays these blocks as code.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can

@@ -5,6 +5,8 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import * as mermaidRendering from "../lib/mermaidRendering";
+import { MarkdownMermaidBlock } from "./MarkdownMermaidBlock";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
@@ -71,6 +73,99 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown Mermaid previews", () => {
+  it("renders Mermaid only after streaming ends and lets the user return to its source", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const renderDiagram = vi
+      .spyOn(mermaidRendering, "renderMermaidDiagram")
+      .mockResolvedValue("<svg><text>Draft</text></svg>");
+    const text = "```mermaid\nflowchart LR\nDraft-->Review\n```";
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={text} isStreaming parseRawHtml={false} />,
+          {
+            createNodeMock: (element) =>
+              element.type === "div" &&
+              (element.props as ComponentProps<"div">).className === "chat-markdown-mermaid"
+                ? {}
+                : null,
+          },
+        );
+      });
+      expect(renderDiagram).not.toHaveBeenCalled();
+      expect(renderer!.root.findAllByType(MarkdownMermaidBlock)).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={false} />);
+      });
+      expect(
+        renderer!.root.findByProps({ role: "img" }).props.dangerouslySetInnerHTML.__html,
+      ).toContain("Draft");
+      const copyPreview = codeButton(renderer!, "Copy code");
+      await act(async () => {
+        copyPreview.onClick?.({} as Parameters<NonNullable<typeof copyPreview.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("flowchart LR\nDraft-->Review\n");
+      const showSource = codeButton(renderer!, "Show source");
+      await act(async () => {
+        showSource.onClick?.({} as Parameters<NonNullable<typeof showSource.onClick>>[0]);
+      });
+      expect(renderer!.root.findAllByProps({ role: "img" })).toHaveLength(0);
+      const copySource = codeButton(renderer!, "Copied");
+      await act(async () => {
+        copySource.onClick?.({} as Parameters<NonNullable<typeof copySource.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("flowchart LR\nDraft-->Review\n");
+      const showPreview = codeButton(renderer!, "Show preview");
+      await act(async () => {
+        showPreview.onClick?.({} as Parameters<NonNullable<typeof showPreview.onClick>>[0]);
+      });
+      expect(
+        renderer!.root.findByProps({ role: "img" }).props.dangerouslySetInnerHTML.__html,
+      ).toContain("Draft");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("keeps malformed Mermaid source readable when diagram rendering fails", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.spyOn(mermaidRendering, "renderMermaidDiagram").mockRejectedValue(
+      new Error("Invalid diagram"),
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={"```mermaid\ninvalid diagram\n```"} />,
+          {
+            createNodeMock: (element) =>
+              element.type === "div" &&
+              (element.props as ComponentProps<"div">).className === "chat-markdown-mermaid"
+                ? {}
+                : null,
+          },
+        );
+      });
+      expect(renderer!.root.findByProps({ role: "status" }).children.join("")).toBe(
+        "Unable to render this diagram. Showing source.",
+      );
+      expect(renderer!.root.findByType("pre").findByType("code").children.join("")).toBe(
+        "invalid diagram\n",
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+});
 
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
