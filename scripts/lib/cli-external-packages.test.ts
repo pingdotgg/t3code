@@ -294,10 +294,12 @@ describe("findEsmImportsOfExternalPackages", () => {
       'import * as fs from "fs";',
       'import { createRequire } from "node:module";',
       'const pty = () => import("node-pty");',
+      'const data = () => import("@ff-labs/fff-bin-linux-x64-gnu", { with: { type: "json" } });',
       'const local = () => import("./chunk-abc.mjs");',
     ].join("\n");
 
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
+      "@ff-labs/fff-bin-linux-x64-gnu",
       "@ff-labs/fff-node",
       "node-pty",
     ]);

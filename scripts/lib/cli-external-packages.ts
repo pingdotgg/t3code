@@ -125,7 +125,7 @@ export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<
   const staticImport = /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
   const sideEffectImport = /^import\s+["']([^"']+)["']/gm;
   const reExport = /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
-  const dynamicImport = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
+  const dynamicImport = /\bimport\(\s*["']([^"']+)["']\s*[,)]/g;
   for (const pattern of [staticImport, sideEffectImport, reExport, dynamicImport]) {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1];
