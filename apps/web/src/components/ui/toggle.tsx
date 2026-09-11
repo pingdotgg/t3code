@@ -14,6 +14,7 @@ const toggleVariants = cva(
     },
     variants: {
       size: {
+        drawer: "h-8 w-10 px-[calc(--spacing(1.5)-1px)]",
         compact:
           "h-7 min-w-7 rounded-md px-[calc(--spacing(1)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 min-w-9 px-[calc(--spacing(2)-1px)] sm:h-8 sm:min-w-8",
@@ -24,6 +25,8 @@ const toggleVariants = cva(
         xs: "h-7 min-w-7 px-[calc(--spacing(1)-1px)] sm:h-6 sm:min-w-6 rounded-md",
       },
       variant: {
+        drawer:
+          "rounded-t-lg rounded-b-none border-b-0 border-border bg-muted shadow-none before:shadow-none data-pressed:bg-accent data-pressed:text-accent-foreground disabled:opacity-100 disabled:text-muted-foreground disabled:[&_svg]:opacity-100",
         default: "border-transparent",
         ghost:
           "border-transparent text-foreground shadow-none [:disabled,:active,[data-pressed]]:shadow-none before:shadow-none data-pressed:bg-accent data-pressed:text-accent-foreground disabled:opacity-100 disabled:text-muted-foreground disabled:[&_svg]:opacity-100",
