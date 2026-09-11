@@ -415,6 +415,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  resolveThreadSwitchTimeline,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
@@ -3239,6 +3240,19 @@ export default function ChatView(props: ChatViewProps) {
     timelineMessages,
     workLogEntries,
   ]);
+  const lastReadyTimelineRef = useRef<{
+    threadKey: string | null;
+    entries: typeof timelineEntries;
+  } | null>(null);
+  if (!threadDetailLoading && timelineEntries.length > 0) {
+    lastReadyTimelineRef.current = { threadKey: activeThreadKey, entries: timelineEntries };
+  }
+  const displayedTimeline = resolveThreadSwitchTimeline({
+    loading: threadDetailLoading,
+    activeThreadKey,
+    nextEntries: timelineEntries,
+    held: lastReadyTimelineRef.current,
+  });
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -8435,7 +8449,7 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col">
+            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={citationRequest}
@@ -8443,13 +8457,13 @@ export default function ChatView(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={activeThread.id}
+                key={displayedTimeline.displayThreadKey ?? activeThread.id}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
                 isCompacting={isCompacting}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
-                timelineEntries={timelineEntries}
+                timelineEntries={displayedTimeline.entries}
                 latestTurn={activeLatestTurn}
                 runningTurnId={activeRunningTurnId}
                 turnDiffSummaries={activeThread.checkpoints}

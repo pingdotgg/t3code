@@ -262,6 +262,30 @@ export function resolveDraftHeroState(input: {
   );
 }
 
+/**
+ * Keep the last ready timeline on screen while the next thread's detail is
+ * still loading. Remounting to an empty list punches a hole through the chat
+ * pane (white in light mode, blank in dark) for the whole snapshot wait.
+ */
+export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input: {
+  loading: boolean;
+  activeThreadKey: string | null;
+  nextEntries: T;
+  held: { threadKey: string | null; entries: T } | null;
+}): { entries: T; displayThreadKey: string | null } {
+  const held = input.held;
+  if (
+    input.loading &&
+    held !== null &&
+    held.threadKey !== null &&
+    held.threadKey !== input.activeThreadKey &&
+    held.entries.length > 0
+  ) {
+    return { entries: held.entries, displayThreadKey: held.threadKey };
+  }
+  return { entries: input.nextEntries, displayThreadKey: input.activeThreadKey };
+}
+
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
   serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;

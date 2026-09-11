@@ -59,6 +59,7 @@ import {
   resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
+  resolveThreadSwitchTimeline,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -562,6 +563,43 @@ describe("draft hero submission transition", () => {
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveThreadSwitchTimeline", () => {
+  const held = { threadKey: "thread-a", entries: ["a1", "a2"] };
+
+  it("keeps the previous thread's entries while the next thread is loading", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "thread-b",
+        nextEntries: [],
+        held,
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+  });
+
+  it("shows the new thread once its detail is ready", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "thread-b",
+        nextEntries: ["b1"],
+        held,
+      }),
+    ).toEqual({ entries: ["b1"], displayThreadKey: "thread-b" });
+  });
+
+  it("does not invent a timeline on the first open of a thread", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "thread-a",
+        nextEntries: [],
+        held: null,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "thread-a" });
   });
 });
 
