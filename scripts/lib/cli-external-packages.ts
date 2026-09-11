@@ -53,24 +53,6 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
-/**
- * External only so the bundler never has to resolve them.
- *
- * These are reached through a runtime-conditional dynamic import that Node
- * never takes, and they resolve `bun:*` specifiers that do not exist when
- * bundling for Node. Because Node never loads them, their dependency closure
- * does not need to be external — only the entry point must stay unbundled.
- */
-export const CLI_BUILD_ONLY_EXTERNAL_PREFIXES = [
-  "@effect/platform-bun",
-  "@effect/sql-sqlite-bun",
-] as const;
-
-export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
-  ...CLI_RUNTIME_EXTERNAL_PREFIXES,
-  ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
-] as const;
-
 export function isRuntimeExternalCliDependency(id: string): boolean {
   return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
 }
@@ -86,7 +68,7 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * inlined while node-pty (a declared dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return isRuntimeExternalCliDependency(id);
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */
@@ -114,40 +96,26 @@ export function selectCliRuntimeExternalDependencies(
  * have to be reached through `createRequire`, which reads the real filesystem
  * in every runtime. The bundler cannot enforce this, so the check reads what it
  * produced.
- *
- * Bun-only entry points are exempt: they sit behind a runtime-conditional
- * `import()` that Node never evaluates.
  */
 export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
   const specifiers = new Set<string>();
-  // `import x from`, `import "side-effect"`, and `export ... from` all load the
-  // module at evaluation time. Dynamic `import()` is deferred, which is the
-  // only form under which the Bun-only entry points are acceptable: they sit
-  // behind a runtime check Node never passes. Statically imported they would
-  // fail at evaluation like any other file-backed package.
-  const evaluatedPatterns = [
+  // `import x from`, `import "side-effect"`, `export ... from`, and `import()`
+  // all resolve through the module loader.
+  const patterns = [
     /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
     /^import\s+["']([^"']+)["']/gm,
     /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
+    /\bimport\(\s*["']([^"']+)["']\s*[,)]/g,
   ];
-  const dynamicImport = /\bimport\(\s*["']([^"']+)["']\s*[,)]/g;
-  const collect = (pattern: RegExp, allowBuildOnly: boolean) => {
+  for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier === undefined) continue;
       if (NodeModule.isBuiltin(specifier)) continue;
       if (specifier.startsWith("./") || specifier.startsWith("../")) continue;
-      if (
-        allowBuildOnly &&
-        CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => specifier.startsWith(prefix))
-      ) {
-        continue;
-      }
       specifiers.add(specifier);
     }
-  };
-  for (const pattern of evaluatedPatterns) collect(pattern, false);
-  collect(dynamicImport, true);
+  }
   return [...specifiers].sort();
 }
 

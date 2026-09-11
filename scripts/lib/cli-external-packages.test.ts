@@ -56,11 +56,6 @@ describe("shouldBundleCliDependency", () => {
     }
   });
 
-  it("leaves bun-only entry points external", () => {
-    assert.strictEqual(shouldBundleCliDependency("@effect/platform-bun"), false);
-    assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), false);
-  });
-
   // The real package is `node-gyp-build-optional-packages`, reached by prefix.
   // It is transitive to a selected dependency root, so the runtime closure test
   // below ensures it follows that root into the sidecar.
@@ -73,7 +68,6 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
     assert.deepStrictEqual(
       selectCliRuntimeExternalDependencies({
-        "@effect/platform-bun": "1.0.0",
         "@ff-labs/fff-node": "2.0.0",
         effect: "3.0.0",
         "node-pty": "4.0.0",
@@ -310,16 +304,6 @@ describe("findEsmImportsOfExternalPackages", () => {
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
       "ffi-rs",
       "msgpackr-extract",
-    ]);
-  });
-
-  it("ignores the bun-only entry points only behind a deferred import()", () => {
-    const deferred = 'const bun = () => import("@effect/platform-bun/BunServices");';
-    assert.deepStrictEqual(findEsmImportsOfExternalPackages(deferred), []);
-
-    const evaluated = 'import { layer } from "@effect/platform-bun/BunServices";';
-    assert.deepStrictEqual(findEsmImportsOfExternalPackages(evaluated), [
-      "@effect/platform-bun/BunServices",
     ]);
   });
 
