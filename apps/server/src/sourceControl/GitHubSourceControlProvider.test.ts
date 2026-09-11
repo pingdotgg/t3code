@@ -7,7 +7,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
-import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
+import { parseGitHubAuthStatus, parseGitHubAuthStatusText } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
 const processResult = (
@@ -398,5 +398,83 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
   assert.match(
     Option.getOrElse(auth.detail, () => ""),
     /2\.81\.0/,
+  );
+});
+
+it("reads the plain `gh auth status` fallback used by gh versions without --json", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(
+      [
+        "github.com",
+        "  ✓ Logged in to github.com account active-user (/home/dev/.config/gh/hosts.yml)",
+        "  - Active account: true",
+        "  - Git operations protocol: https",
+        "  - Token: gho_************************************",
+        "  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'",
+        "",
+      ].join("\n"),
+    ),
+  );
+
+  assert.deepStrictEqual(
+    {
+      status: auth.status,
+      account: auth.account,
+      host: auth.host,
+    },
+    {
+      status: "authenticated",
+      account: Option.some("active-user"),
+      host: Option.some("github.com"),
+    },
+  );
+});
+
+it("prefers the active account when plain `gh auth status` lists several", () => {
+  assert.deepStrictEqual(
+    parseGitHubAuthStatusText(
+      [
+        "github.com",
+        "  ✓ Logged in to github.com account stale-user (keyring)",
+        "  - Active account: false",
+        "  ✓ Logged in to github.com as active-user (keyring)",
+        "  - Active account: true",
+        "",
+      ].join("\n"),
+    ),
+    {
+      parsed: true,
+      accounts: [
+        {
+          host: "github.com",
+          account: "stale-user",
+          authenticated: true,
+          active: false,
+          error: null,
+        },
+        {
+          host: "github.com",
+          account: "active-user",
+          authenticated: true,
+          active: true,
+          error: null,
+        },
+      ],
+    },
+  );
+});
+
+it("does not read failed plain `gh auth status` logins as authenticated accounts", () => {
+  assert.deepStrictEqual(
+    parseGitHubAuthStatusText(
+      [
+        "github.com",
+        "  X Failed to log in to github.com account stale-user (keyring)",
+        "  - Active account: true",
+        "  - The token in keyring is invalid.",
+        "",
+      ].join("\n"),
+    ),
+    { parsed: false, accounts: [] },
   );
 });

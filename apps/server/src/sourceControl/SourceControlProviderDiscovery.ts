@@ -33,6 +33,12 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
+  /**
+   * Second auth probe for CLIs whose preferred flags only exist on newer releases. It runs only
+   * when `authArgs` leaves the status `unknown`, and its answer is used only when it resolves,
+   * so the richer probe still wins and its diagnostic survives when both fail.
+   */
+  readonly fallbackAuthArgs?: ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   readonly refineUnknownRemote?: (
@@ -209,6 +215,31 @@ function probeCli(input: {
     );
 }
 
+function probeCliAuth(input: {
+  readonly spec: SourceControlCliDiscoverySpec;
+  readonly process: VcsProcess.VcsProcess["Service"];
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+}): Effect.Effect<SourceControlProviderAuth> {
+  return input.process
+    .run({
+      operation: "source-control.discovery.auth",
+      command: input.spec.executable,
+      args: input.args,
+      cwd: input.cwd,
+      allowNonZeroExit: true,
+      timeoutMs: probeTimeoutMs(input.spec),
+      maxOutputBytes: 8_000,
+      appendTruncationMarker: true,
+    })
+    .pipe(
+      Effect.map((result) => input.spec.parseAuth(result)),
+      Effect.catch((cause) =>
+        Effect.succeed(unknownAuth(Option.getOrUndefined(detailFromCause(cause)))),
+      ),
+    );
+}
+
 export function probeSourceControlProvider(input: {
   readonly spec: SourceControlProviderDiscoverySpec;
   readonly process: VcsProcess.VcsProcess["Service"];
@@ -246,32 +277,26 @@ export function probeSourceControlProvider(input: {
         } satisfies SourceControlProviderDiscoveryItem);
       }
 
-      return input.process
-        .run({
-          operation: "source-control.discovery.auth",
-          command: spec.executable,
-          args: spec.authArgs,
-          cwd: input.cwd,
-          allowNonZeroExit: true,
-          timeoutMs: probeTimeoutMs(spec),
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map(
-            (result) =>
-              ({
-                ...item,
-                auth: spec.parseAuth(result),
-              }) satisfies SourceControlProviderDiscoveryItem,
-          ),
-          Effect.catch((cause) =>
-            Effect.succeed({
-              ...item,
-              auth: unknownAuth(Option.getOrUndefined(detailFromCause(cause))),
-            } satisfies SourceControlProviderDiscoveryItem),
-          ),
-        );
+      return probeCliAuth({
+        spec,
+        process: input.process,
+        cwd: input.cwd,
+        args: spec.authArgs,
+      }).pipe(
+        Effect.flatMap((auth) => {
+          const fallbackArgs = spec.fallbackAuthArgs;
+          if (auth.status !== "unknown" || fallbackArgs === undefined) {
+            return Effect.succeed(auth);
+          }
+          return probeCliAuth({
+            spec,
+            process: input.process,
+            cwd: input.cwd,
+            args: fallbackArgs,
+          }).pipe(Effect.map((fallback) => (fallback.status === "unknown" ? auth : fallback)));
+        }),
+        Effect.map((auth) => ({ ...item, auth }) satisfies SourceControlProviderDiscoveryItem),
+      );
     }),
   );
 }

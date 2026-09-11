@@ -169,6 +169,92 @@ it.effect("reports implemented tools separately from locally available executabl
   }).pipe(Effect.provide(testLayer));
 });
 
+it.effect("falls back to plain `gh auth status` when the installed gh rejects --json", () => {
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) => {
+      if (input.args[0] === "--version") {
+        return Effect.succeed(
+          processOutput(
+            input.command === "gh"
+              ? "gh version 2.46.0 (2025-12-13 Ubuntu 2.46.0-4)\n"
+              : `${input.command} version test\n`,
+          ),
+        );
+      }
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
+        return Effect.succeed(
+          processOutput("", {
+            stderr: "unknown flag: --json\n\nUsage:  gh auth status [flags]\n",
+            exitCode: ChildProcessSpawner.ExitCode(1),
+          }),
+        );
+      }
+      if (input.command === "gh" && input.args.join(" ") === "auth status") {
+        return Effect.succeed(
+          processOutput(`github.com
+  ✓ Logged in to github.com account octocat (/home/dev/.config/gh/hosts.yml)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+`),
+        );
+      }
+      return Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          cause: new Error(`${input.command} not found`),
+        }),
+      );
+    },
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const testLayer = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-legacy-gh-discovery-",
+      }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(
+      sourceControlProviderRegistryTestLayer({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+    const github = result.sourceControlProviders.find((item) => item.kind === "github");
+
+    assert.ok(github);
+    assert.deepStrictEqual(
+      {
+        auth: github.auth.status,
+        account: github.auth.account,
+        host: github.auth.host,
+        detail: github.auth.detail,
+      },
+      {
+        auth: "authenticated",
+        account: Option.some("octocat"),
+        host: Option.some("github.com"),
+        detail: Option.none(),
+      },
+    );
+  }).pipe(Effect.provide(testLayer));
+});
+
 it.effect("probes provider authentication without exposing token details", () => {
   const processMock = {
     run: (input: VcsProcess.VcsProcessInput) => {

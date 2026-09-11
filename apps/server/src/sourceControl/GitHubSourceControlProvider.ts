@@ -9,7 +9,11 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
-import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
+import {
+  findAuthenticatedGitHubAccount,
+  parseGitHubAuthStatus,
+  parseGitHubAuthStatusText,
+} from "./gitHubAuthStatus.ts";
 import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
@@ -50,7 +54,10 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const authStatus = parseGitHubAuthStatus(input.stdout);
+  const jsonStatus = parseGitHubAuthStatus(input.stdout);
+  // The JSON probe is preferred, but gh rejects `--json` before 2.81.0. `fallbackAuthArgs` reruns
+  // the same probe without the flag, and that plain text is what lands here on those versions.
+  const authStatus = jsonStatus.parsed ? jsonStatus : parseGitHubAuthStatusText(output);
   const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
   const host = authenticatedAccount?.host;
 
@@ -74,7 +81,8 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   }
 
   // gh gained `auth status --json` in 2.81.0. Older versions reject the flag and exit
-  // non-zero, which reads exactly like a signed-out CLI. Name the real problem instead.
+  // non-zero, which reads exactly like a signed-out CLI. The text fallback above covers the
+  // signed-in case, so only an unreadable old CLI reaches here.
   if (input.exitCode !== 0 && output.includes("unknown flag: --json")) {
     return providerAuth({
       status: "unknown",
@@ -105,6 +113,7 @@ export const discovery = {
   executable: "gh",
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
+  fallbackAuthArgs: ["auth", "status"],
   parseAuth: parseGitHubAuth,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",

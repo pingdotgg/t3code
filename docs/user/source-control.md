@@ -11,7 +11,7 @@ and choose **Rescan**.
 
 ### GitHub
 
-Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
+Install [GitHub CLI](https://cli.github.com/), then sign in:
 
 ```bash
 gh auth login
@@ -86,7 +86,7 @@ reopening a declined pull request.
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
   confirm the running server received the environment variables.
-- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
+- **GitHub sign-in cannot be verified:** update GitHub CLI, then rescan.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
