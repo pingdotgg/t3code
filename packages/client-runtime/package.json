@@ -179,6 +179,10 @@
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
     },
+    "./state/skills": {
+      "types": "./src/state/skills.ts",
+      "default": "./src/state/skills.ts"
+    },
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
