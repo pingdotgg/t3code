@@ -50,6 +50,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let aggregateIdleRefreshInterval: Duration
     private let aggregateFailureRefreshInterval: Duration
     private let aggregateRefreshSleep: @Sendable (Duration) async throws -> Void
+    private let aggregatePeerRefreshSleep: @Sendable (String, Duration) async throws -> Void
     private let environmentShellTimeoutInterval: TimeInterval
     private let threadSnapshotTimeoutInterval: TimeInterval
     private let catchUpDelay: @Sendable () async throws -> Void
@@ -112,6 +113,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var configurationTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
+    private(set) var aggregateRefreshWorkers: [
+        String: (environment: Environment, task: Task<Void, Never>)
+    ] = [:]
     private var shellPublishTask: Task<Void, Never>?
     private var archivedRefreshTask: Task<Void, Never>?
     private var detailRefreshTask: Task<Void, Never>?
@@ -153,6 +157,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        aggregatePeerRefreshSleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
         environmentShellTimeoutInterval: TimeInterval = 6,
         threadSnapshotTimeoutInterval: TimeInterval = 8,
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
@@ -192,6 +199,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.aggregateRefreshInterval = aggregateRefreshInterval
         self.aggregateIdleRefreshInterval = aggregateIdleRefreshInterval
         self.aggregateFailureRefreshInterval = aggregateFailureRefreshInterval
+        self.aggregatePeerRefreshSleep = aggregatePeerRefreshSleep
         self.aggregateRefreshSleep = aggregateRefreshSleep
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
@@ -208,6 +216,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
         aggregateRefreshTask?.cancel()
+        aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
         shellPublishTask?.cancel()
         archivedRefreshTask?.cancel()
         detailRefreshTask?.cancel()
@@ -253,6 +262,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             connectionDetail: activeIsReachable ? nil : "That server is currently unreachable."
         )
         latestSnapshot = snapshot
+        startAggregateRefresh(activeClient)
         return snapshot
     }
 
@@ -334,6 +344,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             pairedClient = try await runtime.pair(url: endpoint, clientLabel: "T3 Code Swift")
         }
         await adoptEnvironment(pairedClient.environment, client: pairedClient)
+        startAggregateRefresh(pairedClient)
         startPolling(pairedClient)
     }
 
@@ -410,6 +421,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
             publish(snapshot)
         }
+        startAggregateRefresh(managedClient)
         startPolling(managedClient)
     }
 
@@ -463,6 +475,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
         try await runtime.setEnabled(id: id, enabled: enabled)
         if !enabled {
+            aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
             environmentConnectionStates[id] = .disconnected
             environmentConnectionDetails[id] = nil
             environmentClients[id] = nil
@@ -482,6 +495,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             try await runtime.revokeCredential(id: id)
         }
         try await runtime.remove(id: id)
+        aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
         if removesActiveEnvironment {
             await clearActiveEnvironment(disconnectClient: false)
         }
@@ -853,18 +867,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ environment: Environment,
         client newClient: T3Client
     ) async {
+        cancelAggregateRefresh()
         if activeEnvironment?.id == environment.id, client === newClient {
             activeEnvironment = environment
             environmentClients[environment.id] = newClient
             latestShell = shellsByEnvironmentID[environment.id]
-            startAggregateRefresh(newClient)
             return
         }
         let previousClient = client
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
-        aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
@@ -880,7 +893,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if let previousClient, previousClient !== newClient {
             await previousClient.disconnect()
         }
-        startAggregateRefresh(newClient)
     }
 
     private func clearActiveEnvironment(disconnectClient: Bool = true) async {
@@ -888,7 +900,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
-        aggregateRefreshTask?.cancel()
+        cancelAggregateRefresh()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
@@ -3623,118 +3635,191 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     /// Non-active environments do not hold WebSocket subscriptions. A quiet
     /// HTTP refresh keeps their home rows and reachability useful without
     /// multiplying live streams or creating a high-frequency battery cost.
-    private func startAggregateRefresh(_ activeClient: T3Client) {
+    private func cancelAggregateRefresh() {
         aggregateRefreshTask?.cancel()
-        let generation = environmentGeneration
-        let refreshID = UUID()
-        let fastInterval = aggregateRefreshInterval
-        let idleInterval = aggregateIdleRefreshInterval
-        let failureInterval = aggregateFailureRefreshInterval
-        let sleep = aggregateRefreshSleep
-        let loadEnvironments = aggregateEnvironmentLoader
-        aggregateRefreshID = refreshID
-        aggregateRefreshTask = Task { [weak self] in
-            var nextInterval = fastInterval
-            var failureBackoffs: [String: Duration] = [:]
-            while !Task.isCancelled {
-                let elapsedInterval = nextInterval
+        aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
+        aggregateRefreshWorkers.removeAll()
+        aggregateRefreshID = nil
+    }
+
+    private func startAggregateRefresh(_ activeClient: T3Client) {
+        cancelAggregateRefresh()
+        let context = AggregateRefreshContext(owner: self, activeClient: activeClient)
+        aggregateRefreshID = context.refreshID
+        aggregateRefreshTask = Task {
+            defer { context.cancelWorkers() }
+            while context.isCurrent {
+                var interval = context.fastInterval
                 do {
-                    try await sleep(nextInterval)
-                } catch {
-                    return
-                }
-                guard let self,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ),
-                      let activeEnvironment = self.activeEnvironment else {
-                    return
-                }
-                let environments: [Environment]
-                do {
-                    environments = try await loadEnvironments(self.runtime)
+                    let environments = try await context.loadEnvironments(context.runtime)
+                    guard context.isCurrent else { return }
+                    interval = context.reconcileWorkers(environments)
                 } catch is CancellationError where Task.isCancelled {
                     return
                 } catch {
-                    // Persistence can be briefly unavailable while another
-                    // actor atomically replaces the environment document.
-                    // Back off while keeping the loop alive for recovery.
-                    nextInterval = failureInterval
-                    continue
+                    interval = context.failureInterval
                 }
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let passiveEnvironments = environments.filter {
-                    $0.isEnabled && $0.id != activeEnvironment.id
-                }
-                guard !passiveEnvironments.isEmpty else {
-                    nextInterval = idleInterval
-                    continue
-                }
-                let passiveIDs = Set(passiveEnvironments.map(\.id))
-                failureBackoffs = failureBackoffs.reduce(into: [:]) { result, entry in
-                    guard passiveIDs.contains(entry.key) else { return }
-                    result[entry.key] = max(.zero, entry.value - elapsedInterval)
-                }
-                let refreshableEnvironments = passiveEnvironments.filter {
-                    failureBackoffs[$0.id, default: .zero] <= .zero
-                }
-                guard !refreshableEnvironments.isEmpty else {
-                    nextInterval = fastInterval
-                    continue
-                }
-                let loads = await self.loadEnvironmentShells(refreshableEnvironments)
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let shellsChanged = loads.contains { load in
-                    guard let shell = load.shell else { return false }
-                    return shell != self.shellsByEnvironmentID[load.environment.id]
-                }
-                let hasActiveWork = loads.contains { load in
-                    load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
-                }
-                for load in loads {
-                    if load.shell == nil {
-                        failureBackoffs[load.environment.id] = failureInterval
-                    } else {
-                        failureBackoffs[load.environment.id] = nil
+                do { try await context.sleep(interval) } catch { return }
+            }
+        }
+    }
+
+    /// A worker retains runtime inputs, never its UI owner across a suspension.
+    /// This lets deinit cancel the exact outstanding shell/catalogue tasks.
+    @MainActor
+    private final class AggregateRefreshContext {
+        weak var owner: NativeFeatureClient?
+        let runtime: EnvironmentRuntime
+        let activeClient: T3Client
+        let generation: Int
+        let refreshID = UUID()
+        let fastInterval: Duration
+        let idleInterval: Duration
+        let failureInterval: Duration
+        let shellTimeout: TimeInterval
+        let sleep: @Sendable (Duration) async throws -> Void
+        let peerSleep: @Sendable (String, Duration) async throws -> Void
+        let loadEnvironments: @Sendable (EnvironmentRuntime) async throws -> [Environment]
+
+        init(owner: NativeFeatureClient, activeClient: T3Client) {
+            self.owner = owner
+            runtime = owner.runtime
+            self.activeClient = activeClient
+            generation = owner.environmentGeneration
+            fastInterval = owner.aggregateRefreshInterval
+            idleInterval = owner.aggregateIdleRefreshInterval
+            failureInterval = owner.aggregateFailureRefreshInterval
+            shellTimeout = owner.environmentShellTimeoutInterval
+            sleep = owner.aggregateRefreshSleep
+            peerSleep = owner.aggregatePeerRefreshSleep
+            loadEnvironments = owner.aggregateEnvironmentLoader
+        }
+
+        var isCurrent: Bool {
+            !Task.isCancelled && owner?.aggregateRefreshID == refreshID
+                && owner?.isCurrentSession(client: activeClient, generation: generation) == true
+        }
+
+        func cancelWorkers() {
+            guard let owner, owner.aggregateRefreshID == refreshID else { return }
+            owner.aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
+            owner.aggregateRefreshWorkers.removeAll()
+        }
+
+        func reconcileWorkers(_ environments: [Environment]) -> Duration {
+            guard let owner, isCurrent else { return idleInterval }
+            let passive = environments.filter { $0.isEnabled && $0.id != owner.activeEnvironment?.id }
+            let current = Dictionary(uniqueKeysWithValues: passive.map { ($0.id, $0) })
+            for (id, worker) in owner.aggregateRefreshWorkers where current[id] != worker.environment {
+                worker.task.cancel()
+                owner.aggregateRefreshWorkers[id] = nil
+            }
+            // Prune once per topology check, not once per shell result.
+            owner.reconcileEnvironmentLoads([], savedEnvironments: environments)
+            if owner.latestSnapshot?.environments != environments.map({
+                owner.mapEnvironment($0, activeID: owner.activeEnvironment?.id)
+            }) {
+                owner.publishAggregateSnapshot(environments)
+            }
+            for environment in passive where owner.aggregateRefreshWorkers[environment.id] == nil {
+                let task = Task {
+                    await withTaskGroup(of: Void.self) { group in
+                        group.addTask { await self.refreshShell(environment) }
+                        group.addTask { await self.refreshCatalogue(environment) }
                     }
                 }
-                self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
-                let currentConnection = self.latestSnapshot?.connection
-                    ?? FeatureConnection(
-                        state: .disconnected,
-                        environmentName: activeEnvironment.label,
-                        endpoint: activeEnvironment.httpBaseURL.absoluteString
-                    )
-                let snapshot = self.makeSnapshot(
-                    environments: environments,
-                    activeEnvironment: activeEnvironment,
-                    connectionState: currentConnection.state,
-                    connectionDetail: currentConnection.detail
-                )
-                self.publish(snapshot)
-                if shellsChanged || hasActiveWork {
-                    nextInterval = fastInterval
-                } else {
-                    nextInterval = idleInterval
+                owner.aggregateRefreshWorkers[environment.id] = (environment, task)
+            }
+            return passive.isEmpty ? idleInterval : fastInterval
+        }
+
+        /// Revalidate membership after suspension, including endpoint edits.
+        /// Persistence errors retry; removed or disabled peers end their work.
+        func currentEnvironments(for environment: Environment) async throws -> [Environment]? {
+            guard isCurrent else { return nil }
+            let environments = try await runtime.environments()
+            guard isCurrent, environments.contains(environment), environment.isEnabled,
+                  owner?.activeEnvironment?.id != environment.id else { return nil }
+            return environments
+        }
+
+        func refreshShell(_ environment: Environment) async {
+            var interval = fastInterval
+            while isCurrent {
+                do {
+                    try await peerSleep(environment.id, interval)
+                    guard try await currentEnvironments(for: environment) != nil else { return }
+                    let client = await runtime.client(for: environment)
+                    guard isCurrent else { return }
+                    let shell = try? await client.shellSnapshot(timeoutInterval: shellTimeout)
+                    guard let environments = try await currentEnvironments(for: environment) else { return }
+                    interval = applyShell(shell, client: client, environment: environment, saved: environments)
+                } catch is CancellationError where Task.isCancelled {
+                    return
+                } catch {
+                    interval = failureInterval
                 }
             }
         }
+
+        func applyShell(
+            _ shell: OrchestrationShellSnapshot?, client: T3Client,
+            environment: Environment, saved: [Environment]
+        ) -> Duration {
+            guard let owner, isCurrent else { return failureInterval }
+            let previous = owner.shellsByEnvironmentID[environment.id]
+            let changed = shell.map { $0 != previous } ?? false
+            let membershipChanged = shell.map {
+                $0.projects.map(\.id) != previous?.projects.map(\.id)
+                    || $0.threads.map(\.id) != previous?.threads.map(\.id)
+            } ?? false
+            owner.applyEnvironmentLoad(EnvironmentShellLoad(
+                environment: environment, client: client, shell: shell, config: nil
+            ))
+            if membershipChanged { owner.rebuildEntityIndexes(saved) }
+            owner.publishAggregateSnapshot(saved)
+            guard let shell else { return failureInterval }
+            return changed || NativeFeatureClient.shellNeedsFrequentAggregateRefresh(shell)
+                ? fastInterval : idleInterval
+        }
+
+        func refreshCatalogue(_ environment: Environment) async {
+            while isCurrent && owner?.serverConfigsByEnvironmentID[environment.id] == nil {
+                do {
+                    guard try await currentEnvironments(for: environment) != nil else { return }
+                    // Never disconnect the shared client if this peer becomes selected.
+                    let probe = await runtime.ephemeralClient(for: environment)
+                    let config = try? await probe.serverConfig()
+                    await probe.disconnect()
+                    guard let environments = try await currentEnvironments(for: environment) else { return }
+                    if let config {
+                        applyCatalogue(config, environment: environment, saved: environments)
+                        return
+                    }
+                } catch is CancellationError where Task.isCancelled {
+                    return
+                } catch {
+                    // Retry a transient environment-document read just like a failed probe.
+                }
+                do { try await Task.sleep(for: failureInterval) } catch { return }
+            }
+        }
+
+        func applyCatalogue(_ config: ServerConfigSnapshot, environment: Environment, saved: [Environment]) {
+            guard let owner, isCurrent else { return }
+            owner.setServerConfig(config, environmentID: environment.id)
+            owner.publishAggregateSnapshot(saved)
+        }
+    }
+
+    private func publishAggregateSnapshot(_ environments: [Environment]) {
+        guard let activeEnvironment else { return }
+        let connection = latestSnapshot?.connection
+        publish(makeSnapshot(
+            environments: environments, activeEnvironment: activeEnvironment,
+            connectionState: connection?.state ?? .disconnected,
+            connectionDetail: connection?.detail
+        ))
     }
 
     nonisolated private static func shellNeedsFrequentAggregateRefresh(
@@ -4453,28 +4538,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             savedIDs.contains($0.key)
         }
 
-        for load in loads {
-            environmentClients[load.environment.id] = load.client
-            if let config = load.config {
-                setServerConfig(config, environmentID: load.environment.id)
-                if load.environment.id == activeEnvironment?.id {
-                    latestServerConfig = config
-                }
-            }
-            if let shell = load.shell {
-                if shell.snapshotSequence
-                    >= (shellsByEnvironmentID[load.environment.id]?.snapshotSequence ?? .min) {
-                    shellsByEnvironmentID[load.environment.id] = shell
-                }
-                environmentConnectionStates[load.environment.id] = .connected
-                environmentConnectionDetails[load.environment.id] = nil
-            } else {
-                environmentConnectionStates[load.environment.id] = .disconnected
-                environmentConnectionDetails[load.environment.id] =
-                    "That server is currently unreachable."
+        for load in loads { applyEnvironmentLoad(load) }
+        rebuildEntityIndexes(savedEnvironments)
+    }
+
+    private func applyEnvironmentLoad(_ load: EnvironmentShellLoad) {
+        environmentClients[load.environment.id] = load.client
+        if let config = load.config {
+            setServerConfig(config, environmentID: load.environment.id)
+            if load.environment.id == activeEnvironment?.id {
+                latestServerConfig = config
             }
         }
-        rebuildEntityIndexes(savedEnvironments)
+        if let shell = load.shell {
+            if shell.snapshotSequence
+                >= (shellsByEnvironmentID[load.environment.id]?.snapshotSequence ?? .min) {
+                shellsByEnvironmentID[load.environment.id] = shell
+            }
+            environmentConnectionStates[load.environment.id] = .connected
+            environmentConnectionDetails[load.environment.id] = nil
+        } else {
+            environmentConnectionStates[load.environment.id] = .disconnected
+            environmentConnectionDetails[load.environment.id] =
+                "That server is currently unreachable."
+        }
     }
 
     private func newestShell(
