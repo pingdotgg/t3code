@@ -1,6 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import type { ProviderInstanceId, SourceControlWritingStyleMode } from "@t3tools/contracts";
+import type {
+  ProviderInstanceId,
+  ServerSettings,
+  SourceControlWritingStyleMode,
+} from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
@@ -57,13 +61,29 @@ export function SourceControlWritingSettingsSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments } = useSettingsScope();
+  const { environment, connectedEnvironments, targets } = useSettingsScope();
   // The representative supplies the provider list; a model choice is checked
   // against every target before it fans out.
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  const writingStyleMixed = useScopedSettingsMixed(["sourceControlWritingStyle"]);
+  // The writing style is one object; each control only cares about its own field.
+  const styleFieldMixed = (field: keyof ServerSettings["sourceControlWritingStyle"]) => {
+    const first = targets[0];
+    return (
+      first !== undefined &&
+      targets.some(
+        (candidate) =>
+          candidate.settings.sourceControlWritingStyle[field] !==
+          first.settings.sourceControlWritingStyle[field],
+      )
+    );
+  };
+  const modeMixed = styleFieldMixed("mode");
+  const instructionsMixed = styleFieldMixed("customInstructions");
+  const templatesMixed = styleFieldMixed("followChangeRequestTemplates");
+  const writingStyleMixed = modeMixed || instructionsMixed;
+  const mixedWriterModel = useScopedSettingsMixed(["sourceControlWriterModelSelection"]);
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editingAllInstructions, setEditingAllInstructions] = useState(false);
   const [allInstructions, setAllInstructions] = useState<string | null>(null);
@@ -128,7 +148,7 @@ export function SourceControlWritingSettingsSection() {
         }
         control={
           <Select
-            value={style.mode}
+            value={modeMixed ? null : style.mode}
             onValueChange={(value) => {
               const customInstructions = customInstructionsRef.current?.value.trim();
               updateSettings({
@@ -144,7 +164,11 @@ export function SourceControlWritingSettingsSection() {
               className="w-full sm:w-56"
               aria-label="Source control writing style"
             >
-              <SelectValue>{MODE_OPTIONS[style.mode].label}</SelectValue>
+              <SelectValue placeholder="Mixed">
+                {(value: SourceControlWritingStyleMode | null) =>
+                  value === null ? null : MODE_OPTIONS[value].label
+                }
+              </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
@@ -224,7 +248,7 @@ export function SourceControlWritingSettingsSection() {
         {...searchableSetting("follow-change-request-templates")}
         description="Use the repository's template for change request descriptions when available."
         resetAction={
-          writingStyleMixed ||
+          templatesMixed ||
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
               label="change request templates"
@@ -240,7 +264,8 @@ export function SourceControlWritingSettingsSection() {
         }
         control={
           <Switch
-            checked={style.followChangeRequestTemplates}
+            mixed={templatesMixed}
+            checked={templatesMixed ? false : style.followChangeRequestTemplates}
             onCheckedChange={(checked) =>
               updateSettings({
                 sourceControlWritingStyle: {
@@ -280,6 +305,7 @@ export function SourceControlWritingSettingsSection() {
                   triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   triggerAriaLabel="Source control writer model"
+                  {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
                   {...(environmentId
                     ? {
                         onOpenProviderSetup: (instanceId: ProviderInstanceId) => {

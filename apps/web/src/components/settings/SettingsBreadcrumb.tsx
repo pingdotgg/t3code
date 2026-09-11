@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { ChevronDownIcon, LayersIcon } from "lucide-react";
+import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
@@ -48,6 +48,8 @@ export interface SettingsScopeBreadcrumbProps {
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
   readonly onChange: (next: SettingsScopeSearch) => void;
+  /** Pages that are per machine have no project axis to show. */
+  readonly environmentOnly?: boolean;
 }
 
 /**
@@ -83,10 +85,14 @@ export function SettingsBreadcrumb({
           <WorkspaceBreadcrumbItem className="min-w-0 shrink">
             <EnvironmentScopeMenu {...scope} />
           </WorkspaceBreadcrumbItem>
-          <WorkspaceBreadcrumbSeparator />
-          <WorkspaceBreadcrumbItem className="min-w-0 shrink">
-            <ProjectScopeMenu {...scope} />
-          </WorkspaceBreadcrumbItem>
+          {scope.environmentOnly ? null : (
+            <>
+              <WorkspaceBreadcrumbSeparator />
+              <WorkspaceBreadcrumbItem className="min-w-0 shrink">
+                <ProjectScopeMenu {...scope} />
+              </WorkspaceBreadcrumbItem>
+            </>
+          )}
         </>
       ) : null}
     </WorkspaceBreadcrumb>
@@ -111,16 +117,12 @@ function ScopeMenu({
       <MenuTrigger
         aria-label={ariaLabel}
         className={cn(
-          "group/settings-scope inline-flex min-w-0 max-w-56 cursor-pointer items-center gap-1.5 rounded-sm text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          "inline-flex min-w-0 max-w-56 cursor-pointer items-center gap-1.5 rounded-sm text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
           narrowed ? "text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
         {icon}
         <span className="min-w-0 truncate">{label}</span>
-        <ChevronDownIcon
-          aria-hidden
-          className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/settings-scope:opacity-100 group-focus-visible/settings-scope:opacity-100 group-data-popup-open/settings-scope:opacity-100"
-        />
       </MenuTrigger>
       <MenuPopup align="start" className="w-64 max-w-[calc(100vw-2rem)]">
         {children}

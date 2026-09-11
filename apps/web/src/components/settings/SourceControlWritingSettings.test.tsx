@@ -25,7 +25,9 @@ vi.mock("./SettingsScopeContext", () => ({
     scope: { kind: "all", environmentIds: [] },
     environment: null,
     connectedEnvironments: [],
-    targets: [],
+    targets: state.styles.map((style) => ({
+      settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
+    })),
   }),
 }));
 vi.mock("./useScopedModelAvailability", () => ({
@@ -201,15 +203,9 @@ describe("mixed source control instructions", () => {
     expect(state.styles.map((style) => style.customInstructions)).toEqual(["", ""]);
   });
 
-  it("resets the draft when the bulk editor reopens", () => {
+  it("shows the plain editor once instructions agree, even while templates differ", () => {
     openEditor();
     editInstructions("Shared instructions");
-    applyInstructions();
-
-    // Template preferences still differ, so this row remains mixed after the save.
-    openEditor();
-    expect(renderer!.root.findByType("textarea").props.value).toBe("");
-    expect(button("Apply instructions to all").props.disabled).toBe(true);
     applyInstructions();
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
@@ -217,5 +213,9 @@ describe("mixed source control instructions", () => {
       "Shared instructions",
       "Shared instructions",
     ]);
+    // Template preferences still differ, but that is the templates row's
+    // concern: the instructions editor is no longer a bulk draft.
+    expect(button("Write custom instructions for all")).toBeUndefined();
+    expect(renderer!.root.findByType("textarea").props.defaultValue).toBe("Shared instructions");
   });
 });

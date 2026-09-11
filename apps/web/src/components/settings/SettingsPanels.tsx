@@ -69,7 +69,11 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -123,6 +127,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
@@ -1987,7 +1992,8 @@ function LegacyFeaturesSection() {
               {...searchableSetting("legacy-token-streaming")}
               description="Stream output token by token. This legacy mode is slower and harder to follow."
               control={
-                <Switch
+                <ScopedSwitch
+                  settingKeys={["enableLegacyTokenStreaming"]}
                   checked={settings.enableLegacyTokenStreaming}
                   onCheckedChange={(checked) => {
                     if (!checked) {
@@ -2095,6 +2101,9 @@ export function GeneralSettingsPanel() {
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
+  const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
+  const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
       ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: ${
@@ -2167,7 +2176,8 @@ export function GeneralSettingsPanel() {
                 ) : null
               }
               control={
-                <Switch
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleOnMerge"]}
                   checked={settings.sidebarAutoSettleOnMerge}
                   onCheckedChange={(checked) =>
                     updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
@@ -2197,7 +2207,8 @@ export function GeneralSettingsPanel() {
                 ) : null
               }
               control={
-                <Switch
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleAfterDays"]}
                   checked={settings.sidebarAutoSettleAfterDays !== null}
                   onCheckedChange={(checked) =>
                     updateSettings({
@@ -2426,7 +2437,8 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <Switch
+            <ScopedSwitch
+              settingKeys={["enableProviderUpdateChecks"]}
               checked={settings.enableProviderUpdateChecks}
               onCheckedChange={(checked) =>
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
@@ -2462,7 +2474,8 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <Switch
+            <ScopedSwitch
+              settingKeys={["continueThreadsAfterServerUpdate"]}
               checked={settings.continueThreadsAfterServerUpdate}
               disabled={!supportsRestartContinuation}
               onCheckedChange={(checked) =>
@@ -2498,7 +2511,7 @@ export function GeneralSettingsPanel() {
           control={
             <>
               <Select
-                value={backgroundActivityProfileOption}
+                value={mixedBackgroundActivity ? null : backgroundActivityProfileOption}
                 onValueChange={(value) => {
                   if (value === "advanced") {
                     if (isEnvironmentScope) setBackgroundActivityDialogOpen(true);
@@ -2518,8 +2531,10 @@ export function GeneralSettingsPanel() {
                   className="w-full sm:w-40"
                   aria-label="Background activity profile"
                 >
-                  <SelectValue>
-                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[backgroundActivityProfileOption]}
+                  <SelectValue placeholder="Mixed">
+                    {(value: BackgroundActivityProfileOption | null) =>
+                      value === null ? null : BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[value]
+                    }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -2586,7 +2601,8 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <Switch
+            <ScopedSwitch
+              settingKeys={["newWorktreesStartFromOrigin"]}
               checked={settings.newWorktreesStartFromOrigin}
               onCheckedChange={(checked) =>
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
@@ -2617,9 +2633,9 @@ export function GeneralSettingsPanel() {
             <DraftInput
               size="sm"
               className="w-full sm:w-72"
-              value={settings.addProjectBaseDirectory}
+              value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
               onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
-              placeholder="~/"
+              placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
               spellCheck={false}
               aria-label="Add project base directory"
             />
@@ -2787,6 +2803,7 @@ export function GeneralSettingsPanel() {
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
                   triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
                   {...(environmentId
                     ? {

@@ -287,7 +287,6 @@ export function SettingsRow({
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const clearOverrides = useClearScopedSettings();
-  const [editingMixed, setEditingMixed] = useState(false);
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
@@ -349,22 +348,19 @@ export function SettingsRow({
       </TooltipPopup>
     </Tooltip>
   );
+  // A mixed selection keeps the real control with "Mixed" as its placeholder
+  // (the multi-selection inspector convention): the popover shows who has
+  // what, and picking a value applies it to every target.
   const renderedControl =
-    mixed && !editingMixed && control ? (
-      <Button size="sm" variant="outline" onClick={() => setEditingMixed(true)}>
-        Set for all...
-      </Button>
-    ) : unavailable && control ? (
-      inertControl(
-        context
-          ? "Reconnect the selected environment to change this setting."
-          : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
-      )
-    ) : environmentWide && control ? (
-      inertControl("Environment-wide setting. Select an environment to change it.")
-    ) : (
-      control
-    );
+    unavailable && control
+      ? inertControl(
+          context
+            ? "Reconnect the selected environment to change this setting."
+            : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+        )
+      : environmentWide && control
+        ? inertControl("Environment-wide setting. Select an environment to change it.")
+        : control;
   // Server rows get an indicator beside the title that opens the resolution
   // chain per target at every scope; client rows keep a plain status only.
   const customized =
@@ -397,11 +393,7 @@ export function SettingsRow({
         keys={settingKeys}
       />
     ) : null;
-  const renderedStatus = renderedInheritance
-    ? status
-    : source !== null || mixed
-      ? inheritance.summary
-      : status;
+  const renderedStatus = status;
 
   return (
     <div

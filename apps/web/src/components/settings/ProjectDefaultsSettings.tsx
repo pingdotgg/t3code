@@ -186,6 +186,7 @@ export function ProjectDefaultsSettings({
                     modelOptionsByInstance={modelOptions}
                     triggerVariant="outline"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
                     getModelDisabledReason={modelDisabledReason}
                     onOpenProviderSetup={(instanceId) => {
                       if (representative)
@@ -251,19 +252,17 @@ export function ProjectDefaultsSettings({
             }
             control={
               <Select
-                value={mixedWorkspace ? "mixed" : settings.defaultThreadEnvMode}
+                value={mixedWorkspace ? null : settings.defaultThreadEnvMode}
                 onValueChange={(value) => {
                   if (value === "local" || value === "worktree")
                     updateSettings({ defaultThreadEnvMode: value });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Default workspace">
-                  <SelectValue>
-                    {unavailable
-                      ? "Unavailable"
-                      : mixedWorkspace
-                        ? "Mixed"
-                        : resolveEnvModeLabel(settings.defaultThreadEnvMode)}
+                  <SelectValue placeholder={unavailable ? "Unavailable" : "Mixed"}>
+                    {(value: string | null) =>
+                      value === "local" || value === "worktree" ? resolveEnvModeLabel(value) : null
+                    }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -298,7 +297,8 @@ export function ProjectDefaultsSettings({
           control={
             <Switch
               aria-label="Default automatic pull"
-              checked={settings.defaultAutoPull}
+              mixed={mixedAutoPull}
+              checked={mixedAutoPull ? false : settings.defaultAutoPull}
               onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
             />
           }
@@ -332,7 +332,8 @@ export function ProjectDefaultsSettings({
             control={
               <Switch
                 aria-label="Agent browser access"
-                checked={settings.enableAgentBrowserAccess}
+                mixed={mixedBrowser}
+                checked={mixedBrowser ? false : settings.enableAgentBrowserAccess}
                 onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}
               />
             }

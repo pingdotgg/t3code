@@ -53,7 +53,11 @@ const DEVICE_ONLY_PATHS = new Set([
   "/settings/snap-shot",
   "/settings/connections",
 ]);
-/** Pages that read machine-local state and cannot fan an edit out. */
+/**
+ * Pages that read one machine's state (binaries, credentials, processes) and
+ * cannot fan out. They show the environment crumb only and open on the primary
+ * environment instead of asking.
+ */
 const SINGLE_ENVIRONMENT_PATHS = new Set(["/settings/providers", "/settings/diagnostics"]);
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
@@ -106,23 +110,6 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   }
   if (scope.kind === "unavailable")
     return <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>;
-  // Provider instances and diagnostics belong to one machine: they hold
-  // credentials, binaries and process state that cannot fan out. Any
-  // selection that resolves to one environment works, including a project
-  // registered on a single environment.
-  if (
-    SINGLE_ENVIRONMENT_PATHS.has(pathname) &&
-    scope.environmentIds.length !== 1 &&
-    connectedEnvironments.length > 1
-  ) {
-    return (
-      <SettingsScopeNotice target="environment">
-        {pathname === "/settings/providers"
-          ? "Providers are configured per environment. Choose the environment to set up."
-          : "Diagnostics show one environment at a time. Choose which one to inspect."}
-      </SettingsScopeNotice>
-    );
-  }
   if (scope.kind === "environment" && connectedEnvironments.length === 0) {
     return (
       <p className="p-8 text-sm text-muted-foreground">
@@ -142,6 +129,7 @@ function SettingsContentLayout() {
   const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
+  const environmentOnly = SINGLE_ENVIRONMENT_PATHS.has(location.pathname);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -180,7 +168,7 @@ function SettingsContentLayout() {
               pathname={location.pathname}
               scope={
                 showScope
-                  ? { value: search, groups, environments, onChange: selectScope }
+                  ? { value: search, groups, environments, onChange: selectScope, environmentOnly }
                   : undefined
               }
             />
