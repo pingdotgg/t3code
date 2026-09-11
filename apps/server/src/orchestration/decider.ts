@@ -11,6 +11,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationThread,
   type ThreadPullRequestKey,
+  type ThreadId,
   type ThreadPullRequestLink,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
@@ -210,10 +211,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  checkoutDirectories,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly checkoutDirectories?: {
+    readonly target: string | null;
+    readonly byThread: ReadonlyMap<ThreadId, string | null>;
+  };
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -969,10 +975,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const worktreeGuardFailed =
         command.requireIdleWorktreePath !== undefined &&
         (thread.worktreePath !== command.requireIdleWorktreePath ||
+          checkoutDirectories?.target == null ||
+          checkoutDirectories.byThread.get(thread.id) !== checkoutDirectories.target ||
           readModel.threads.some(
             (other) =>
               other.id !== thread.id &&
-              other.worktreePath === command.requireIdleWorktreePath &&
+              // An unresolved active cwd cannot safely be ruled out as a sibling.
+              (checkoutDirectories.byThread.get(other.id) == null ||
+                checkoutDirectories.byThread.get(other.id) === checkoutDirectories.target) &&
               (other.session?.activeTurnId != null ||
                 other.session?.status === "starting" ||
                 other.session?.status === "running" ||
