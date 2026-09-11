@@ -109,15 +109,22 @@ function floorFor(
     : container.height;
 }
 
-// The largest box guaranteed to fit somewhere: full width, and the rows above the composer.
+/**
+ * The box a stored size is fitted into. A player with a position keeps the
+ * rows its own columns have, so a tall frame parked beside the composer
+ * survives the next layout pass; without one it takes the rows above the
+ * composer, which every column has.
+ */
 const availableArea = (
   container: PreviewMiniPlayerSize,
   obstacles: PreviewMiniPlayerObstacles,
+  span: HorizontalSpan | null,
 ): PreviewMiniPlayerSize => ({
   width: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
   height:
-    container.height -
-    Math.max(0, obstacles.composer?.height ?? 0) -
+    (span
+      ? floorFor(span, container, obstacles)
+      : container.height - Math.max(0, obstacles.composer?.height ?? 0)) -
     PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
 
@@ -240,7 +247,7 @@ export function resolvePreviewMiniPlayerFrame(input: {
   const size = fitPreviewMiniPlayerWidth(
     width ?? defaultPreviewMiniPlayerWidth(source),
     source,
-    availableArea(container, obstacles),
+    availableArea(container, obstacles, position && width ? spanOf(position.x, width) : null),
   );
   const anchored = position ?? {
     x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,

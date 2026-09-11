@@ -117,6 +117,30 @@ describe("resolvePreviewMiniPlayerFrame", () => {
     expect(frame).toEqual({ x: 100, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 602, height: 376 });
   });
 
+  it("keeps a tall frame parked beside the composer across layout passes", () => {
+    // The frame an edge resize produced in the left margin, resolved again from
+    // the stored width and position on the next render.
+    const phone = { width: 390, height: 844 };
+    const beside = { composer: { left: 300, right: 900, height: 300 } };
+    const resized = resizePreviewMiniPlayer({
+      start: { x: 12, y: 100, width: 240, height: 519 },
+      direction: "east",
+      delta: { x: 10, y: 0 },
+      source: phone,
+      container,
+      obstacles: beside,
+    });
+    expect(
+      resolvePreviewMiniPlayerFrame({
+        width: resized.width,
+        position: { x: resized.x, y: resized.y },
+        source: phone,
+        container,
+        obstacles: beside,
+      }),
+    ).toEqual(resized);
+  });
+
   it("never grows past the source's own rendered size", () => {
     expect(
       resolvePreviewMiniPlayerFrame({
