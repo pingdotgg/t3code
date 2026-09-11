@@ -175,21 +175,36 @@ stops if the upstream changed since T3 Code last fetched it.
 
 ### Run a command after pushing
 
-Add a `hooks.afterPush` command to `.t3code/vcs.json` to run a project-specific command after a
+Add `hooks.afterPush` commands to `.t3code/vcs.json` to run project-specific commands after a
 successful push:
 
 ```json
 {
   "hooks": {
-    "afterPush": "./scripts/populate-ci-cache"
+    "afterPush": ["./scripts/populate-ci-cache", "./scripts/notify-ci"]
   }
 }
 ```
 
-The command runs in the repository working directory through the host shell. T3 Code waits for it
-to finish and reports a non-zero exit status as an action failure. When the action also creates a
-pull or merge request, change-request creation runs concurrently with the command. The hook does not
-run when the branch is already up to date and no push occurs.
+The commands run sequentially in declaration order through the host shell, with the repository as
+their working directory. T3 Code stops at the first non-zero exit status and reports the action as a
+failure. When the action also creates a pull or merge request, change-request creation runs
+concurrently with the command sequence. The hook does not run when the branch is already up to date
+and no push occurs.
+
+To bypass the host shell and preserve argument boundaries, define each command as an argv-style
+array instead:
+
+```json
+{
+  "hooks": {
+    "afterPush": [
+      ["./scripts/populate-ci-cache", "--ref", "feature/example"],
+      ["./scripts/notify-ci"]
+    ]
+  }
+}
+```
 
 ## Review and merge
 

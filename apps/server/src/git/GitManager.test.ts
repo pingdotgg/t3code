@@ -1148,15 +1148,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const realProcess = yield* VcsProcess.VcsProcess;
       const hookFinishedMarker = NodePath.join(remoteDir, "hook-finished");
       const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-      const hookCommand = [
+      const hookCommands = [
         `git --git-dir=${shellQuote(remoteDir)} rev-parse refs/heads/feature/after-push-hook >/dev/null`,
         `printf '%s\\n' complete >${shellQuote(hookFinishedMarker)}`,
-      ].join(" && ");
+      ];
       NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
       NodeFS.writeFileSync(
         NodePath.join(repoDir, ".t3code", "vcs.json"),
         // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.stringify({ hooks: { afterPush: hookCommand } }),
+        JSON.stringify({ hooks: { afterPush: hookCommands } }),
       );
       NodeFS.writeFileSync(NodePath.join(repoDir, "after-push.txt"), "after push\n");
       yield* runGit(repoDir, ["add", ".t3code/vcs.json", "after-push.txt"]);
@@ -1197,18 +1197,70 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("fails the action when hooks.afterPush fails after a successful push", () =>
+  it.effect("runs argv-style hooks.afterPush commands sequentially", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/argv-after-push-hook"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const firstMarker = NodePath.join(remoteDir, "argv-first");
+      const finalMarker = NodePath.join(remoteDir, "argv-final");
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "vcs.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          hooks: {
+            afterPush: [
+              [
+                process.execPath,
+                "-e",
+                `require("node:fs").writeFileSync(process.argv[1], "first")`,
+                firstMarker,
+              ],
+              [
+                process.execPath,
+                "-e",
+                `const fs = require("node:fs"); if (fs.readFileSync(process.argv[1], "utf8") !== "first") process.exit(2); fs.writeFileSync(process.argv[2], process.argv[3])`,
+                firstMarker,
+                finalMarker,
+                "argument with spaces",
+              ],
+            ],
+          },
+        }),
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "argv-after-push.txt"), "after push\n");
+      yield* runGit(repoDir, ["add", ".t3code/vcs.json", "argv-after-push.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Exercise argv after-push hooks"]);
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+      });
+
+      expect(result.push.status).toBe("pushed");
+      expect(NodeFS.readFileSync(finalMarker, "utf8")).toBe("argument with spaces");
+    }),
+  );
+
+  it.effect("fails the action and stops remaining hooks.afterPush commands", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/failing-after-push-hook"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const skippedMarker = NodePath.join(remoteDir, "skipped-after-hook-failure");
+      const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
       NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
       NodeFS.writeFileSync(
         NodePath.join(repoDir, ".t3code", "vcs.json"),
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.stringify({ hooks: { afterPush: "exit 7" } }),
+        JSON.stringify({
+          hooks: { afterPush: ["exit 7", `touch ${shellQuote(skippedMarker)}`] },
+        }),
       );
       yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
       yield* runGit(repoDir, ["commit", "-m", "Configure failing after-push hook"]);
@@ -1220,6 +1272,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }).pipe(Effect.flip);
 
       expect(error.message).toContain("configured hooks.afterPush command failed");
+      expect(NodeFS.existsSync(skippedMarker)).toBe(false);
       expect(
         yield* runGit(remoteDir, [
           "show-ref",
@@ -1242,8 +1295,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
       NodeFS.writeFileSync(
         NodePath.join(repoDir, ".t3code", "vcs.json"),
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.stringify({ hooks: { afterPush: `touch ${shellQuote(marker)}` } }),
+        JSON.stringify({
+          hooks: { afterPush: [`touch ${shellQuote(marker)}`] },
+        }),
       );
       yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
       yield* runGit(repoDir, ["commit", "-m", "Configure skipped after-push hook"]);

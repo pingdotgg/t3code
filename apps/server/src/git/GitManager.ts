@@ -1019,28 +1019,42 @@ export const make = Effect.gen(function* () {
     }
 
     const shell = hostPlatform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "/bin/sh";
-    const args = hostPlatform === "win32" ? ["/d", "/s", "/c", afterPush] : ["-lc", afterPush];
 
-    yield* vcsProcess
-      .run({
-        operation: "GitManager.runAfterPushHook",
-        command: shell,
-        args,
-        cwd,
-        timeoutMs: AFTER_PUSH_TIMEOUT_MS,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new GitManagerError({
-              operation: "runAfterPushHook",
-              cwd,
-              detail: "The configured hooks.afterPush command failed.",
-              cause,
-            }),
-        ),
-        Effect.asVoid,
-      );
+    yield* Effect.forEach(afterPush, (configuredCommand) => {
+      const processCommand =
+        typeof configuredCommand === "string"
+          ? {
+              command: shell,
+              args:
+                hostPlatform === "win32"
+                  ? ["/d", "/s", "/c", configuredCommand]
+                  : ["-lc", configuredCommand],
+            }
+          : {
+              command: configuredCommand[0],
+              args: configuredCommand.slice(1),
+            };
+
+      return vcsProcess
+        .run({
+          operation: "GitManager.runAfterPushHook",
+          ...processCommand,
+          cwd,
+          timeoutMs: AFTER_PUSH_TIMEOUT_MS,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitManagerError({
+                operation: "runAfterPushHook",
+                cwd,
+                detail: "The configured hooks.afterPush command failed.",
+                cause,
+              }),
+          ),
+          Effect.asVoid,
+        );
+    }).pipe(Effect.asVoid);
   });
 
   const createProgressEmitter = (

@@ -159,7 +159,7 @@ describe("VcsProjectConfig", () => {
   });
 
   it.layer(layerTest)("resolves project hooks", (it) => {
-    it.effect("returns an after-push command from a parent config", () =>
+    it.effect("returns after-push commands from a parent config", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -172,13 +172,51 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.makeDirectory(nested, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
-          JSON.stringify({ hooks: { afterPush: "./scripts/populate-cache" } }),
+          JSON.stringify({
+            hooks: { afterPush: ["./scripts/populate-cache", "./scripts/notify-ci"] },
+          }),
         );
 
         const config = yield* VcsProjectConfig.VcsProjectConfig;
         const hooks = yield* config.resolveHooks({ cwd: nested });
 
-        assert.deepStrictEqual(hooks, { afterPush: "./scripts/populate-cache" });
+        assert.deepStrictEqual(hooks, {
+          afterPush: ["./scripts/populate-cache", "./scripts/notify-ci"],
+        });
+      }),
+    );
+
+    it.effect("returns argv-style after-push commands", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3code");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDir, "vcs.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({
+            hooks: {
+              afterPush: [
+                ["./scripts/populate-cache", "--ref", "feature/example"],
+                ["./scripts/notify-ci"],
+              ],
+            },
+          }),
+        );
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const hooks = yield* config.resolveHooks({ cwd: root });
+
+        assert.deepStrictEqual(hooks, {
+          afterPush: [
+            ["./scripts/populate-cache", "--ref", "feature/example"],
+            ["./scripts/notify-ci"],
+          ],
+        });
       }),
     );
   });

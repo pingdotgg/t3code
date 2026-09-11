@@ -18,8 +18,14 @@ const BranchNamingConfig = Schema.Struct({
   preserveNamespaces: Schema.optional(Schema.Boolean),
 });
 
+const ShellHookCommands = Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1));
+const ArgvHookCommand = Schema.TupleWithRest(Schema.Tuple([TrimmedNonEmptyString]), [
+  Schema.String,
+]);
+const ArgvHookCommands = Schema.Array(ArgvHookCommand).check(Schema.isMinLength(1));
+
 const HooksConfig = Schema.Struct({
-  afterPush: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  afterPush: Schema.optional(Schema.NullOr(Schema.Union([ShellHookCommands, ArgvHookCommands]))),
 });
 
 const ProjectVcsConfig = Schema.Struct({
@@ -48,7 +54,10 @@ export interface VcsBranchNamingConfig {
 }
 
 export interface VcsHooksConfig {
-  readonly afterPush: string | null;
+  readonly afterPush:
+    | ReadonlyArray<string>
+    | ReadonlyArray<readonly [string, ...ReadonlyArray<string>]>
+    | null;
 }
 
 export const defaultBranchNamingConfig: VcsBranchNamingConfig = {
