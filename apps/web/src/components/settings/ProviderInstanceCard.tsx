@@ -615,12 +615,9 @@ export function ProviderInstanceCard({
           {titleIconNode}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
-              {String(instanceId) !== String(instance.driver) ? (
-                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
+              <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                {displayName}
+              </span>
               {versionLabel ? (
                 <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                   {versionLabel}
@@ -654,6 +651,13 @@ export function ProviderInstanceCard({
                 )
               ) : null}
             </span>
+            {String(instanceId) !== String(instance.driver) ? (
+              <span className="mt-0.5 flex min-w-0">
+                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
+                  {instanceId}
+                </code>
+              </span>
+            ) : null}
             <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
               {statusDotNode ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>

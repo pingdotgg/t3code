@@ -160,4 +160,88 @@ describe("deriveProviderModelsForDisplay", () => {
       expect(markup).toContain("is not a symlink");
     }
   });
+
+  it("puts a custom instance's config id on its own line below the name and version", () => {
+    const instanceId = ProviderInstanceId.make("codex_personal");
+    const driver = ProviderDriverKind.make("codex");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "0.154.0",
+      status: "ready",
+      auth: { status: "unknown" },
+      checkedAt: "2026-09-11T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        instanceId,
+        instance: { driver, displayName: "personal" },
+        driverOption: undefined,
+        liveProvider,
+        mode: "list",
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+
+    // The title line holds just the name and version; the config id renders on
+    // the line underneath so the three never compete for one cramped flex line.
+    const nameIndex = markup.indexOf(">personal<");
+    const versionIndex = markup.indexOf("v0.154.0");
+    const configIdIndex = markup.indexOf("codex_personal");
+    expect(nameIndex).toBeGreaterThanOrEqual(0);
+    expect(versionIndex).toBeGreaterThan(nameIndex);
+    expect(configIdIndex).toBeGreaterThan(versionIndex);
+    expect(markup.slice(versionIndex, configIdIndex)).toContain("</span>");
+  });
+
+  it("keeps built-in rows on a single title line without a config id chip", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "0.154.0",
+      status: "ready",
+      auth: { status: "unknown" },
+      checkedAt: "2026-09-11T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        instanceId,
+        instance: { driver },
+        driverOption: undefined,
+        liveProvider,
+        mode: "list",
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain(">codex<");
+    expect(markup).toContain("v0.154.0");
+    expect(markup).not.toContain(">codex</code>");
+  });
 });
