@@ -1048,6 +1048,14 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
     }),
+    // Fetched only when the thread view is opened; scans are cache-warm after
+    // the summary, so a minute of staleness matches it.
+    usageThreadBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-thread-breakdown",
+      tag: WS_METHODS.serverGetUsageThreadBreakdown,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usagePricesAtom(environmentId),
+    }),
     configProjection,
     welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
