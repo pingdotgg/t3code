@@ -5724,7 +5724,9 @@ export default function ChatView(props: ChatViewProps) {
   // banner is the only visible stop affordance. Stop ends the provider session,
   // which tears down its background work and emits the liveness update.
   const activeBackgroundLiveness =
-    !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
+    !isWorking && activeThread && activeThreadShell?.session?.status !== "stopped"
+      ? (activeThreadShell?.backgroundLiveness ?? null)
+      : null;
   const [stoppingBackgroundWorkThreadId, setStoppingBackgroundWorkThreadId] =
     useState<ThreadId | null>(null);
   const isStoppingBackgroundWork = activeThread?.id === stoppingBackgroundWorkThreadId;
