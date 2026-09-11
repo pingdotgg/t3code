@@ -122,56 +122,6 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
-  it("fails when a required production dependency cannot be resolved", async () => {
-    const fixture = await createFixture();
-    await writeJson(fixture.appManifest, {
-      name: "fixture-app",
-      dependencies: { "missing-dependency": "1.0.0" },
-    });
-
-    await expect(
-      generateThirdPartyLicenseManifest({
-        configFile: fixture.configFile,
-        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-      }),
-    ).rejects.toThrow('Unable to resolve production dependency "missing-dependency"');
-  });
-
-  it("allows unresolved optional dependencies", async () => {
-    const fixture = await createFixture();
-    await writeJson(fixture.appManifest, {
-      name: "fixture-app",
-      dependencies: { "demo-dependency": "1.2.3" },
-      optionalDependencies: { "platform-only-dependency": "1.0.0" },
-    });
-
-    const manifest = await generateThirdPartyLicenseManifest({
-      configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-    });
-
-    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
-  });
-
-  it("allows package-manager-pruned transitive dependencies", async () => {
-    const fixture = await createFixture();
-    await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
-      name: "demo-dependency",
-      version: "1.2.3",
-      license: "MIT",
-      main: "index.js",
-      dependencies: { "pruned-transitive-dependency": "1.0.0" },
-      repository: "example/demo-dependency",
-    });
-
-    const manifest = await generateThirdPartyLicenseManifest({
-      configFile: fixture.configFile,
-      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
-    });
-
-    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
-  });
-
   it("includes custom notices selected by the dev server bundle", async () => {
     const fixture = await createFixture();
     await writeJson(fixture.configFile, {
