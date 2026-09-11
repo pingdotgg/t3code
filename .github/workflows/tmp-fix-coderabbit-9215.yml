@@ -84,7 +84,7 @@ jobs:
           
               assert.isDefined(source);
               assert.include(source.diff, "+tracked trailing spaces   \n");
-              assert.include(source.diff, "+untracked trailing spaces   \n");
+              assert.isTrue(source.diff.endsWith("+untracked trailing spaces   "));
             }).pipe(Effect.provide(TestLayer)),
           );
           '''
