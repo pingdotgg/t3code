@@ -59,10 +59,12 @@ import Animated, {
   FadeOut,
   ReduceMotion,
   useAnimatedReaction,
+  useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
@@ -662,6 +664,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
+  const workspaceContentWidth = useWorkspaceContentWidth();
+  const composerWidthStyle = useAnimatedStyle(() =>
+    isSplitLayout && workspaceContentWidth !== null
+      ? { width: workspaceContentWidth.value, right: undefined }
+      : { width: undefined, right: 0 },
+  );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
@@ -991,7 +999,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           <Animated.View
             layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents="box-none"
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+            style={[{ position: "absolute", bottom: 0, left: 0, right: 0 }, composerWidthStyle]}
           >
             {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer

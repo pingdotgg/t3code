@@ -520,6 +520,33 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("settles only the project opted in while environment settlement is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const thread = makeThread("project-opt-in", {
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-25T00:00:00.000Z"),
+        });
+        const other = makeThread("environment-off", { projectId: ProjectId.make("other-project") });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([thread, other]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleAfterDays: 2 } },
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const commands = yield* Ref.get(fixture.commands);
+          expect(commands.map((command) => command.threadId)).toEqual([thread.id]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("dispatches the last activity time with the v2 snapshot guard", () =>
     Effect.scoped(
       Effect.gen(function* () {
