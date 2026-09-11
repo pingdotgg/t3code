@@ -8,6 +8,10 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
+import {
+  attachRecordingCursorCompositor,
+  type RecordingCursorCompositor,
+} from "./browserRecordingCursor";
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
 
 export class BrowserRecordingUnavailableError extends Schema.TaggedError<BrowserRecordingUnavailableError>()(
@@ -122,6 +126,7 @@ interface ActiveRecording {
   readonly startupSettled: Promise<void>;
   releaseSurfaceActivity: (() => void) | null;
   stream: MediaStream | null;
+  cursorCompositor: RecordingCursorCompositor | null;
   recorder: MediaRecorder | null;
   savedBlob?: Blob;
   uploadPromise?: Promise<string>;
@@ -248,9 +253,12 @@ const preferredMimeTypes = [
   "video/webm",
 ] as const;
 
-const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
+const createMediaRecorder = (
+  stream: MediaStream,
+  settingsStream: MediaStream = stream,
+): MediaRecorder => {
   const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  const settings = stream.getVideoTracks()[0]?.getSettings();
+  const settings = settingsStream.getVideoTracks()[0]?.getSettings();
   // Browser defaults under-budget native-resolution text and motion. Scale with captured pixels
   // and frames, while bounding storage and encoder load for very large displays.
   const videoBitsPerSecond = Math.round(
@@ -429,6 +437,8 @@ const cleanupFailedRecordingStart = async (
     errors.push(error);
   }
   try {
+    recording.cursorCompositor?.dispose();
+    recording.cursorCompositor = null;
     stopMediaStream(recording.stream);
   } catch (error) {
     errors.push(error);
@@ -524,6 +534,7 @@ export async function startBrowserRecording(
     startupSettled,
     releaseSurfaceActivity,
     stream: null,
+    cursorCompositor: null,
     recorder: null,
     lifecycle: startingLifecycle,
   };
@@ -612,9 +623,21 @@ export async function startBrowserRecording(
     ]);
     await throwIfStartupCancelled();
 
+    // The raw tab capture has no pointer rendered in it; composite the agent
+    // cursor onto a canvas when the environment supports it so recordings show
+    // the pointer where the live preview does. Falls back to the raw stream.
+    const cursorCompositor = await attachRecordingCursorCompositor({
+      tabId,
+      serverTabId,
+      stream,
+      threadRef,
+      frameRate,
+    });
+    recording.cursorCompositor = cursorCompositor;
+
     let recorder: MediaRecorder;
     try {
-      recorder = createMediaRecorder(stream);
+      recorder = createMediaRecorder(cursorCompositor?.stream ?? stream, stream);
       recording.recorder = recorder;
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) chunks.push(event.data);
@@ -695,6 +718,8 @@ const finalizeBrowserRecording = async (
         });
       }
       // Encoding has flushed; release native capture before materializing and saving the file.
+      recording.cursorCompositor?.dispose();
+      recording.cursorCompositor = null;
       stopMediaStream(recording.stream);
       recording.stream = null;
       const mimeType =
@@ -739,6 +764,8 @@ const finalizeBrowserRecording = async (
     cleanupErrors.push(cause);
   }
   try {
+    recording.cursorCompositor?.dispose();
+    recording.cursorCompositor = null;
     stopMediaStream(recording.stream);
   } catch (cause) {
     cleanupErrors.push(cause);
@@ -786,6 +813,8 @@ const discardBrowserRecording = async (
   try {
     await bridge.recording.stopScreencast(recording.tabId).catch(() => undefined);
     await stopMediaRecorder(recording.recorder).catch(() => undefined);
+    recording.cursorCompositor?.dispose();
+    recording.cursorCompositor = null;
     stopMediaStream(recording.stream);
     return null;
   } finally {
