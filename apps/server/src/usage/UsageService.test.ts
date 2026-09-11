@@ -4,6 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { vi } from "vite-plus/test";
+
+vi.mock("node:fs/promises", { spy: true });
+
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -370,6 +374,114 @@ describe("UsageService", () => {
       assert.isUndefined(
         orphanedAt,
         `interruption left the next matching request pending at scheduler check ${orphanedAt}`,
+      );
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("UsageService scan coverage", () => {
+  it.live("reports read failures and retries unchanged bytes without caching an empty result", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-read-failure-test", home, settings }),
+        ),
+      );
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      const open = vi
+        .spyOn(NodeFSP, "open")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("private transcript contents"), { code: "EACCES" }),
+        );
+      const failed = yield* service
+        .readSummary(WINDOW)
+        .pipe(Effect.ensuring(Effect.sync(() => open.mockRestore())));
+      const source = failed.sources.find((source) => source.fingerprint.provider === "claude");
+      assert.strictEqual(source?.status, "partial");
+      assert.strictEqual(source?.skippedFiles, 1);
+      assert.notInclude(source?.message ?? "", "private transcript contents");
+      const recovered = yield* service.readSummary(WINDOW);
+      assert.strictEqual(
+        recovered.sources.find((source) => source.fingerprint.provider === "claude")?.status,
+        "ok",
+      );
+      assert.strictEqual(totalOutputTokens(recovered), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps cached transcripts hidden by an incomplete directory walk", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(home, "claude", "projects", "readable.jsonl"),
+          claudeLine(2, 7),
+        ),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-partial-cache-test", home, settings }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 12);
+      const actual = yield* Effect.promise(() =>
+        vi.importActual<typeof NodeFSP>("node:fs/promises"),
+      );
+      const readdir = vi
+        .mocked(NodeFSP.readdir)
+        .mockImplementationOnce((...args) => actual.readdir(...args))
+        .mockRejectedValueOnce(
+          Object.assign(new Error("cannot list nested directory"), { code: "EACCES" }),
+        );
+      const partial = yield* service
+        .readSummary(WINDOW)
+        .pipe(Effect.ensuring(Effect.sync(() => readdir.mockRestore())));
+      assert.strictEqual(
+        partial.sources.find((source) => source.fingerprint.provider === "claude")?.status,
+        "partial",
+      );
+      assert.strictEqual(totalOutputTokens(partial), 7);
+      // The unchanged file should remain cached. A reread would fail here.
+      const open = vi.mocked(NodeFSP.open).mockRejectedValueOnce(new Error("unexpected reread"));
+      const recovered = yield* service
+        .readSummary(WINDOW)
+        .pipe(Effect.ensuring(Effect.sync(() => open.mockRestore())));
+      assert.strictEqual(totalOutputTokens(recovered), 12);
+      assert.strictEqual(
+        recovered.sources.find((source) => source.fingerprint.provider === "claude")?.status,
+        "ok",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("distinguishes an unreadable root from absent provider directories", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-root-failure-test", home, settings }),
+        ),
+      );
+      const readdir = vi
+        .spyOn(NodeFSP, "readdir")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("private directory detail"), { code: "EACCES" }),
+        );
+      const summary = yield* service
+        .readSummary(WINDOW)
+        .pipe(Effect.ensuring(Effect.sync(() => readdir.mockRestore())));
+      assert.strictEqual(
+        summary.sources.find((source) => source.fingerprint.provider === "claude")?.status,
+        "failed",
+      );
+      assert.strictEqual(
+        summary.sources.find((source) => source.fingerprint.provider === "codex")?.status,
+        "missing",
       );
     }).pipe(Effect.scoped),
   );

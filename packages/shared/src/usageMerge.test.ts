@@ -5,6 +5,7 @@ import {
   type UsageDay,
   type UsageProviderKind,
   type UsageSummary,
+  type UsageSource,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -40,6 +41,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSource["status"];
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,7 +59,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -369,5 +371,36 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+});
+
+describe("usage source coverage ownership", () => {
+  const same = { provider: "claude" as const, hostId: "mac", homePath: "/same/.claude" };
+  it.each(["partial", "failed", "missing"] as const)(
+    "prefers complete coverage over an earlier %s source",
+    (status) => {
+      const incomplete = environment(
+        "env-a",
+        summary([bucket({ costUsd: 2 })], [{ ...same, status }]),
+      );
+      const complete = environment("env-b", summary([bucket({ costUsd: 10 })], [same]));
+      for (const environments of [
+        [incomplete, complete],
+        [complete, incomplete],
+      ]) {
+        expect(mergeUsage(environments, USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+      }
+    },
+  );
+  it("retains partial usage when no complete copy exists", () => {
+    expect(
+      mergeUsage(
+        [
+          environment("env-a", summary([], [{ ...same, status: "failed" }])),
+          environment("env-b", summary([bucket({ costUsd: 2 })], [{ ...same, status: "partial" }])),
+        ],
+        USAGE_CONTRACT_VERSION,
+      ).costUsd,
+    ).toBe(2);
   });
 });

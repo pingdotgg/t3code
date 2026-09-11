@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { vi } from "vite-plus/test";
+
+vi.mock("node:fs/promises", { spy: true });
+
+import { listTranscriptFiles, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -16,6 +20,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await NodeFSP.rm(dir, { recursive: true, force: true });
 });
 
@@ -207,4 +212,47 @@ describe("readTranscriptRecords resume", () => {
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
   });
+});
+
+describe("transcript listing coverage", () => {
+  it("distinguishes a missing root from one that cannot be listed", async () => {
+    assert.strictEqual(
+      (await listTranscriptFiles(NodePath.join(dir, "missing"), 0)).status,
+      "missing",
+    );
+    const file = NodePath.join(dir, "not-a-directory");
+    await NodeFSP.writeFile(file, "x");
+    assert.strictEqual((await listTranscriptFiles(file, 0)).status, "failed");
+  });
+
+  it("retains readable files when a nested directory cannot be listed", async () => {
+    await NodeFSP.mkdir(NodePath.join(dir, "nested"));
+    const readable = NodePath.join(dir, "readable.jsonl");
+    await NodeFSP.writeFile(readable, claudeLine(1, 5));
+    const actual = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+    vi.mocked(NodeFSP.readdir)
+      .mockImplementationOnce((...args) => actual.readdir(...args))
+      .mockRejectedValueOnce(Object.assign(new Error("private detail"), { code: "EACCES" }));
+    const result = await listTranscriptFiles(dir, 0);
+    assert.strictEqual(result.status, "partial");
+    assert.strictEqual(result.failedEntries, 1);
+    assert.deepStrictEqual(
+      result.files.map((file) => file.path),
+      [readable],
+    );
+  });
+
+  it.each(["EACCES", "EIO", "ENOENT"])(
+    "reports %s stat failures while allowing vanished files",
+    async (code) => {
+      await NodeFSP.writeFile(NodePath.join(dir, "entry.jsonl"), claudeLine(1, 5));
+      vi.mocked(NodeFSP.stat).mockRejectedValueOnce(
+        Object.assign(new Error("private detail"), { code }),
+      );
+      const result = await listTranscriptFiles(dir, 0);
+      assert.strictEqual(result.status, code === "ENOENT" ? "ok" : "partial");
+      assert.strictEqual(result.failedEntries, code === "ENOENT" ? 0 : 1);
+      assert.deepStrictEqual(result.files, []);
+    },
+  );
 });
