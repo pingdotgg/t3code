@@ -53,9 +53,11 @@ export default mergeConfig(
             exe: {
               fileName: "t3",
               outDir: "dist-exe",
-              // The code cache only loads on the platform that produced it, so
-              // executables are always built natively, never cross-compiled.
-              seaConfig: { useCodeCache: true },
+              // Node's SEA docs: `import()` does not work when useCodeCache is
+              // true, and the server reaches several modules that way. The
+              // cache is also platform-bound, so leaving it off keeps the
+              // build correct on any host.
+              seaConfig: { useCodeCache: false },
             },
           }
         : {}),

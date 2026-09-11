@@ -303,6 +303,14 @@ describe("findEsmImportsOfExternalPackages", () => {
     ]);
   });
 
+  it("flags side-effect imports and re-exports too", () => {
+    const source = ['import "msgpackr-extract";', 'export { load } from "ffi-rs";'].join("\n");
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
+      "ffi-rs",
+      "msgpackr-extract",
+    ]);
+  });
+
   it("ignores the bun-only entry points Node never evaluates", () => {
     const source = 'const bun = () => import("@effect/platform-bun/BunServices");';
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);

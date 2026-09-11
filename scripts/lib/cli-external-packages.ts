@@ -120,9 +120,13 @@ export function selectCliRuntimeExternalDependencies(
  */
 export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
   const specifiers = new Set<string>();
+  // `import x from`, `import "side-effect"`, and `export ... from` all load the
+  // module at evaluation time.
   const staticImport = /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
+  const sideEffectImport = /^import\s+["']([^"']+)["']/gm;
+  const reExport = /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
   const dynamicImport = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
-  for (const pattern of [staticImport, dynamicImport]) {
+  for (const pattern of [staticImport, sideEffectImport, reExport, dynamicImport]) {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier === undefined) continue;

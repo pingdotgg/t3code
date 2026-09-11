@@ -213,11 +213,13 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
-      yield* Effect.log("[cli] Built dist-exe/t3");
+      yield* Effect.log(
+        "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
+      );
     }),
 ).pipe(
   Command.withDescription(
-    "Build the server as a Node single-executable (needs a Node 25.7+ host for --build-sea).",
+    "Build the server as a Node single-executable (needs a Node 25.7+ host for --build-sea). The binary still resolves native packages from a node_modules tree beside it.",
   ),
 );
 
