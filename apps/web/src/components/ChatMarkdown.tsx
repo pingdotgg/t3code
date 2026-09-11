@@ -1,5 +1,5 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -2446,7 +2446,12 @@ function useChatMarkdownState({
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
-      if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+      if (
+        !cwd ||
+        environmentId === null ||
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
+        !needsWorkspaceBasenameLookup(workspaceRelativePath)
+      ) {
         return null;
       }
       const result = await searchProjectEntries({

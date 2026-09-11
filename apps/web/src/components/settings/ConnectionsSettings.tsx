@@ -21,12 +21,14 @@ import {
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  AuthReviewWriteScope,
   AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
   type AuthClientSession,
   type AuthEnvironmentScope,
+  type AuthGrantScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
@@ -188,19 +190,19 @@ function formatAccessTimestamp(value: string): string {
 }
 
 const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
-  readonly scope: AuthEnvironmentScope;
+  readonly scope: AuthGrantScope;
   readonly title: string;
   readonly description: string;
 }> = [
   {
     scope: AuthOrchestrationReadScope,
     title: "View environment",
-    description: "Read threads, status, diffs, and configuration.",
+    description: "Read threads, status, checkpoints, and configuration.",
   },
   {
     scope: AuthOrchestrationOperateScope,
     title: "Operate tasks",
-    description: "Start tasks and perform changes in the environment.",
+    description: "Start, update, and stop tasks.",
   },
   {
     scope: AuthSettingsWriteScope,
@@ -228,9 +230,14 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     description: "Commit, push, manage branches and repositories, and change pull requests.",
   },
   {
-    scope: AuthReviewWriteScope,
-    title: "Write reviews",
-    description: "Create comments while reviewing changes.",
+    scope: AuthFilesystemReadScope,
+    title: "Read files",
+    description: "Browse host files, search workspaces, and inspect local changes.",
+  },
+  {
+    scope: AuthFilesystemWriteScope,
+    title: "Write files",
+    description: "Edit workspace files and save plans to disk.",
   },
   {
     scope: AuthAccessReadScope,
@@ -1061,7 +1068,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pairingLabel, setPairingLabel] = useState("");
-  const [pairingScopes, setPairingScopes] = useState<ReadonlyArray<AuthEnvironmentScope>>([
+  const [pairingScopes, setPairingScopes] = useState<ReadonlyArray<AuthGrantScope>>([
     ...AuthStandardClientScopes,
   ]);
   const selectedScopes = pairingScopes.filter((scope) => delegatableScopes.includes(scope));
@@ -1101,7 +1108,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
     }
   }, [delegatableScopes, onPairingLinkCreated, pairingLabel, primaryEnvironmentId, selectedScopes]);
 
-  const togglePairingScope = useCallback((scope: AuthEnvironmentScope, checked: boolean) => {
+  const togglePairingScope = useCallback((scope: AuthGrantScope, checked: boolean) => {
     setPairingScopes((current) =>
       checked ? [...current, scope] : current.filter((currentScope) => currentScope !== scope),
     );
@@ -1173,9 +1180,9 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                     disabled={isCreatingPairingLink}
                     onClick={() =>
                       setPairingScopes(
-                        delegatableScopes.includes(AuthOrchestrationReadScope)
-                          ? [AuthOrchestrationReadScope]
-                          : [],
+                        [AuthOrchestrationReadScope, AuthFilesystemReadScope].filter((scope) =>
+                          delegatableScopes.includes(scope),
+                        ),
                       )
                     }
                   >

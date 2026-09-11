@@ -1,3 +1,5 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -36,6 +38,7 @@ import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import {
@@ -259,14 +262,15 @@ function useThreadFilesWorkspace(params: {
   };
 }
 
-function FilesUnavailable() {
+function FilesUnavailable({
+  detail = "This thread does not have an active workspace path.",
+}: {
+  detail?: string;
+}) {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <NativeStackScreenOptions options={{ title: "Files" }} />
-      <EmptyState
-        title="Files unavailable"
-        detail="This thread does not have an active workspace path."
-      />
+      <EmptyState title="Files unavailable" detail={detail} />
     </View>
   );
 }
@@ -315,8 +319,19 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && !fileInspector.supported
+    canReadFiles && environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
           environmentId,
           input: { cwd },
@@ -408,6 +423,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) {
+    if (fileAccess.isPending) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -532,7 +555,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       )}
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}
-        error={entriesQuery.error}
+        error={canReadFiles ? entriesQuery.error : "This connection cannot read host files."}
         isPending={entriesQuery.isPending}
         searchQuery={searchQuery}
         selectedPath={null}
@@ -644,8 +667,23 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null &&
     !isVideoFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const fileQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
+    canReadFiles &&
+      environmentId !== null &&
+      cwd !== null &&
+      relativePath !== null &&
+      needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
           input: { cwd, relativePath },
@@ -822,6 +860,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) {
+    if (fileAccess.isPending) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -949,7 +995,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         mediaSource={mediaSource}
         resolveVideoUri={assetPreview.refresh}
         fileContents={fileData?.contents ?? null}
-        fileError={fileQuery.error}
+        fileError={canReadFiles ? fileQuery.error : "This connection cannot read host files."}
         initialLine={targetLine}
         relativePath={relativePath}
         threadId={threadId}

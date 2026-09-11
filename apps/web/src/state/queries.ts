@@ -23,6 +23,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
@@ -239,12 +240,14 @@ export function useProjectPathSearch(
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
-  const result = useEnvironmentQuery(
+  const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
+  const { canReadFiles } = fileAccess;
+  const searchTarget =
     debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
-      ? projectEnvironment.searchEntries({
+    debouncedTarget.cwd !== null &&
+    debouncedTarget.query !== null &&
+    (allowEmptyQuery || debouncedTarget.query.length > 0)
+      ? {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
@@ -253,15 +256,24 @@ export function useProjectPathSearch(
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
           },
-        })
-      : null,
+        }
+      : null;
+  const result = useEnvironmentQuery(
+    canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
+  const hasTarget = searchTarget !== null;
 
   return {
     entries: result.data?.entries ?? [],
-    error: result.error,
+    error:
+      !hasTarget || fileAccess.isPending
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
     isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
+      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
+      (hasTarget && (fileAccess.isPending || result.isPending)),
     searchedQuery: debouncedTarget.query ?? "",
     refresh: result.refresh,
   };
@@ -281,13 +293,18 @@ interface ProjectContentSearchTarget {
 }
 
 export function useProjectContentSearch(target: ProjectContentSearchTarget) {
+  const hasTarget = target.environmentId !== null && target.cwd !== null;
+  const fileAccess = useFilesystemReadAccess(target.environmentId);
+  const canReadFiles = hasTarget && fileAccess.canReadFiles;
+  const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Whitespace is significant in content queries; trimming is only used to
   // decide whether the input is blank.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
-    target.environmentId !== null &&
+    canReadFiles &&
+      target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
       debouncedQuery.trim().length > 0
@@ -306,9 +323,18 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   );
 
   return {
+    canReadFiles,
+    isCheckingAccess,
     matches: result.data?.matches ?? EMPTY_CONTENT_MATCHES,
-    error: result.error,
-    isPending: hasQuery && (query !== debouncedQuery || result.isPending),
+    error:
+      !hasTarget || isCheckingAccess
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      isCheckingAccess ||
+      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,

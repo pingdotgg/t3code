@@ -25,6 +25,7 @@ import {
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
+import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
@@ -136,6 +137,8 @@ export default function DiffPanel({
   });
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
+  const fileAccess = useFilesystemReadAccess(activeThread?.environmentId ?? null);
+  const { canReadFiles } = fileAccess;
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useProject(
     activeThread && activeProjectId
@@ -257,7 +260,7 @@ export default function DiffPanel({
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && activeThread && activeCwd
+    canReadFiles && selectedTurnId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -274,7 +277,7 @@ export default function DiffPanel({
     serverConfig?.cwd !== undefined &&
     serverConfig.cwd !== activeCwd;
   const fallbackBranchDiffPreview = useEnvironmentQuery(
-    shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
+    canReadFiles && shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -318,6 +321,7 @@ export default function DiffPanel({
       return undefined;
     }
 
+    if (!canReadFiles) return undefined;
     return createGitDiffFileContentsLoader(getDiffFileContents, {
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
@@ -330,6 +334,7 @@ export default function DiffPanel({
     activeThread,
     branchDiffPreview.data,
     getDiffFileContents,
+    canReadFiles,
     selectedGitSource,
     selectedTurnId,
   ]);
@@ -894,6 +899,14 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
+      ) : selectedTurnId === null && !canReadFiles ? (
+        fileAccess.isPending ? (
+          <DiffPanelLoadingState label="Checking file access..." />
+        ) : (
+          <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+            {fileAccess.error ?? "This connection cannot read local diffs."}
+          </div>
+        )
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
