@@ -14,6 +14,31 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_CUSTOM_WINDOW_DAYS = 90;
+
+function usageDayOrdinal(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12) return null;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (daysInMonth === undefined || day < 1 || day > daysInMonth) return null;
+  return year * 372 + (month - 1) * 31 + day;
+}
+
+/** Compares two strict `YYYY-MM-DD` calendar days, or returns null if either is invalid. */
+export function compareUsageDays(left: string, right: string): -1 | 0 | 1 | null {
+  const leftOrdinal = usageDayOrdinal(left);
+  const rightOrdinal = usageDayOrdinal(right);
+  if (leftOrdinal === null || rightOrdinal === null) return null;
+  if (leftOrdinal < rightOrdinal) return -1;
+  if (leftOrdinal > rightOrdinal) return 1;
+  return 0;
+}
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
@@ -160,8 +185,8 @@ export function formatRelativeHourShort(
     month: "2-digit",
     day: "2-digit",
   });
-  const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
-  const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
+  const instantDay = Date.parse(`${formatUsageDay(dayFormat, instant)}T00:00:00Z`);
+  const referenceDay = Date.parse(`${formatUsageDay(dayFormat, reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
   const hour = formatHourShort(hourStart, timeZone);
 
@@ -170,15 +195,17 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
-/**
- * The window the page requests, expressed in the viewer's own time zone so days
- * line up with what they actually experienced.
- */
-export function makeWindow(
-  days: number,
-  now = new Date(),
-  resolution: UsageResolution = "day",
-): UsageSummaryInput {
+function formatUsageDay(format: Intl.DateTimeFormat, instant: Date): string {
+  const parts = Object.fromEntries(
+    format.formatToParts(instant).map(({ type, value }) => [type, value]),
+  );
+  const year = parts.year?.padStart(4, "0");
+  if (year === undefined || year.length !== 4)
+    throw new RangeError("Usage years must have four digits");
+  return `${year}-${parts.month}-${parts.day}`;
+}
+
+function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
   let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let format: Intl.DateTimeFormat;
   try {
@@ -198,7 +225,47 @@ export function makeWindow(
       day: "2-digit",
     });
   }
-  const untilDay = format.format(now);
+  return { timeZone, format };
+}
+
+/**
+ * A daily window over an explicit inclusive day range, in the viewer's zone.
+ * Bounds arrive from date inputs or a chart brush; out-of-order bounds are
+ * swapped rather than rejected so callers can pass a drag's raw endpoints.
+ * Typed spans are capped at the same 90 days as the largest preset so day
+ * enumeration remains bounded.
+ */
+export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSummaryInput {
+  const comparison = compareUsageDays(sinceDay, untilDay);
+  if (comparison === null)
+    throw new RangeError("Usage window bounds must be valid YYYY-MM-DD dates");
+  const [first, requestedLast] = comparison <= 0 ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  const firstMs = Date.parse(`${first}T00:00:00Z`);
+  const requestedLastMs = Date.parse(`${requestedLast}T00:00:00Z`);
+  const maximumLastMs = firstMs + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS;
+  const last =
+    requestedLastMs > maximumLastMs
+      ? new Date(maximumLastMs).toISOString().slice(0, 10)
+      : requestedLast;
+  return {
+    sinceDay: UsageDay.make(first),
+    untilDay: UsageDay.make(last),
+    timeZone: viewerDayFormat().timeZone,
+    resolution: "day",
+  };
+}
+
+/**
+ * The window the page requests, expressed in the viewer's own time zone so days
+ * line up with what they actually experienced.
+ */
+export function makeWindow(
+  days: number,
+  now = new Date(),
+  resolution: UsageResolution = "day",
+): UsageSummaryInput {
+  const { timeZone, format } = viewerDayFormat();
+  const untilDay = formatUsageDay(format, now);
   if (resolution === "hour") {
     // Minute-aligned bounds keep labels readable while still representing an
     // exact rolling 24-hour duration. Fixed-duration buckets remain correct
@@ -208,8 +275,8 @@ export function makeWindow(
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {
-      sinceDay: UsageDay.make(format.format(sinceTime)),
-      untilDay: UsageDay.make(format.format(untilTime)),
+      sinceDay: UsageDay.make(formatUsageDay(format, sinceTime)),
+      untilDay: UsageDay.make(formatUsageDay(format, untilTime)),
       timeZone,
       resolution,
       sinceTime: sinceTime.toISOString(),
@@ -219,10 +286,7 @@ export function makeWindow(
   // Subtracting fixed milliseconds from `now` lands on the wrong calendar day
   // around a DST transition. The window start is pure calendar arithmetic on
   // the local end day, done in UTC where days are uniform.
-  const [year = 0, month = 1, dayOfMonth = 1] = untilDay
-    .split("-")
-    .map((part) => Number.parseInt(part, 10));
-  const start = new Date(Date.UTC(year, month - 1, dayOfMonth - (days - 1)));
+  const start = new Date(Date.parse(`${untilDay}T00:00:00Z`) - (days - 1) * DAY_MS);
   return {
     sinceDay: UsageDay.make(start.toISOString().slice(0, 10)),
     untilDay: UsageDay.make(untilDay),
