@@ -652,15 +652,13 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
       }),
     );
   };
-  if (noticeFiles.length === 0) {
-    await Promise.all(
-      rootEntries
-        .filter(
-          (entry) => entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git",
-        )
-        .map((entry) => collectNestedNoticeFiles(entry.name, 2)),
-    );
-  }
+  await Promise.all(
+    rootEntries
+      .filter(
+        (entry) => entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git",
+      )
+      .map((entry) => collectNestedNoticeFiles(entry.name, 2)),
+  );
   noticeFiles.sort((left, right) => left.localeCompare(right));
   if (noticeFiles.length === 0) return null;
 

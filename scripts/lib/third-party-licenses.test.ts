@@ -256,9 +256,8 @@ describe("third-party license generation", () => {
     ).rejects.toThrow("does not include a license or notice file");
   });
 
-  it("collects notices nested inside a published package", async () => {
+  it("collects nested notices even when a package also has a root license", async () => {
     const fixture = await createFixture();
-    await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
     await NodeFSP.mkdir(NodePath.join(fixture.dependencyRoot, "dist", "third-party"), {
       recursive: true,
     });
@@ -274,7 +273,7 @@ describe("third-party license generation", () => {
     });
 
     expect(manifest.entries.find((entry) => entry.name === "demo-dependency")?.noticeText).toBe(
-      "Nested notice",
+      "dist/third-party/NOTICE.txt\n\nNested notice\n\n---\n\nLICENSE\n\nDemo MIT license text",
     );
   });
 
