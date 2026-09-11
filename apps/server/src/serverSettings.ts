@@ -460,9 +460,12 @@ function foldLegacyProjectSettings(
   for (const [projectId, value] of Object.entries(settings.projectAutoPullOverrides)) {
     set(projectId, "defaultAutoPull", value);
   }
+  // A stored null meant "reset to machine defaults", which is now plain
+  // inheritance; the project's own aggregate scripts must not resurface.
+  const resetScripts = new Set<string>();
   for (const [projectId, value] of Object.entries(settings.projectScriptOverrides)) {
-    // A stored null meant "reset to machine defaults", which is now plain inheritance.
-    if (value !== null) set(projectId, "defaultProjectScripts", value);
+    if (value === null) resetScripts.add(projectId);
+    else set(projectId, "defaultProjectScripts", value);
   }
   for (const row of rows) {
     const model = decodeModelSelectionJson(row.defaultModelSelection ?? "null");
@@ -474,7 +477,7 @@ function foldLegacyProjectSettings(
     }
     if (row.autoPull === 1) set(row.projectId, "defaultAutoPull", true);
     const scripts = decodeProjectScriptsJson(row.scripts);
-    if (Option.isSome(scripts) && scripts.value.length > 0) {
+    if (Option.isSome(scripts) && scripts.value.length > 0 && !resetScripts.has(row.projectId)) {
       set(row.projectId, "defaultProjectScripts", scripts.value);
     }
   }

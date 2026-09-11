@@ -1304,7 +1304,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         Schema.fromJsonString(Schema.Array(ProjectScript)),
       )([script]);
       for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
-        [legacyProject, modelJson, "worktree", 1, "[]"],
+        // The legacy project also carries aggregate scripts, but its stored
+        // null override reset them; the fold must not bring them back.
+        [legacyProject, modelJson, "worktree", 1, scriptsJson],
         [scriptedProject, null, null, 0, scriptsJson],
       ] as const) {
         yield* sql`
