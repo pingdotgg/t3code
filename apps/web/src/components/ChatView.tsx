@@ -328,6 +328,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { CodexFeedbackDialog } from "./chat/CodexFeedbackDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
@@ -1622,6 +1623,13 @@ export default function ChatView(props: ChatViewProps) {
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
+  const [feedbackPrompt, setFeedbackPrompt] = useState<{
+    threadKey: string;
+    submit: (reason?: string) => void;
+  } | null>(null);
+  if (feedbackPrompt && feedbackPrompt.threadKey !== routeThreadKey) {
+    setFeedbackPrompt(null);
+  }
   const feedbackSubmissions = useMemo(
     () => feedbackSubmissionsByThreadKey[routeThreadKey] ?? [],
     [feedbackSubmissionsByThreadKey, routeThreadKey],
@@ -6774,41 +6782,55 @@ export default function ChatView(props: ChatViewProps) {
         );
         return;
       }
-      feedbackUploadsInFlightRef.current.add(routeThreadKey);
-      await submitCodexFeedback({
-        submission: {
-          id: newMessageId(),
-          command: trimmed,
-          createdAt: new Date().toISOString(),
-        },
-        clearDraft: () => {
-          promptRef.current = "";
-          clearComposerDraftContent(composerDraftTarget);
-          composerRef.current?.resetCursorState();
-        },
-        onUpdate: (submission) => {
-          setFeedbackSubmissionsByThreadKey((current) => {
-            const existing = current[routeThreadKey] ?? [];
-            const found = existing.some((entry) => entry.id === submission.id);
-            return {
-              ...current,
-              [routeThreadKey]: found
-                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                : [...existing, submission],
-            };
-          });
-        },
-        upload: () =>
-          uploadThreadFeedback({
-            environmentId,
-            input: {
-              threadId: activeThread.id,
-              ...feedbackCommand,
-            },
-          }),
-      }).finally(() => {
-        feedbackUploadsInFlightRef.current.delete(routeThreadKey);
-      });
+      const sendFeedback = async (reason?: string) => {
+        if (feedbackUploadsInFlightRef.current.has(routeThreadKey)) return;
+        feedbackUploadsInFlightRef.current.add(routeThreadKey);
+        await submitCodexFeedback({
+          submission: {
+            id: newMessageId(),
+            command: trimmed,
+            createdAt: new Date().toISOString(),
+          },
+          clearDraft: () => {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+          },
+          onUpdate: (submission) => {
+            setFeedbackSubmissionsByThreadKey((current) => {
+              const existing = current[routeThreadKey] ?? [];
+              const found = existing.some((entry) => entry.id === submission.id);
+              return {
+                ...current,
+                [routeThreadKey]: found
+                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                  : [...existing, submission],
+              };
+            });
+          },
+          upload: () =>
+            uploadThreadFeedback({
+              environmentId,
+              input: {
+                threadId: activeThread.id,
+                ...(reason ? { reason } : {}),
+              },
+            }),
+        }).finally(() => {
+          feedbackUploadsInFlightRef.current.delete(routeThreadKey);
+        });
+      };
+      if (!feedbackCommand.reason) {
+        setFeedbackPrompt({
+          threadKey: routeThreadKey,
+          submit: (reason) => {
+            setFeedbackPrompt(null);
+            void sendFeedback(reason);
+          },
+        });
+      } else {
+        await sendFeedback(feedbackCommand.reason);
+      }
 
       return;
     }
@@ -8997,6 +9019,12 @@ export default function ChatView(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
+      {feedbackPrompt?.threadKey === routeThreadKey && (
+        <CodexFeedbackDialog
+          onSubmit={feedbackPrompt.submit}
+          onCancel={() => setFeedbackPrompt(null)}
+        />
+      )}
       <LinkPullRequestDialogHost />
       {expandedImage && (
         <ExpandedImageDialog
