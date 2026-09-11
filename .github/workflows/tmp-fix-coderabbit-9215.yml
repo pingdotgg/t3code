@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: fix/review-diff-preview-budget
-          fetch-depth: 0
-          persist-credentials: false
+      - name: Clone branch without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --branch fix/review-diff-preview-budget --single-branch https://github.com/c8dhjp4tyv-bit/t3code.git .
 
       - uses: voidzero-dev/setup-vp@v1
         with:
