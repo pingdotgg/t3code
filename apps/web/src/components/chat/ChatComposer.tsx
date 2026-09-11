@@ -96,6 +96,7 @@ import {
   usePromptStashStore,
   type PromptStashEntry,
 } from "../../promptStashStore";
+import { ChevronUpIcon } from "lucide-react";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -469,7 +470,11 @@ function useComposerRestingTransition(
         // surface glued to the overlay's stable bottom edge. The pin lasts
         // only for the tween so later attachment, thread, font, and viewport
         // changes remain natural.
-        if (overlay && overlayHeight !== null) {
+        if (
+          overlay &&
+          overlayHeight !== null &&
+          getComputedStyle(overlay).alignItems !== "center"
+        ) {
           overlay.style.height = `${String(overlayHeight)}px`;
           overlay.style.display = "flex";
           overlay.style.flexDirection = "column";
@@ -3703,6 +3708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setComposerCursor(0);
       setComposerTrigger(null);
+      setIsStashMenuOpen(false);
       pulseStashBadge();
 
       if (evicted) {
@@ -3872,6 +3878,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // collapse. Both leave the footer unrendered, so the strip is the only place
   // to see or change the model without expanding the composer.
   const composerControlsInStrip = isComposerResting || isComposerCollapsedMobile;
+  // The inline stash action only exists for an expanded composer with draft
+  // content, so the editor gutter it needs is reserved in exactly those modes.
+  const showComposerStashAction =
+    !isComposerApprovalState &&
+    !isComposerResting &&
+    !projectSelectionRequired &&
+    pendingUserInputs.length === 0 &&
+    activePendingProgress === null &&
+    !isComposerCollapsedMobile &&
+    (prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim().length > 0 ||
+      composerImages.length > 0 ||
+      composerFiles.length > 0);
   const composerControlsVisibleInStrip = composerControlsInStrip && restingControlsVisible;
   const composerControlsHidden = composerControlsInStrip && !restingControlsVisible;
   if (composerControlsHidden && isComposerModelPickerOpen) {
@@ -5656,6 +5674,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "pr-12"),
                 )}
               >
+                {showComposerStashAction ? (
+                  <div
+                    className={cn(
+                      "absolute flex top-[calc(0.5lh-1rem)] right-[calc(var(--chat-composer-drawer-inset)-0.75rem-1px)] z-10 leading-relaxed [font-size:var(--font-size-prompt,0.875rem)] sm:right-[calc(var(--chat-composer-drawer-inset)-1rem-1px)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
+                      isComposerResting && "leading-8",
+                    )}
+                  >
+                    {/* Shared Button, styled from the shadcn Button baseline:
+                        https://ui.shadcn.com/docs/components/base/button */}
+                    <Button
+                      variant="ghost-muted"
+                      size="icon-sm"
+                      aria-label="Stash this draft"
+                      className="group/stash h-8 min-w-8 w-auto gap-0 bg-(--chat-composer-glass-surface) px-2 text-xs sm:h-8 sm:w-auto sm:text-xs [&_svg]:mx-0"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        void stashCurrentPrompt();
+                        window.requestAnimationFrame(() => {
+                          composerEditorRef.current?.focusAtEnd();
+                        });
+                      }}
+                    >
+                      <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-150 ease-out group-hover/stash:mr-1 group-hover/stash:max-w-24 group-hover/stash:opacity-100 group-focus/stash:mr-1 group-focus/stash:max-w-24 group-focus/stash:opacity-100 motion-reduce:transition-none">
+                        Stash this
+                      </span>
+                      <ChevronUpIcon aria-hidden className="size-3.5 shrink-0" />
+                    </Button>
+                  </div>
+                ) : null}
                 <ComposerPromptEditor
                   editorRef={composerEditorRef}
                   value={
@@ -5674,11 +5721,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   skills={selectedProviderSkills}
                   containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
                   className={cn(
+                    showComposerStashAction && "pr-28",
                     showMobilePendingAnswerActions && "max-sm:pb-11",
                     isComposerResting &&
                       "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
                   )}
                   placeholderClassName={cn(
+                    showComposerStashAction && "pr-28",
                     isComposerResting &&
                       "flex items-center overflow-hidden whitespace-nowrap leading-8",
                   )}
