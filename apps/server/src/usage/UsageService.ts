@@ -227,9 +227,10 @@ export const make = Effect.gen(function* () {
   const resolveClaudeTranscriptDir = (homePath: string) =>
     Effect.gen(function* () {
       const nested = path.join(homePath, ".claude", "projects");
+      // If this probe fails, scan the same path so its error stays visible.
       const nestedExists = yield* fileSystem
         .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        .pipe(Effect.catchCause(() => Effect.succeed(true)));
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
@@ -316,7 +317,7 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[]> =>
+  ): Effect.Effect<readonly UsageRecord[] | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -344,7 +345,7 @@ export const make = Effect.gen(function* () {
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) return [];
+      if (parsed === null) return null;
 
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass. One
@@ -372,40 +373,42 @@ export const make = Effect.gen(function* () {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
-    /** Parsed records per file, or `null` when the directory does not exist. */
-    readonly files:
-      | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
-      | null;
+    readonly status: "ok" | "partial" | "missing" | "failed";
+    readonly failedEntries: number;
+    readonly files: readonly {
+      readonly path: string;
+      readonly records: readonly UsageRecord[] | null;
+    }[];
   }
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
   ) {
-    // The home resolvers ask for `Path` themselves; satisfy them from the
-    // instance we already hold so the scan stays context-free.
     const dirs = yield* resolveTranscriptDirs(settings).pipe(
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      if (!exists) {
-        scanned.push({ provider, dir, volumeId, files: null });
-        continue;
-      }
-      const files = yield* Effect.promise(() =>
+      const listing = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
-      const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
-      for (const file of files) {
+      const parsedFiles: { path: string; records: readonly UsageRecord[] | null }[] = [];
+      let failedEntries = listing.failedEntries;
+      for (const file of listing.files) {
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (records === null) failedEntries += 1;
         parsedFiles.push({ path: file.path, records });
       }
-      scanned.push({ provider, dir, volumeId, files: parsedFiles });
+      scanned.push({
+        provider,
+        dir,
+        volumeId,
+        files: parsedFiles,
+        failedEntries,
+        status: listing.status === "ok" && failedEntries > 0 ? "partial" : listing.status,
+      });
     }
     return scanned;
   });
@@ -481,21 +484,25 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
-      if (files === null) {
+    for (const { provider, dir, volumeId, files, status, failedEntries } of scannedDirs) {
+      if (status === "missing" || status === "failed") {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
+          status,
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            status === "missing"
+              ? "No transcript directory on this environment."
+              : "Could not read the transcript directory.",
         });
         continue;
       }
 
-      walkedRoots.push(dir);
+      // An incomplete walk cannot establish which cached files disappeared.
+      if (status === "ok") walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -504,7 +511,7 @@ export const make = Effect.gen(function* () {
 
       for (const file of files) {
         livePaths.add(file.path);
-        if (file.records.length === 0) {
+        if (file.records === null || file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
@@ -520,12 +527,15 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status,
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          status === "partial"
+            ? `Usage is incomplete: ${failedEntries} transcript files or directory entries could not be read.`
+            : null,
       });
     }
 

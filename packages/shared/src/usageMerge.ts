@@ -118,9 +118,8 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * healthiest source claims a fingerprint; the rest have that provider's
+ * buckets dropped. Environment ids break ties so ownership stays stable.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -129,18 +128,26 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
 
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
+  // Complete coverage wins over partial coverage of the same directory;
+  // failed sources must never claim it. Environment id breaks healthy ties.
+  const ordered = environments
+    .flatMap((environment) =>
+      environment.summary.sources.map((source) => ({ environment, source })),
+    )
+    .filter(({ source }) => source.status === "ok" || source.status === "partial")
+    .sort(
+      (a, b) =>
+        Number(a.source.status !== "ok") - Number(b.source.status !== "ok") ||
+        a.environment.environmentId.localeCompare(b.environment.environmentId),
+    );
 
-  for (const environment of ordered) {
-    for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
-      const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
-      }
-      ownerByFingerprint.set(key, environment.environmentId);
+  for (const { environment, source } of ordered) {
+    const key = fingerprintKey(source.fingerprint);
+    if (ownerByFingerprint.has(key)) {
+      duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      continue;
     }
+    ownerByFingerprint.set(key, environment.environmentId);
   }
 
   return { ownerByFingerprint, duplicates };
@@ -157,7 +164,7 @@ function ownedContribution(
   const ownedProviders = new Set<UsageProviderKind>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+    if (source.status === "missing" || source.status === "failed") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;

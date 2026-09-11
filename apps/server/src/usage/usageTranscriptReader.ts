@@ -86,30 +86,40 @@ function fnv1a(buffer: Buffer): number {
   return hash >>> 0;
 }
 
+export interface TranscriptListing {
+  readonly files: readonly TranscriptFile[];
+  readonly status: "ok" | "partial" | "missing" | "failed";
+  readonly failedEntries: number;
+}
+
+function isMissingEntry(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
 /**
- * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
- *
- * Errors on individual entries are swallowed: session files rotate and get
- * removed while the walk is in flight, and a partial listing is far better than
- * failing the page.
- *
- * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
- * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
- * never carry usage, so the basename filter keeps a cold scan off those files.
+ * Keep readable transcripts while reporting incomplete directory coverage.
+ * `fileName` restricts Grok scans to updates.jsonl, skipping its large non-usage logs.
  */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptListing> {
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
+  let rootStatus: "ok" | "missing" | "failed" = "ok";
+  let failedEntries = 0;
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (dir === root) {
+        rootStatus = isMissingEntry(error) ? "missing" : "failed";
+      } else if (!isMissingEntry(error)) {
+        failedEntries += 1;
+      }
       return;
     }
     for (const entry of entries) {
@@ -128,14 +138,19 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // Vanished between readdir and stat.
+      } catch (error) {
+        // Files removed during rotation are absent coverage, not unreadable data.
+        if (!isMissingEntry(error)) failedEntries += 1;
       }
     }
   };
 
   await walk(root);
-  return found;
+  return {
+    files: found,
+    status: rootStatus === "ok" && failedEntries > 0 ? "partial" : rootStatus,
+    failedEntries,
+  };
 }
 
 /**
