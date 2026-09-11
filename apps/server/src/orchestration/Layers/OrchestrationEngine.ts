@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -89,6 +90,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
@@ -242,9 +244,36 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Resolve aliases inside the serialized command handler so the identities
+        // and sibling activity belong to the same command snapshot.
+        let checkoutDirectories;
+        if (
+          envelope.command.type === "thread.meta.update" &&
+          envelope.command.requireIdleWorktreePath !== undefined
+        ) {
+          const directories = new Map<string, string | null>();
+          const resolveDirectory = Effect.fn(function* (cwd: string) {
+            if (!directories.has(cwd)) {
+              const canonical = yield* fileSystem.realPath(cwd).pipe(Effect.option);
+              directories.set(cwd, Option.getOrNull(canonical));
+            }
+            return directories.get(cwd) ?? null;
+          });
+          const target = yield* resolveDirectory(envelope.command.requireIdleWorktreePath);
+          const projectRoots = new Map(
+            commandReadModel.projects.map((project) => [project.id, project.workspaceRoot]),
+          );
+          const byThread = new Map<ThreadId, string | null>();
+          for (const thread of commandReadModel.threads) {
+            const cwd = thread.worktreePath ?? projectRoots.get(thread.projectId);
+            byThread.set(thread.id, cwd === undefined ? null : yield* resolveDirectory(cwd));
+          }
+          checkoutDirectories = { target, byThread };
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(checkoutDirectories !== undefined ? { checkoutDirectories } : {}),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
