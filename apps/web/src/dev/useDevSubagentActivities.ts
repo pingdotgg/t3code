@@ -39,6 +39,9 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/** Production never changes scenario, so it never registers the listeners either. */
+const subscribeDev: typeof subscribe = import.meta.env.DEV ? subscribe : () => () => {};
+
 interface DevAgentsActivation {
   readonly scenario: string;
   /** Wall clock at activation, so fixture elapsed timers start from zero. */
@@ -86,7 +89,7 @@ export function useDevSubagentActivities(
   actual: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const { scenario: raw, now } = useSyncExternalStore(
-    subscribe,
+    subscribeDev,
     readActivation,
     readServerActivation,
   );

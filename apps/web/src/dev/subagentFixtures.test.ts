@@ -33,6 +33,18 @@ describe("dev subagent fixtures", () => {
     expect(isDevSubagentScenario("not-a-scenario")).toBe(false);
   });
 
+  it("never stamps an activity after the fixture clock", () => {
+    for (const scenario of DEV_SUBAGENT_SCENARIOS) {
+      const late = devSubagentActivities(scenario, NOW).filter(
+        (activity) => Date.parse(activity.createdAt) > NOW,
+      );
+      expect({ scenario, late: late.map((activity) => activity.id) }).toEqual({
+        scenario,
+        late: [],
+      });
+    }
+  });
+
   it("produces agents for every scenario except the empty state", () => {
     for (const scenario of DEV_SUBAGENT_SCENARIOS) {
       expect({ scenario, hasAgents: panelModelFor(scenario).hasAgents }).toEqual({

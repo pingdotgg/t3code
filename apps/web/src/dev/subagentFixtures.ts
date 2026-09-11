@@ -204,7 +204,9 @@ function pushWorkflow(rows: Rows, clock: Clock, spec: WorkflowSpec): void {
           summary: member.status === "failed" ? (member.error ?? "Agent failed") : member.result,
           ...(member.usage === undefined ? {} : { typedUsage: member.usage }),
         },
-        clock.at(40 - member.slot),
+        // Slots run past 40 in the "many" scenario; never stamp a completion
+        // in the future or the panel's elapsed timers go negative.
+        clock.at(Math.max(0, 40 - member.slot)),
       );
     }
   }
