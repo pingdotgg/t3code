@@ -12,9 +12,8 @@ import type { DataLake } from "./DataLake.ts";
  * {@link DataLake}.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityLake.GetDataLakeSourcesHttp)`.
- * @binding
- * @section Monitoring the data lake
- * @example Check source collection status
+ * ### Monitoring the data lake
+ * **Example:** Check source collection status
  * ```typescript
  * // init
  * const getSources = yield* AWS.SecurityLake.GetDataLakeSources(lake);
@@ -22,6 +21,8 @@ import type { DataLake } from "./DataLake.ts";
  * // runtime
  * const { dataLakeSources } = yield* getSources();
  * ```
+ *
+ * @binding
  */
 export interface GetDataLakeSources extends Binding.Service<
   GetDataLakeSources,

@@ -14,7 +14,7 @@ const primarySessionStateAtom = Atom.make(Effect.promise(fetchSessionState)).pip
   Atom.withLabel("primary-environment:session"),
 );
 
-export function refreshPrimarySessionState(): void {
+function refreshPrimarySessionState(): void {
   appAtomRegistry.refresh(primarySessionStateAtom);
 }
 

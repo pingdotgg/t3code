@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "workspace:*",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
     "alchemy": "workspace:*",
-    "better-auth": "catalog:",
-    "effect": "catalog:"
+    "better-auth": "catalog:auth",
+    "effect": "catalog:effect"
   }
 }

@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
@@ -42,6 +43,7 @@ vi.mock("../state/session", async (importOriginal) => ({
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -51,8 +53,7 @@ vi.mock("../editorPreferences", () => ({
   usePreferredEditor: () => [null, vi.fn()],
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
-  findProjectForChangeRequest: () => undefined,
-  matchesLinkedPullRequestUrl: () => false,
+  findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
@@ -60,7 +61,6 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
-  orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -79,10 +79,10 @@ describe("ChatMarkdown favicon privacy", () => {
     const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
     try {
       await act(async () => {
-        renderer = create(markdown("https://github.com"));
+        renderer = create(markdown("https://example.com"));
       });
       expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
-        "https://www.google.com/s2/favicons?domain=github.com&sz=32",
+        "https://www.google.com/s2/favicons?domain=example.com&sz=32",
       ]);
       for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
         await act(async () => {
@@ -91,9 +91,15 @@ describe("ChatMarkdown favicon privacy", () => {
         expect(renderer!.root.findAllByType("img")).toHaveLength(0);
       }
       await act(async () => {
-        renderer!.update(markdown("https://github.com"));
+        renderer!.update(markdown("https://example.com"));
       });
       expect(renderer!.root.findAllByType("img")).toHaveLength(1);
+      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
+      await act(async () => {
+        renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType(GitHubIcon)).toHaveLength(1);
     } finally {
       await act(async () => {
         renderer?.unmount();
@@ -104,13 +110,36 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("does not retokenize completed lines when streaming finishes", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("typescript");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "```typescript\nconst completed = 1;\nconst current = 2;";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      expect(highlight).toHaveBeenCalled();
+      highlight.mockClear();
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
+      });
+      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
-    const codeToHtml = highlighter.codeToHtml.bind(highlighter);
+    const codeToHast = highlighter.codeToHast.bind(highlighter);
     let fail = true;
-    vi.spyOn(highlighter, "codeToHtml").mockImplementation((...args) => {
+    vi.spyOn(highlighter, "codeToHast").mockImplementation((...args) => {
       if (fail) throw new Error("Temporary highlighter failure");
-      return codeToHtml(...args);
+      return codeToHast(...args);
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -150,7 +179,7 @@ describe("ChatMarkdown streaming", () => {
 
   it("preserves code controls and details without highlighting an unchanged fence again", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
-    const highlight = vi.spyOn(highlighter, "codeToHtml");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -637,47 +666,6 @@ describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
         canOpenInPanel: true,
       }),
     ).toBe(true);
-  });
-});
-
-describe("orderedListGutterStyle", () => {
-  it("leaves the default gutter alone for single-digit lists", () => {
-    expect(orderedListGutterStyle(9, undefined)).toBeUndefined();
-  });
-
-  it("widens the gutter for two-digit lists", () => {
-    expect(orderedListGutterStyle(99, undefined)).toEqual({ "--list-gutter": "3ch" });
-  });
-
-  it("widens the gutter for a two-digit list that starts above 1", () => {
-    // start=50 + 49 items => last marker is "98", still two digits.
-    expect(orderedListGutterStyle(49, 50)).toEqual({ "--list-gutter": "3ch" });
-  });
-
-  it("widens the gutter once the last marker reaches three digits", () => {
-    // item 100 is the bug from #6512: a 100-item list starting at 1.
-    expect(orderedListGutterStyle(100, undefined)).toEqual({ "--list-gutter": "4ch" });
-  });
-
-  it("accounts for a non-default start attribute", () => {
-    // start=95 + 9 items => last marker is "103", three digits.
-    expect(orderedListGutterStyle(9, 95)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(5, "999995")).toEqual({ "--list-gutter": "7ch" });
-  });
-
-  it("scales further for four-digit markers", () => {
-    expect(orderedListGutterStyle(1000, undefined)).toEqual({ "--list-gutter": "5ch" });
-  });
-
-  it("uses the widest marker and includes a negative start's minus sign", () => {
-    expect(orderedListGutterStyle(1001, -1000)).toEqual({ "--list-gutter": "6ch" });
-    expect(orderedListGutterStyle(3, -15)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(3, -5)).toEqual({ "--list-gutter": "3ch" });
-  });
-
-  it("treats a missing/zero item count as a single item", () => {
-    expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
-    expect(orderedListGutterStyle(0, 100)).toEqual({ "--list-gutter": "4ch" });
   });
 });
 

@@ -19,15 +19,16 @@ export interface GetDevicePositionRequest extends Omit<
  * `geo:GetDevicePosition`), scoped to one {@link Tracker}. Provide the implementation with
  * `Effect.provide(AWS.Location.GetDevicePositionHttp)`.
  *
- * @binding
- * @section Reading Device Positions
- * @example Read a Device's Latest Position
+ * ### Reading Device Positions
+ * **Example:** Read a Device's Latest Position
  * ```typescript
  * const getPosition = yield* Location.GetDevicePosition(tracker);
  *
  * const latest = yield* getPosition({ DeviceId: "vehicle-1" });
  * // latest.Position → [longitude, latitude]
  * ```
+ *
+ * @binding
  */
 export interface GetDevicePosition extends Binding.Service<
   GetDevicePosition,

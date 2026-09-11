@@ -88,6 +88,10 @@ legacy `.agent/skills` directory. Among these project locations, the first copy
 wins in this order: `.gemini/skills`, `.agents/skills`, `.agent/skills`. See
 [commands and skills](./composer.md#commands-and-skills) for invoking them.
 
+Skills for every project go in `~/.gemini/config/skills` or
+`~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
+so a skill there only appears when the project itself is your home directory.
+
 Antigravity accepts images, PDFs, text files, and supported audio formats directly.
 Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and
 50 MiB total attachments per message. Unsupported formats are rejected. These
@@ -122,6 +126,9 @@ installation. Clear any explicit binary path pointing into that runtime. Removal
 is refused while the runtime is in use.
 
 ## Check access and troubleshoot
+
+A server restart keeps your Google sign-in. The provider shows the saved account
+until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to

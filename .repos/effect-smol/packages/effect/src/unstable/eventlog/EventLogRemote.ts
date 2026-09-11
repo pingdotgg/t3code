@@ -119,7 +119,7 @@ const makeAuthenticate = Effect.fnUntraced(function*(options: {
  * Use to provide the RPC client used by remote event-log replicas to
  * authenticate, write entries, and subscribe to changes.
  *
- * @category RPC client
+ * @category services
  * @since 4.0.0
  */
 export class EventLogRemoteClient extends Context.Service<
@@ -307,14 +307,14 @@ export const makeEncrypted = Effect.gen(function*(): Effect.fn.Return<
   return yield* makeWith({
     encodeWrite: (options) =>
       encryption.encrypt(options.identity, options.entries).pipe(
-        Effect.flatMap((msg) =>
+        Effect.flatMap((encryptedEntries) =>
           new WriteEntries({
             publicKey: options.identity.publicKey,
             storeId: options.storeId,
-            iv: msg.iv,
-            encryptedEntries: msg.encryptedEntries.map((entry, i) => ({
+            encryptedEntries: encryptedEntries.map((entry, i) => ({
               entryId: options.entries[i].id,
-              encryptedEntry: entry
+              iv: entry.iv,
+              encryptedEntry: entry.encryptedEntry
             }))
           }).encoded
         )

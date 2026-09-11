@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * account-level (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.CreateTimelineEventHttp)`.
- * @binding
- * @section Timeline Events
- * @example Annotate An Incident
+ * ### Timeline Events
+ * **Example:** Annotate An Incident
  * ```typescript
  * // init
  * const createTimelineEvent = yield* AWS.SSMIncidents.CreateTimelineEvent();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   eventData: JSON.stringify({ note: "traffic shifted to us-west-2" }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateTimelineEvent extends Binding.Service<
   CreateTimelineEvent,

@@ -1,0 +1,135 @@
+---
+title: Railway
+description: Deploy Effect programs to Railway as Projects, Services, databases, Volumes, and Buckets.
+---
+
+A Project is a workspace-scoped namespace. A Service is a container —
+a public image, an Effect program Alchemy bundles, or a canvas
+Function. Postgres, MySQL, Mongo, Redis, Volumes, Variables, and
+Buckets live in the same TypeScript program.
+
+The production environment is created with the Project. Extra
+environments (staging) are a separate resource. Workspace is **not**
+a resource — Alchemy uses `me.workspace ?? me.workspaces[0]`.
+
+[Set up your workspace and API token](/railway/setup), then start the
+[tutorial](/railway/tutorial/part-1).
+
+## Compute
+
+- **[Projects](/railway/compute/projects)** — the parent for every
+  other resource. Alchemy generates a unique name unless you pass
+  one. `https://railway.com/project/{projectId}` is the dashboard.
+- **[Services](/railway/compute/services)** — a container in a
+  Project. Pass `image` for a public tag (`hashicorp/http-echo`),
+  `main` for an Effect program, or `repo` for GitHub.
+  `healthcheck` / `cronSchedule` / `buildCommand` match Railway IaC.
+  `url` is `https://{name}.up.railway.app`. Railway load-balances
+  public traffic; Alchemy does not pin a replica count.
+- **[Functions, templates & VMs](/railway/compute/functions)** —
+  Effect-native canvas Functions (`main`, no registry), inline
+  `source` / cron, marketplace templates, sandboxes, and cloud
+  agents.
+- **[Environments](/railway/compute/environments)** — extra deploy
+  environments under a Project. Do **not** recreate production —
+  it is `project.environmentId`.
+- **[Regions](/railway/compute/regions)** — where a Service, Volume,
+  or database instance runs (`us-west2`, `us-east4`, …). Buckets use
+  a shorter set (`sjc`, `iad`, `ams`, `sin`).
+
+## Frontend
+
+- **[Websites](/railway/frontend/websites)** — Vite, Astro,
+  Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack
+  Start, Waku, Octane, Foldkit, Vocs, and StaticSite. Each builds
+  your app and deploys a
+  [Service](/railway/compute/services) from a generated Dockerfile
+  Railway builds. URL is `*.up.railway.app` or a
+  [custom domain](/railway/networking#custom-domains).
+- [`Vite`](/railway/frontend/vite), [`Astro`](/railway/frontend/astro),
+  [`Next.js`](/railway/frontend/nextjs), [`Nuxt`](/railway/frontend/nuxt),
+  [`React Router`](/railway/frontend/react-router),
+  [`SolidStart`](/railway/frontend/solidstart),
+  [`SvelteKit`](/railway/frontend/sveltekit),
+  [`TanStack Start`](/railway/frontend/tanstack-start),
+  [`Waku`](/railway/frontend/waku),
+  [`Octane`](/railway/frontend/octane), [`Foldkit`](/railway/frontend/foldkit),
+  [`Vocs`](/railway/frontend/vocs),
+  [`StaticSite`](/railway/frontend/static-site).
+
+## Data
+
+- **[Volumes](/railway/data/volumes)** — block disk in a Project.
+  Create one, then mount it into a Service with
+  `MountVolume(volume, { path })`. Snapshot with `VolumeBackup`.
+- **[Postgres](/railway/data/postgres)** — official SSL Postgres
+  image, a Volume, `DATABASE_URL`, and an optional public TCP proxy.
+  Bind `ConnectPostgres` on a Service; pass the connection string
+  to Drizzle or SQL.
+- **[MySQL](/railway/data/mysql)** — official `mysql` image,
+  `MYSQL_URL`, `ConnectMySQL`.
+- **[Mongo](/railway/data/mongo)** — official `mongo` image,
+  `MONGO_URL`, `ConnectMongo`.
+- **[Redis](/railway/data/redis)** — `redis:7` or `bitnami/redis`.
+  Bind `ReadWriteRedis` on a Service.
+- **[Buckets](/railway/data/buckets)** — S3-compatible object
+  storage. Bind `PutObject` / `GetObject` on a Service.
+
+## Variables
+
+- **[Variables](/railway/data/variables)** — `Config.redacted` in a
+  Service for values from `.env`. `Railway.Variable` when Railway
+  should own a value shared across services. `Railway.ref(Db,
+  "DATABASE_URL")` emits `${{Db.DATABASE_URL}}` (IaC
+  `db.env.DATABASE_URL`). The plaintext is never stored in
+  attributes.
+
+## Networking
+
+- **[Custom domains, TCP & private networks](/railway/networking)** —
+  your hostname on a Service (`CustomDomain`), public TCP for
+  Postgres/MySQL/Mongo/Redis (`TcpProxy` on `*.proxy.rlwy.net`), and
+  named private meshes (`PrivateNetwork` + `PrivateNetworkEndpoint`).
+  HTTP Services already get a generated `*.up.railway.app` domain.
+
+## What are you building?
+
+| You're building              | Reach for                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| An HTTP API on Railway       | [Project](/railway/compute/projects) + [Service](/railway/compute/services) |
+| A Vite SPA                   | [`Website.Vite`](/railway/frontend/vite)           |
+| An SSR site (Astro, Next, Nuxt, …) | [`Website`](/railway/frontend/websites)                             |
+| A raw container              | [Service](/railway/compute/services) with an `image`                      |
+| An Effect Function (no registry) | [Function](/railway/compute/functions)                                 |
+| A canvas / cron Function     | [Function](/railway/compute/functions) with `source`                      |
+| A background worker          | [Service](/railway/compute/services) with `ServerHost.run`                |
+| Persistent disk              | [Volume](/railway/data/volumes) + `MountVolume` (one volume per service) |
+| Volume snapshot              | [VolumeBackup](/railway/data/volumes#backups)                             |
+| Postgres                     | [Postgres](/railway/data/postgres) + `ConnectPostgres`                    |
+| MySQL                        | [MySQL](/railway/data/mysql) + `ConnectMySQL`                             |
+| Mongo                        | [Mongo](/railway/data/mongo) + `ConnectMongo`                             |
+| Redis                        | [Redis](/railway/data/redis) + `ReadRedis` / `WriteRedis` / `ReadWriteRedis` |
+| Object storage               | [Bucket](/railway/data/buckets) + `PutObject` / `GetObject`               |
+| Staging next to production   | [Environment](/railway/compute/environments)                              |
+| Config / API tokens          | [`Config.redacted`](/railway/data/variables). [`Railway.Variable`](/railway/data/variables) when Railway should own it |
+| Cross-service env            | [`Railway.ref`](/railway/data/variables#variable-references)              |
+| Your own domain              | [CustomDomain](/railway/networking#custom-domains)                        |
+| Laptop access to Postgres    | [TcpProxy](/railway/networking#tcp-proxies) (or Postgres `public: true`)  |
+| Custom private DNS           | [PrivateNetwork](/railway/networking#private-networks)                    |
+| Trusted call between Services | [Schemaless RPC](/railway/compute/services#schemaless-rpc) — `bindService` / `bindFunction`, private mesh only |
+
+## Where next
+
+- [Setup](/railway/setup) — create a Railway workspace, generate an
+  account token, and connect alchemy.
+- [Tutorial](/railway/tutorial/part-1) — from empty directory to a
+  Project running an HTTP Service with a mounted Volume and a
+  Variable.
+- [Websites](/railway/frontend/websites) — Vite, Astro, Next.js, and
+  other framework sites as a container Service.
+- `examples/railway-service` — every resource and binding in one
+  stack (Project, Environment, Variable, Volume, Postgres, MySQL,
+  Redis, Bucket, TcpProxy, image Service, Effect Function, canvas
+  cron Function, Effect Api + Worker, `Railway.ref`, canvas Group).
+- [Providers reference](/providers) — generated API docs for every
+  Railway resource Alchemy ships.

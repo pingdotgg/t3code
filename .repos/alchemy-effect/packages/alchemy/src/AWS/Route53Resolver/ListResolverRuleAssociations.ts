@@ -16,9 +16,8 @@ export interface ListResolverRuleAssociationsRequest extends Omit<
  *
  * Provide `Route53Resolver.ListResolverRuleAssociationsHttp` on the hosting
  * Lambda Function to satisfy the requirement.
- * @binding
- * @section Reading Rule State
- * @example List the VPCs a Rule Is Live In
+ * ### Reading Rule State
+ * **Example:** List the VPCs a Rule Is Live In
  * ```typescript
  * // init — grants route53resolver:ListResolverRuleAssociations on the rule
  * const listAssociations = yield* AWS.Route53Resolver.ListResolverRuleAssociations(rule);
@@ -27,6 +26,8 @@ export interface ListResolverRuleAssociationsRequest extends Omit<
  * const { ResolverRuleAssociations } = yield* listAssociations();
  * const vpcIds = (ResolverRuleAssociations ?? []).map((a) => a.VPCId);
  * ```
+ *
+ * @binding
  */
 export interface ListResolverRuleAssociations extends Binding.Service<
   ListResolverRuleAssociations,

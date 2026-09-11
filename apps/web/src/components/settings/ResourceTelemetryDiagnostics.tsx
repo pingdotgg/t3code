@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ActivityIcon,
   AlertTriangleIcon,
@@ -9,11 +10,10 @@ import {
   GaugeIcon,
   HardDriveIcon,
   MemoryStickIcon,
-  RefreshCwIcon,
-  RotateCcwIcon,
 } from "lucide-react";
 import type {
   BackgroundBooleanState,
+  EnvironmentId,
   ResourceAttributionEntry,
   ResourceTelemetryAggregate,
   ResourceTelemetryHistoryBucket,
@@ -27,7 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -39,7 +39,6 @@ import {
 } from "../../lib/resourceTelemetryState";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTime } from "../../timestampFormat";
@@ -832,31 +831,43 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
   );
 }
 
-export function ResourceTelemetryDiagnostics() {
+export function ResourceTelemetryDiagnostics({
+  environmentId,
+}: {
+  environmentId: EnvironmentId | null;
+}) {
   const [windowMs, setWindowMs] = useState(15 * 60_000);
   const selectedWindow =
     HISTORY_WINDOWS.find((option) => option.windowMs === windowMs) ?? HISTORY_WINDOWS[1];
-  const telemetry = useResourceTelemetry();
+  const telemetry = useResourceTelemetry(environmentId);
   const retryTelemetry = telemetry.retry;
-  const history = useResourceTelemetryHistory({
-    windowMs: selectedWindow.windowMs,
-    bucketMs: selectedWindow.bucketMs,
-  });
-  const primaryEnvironment = usePrimaryEnvironment();
+  const history = useResourceTelemetryHistory(
+    {
+      windowMs: selectedWindow.windowMs,
+      bucketMs: selectedWindow.bucketMs,
+    },
+    environmentId,
+  );
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
   const [signalingKeys, setSignalingKeys] = useState<ReadonlySet<string>>(() => new Set());
   const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
-  signalingKeysRef.current = signalingKeys;
-  const primaryEnvironmentIdRef = useRef(primaryEnvironment?.environmentId);
-  primaryEnvironmentIdRef.current = primaryEnvironment?.environmentId;
+  const environmentIdRef = useRef(environmentId);
+  useEffect(() => {
+    environmentIdRef.current = environmentId;
+    return () => {
+      environmentIdRef.current = null;
+    };
+  }, [environmentId]);
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
 
   const signalProcess = useCallback(
     async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
+      const targetEnvironmentId = environmentIdRef.current;
+      if (targetEnvironmentId === null) return;
       const identityKey = processIdentityKey(process);
       if (signalingKeysRef.current.has(identityKey)) return;
       const nextSignalingKeys = new Set(signalingKeysRef.current).add(identityKey);
@@ -890,13 +901,12 @@ export function ResourceTelemetryDiagnostics() {
           return;
         }
       }
-      const environmentId = primaryEnvironmentIdRef.current;
-      if (environmentId === undefined) {
+      if (environmentIdRef.current !== targetEnvironmentId) {
         clearSignaling();
         return;
       }
       void signalServerProcess({
-        environmentId,
+        environmentId: targetEnvironmentId,
         input: {
           pid: process.identity.pid,
           startTimeMs: process.identity.startTimeMs,
@@ -982,9 +992,7 @@ export function ResourceTelemetryDiagnostics() {
                     onClick={telemetry.refresh}
                     aria-label="Refresh resource telemetry"
                   >
-                    <RefreshCwIcon
-                      className={cn("size-3", telemetry.isPending && "animate-spin")}
-                    />
+                    <RefreshIcon className="size-3" refreshing={telemetry.isPending} />
                   </Button>
                 }
               />
@@ -1095,7 +1103,7 @@ export function ResourceTelemetryDiagnostics() {
         headerAction={
           collectorNeedsRetry ? (
             <Button size="xs" variant="outline" disabled={isRetrying} onClick={retryCollector}>
-              <RotateCcwIcon className={cn("size-3", isRetrying && "animate-spin")} />
+              <RefreshIcon className="size-3" refreshing={isRetrying} />
               Retry monitor
             </Button>
           ) : null
@@ -1233,7 +1241,7 @@ export function ResourceTelemetryDiagnostics() {
               onClick={history.refresh}
               aria-label="Refresh resource history"
             >
-              <RefreshCwIcon className={cn("size-3", history.isPending && "animate-spin")} />
+              <RefreshIcon className="size-3" refreshing={history.isPending} />
             </Button>
           </div>
         }

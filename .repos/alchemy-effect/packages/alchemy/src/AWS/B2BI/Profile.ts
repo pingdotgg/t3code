@@ -76,9 +76,8 @@ export interface Profile extends Resource<
  * mechanism used to model a distinct private network; you can have up to
  * five profiles per account. Profiles are credential-free and fully
  * self-service, so their lifecycle is directly testable.
- * @resource
- * @section Creating a Profile
- * @example Basic Profile
+ * ### Creating a Profile
+ * **Example:** Basic Profile
  * ```typescript
  * const profile = yield* B2BI.Profile("Acme", {
  *   name: "Acme Trading",
@@ -88,8 +87,8 @@ export interface Profile extends Resource<
  * });
  * ```
  *
- * @section Disabling CloudWatch Logging
- * @example Logging Disabled
+ * ### Disabling CloudWatch Logging
+ * **Example:** Logging Disabled
  * ```typescript
  * const profile = yield* B2BI.Profile("Acme", {
  *   name: "Acme Trading",
@@ -98,6 +97,8 @@ export interface Profile extends Resource<
  *   logging: "DISABLED",
  * });
  * ```
+ *
+ * @resource
  */
 export const Profile = Resource<Profile>("AWS.B2BI.Profile");
 

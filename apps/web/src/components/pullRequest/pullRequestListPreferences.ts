@@ -37,7 +37,7 @@ export type PullRequestListPreferencePatch = {
   [Key in keyof PullRequestListPreferences]?: PullRequestListPreferences[Key] | undefined;
 };
 
-export const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
+const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
   involvement: "all",
   state: "open",
 } as const satisfies PullRequestListPreferences;

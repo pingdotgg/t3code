@@ -20,15 +20,16 @@ export interface ListDICOMImportJobsRequest extends Omit<
  * `jobStatus`. Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.ListDICOMImportJobsHttp)`.
  *
- * @binding
- * @section Importing DICOM Data
- * @example List In-Progress Import Jobs
+ * ### Importing DICOM Data
+ * **Example:** List In-Progress Import Jobs
  * ```typescript
  * const listImportJobs = yield* MedicalImaging.ListDICOMImportJobs(datastore);
  *
  * const jobs = yield* listImportJobs({ jobStatus: "IN_PROGRESS" });
  * // jobs.jobSummaries[i].jobId
  * ```
+ *
+ * @binding
  */
 export interface ListDICOMImportJobs extends Binding.Service<
   ListDICOMImportJobs,
