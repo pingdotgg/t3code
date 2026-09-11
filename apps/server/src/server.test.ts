@@ -6143,6 +6143,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               );
               yield* check(
                 client[WS_METHODS.serverUpdateSettings]({
+                  patch: {
+                    projectSettingsOverrides: { "project-auth-test": { defaultAutoPull: true } },
+                  },
+                }),
+                ["settings:write"],
+              );
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
+                  patch: { projectSettingsOverrides: { "project-auth-test": null } },
+                }),
+                ["settings:write"],
+              );
+              yield* check(
+                client[WS_METHODS.serverUpdateSettings]({
                   patch: { providerInstances: {} },
                 }),
                 ["providers:manage"],
@@ -6177,7 +6191,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
       }
-      assert.equal(settingsWrites, 7);
+      assert.equal(settingsWrites, 11);
       assert.equal(signIns, 2);
       assert.equal(processSignals, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
