@@ -585,9 +585,11 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
 function SidebarContent({
   className,
   fixedHeader,
+  chainVerticalScroll = false,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  chainVerticalScroll?: boolean;
 }) {
   return (
     <>
@@ -602,6 +604,7 @@ function SidebarContent({
         // Base UI's viewport out of the tab order lets its presentational role
         // flatten in WebKit instead of becoming a VoiceOver interaction group.
         viewportTabIndex={-1}
+        chainVerticalScroll={chainVerticalScroll}
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
         <div
