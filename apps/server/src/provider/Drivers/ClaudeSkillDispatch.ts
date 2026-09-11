@@ -30,7 +30,6 @@
  * (`packages/shared/src/composerInlineTokens.ts`), so a rendered chip and a
  * dispatched skill are always the same set.
  */
-import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
 
 const SKILL_MENTION_PATTERN =
   /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
@@ -44,7 +43,8 @@ export interface ClaudeSkillDispatch {
 }
 
 /**
- * Split `prompt` around the last `$skill` mention that names a known skill.
+ * Split the pre-fallback `prompt` around the last known `$skill` mention.
+ * Generated exact-file instructions must remain separate from this input.
  * Returns `undefined` when there is nothing to dispatch, in which case the
  * prompt should go out unchanged. Mentions that do not match a discovered
  * skill stay literal: a `$HOME` in prose must not become a command.
@@ -53,9 +53,6 @@ export function planClaudeSkillDispatch(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): ClaudeSkillDispatch | undefined {
-  // Explicit sources have already been attached by ProviderService. Their
-  // instruction bodies are not additional native slash invocations.
-  if (collectSkillReferences(prompt).length > 0) return undefined;
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     if (!skillNames.has(name)) return [];

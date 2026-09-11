@@ -42,17 +42,64 @@ export function collectSkillReferences(
   return [...references.values()];
 }
 
+/** Markdown fences and exact-length backtick spans are literal, including unclosed fences. */
+function collectMarkdownCodeRanges(text: string): Array<{ start: number; end: number }> {
+  const fences: Array<{ start: number; end: number }> = [];
+  let open: { start: number; character: string; length: number } | undefined;
+  for (const line of text.matchAll(/^.*(?:\n|$)/gm)) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)\r?\n?$/.exec(line[0]);
+    if (!delimiter) continue;
+    const run = delimiter[1]!;
+    const rest = delimiter[2]!;
+    if (open) {
+      if (run[0] === open.character && run.length >= open.length && rest.trim() === "") {
+        fences.push({ start: open.start, end: line.index + line[0].length });
+        open = undefined;
+      }
+    } else if (run[0] !== "`" || !rest.includes("`")) {
+      open = { start: line.index, character: run[0]!, length: run.length };
+    }
+  }
+  if (open) fences.push({ start: open.start, end: text.length });
+  const ranges = [...fences];
+  let offset = 0;
+  for (const fence of [...fences, { start: text.length, end: text.length }]) {
+    const runs = [...text.slice(offset, fence.start).matchAll(/`+/g)];
+    const nextByLength = new Map<number, number>();
+    const closing = new Map<number, number>();
+    for (let index = runs.length - 1; index >= 0; index--) {
+      const length = runs[index]![0].length;
+      const next = nextByLength.get(length);
+      if (next !== undefined) closing.set(index, next);
+      nextByLength.set(length, index);
+    }
+    for (let index = 0; index < runs.length; index++) {
+      const end = closing.get(index);
+      if (end === undefined) continue;
+      ranges.push({
+        start: offset + runs[index]!.index,
+        end: offset + runs[end]!.index + runs[end]![0].length,
+      });
+      index = end;
+    }
+    offset = fence.end;
+  }
+  return ranges.sort((left, right) => left.start - right.start);
+}
+
 function collectSkillReferenceTokens(
   text: string,
 ): Extract<ComposerInlineToken, { type: "skill" }>[] {
   if (!text.includes("[$")) return [];
   const tokens: Extract<ComposerInlineToken, { type: "skill" }>[] = [];
-  const codeRanges = [...text.matchAll(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g)];
+  const codeRanges = collectMarkdownCodeRanges(text);
+  let codeRangeIndex = 0;
   const pattern = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^\s)]+)\)/g;
   for (const match of text.matchAll(pattern)) {
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
-    if (codeRanges.some((range) => start >= range.index && start < range.index + range[0].length))
-      continue;
+    while (codeRanges[codeRangeIndex] && codeRanges[codeRangeIndex]!.end <= start) codeRangeIndex++;
+    const codeRange = codeRanges[codeRangeIndex];
+    if (codeRange && start >= codeRange.start && start < codeRange.end) continue;
     const name = match[2];
     const encodedPath = match[3];
     if (!name || !encodedPath) continue;

@@ -5,12 +5,19 @@ import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
-  it("does not re-resolve attached source instructions by name", () => {
+  it("preserves source references while dispatching an intentional bare invocation", () => {
     expect(
       planClaudeSkillDispatch(
-        "Use [$review](/personal/review/SKILL.md)\n\nInstructions: run $implement next",
+        "Use [$review](/personal/review/SKILL.md) then $implement next",
         SKILLS,
       ),
+    ).toEqual({
+      leadingText: "Use [$review](/personal/review/SKILL.md) then",
+      commandText: "/implement next",
+      skillName: "implement",
+    });
+    expect(
+      planClaudeSkillDispatch("Use [$review](/personal/review/SKILL.md)", SKILLS),
     ).toBeUndefined();
   });
   it("leaves a prompt without a known skill untouched", () => {

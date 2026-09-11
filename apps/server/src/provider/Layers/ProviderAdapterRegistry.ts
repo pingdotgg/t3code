@@ -19,7 +19,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ProviderUnsupportedError } from "../Errors.ts";
+import { ProviderUnsupportedError, ProviderValidationError } from "../Errors.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import {
   ProviderAdapterRegistry,
@@ -62,6 +62,32 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       ),
     );
 
+  const getSkills: ProviderAdapterRegistryShape["getSkills"] = Effect.fn("getSkills")(
+    function* (instanceId, cwd) {
+      const instance = yield* registry.getInstance(instanceId);
+      if (!instance || !instance.enabled)
+        return yield* new ProviderUnsupportedError({ provider: instanceId });
+      const snapshot = yield* (
+        cwd !== undefined && instance.snapshotForCwd
+          ? instance.snapshotForCwd(cwd)
+          : instance.snapshot.refresh
+      ).pipe(
+        Effect.mapError(
+          () =>
+            new ProviderValidationError({
+              operation: "ProviderService.sendTurn",
+              issue: "Cannot discover the selected provider's skills. Refresh skills and retry.",
+            }),
+        ),
+      );
+      if (snapshot.status === "error")
+        return yield* new ProviderValidationError({
+          operation: "ProviderService.sendTurn",
+          issue: "Cannot discover the selected provider's skills. Refresh skills and retry.",
+        });
+      return snapshot.skills;
+    },
+  );
   const listInstances: ProviderAdapterRegistryShape["listInstances"] = () =>
     registry.listInstances.pipe(
       Effect.map((instances) => instances.map((instance) => instance.instanceId)),
@@ -69,6 +95,7 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
 
   return {
     getByInstance,
+    getSkills,
     getInstanceInfo,
     listInstances,
     subscribeChanges: registry.subscribeChanges,

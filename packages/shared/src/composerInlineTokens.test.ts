@@ -12,6 +12,28 @@ describe("explicit skill references", () => {
     expect(collectSkillReferences(`Example: \`${ref}\`\n\n\`\`\`md\n${ref}\n\`\`\``)).toEqual([]);
   });
   it.each([
+    "`` [$review](/private/SKILL.md) ``",
+    "`` literal ` [$review](/private/SKILL.md) ``",
+    "`` multi\n [$review](/private/SKILL.md) \nline ``",
+    "```md\n[$review](/private/SKILL.md)",
+    "~~~md\n[$review](/private/SKILL.md)",
+    "````md\n```\n[$review](/private/SKILL.md)\n````",
+    "~~~~md\n~~~\n[$review](/private/SKILL.md)\n~~~~",
+    "```md\n~~~\n[$review](/private/SKILL.md)",
+  ])("ignores references in Markdown code: %s", (text) => {
+    expect(collectSkillReferences(text)).toEqual([]);
+  });
+
+  it("collects references after matching fences and unmatched inline delimiters", () => {
+    const ref = "[$review](/personal/review/SKILL.md)";
+    expect(collectSkillReferences("````md\nignored\n`````\n" + ref)).toEqual([
+      { name: "review", path: "/personal/review/SKILL.md" },
+    ]);
+    expect(collectSkillReferences("`` unmatched " + ref)).toEqual([
+      { name: "review", path: "/personal/review/SKILL.md" },
+    ]);
+  });
+  it.each([
     "/home/Matt/My Skills (personal)/review?#雪/SKILL.md",
     "C:\\Users\\Matt\\My Skills (personal)\\review\\SKILL.md",
     "\\\\server\\skills\\review\\SKILL.md",

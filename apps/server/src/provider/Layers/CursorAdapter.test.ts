@@ -310,7 +310,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
       yield* adapter.sendTurn({
         threadId,
-        input: "please $review this",
+        input:
+          "Use [$review](/personal/review/SKILL.md) then $review this\n\nInstructions: $review stays literal",
+        skillContext: "\n\nInstructions: $review stays literal",
         attachments: [],
       });
       const snapshot = yield* adapter.readThread(threadId);
@@ -319,7 +321,12 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         [
           [
             {
-              prompt: [{ type: "text", text: "please /review this" }],
+              prompt: [
+                {
+                  type: "text",
+                  text: "Use [$review](/personal/review/SKILL.md) then /review this\n\nInstructions: $review stays literal",
+                },
+              ],
               result: { stopReason: "end_turn" },
             },
           ],
@@ -335,7 +342,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         ),
         [
           [
-            { type: "text", text: "please /review this" },
+            {
+              type: "text",
+              text: "Use [$review](/personal/review/SKILL.md) then /review this\n\nInstructions: $review stays literal",
+            },
             { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
           ],
         ],

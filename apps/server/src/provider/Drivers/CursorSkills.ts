@@ -1,4 +1,3 @@
-import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
 /**
  * CursorSkills — workspace-aware discovery and native invocation for Cursor.
  *
@@ -277,7 +276,6 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
 
 /** Preserve native invocation for legacy drafts and manually typed `$name` mentions. */
 export function hasCursorSkillMention(prompt: string): boolean {
-  if (collectSkillReferences(prompt).length > 0) return false;
   return HAS_SKILL_MENTION_PATTERN.test(prompt);
 }
 
@@ -285,7 +283,6 @@ export function rewriteCursorSkillMentions(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): string {
-  if (collectSkillReferences(prompt).length > 0) return prompt;
   return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
     skillNames.has(name) ? `${prefix}/${name}` : match,
   );
