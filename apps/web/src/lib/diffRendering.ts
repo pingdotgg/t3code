@@ -289,37 +289,37 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
 
   --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--success)),
-    color-mix(in srgb, var(--code-background) 70%, var(--success))
+    color-mix(in srgb, var(--code-background) 50%, var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) 70%, var(--diff-addition))
   );
   --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--success)),
-    color-mix(in srgb, var(--code-background) 60%, var(--success))
+    color-mix(in srgb, var(--code-background) 35%, var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) 60%, var(--diff-addition))
   );
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--success));
+  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--diff-addition));
   --diffs-bg-addition-emphasis-override: color-mix(
     in srgb,
     var(--code-background) 80%,
-    var(--success)
+    var(--diff-addition)
   );
 
   --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--destructive)),
-    color-mix(in srgb, var(--code-background) 70%, var(--destructive))
+    color-mix(in srgb, var(--code-background) 50%, var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) 70%, var(--diff-deletion))
   );
   --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--destructive)),
-    color-mix(in srgb, var(--code-background) 60%, var(--destructive))
+    color-mix(in srgb, var(--code-background) 35%, var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) 60%, var(--diff-deletion))
   );
   --diffs-bg-deletion-hover-override: color-mix(
     in srgb,
     var(--code-background) 85%,
-    var(--destructive)
+    var(--diff-deletion)
   );
   --diffs-bg-deletion-emphasis-override: color-mix(
     in srgb,
     var(--code-background) 80%,
-    var(--destructive)
+    var(--diff-deletion)
   );
 
   background-color: var(--diffs-bg) !important;
