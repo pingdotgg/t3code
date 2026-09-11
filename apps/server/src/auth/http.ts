@@ -1,4 +1,5 @@
 import {
+  authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
@@ -18,10 +19,11 @@ import {
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
-import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
+import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/unstable/http/Cookies";
@@ -122,7 +124,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
       Effect.fail(
         new EnvironmentScopeRequiredError({
           code: "insufficient_scope",
-          requiredScope,
+          ...authScopeRequiredResponse(requiredScope),
           traceId,
         }),
       ),
@@ -305,10 +307,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const requestedScopes =
               args.payload.scope === undefined
                 ? undefined
-                : parseAllowedOAuthScope({
-                    value: args.payload.scope,
-                    allowedScopes: new Set(AuthGrantScope.literals),
-                  });
+                : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ?? null);
             if (requestedScopes === null) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }

@@ -183,9 +183,10 @@ and the agent it runs can use Git however the environment allows.
 
 Settings changes, provider management, and environment maintenance can be granted
 separately from access administration. New standard pairings include these
-permissions. Existing clients keep their original grants after an update; to
-receive newly separated permissions, pair the client again with the scopes it
-needs. Reconnecting or refreshing a session does not expand its grant.
+permissions. Existing clients can stay connected after an update, but newly separated
+features may require pairing again with the permissions they need. Older clients
+may show controls that the server denies. Create a fresh pairing link to change
+a client's permissions.
 
 `filesystem:read` allows browsing host files, opening workspace files, and viewing
 local changes. Add `filesystem:write` to allow editing files or saving plans to

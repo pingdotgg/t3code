@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthOrchestrationOperateScope, type AuthSessionState } from "@t3tools/contracts";
+import {
+  AuthEnvironmentMaintainScope,
+  type AuthSessionState,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { environmentSession } from "~/state/session";
 import type { EnvironmentId, ServerSelfUpdateCapability } from "@t3tools/contracts";
@@ -152,13 +156,7 @@ export function ServerUpdatesAction({
 
 function canUpdateServer(result: AsyncResult.AsyncResult<AuthSessionState, unknown>): boolean {
   if (result._tag !== "Success" || !result.value.authenticated) return false;
-  const session = result.value;
-  // Only self-update bridges the old authorization protocol. Upgraded servers
-  // advertise the new scope even when this client's grant predates it.
-  return (
-    session.scopes?.includes(session.auth.serverUpdateScope ?? AuthOrchestrationOperateScope) ===
-    true
-  );
+  return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
 }
 
 /**
