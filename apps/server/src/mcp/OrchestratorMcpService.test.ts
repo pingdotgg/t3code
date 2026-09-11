@@ -3,20 +3,27 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
   NodeId,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadProjection,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ServerProvider,
   ThreadId,
-  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 
 describe("OrchestratorMcpService", () => {
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
@@ -327,5 +334,135 @@ describe("OrchestratorMcpService", () => {
         );
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
+  );
+
+  it.effect(
+    "resolves inherited provider instances for driver-only delegate targets by availability",
+    () =>
+      Effect.gen(function* () {
+        const inheritedInstanceId = ProviderInstanceId.make("codex-inherited");
+        const healthyInstanceId = ProviderInstanceId.make("codex-healthy");
+        const driverKind = ProviderDriverKind.make("codex");
+        const parentThreadId = ThreadId.make("thread:mcp-target-parent");
+        const parentProjection = {
+          thread: {
+            id: parentThreadId,
+            modelSelection: { instanceId: inheritedInstanceId, model: "gpt-5.6-terra" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+          runs: [
+            {
+              id: RunId.make("run:mcp-target-parent"),
+              ordinal: 1,
+              status: "running",
+              rootNodeId: NodeId.make("node:mcp-target-root"),
+              providerInstanceId: inheritedInstanceId,
+            },
+          ],
+          contextTransfers: [],
+          subagents: [],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const scope: McpInvocationScope = {
+          environmentId: EnvironmentId.make("environment:mcp-target"),
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-target",
+          providerInstanceId: inheritedInstanceId,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+        const provider = (instanceId: ProviderInstanceId, enabled: boolean): ServerProvider =>
+          decodeServerProvider({
+            instanceId,
+            driver: driverKind,
+            enabled,
+            installed: true,
+            version: "1.0.0",
+            status: enabled ? "ready" : "disabled",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-10T00:00:00.000Z",
+            availability: enabled ? "available" : "unavailable",
+            models: [
+              { slug: "gpt-5.6-terra", name: "GPT-5.6 Terra", isCustom: false, capabilities: null },
+            ],
+          });
+        const cases = [
+          {
+            name: "healthy-inherited",
+            inheritedEnabled: true,
+            explicit: false,
+            selectedInstanceId: inheritedInstanceId,
+          },
+          {
+            name: "unavailable-inherited-fallback",
+            inheritedEnabled: false,
+            explicit: false,
+            selectedInstanceId: healthyInstanceId,
+          },
+          {
+            name: "explicit-unavailable",
+            inheritedEnabled: false,
+            explicit: true,
+            selectedInstanceId: null,
+          },
+        ] as const;
+
+        for (const testCase of cases) {
+          const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2Command>>([]);
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService)({
+              getThreadProjection: () => Effect.succeed(parentProjection),
+              dispatch: (command: OrchestrationV2Command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new OrchestratorDispatchError({
+                        commandId: command.commandId,
+                        commandType: command.type,
+                        cause: "simulated child creation failure",
+                      }),
+                    ),
+                  ),
+                ),
+            }),
+            Layer.mock(ProviderRegistry)({
+              getProviders: Effect.succeed([
+                provider(healthyInstanceId, true),
+                provider(inheritedInstanceId, testCase.inheritedEnabled),
+              ]),
+            }),
+            Layer.mock(ScheduledTaskService)({}),
+          );
+
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const error = yield* service
+              .delegateTask(scope, {
+                task: "Resolve the child provider instance.",
+                target: testCase.explicit
+                  ? { providerInstanceId: inheritedInstanceId }
+                  : { driverKind },
+                clientRequestId: testCase.name,
+              })
+              .pipe(Effect.flip);
+            const commands = yield* Ref.get(dispatched);
+            if (testCase.selectedInstanceId === null) {
+              assert.equal(error.code, "provider_unavailable");
+              assert.deepEqual(commands, []);
+              return;
+            }
+            assert.equal(error.code, "orchestration_error");
+            assert.equal(commands.length, 1);
+            assert.equal(commands[0]?.type, "delegated_task.request");
+            assert.equal(
+              commands[0]?.type === "delegated_task.request"
+                ? commands[0].modelSelection.instanceId
+                : undefined,
+              testCase.selectedInstanceId,
+            );
+          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }
+      }),
   );
 });
