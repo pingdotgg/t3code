@@ -83,11 +83,7 @@ public enum PairingURL {
 
         let query = components.queryItems ?? []
         let fragment = queryItems(fromFragment: components.percentEncodedFragment)
-        let token = [fragment, query].compactMap { items in
-            items.lazy.filter { $0.name.caseInsensitiveCompare("token") == .orderedSame }
-                .compactMap { $0.value?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first(where: { !$0.isEmpty })
-        }.first(where: { !$0.isEmpty }) ?? ""
+        let token = firstNonemptyToken(in: fragment) ?? firstNonemptyToken(in: query) ?? ""
         let label = query
             .first(where: { $0.name.caseInsensitiveCompare("label") == .orderedSame })?
             .value?
@@ -233,6 +229,13 @@ public enum PairingURL {
         var components = URLComponents()
         components.percentEncodedQuery = fragment
         return components.queryItems ?? []
+    }
+
+    private static func firstNonemptyToken(in items: [URLQueryItem]) -> String? {
+        items.lazy
+            .filter { $0.name.caseInsensitiveCompare("token") == .orderedSame }
+            .compactMap { $0.value?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
     }
 
     private static func displayHost(_ url: URL) -> String {
