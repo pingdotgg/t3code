@@ -93,11 +93,19 @@ export function MediaVideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     const pauseWhenHidden = () => {
-      if (document.hidden) video.pause();
+      // Native fullscreen can hide the inline page while this video is still visible.
+      const fullscreen =
+        document.fullscreenElement?.contains(video) ||
+        ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
+      if (document.hidden && !fullscreen) video.pause();
     };
     document.addEventListener("visibilitychange", pauseWhenHidden);
+    document.addEventListener("fullscreenchange", pauseWhenHidden);
+    video.addEventListener("webkitendfullscreen", pauseWhenHidden);
     return () => {
       document.removeEventListener("visibilitychange", pauseWhenHidden);
+      document.removeEventListener("fullscreenchange", pauseWhenHidden);
+      video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
     };
   }, [src, failed, loadAttempt]);

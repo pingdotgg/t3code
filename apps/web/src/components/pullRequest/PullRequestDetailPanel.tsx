@@ -4,16 +4,18 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  DEFAULT_SERVER_SETTINGS,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
-  GitHubAccountId,
-  PullRequestAction,
-  PullRequestMergeMethod,
-  PullRequestListEntry,
-  PullRequestUpdateMethod,
-  PullRequestRef,
-  ScopedThreadRef,
+  type GitHubAccountId,
+  type PullRequestAction,
+  type PullRequestMergeMethod,
+  type PullRequestListEntry,
+  type PullRequestUpdateMethod,
+  type PullRequestRef,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
@@ -56,8 +58,8 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   changeRequestRepositoryUrl,
   gitHubPullRequestBrowserUrl,
@@ -592,10 +594,19 @@ export function PullRequestDetailPanel({
   }, [condensed]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
-  const mergeMethodOverrides = useClientSettings(
+  // Server-side and per project, like every other project setting. The
+  // client-local per-project map from before still answers when the server
+  // has no value, so a choice made on an older release keeps applying until
+  // it is set (or reset) in Settings.
+  const legacyMergeMethodOverrides = useClientSettings(
     (settings) => settings.pullRequestMergeMethodOverrides,
   );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectDefaultMergeMethod =
+    resolveProjectSettings(
+      environmentConfigs.get(environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS,
+      reference.projectId,
+    ).settings.pullRequestMergeMethod ?? undefined;
   const [mergeMethodSelection, setMergeMethodSelection] = useState<{
     readonly pullRequestKey: string;
     readonly method: PullRequestMergeMethod;
@@ -866,9 +877,10 @@ export function PullRequestDetailPanel({
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
   }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
-  // Project settings store the override under the sidebar group's key, which a duplicate row
+  // Project settings stored the override under the sidebar group's key, which a duplicate row
   // borrows from its siblings, so the project alone does not always name the same key.
-  const projectDefaultMergeMethod = useMemo(() => {
+  const legacyProjectDefaultMergeMethod = useMemo(() => {
+    if (projectDefaultMergeMethod !== undefined) return undefined;
     const project = projects.find(
       (candidate) =>
         candidate.environmentId === environmentId && candidate.id === reference.projectId,
@@ -881,11 +893,12 @@ export function PullRequestDetailPanel({
         primaryEnvironmentId,
       }).get(derivePhysicalProjectKey(project)) ??
       deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    return mergeMethodOverrides[projectKey];
+    return legacyMergeMethodOverrides[projectKey];
   }, [
     environmentId,
-    mergeMethodOverrides,
+    legacyMergeMethodOverrides,
     primaryEnvironmentId,
+    projectDefaultMergeMethod,
     projectGroupingSettings,
     projects,
     reference.projectId,
@@ -1368,7 +1381,7 @@ export function PullRequestDetailPanel({
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedMergeMethods,
     currentMergeMethod,
-    projectDefaultMergeMethod,
+    projectDefaultMergeMethod ?? legacyProjectDefaultMergeMethod,
     lastSelectedMergeMethod,
   );
   const selectedMergeMethodLabel = PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod];
@@ -1488,7 +1501,13 @@ export function PullRequestDetailPanel({
           onPickerOpenChange={setThreadPickerOpen}
         />
       ) : null}
-      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
+      <div
+        className={cn(
+          "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
+          detail && "border-b border-border/60",
+          !detail && !onClose && "hidden",
+        )}
+      >
         <div className="ml-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div
             aria-hidden={condensed}
@@ -1693,7 +1712,7 @@ export function PullRequestDetailPanel({
                           render={
                             <Button
                               size="xs"
-                              variant="ghost"
+                              variant="outline"
                               aria-label={
                                 handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
                               }
@@ -1778,7 +1797,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="default"
+                          variant="destructive-outline"
                           disabled={handoff !== null}
                           onClick={startResolveConflicts}
                           aria-label={
@@ -2570,7 +2589,7 @@ export function PullRequestDetailPanel({
       </div>
 
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
           scrollerRef.current = scroller;

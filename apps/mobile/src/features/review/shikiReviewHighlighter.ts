@@ -17,6 +17,7 @@ import {
   resolveReviewHighlighterEnginePreference,
   type ReviewHighlighterEngine,
 } from "./reviewHighlighterEngine";
+import { createIncrementalSnippet } from "./incrementalSnippet";
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import { applyDiffRangesToTokens, computeWordAltDiffRanges } from "./reviewWordDiffs";
 
@@ -453,16 +454,23 @@ async function resolveLanguageFromPath(
   return candidate;
 }
 
+type RawHighlightedLine = ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>;
+const normalizedLines = new WeakMap<RawHighlightedLine, ReadonlyArray<ReviewHighlightedToken>>();
+
 function normalizeHighlightedLines(
-  tokenLines: ReadonlyArray<ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>>,
+  tokenLines: ReadonlyArray<RawHighlightedLine>,
 ): ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>> {
-  return tokenLines.map((line) =>
-    line.map((token) => ({
+  return tokenLines.map((line) => {
+    const cached = normalizedLines.get(line);
+    if (cached) return cached;
+    const normalized = line.map((token) => ({
       content: token.content,
       color: token.color ?? null,
       fontStyle: token.fontStyle ?? null,
-    })),
-  );
+    }));
+    normalizedLines.set(line, normalized);
+    return normalized;
+  });
 }
 
 function applyWordAltDiffHighlightsToSelectedLines(input: {
@@ -594,15 +602,61 @@ async function highlightLines(
   return highlightedLines;
 }
 
+const snippetSessions = new WeakMap<
+  object,
+  { language: string; theme: string; highlight: ReturnType<typeof createIncrementalSnippet> }
+>();
+
 export async function highlightCodeSnippet(input: {
+  readonly session?: object;
   readonly code: string;
   readonly language?: string | null;
   readonly theme: ReviewDiffTheme;
 }): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   const languageHint = input.language?.trim() || "text";
   const language = await resolveLanguageFromPath(`snippet.${languageHint}`, languageHint);
-  return highlightLines(input.code, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
+  const theme = SHIKI_THEME_NAME_BY_SCHEME[input.theme];
+  // Bound retained text and preserve the existing plain-text/long-line fallback.
+  if (
+    !input.session ||
+    language === "text" ||
+    input.code.length === 0 ||
+    input.code.length > 100_000 ||
+    input.code.includes("\r") ||
+    input.code.split("\n").some((line) => line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH)
+  ) {
+    if (input.session) snippetSessions.delete(input.session);
+    return highlightLines(input.code, language, theme);
+  }
+  const highlighter = await getHighlighter();
+  let session = snippetSessions.get(input.session);
+  if (!session || session.language !== language || session.theme !== theme) {
+    session = {
+      language,
+      theme,
+      highlight: createIncrementalSnippet(highlighter, language, theme),
+    };
+    snippetSessions.set(input.session, session);
+  }
+  return normalizeHighlightedLines(await session.highlight(input.code));
 }
+
+highlightCodeSnippet.read = (input: Parameters<typeof highlightCodeSnippet>[0]) => {
+  if (!input.session || !input.code || input.code.length > 100_000 || input.code.includes("\r"))
+    return undefined;
+  const session = snippetSessions.get(input.session);
+  const hint = input.language?.trim() || "text";
+  const language = resolveLoadedLanguageFromPath(`snippet.${hint}`, hint);
+  if (
+    !session ||
+    session.language !== language ||
+    session.theme !== SHIKI_THEME_NAME_BY_SCHEME[input.theme] ||
+    input.code.split("\n").some((line) => line.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH)
+  )
+    return undefined;
+  const tokens = session.highlight.read(input.code);
+  return tokens ? normalizeHighlightedLines(tokens) : undefined;
+};
 
 export async function highlightSourceFile(input: {
   readonly path: string;

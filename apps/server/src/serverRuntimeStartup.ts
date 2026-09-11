@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
@@ -10,7 +11,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -229,7 +230,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         nextProjectId = existingProject.value.id;
         bootstrapProjectId = nextProjectId;
         nextThreadModelSelection =
-          existingProject.value.defaultModelSelection ?? defaultModelSelection;
+          resolveProjectSettings(settings, nextProjectId, existingProject.value).settings
+            .defaultModelSelection ?? defaultModelSelection;
       }
 
       yield* Effect.gen(function* () {
@@ -479,14 +481,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const continueAfterRestart = yield* settings.getSettings.pipe(
-    Effect.map((value) => value.continueThreadsAfterServerUpdate),
+  const restartSettings = yield* settings.getSettings.pipe(
+    Effect.map(Option.some),
     Effect.catch((cause) =>
       Effect.logWarning("could not read restart continuation preference", { cause }).pipe(
-        Effect.as(false),
+        Effect.as(Option.none()),
       ),
     ),
   );
+  const continueAfterRestartFor = (projectId: ProjectId) =>
+    Option.isSome(restartSettings)
+      ? resolveProjectSettings(restartSettings.value, projectId).settings
+          .continueThreadsAfterServerUpdate
+      : false;
 
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
@@ -568,7 +575,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     // Runtime events advance the projection's turn, but not the directory's
     // last admitted turn. Use the projection to identify interrupted work.
     const interruptedByRestart =
-      continueAfterRestart &&
+      continueAfterRestartFor(thread.projectId) &&
       session.status === "running" &&
       session.activeTurnId !== null &&
       Option.isSome(binding) &&
@@ -742,16 +749,13 @@ interface StartupOptions {
 
 export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<OrchestrationProjectShell>,
-  settings: Pick<
-    typeof DEFAULT_SERVER_SETTINGS,
-    "defaultAutoPull" | "projectAutoPullOverrides"
-  > = DEFAULT_SERVER_SETTINGS,
+  settings: ServerSettingsValue = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const workspaceRoots = [
     ...new Set(
       projects
-        .filter((project) => resolveProjectAutoPull(settings, project.id, project.autoPull))
+        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
         .map((project) => project.workspaceRoot),
     ),
   ];

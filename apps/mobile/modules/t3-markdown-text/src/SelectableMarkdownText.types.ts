@@ -25,11 +25,22 @@ export interface MarkdownHighlightedToken {
   readonly fontStyle: number | null;
 }
 
-export type MarkdownCodeHighlighter = (input: {
+export interface MarkdownCodeHighlightInput {
+  /** Identity of the mounted code block, for incremental highlighting. */
+  readonly session?: object;
   readonly code: string;
   readonly language?: string | null;
   readonly theme: "light" | "dark";
-}) => Promise<ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>>;
+}
+export interface MarkdownCodeHighlighter {
+  (
+    input: MarkdownCodeHighlightInput,
+  ): Promise<ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>>;
+  /** Optional synchronous result for a small append to an already warm block. */
+  read?: (
+    input: MarkdownCodeHighlightInput,
+  ) => ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>> | undefined;
+}
 
 export interface SelectableMarkdownSkill {
   readonly name: string;

@@ -59,6 +59,14 @@ import {
   resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
+  isPaintOnlyThreadTimeline,
+  peekHeldThreadTimeline,
+  peekRememberedThreadTimeline,
+  rememberReadyThreadTimeline,
+  resetHeldThreadTimeline,
+  resolveThreadSwitchTimeline,
+  threadKeysShareEnvironment,
+  timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
   snapshotComposerSendList,
   startNewThreadForProject,
@@ -119,7 +127,7 @@ describe("floating browser preview", () => {
     const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
     const panels = useRightPanelStore.getState();
     const revision = panels.getUserActionRevision(ref);
-    usePreviewMiniPlayerStore.getState().open(ref, "agent-tab");
+    usePreviewMiniPlayerStore.getState().open(ref, { kind: "browser", tabId: "agent-tab" });
     panels.reconcileBrowserSurfaces(ref, ["agent-tab"]);
     const intent = selectThreadPreviewMiniPlayer(
       usePreviewMiniPlayerStore.getState().byThreadKey,
@@ -128,7 +136,7 @@ describe("floating browser preview", () => {
     const isFloating = () =>
       shouldRenderPreviewMiniPlayer(
         selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, ref)
-          ?.tabId ?? null,
+          ?.source ?? null,
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
       );
 
@@ -145,22 +153,61 @@ describe("floating browser preview", () => {
   });
 
   it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    const tab = { kind: "browser", tabId: "tab-1" } as const;
     expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:one",
         kind: "preview",
         resourceId: "tab-1",
       }),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:two",
         kind: "preview",
         resourceId: "tab-2",
       }),
     ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(tab, { id: "diff", kind: "diff" })).toBe(true);
+  });
+
+  it("only hides a floating device while that device is rendered in the panel", () => {
+    const pixel = {
+      kind: "device",
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    const target = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5580",
+        kind: "device",
+        target,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5554",
+        kind: "device",
+        target: { ...target, deviceId: "emulator-5554" },
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(pixel, { id: "device", kind: "device" })).toBe(true);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "emulator-5580",
+      }),
+    ).toBe(true);
   });
 });
 
@@ -563,6 +610,179 @@ describe("draft hero submission transition", () => {
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveThreadSwitchTimeline", () => {
+  afterEach(() => {
+    resetHeldThreadTimeline();
+  });
+
+  const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
+
+  it("keeps the previous thread's entries while the next thread is loading", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("shows the new thread once its detail is ready", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["b1"],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["b1"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not invent a timeline on the first open of a thread", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+        lastReady: null,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("keeps the held thread workspace cwd with the snapshot", () => {
+    rememberReadyThreadTimeline({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+    expect(peekHeldThreadTimeline<string[]>()).toEqual({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+  });
+
+  it("survives a ChatView remount by remembering the last ready timeline", () => {
+    rememberReadyThreadTimeline(held);
+    expect(peekHeldThreadTimeline<string[]>()).toEqual(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("paints a remembered destination instead of the last-viewed thread", () => {
+    rememberReadyThreadTimeline(held);
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("prefers live entries over a remembered snapshot", () => {
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["fresh-b"],
+      }),
+    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not keep a remembered snapshot on a resolved empty thread", () => {
+    rememberReadyThreadTimeline(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("does not hold another environment's timeline across a jump", () => {
+    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-2:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-2:thread-b" });
+  });
+
+  it("treats a foreign held timeline as paint-only", () => {
+    expect(isPaintOnlyThreadTimeline("env-1:thread-a", "env-1:thread-b")).toBe(true);
+    expect(isPaintOnlyThreadTimeline("env-1:thread-b", "env-1:thread-b")).toBe(false);
+  });
+
+  it("does not remember a timeline that still has handoff blob previews", () => {
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "blob:handoff",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "https://cdn.example/a.png",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 });
 

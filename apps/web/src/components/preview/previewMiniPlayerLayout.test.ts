@@ -5,6 +5,8 @@ import {
   clampPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   resizePreviewMiniPlayer,
+  resolveDeviceMiniPlayerCornerRadius,
+  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -27,6 +29,50 @@ describe("resolvePreviewMiniPlayerSourceSize", () => {
         1,
       ),
     ).toEqual({ width: 1_280, height: 800 });
+  });
+});
+
+describe("resolveDeviceMiniPlayerSourceSize", () => {
+  it("stands in with the platform's phone shape until the stream reports a size", () => {
+    const ios = resolveDeviceMiniPlayerSourceSize("ios", null);
+    expect(ios.width / ios.height).toBeCloseTo(9 / 19.5);
+    const android = resolveDeviceMiniPlayerSourceSize("android", null);
+    expect(android.width / android.height).toBeCloseTo(9 / 20);
+  });
+
+  it("turns a rotated screen into a landscape box", () => {
+    const screen = { width: 1_179, height: 2_556, orientation: "landscape_left" } as const;
+    expect(resolveDeviceMiniPlayerSourceSize("ios", screen)).toEqual({
+      width: 2_556,
+      height: 1_179,
+    });
+    expect(
+      resolveDeviceMiniPlayerSourceSize("android", { ...screen, orientation: "portrait" }),
+    ).toEqual({ width: 1_179, height: 2_556 });
+  });
+
+  it("floats a phone at the minimum width rather than the default box", () => {
+    expect(
+      resolvePreviewMiniPlayerFrame({
+        width: null,
+        position: null,
+        source: resolveDeviceMiniPlayerSourceSize("ios", null),
+        container,
+      }),
+    ).toMatchObject({ width: 240, height: 520 });
+  });
+});
+
+describe("resolveDeviceMiniPlayerCornerRadius", () => {
+  it("rounds an Android player like a phone, scaled with its short side", () => {
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 240, height: 520 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 520, height: 240 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 60, height: 130 })).toBe(12);
+  });
+
+  it("keeps the frame radius for iOS, whose stream has square corners", () => {
+    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 240, height: 520 })).toBe(12);
+    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 720, height: 1_000 })).toBe(12);
   });
 });
 

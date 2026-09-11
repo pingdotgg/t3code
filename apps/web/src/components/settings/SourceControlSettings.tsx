@@ -21,11 +21,13 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
+import { useSettingsScope } from "./SettingsScopeContext";
+import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -347,8 +349,8 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -650,15 +652,16 @@ function GitHubAccountRow(props: {
 }
 
 export function SourceControlSettingsPanel() {
-  const { environments } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  const fallbackEnvironment =
-    environments.find((environment) => environment.connection.phase === "connected") ??
-    environments[0] ??
-    null;
+  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Discovery scans one machine's tools, so it shows the representative
+  // environment (named in the section title when several are selected);
+  // the settings rows above it fan out like everywhere else.
   const environmentId =
-    primaryEnvironment?.environmentId ?? fallbackEnvironment?.environmentId ?? null;
-  const isPrimaryEnvironment = environmentId === primaryEnvironment?.environmentId;
+    environment?.connection.phase === "connected" ? environment.environmentId : null;
+  const isPrimaryEnvironment = environmentId === primaryEnvironmentId;
+  const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
+  const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -695,10 +698,20 @@ export function SourceControlSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ProjectDefaultsSettings category="source-control" />
       {isPrimaryEnvironment ? <GitHubAccountSettings /> : null}
-      {isInitialScanPending ? (
+      {environmentId === null ? (
+        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            Connect an environment to inspect its version control tools and hosting integrations.
+          </p>
+        </SettingsSection>
+      ) : isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
+          <SourceControlSectionSkeleton
+            title={`Version Control${environmentSuffix}`}
+            headerAction={scanButton}
+          />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
       ) : hasDiscoveryItems ? (
@@ -706,14 +719,12 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title="Version Control"
+              title={`Version Control${environmentSuffix}`}
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" && isPrimaryEnvironment ? (
-                    <GitFetchIntervalSettings />
-                  ) : undefined}
+                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -722,7 +733,11 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
+              title={
+                hasVersionControlSystems
+                  ? "Source Control Providers"
+                  : `Source Control Providers${environmentSuffix}`
+              }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
@@ -739,8 +754,6 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {/* Its rows are serverScoped: without a primary they render inert with
-          an explanation, which beats disappearing. */}
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
