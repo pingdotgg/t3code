@@ -19,7 +19,6 @@ import {
   SettingsScopeProvider,
   useSettingsScope,
 } from "../components/settings/SettingsScopeContext";
-import { SettingsScopeSelects } from "../components/settings/SettingsScopeSelects";
 import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
@@ -177,22 +176,21 @@ function SettingsContentLayout() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
           <div className="flex w-full items-center gap-3">
-            <SettingsBreadcrumb pathname={location.pathname} />
-            <div className="ms-auto flex min-w-0 items-center gap-2">
-              {location.pathname === "/settings/general" ? (
+            <SettingsBreadcrumb
+              pathname={location.pathname}
+              scope={
+                showScope
+                  ? { value: search, groups, environments, onChange: selectScope }
+                  : undefined
+              }
+            />
+            {location.pathname === "/settings/general" ? (
+              <div className="ms-auto flex shrink-0 items-center">
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
-              ) : null}
-              {showScope ? (
-                <SettingsScopeSelects
-                  value={search}
-                  groups={groups}
-                  environments={environments}
-                  onChange={selectScope}
-                />
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
         </WorkspacePageHeader>
 

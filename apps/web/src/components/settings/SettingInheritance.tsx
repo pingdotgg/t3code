@@ -1,9 +1,11 @@
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 
@@ -71,33 +73,56 @@ export function settingInheritanceLayers(
   return layers;
 }
 
+export type SettingInheritanceState = "inherited" | "overridden" | "mixed";
+
 /**
- * Status text that opens a top-down view of where a setting's value comes
- * from on each selected target. Replaces the plain "Inherited"/"Overridden"
- * caption when there is a hierarchy to show.
+ * A small indicator beside a row's title that opens a top-down view of where
+ * the setting's value comes from on each selected target. It sits inline so
+ * narrowing to a project does not add a caption line to every row.
  */
 export function SettingInheritance({
+  state,
   summary,
   targets,
   environmentSettingsById,
   keys,
 }: {
+  state: SettingInheritanceState;
   summary: string;
   targets: readonly ScopedSettingsTarget[];
   environmentSettingsById: ReadonlyMap<string, ServerSettings>;
   keys: readonly (keyof ServerSettings)[];
 }) {
   const key = keys[0];
-  if (!key || targets.length === 0) return <>{summary}</>;
+  if (!key || targets.length === 0) return null;
   return (
     <Popover>
-      <PopoverTrigger
-        className="inline-flex items-center gap-1 rounded text-left text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-        aria-label="Show where this value comes from"
-      >
-        {summary}
-        <ChevronDownIcon className="size-3" />
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  aria-label={`${summary}. Show where this value comes from`}
+                  className={cn(
+                    "[--control-icon-color:currentColor]",
+                    state === "overridden"
+                      ? "text-primary hover:text-primary"
+                      : state === "mixed"
+                        ? "text-warning hover:text-warning"
+                        : "text-muted-foreground/70 hover:text-foreground",
+                  )}
+                />
+              }
+            />
+          }
+        >
+          <LayersIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{summary}</TooltipPopup>
+      </Tooltip>
       <PopoverPopup align="start" className="w-80 max-w-[calc(100vw-2rem)]">
         <PopoverTitle className="text-sm">Where this value comes from</PopoverTitle>
         <div className="mt-3 flex flex-col gap-4">

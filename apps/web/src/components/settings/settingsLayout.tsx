@@ -27,7 +27,7 @@ import {
   scopedSettingsSource,
 } from "./scopedSettings";
 import { useClearScopedSettings } from "./useScopedSettings";
-import { SettingInheritance } from "./SettingInheritance";
+import { SettingInheritance, type SettingInheritanceState } from "./SettingInheritance";
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 
@@ -364,28 +364,26 @@ export function SettingsRow({
     ) : (
       control
     );
-  // Server rows get a caption that opens the resolution chain per target;
-  // client rows and rows without settings keys keep their plain status.
-  const summary = mixed
-    ? isProjectScope
-      ? "Mixed across selected environments"
-      : "Mixed across selected environments"
+  // Server rows get an indicator beside the title that opens the resolution
+  // chain per target; client rows and rows without keys keep a plain status.
+  const inheritance: { state: SettingInheritanceState; summary: string } | null = mixed
+    ? { state: "mixed", summary: "Mixed across selected environments" }
     : source === "project"
-      ? "Overridden for this project"
+      ? { state: "overridden", summary: "Overridden for this project" }
       : source === "environment" && scopedKeys.length > 0
-        ? `Inherited from ${inheritedFrom}`
+        ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
         : null;
-  const renderedStatus =
-    summary !== null && context && serverScoped && settingKeys.length > 0 ? (
+  const renderedInheritance =
+    inheritance && context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
-        summary={summary}
+        state={inheritance.state}
+        summary={inheritance.summary}
         targets={context.targets}
         environmentSettingsById={environmentSettingsById}
         keys={settingKeys}
       />
-    ) : (
-      (summary ?? status)
-    );
+    ) : null;
+  const renderedStatus = renderedInheritance ? null : (inheritance?.summary ?? status);
 
   return (
     <div
@@ -403,6 +401,11 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
+            {renderedInheritance ? (
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                {renderedInheritance}
+              </span>
+            ) : null}
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
               {renderedReset}
             </span>

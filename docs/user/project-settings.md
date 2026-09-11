@@ -1,19 +1,18 @@
 # Settings and project overrides
 
-Settings has two selectors in the header: an environment and a project. They start at
-**All environments** and **All projects** and stay selected as you move between categories or
+The Settings breadcrumb ends with the environment and project a change applies to. They start
+at **All environments** and **All projects** and stay selected as you move between categories or
 search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, always
 show and ignore the selection. Everything else is stored on a server. Choose one environment to
 edit its settings, or leave **All environments** to edit every connected environment at once.
 Offline environments keep their current values; this is a bulk edit, not a synced global default.
-Providers, keybindings and diagnostics need a single environment.
 
-Choose a project to override settings for it on the selected environments. Each row shows whether
-the value is inherited from the environment or overridden for the project; open that caption to see
-the full chain, from the built-in default through the environment to the project, on every selected
-environment. An override can be reset to inherit again. Settings that cannot be overridden by a
+Choose a project to override settings for it on the selected environments. A layers icon beside
+each row's title shows whether the value is inherited from the environment or overridden for the
+project; click it to see the full chain, from the built-in default through the environment to the
+project, on every selected environment. An override can be reset to inherit again. Settings that cannot be overridden by a
 project are shown read-only while a project is selected. Mixed values mean the selected
 environments disagree.
 
