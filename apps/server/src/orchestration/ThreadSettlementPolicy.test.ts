@@ -5,6 +5,7 @@ import {
   ProjectId,
   TurnId,
   type OrchestrationThreadShell,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { type SettlementPullRequest, resolveAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
 
@@ -18,6 +19,7 @@ const makeThread = (
   modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
   runtimeMode: "full-access",
   interactionMode: "default",
+  pullRequests: [],
   branch: "feature",
   worktreePath: "/repo",
   latestTurn: null,
@@ -211,5 +213,77 @@ describe("resolveAutoSettlementAt", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+function linkedRequest(
+  number: number,
+  snapshot: ThreadPullRequestLink["snapshot"],
+): ThreadPullRequestLink {
+  return {
+    host: "github.com",
+    repository: "org/repo",
+    number,
+    url: `https://github.com/org/repo/pull/${number}`,
+    source: "manual",
+    linkedAt: NOW,
+    stack: null,
+    snapshot,
+  };
+}
+
+const terminalSnapshot = (
+  state: "closed" | "merged",
+  terminalAt: string,
+  updatedAt = terminalAt,
+) => ({
+  state,
+  title: "Change",
+  headBranch: "feature",
+  baseBranch: "main",
+  isDraft: false,
+  closedAt: terminalAt,
+  mergedAt: state === "merged" ? terminalAt : null,
+  updatedAt,
+  syncedAt: NOW,
+});
+
+describe("linked request settlement", () => {
+  it.each(["closed", "merged"] as const)(
+    "uses the latest actual %s transition despite later comments on another PR",
+    (state) => {
+      const old = linkedRequest(1, terminalSnapshot(state, "2026-08-19T00:00:00.000Z", NOW));
+      const recent = linkedRequest(2, terminalSnapshot(state, "2026-08-21T00:00:00.000Z"));
+      expect(decide(makeThread({ pullRequests: [old, recent] }), null, { days: null })).toBe(true);
+      expect(decide(makeThread({ pullRequests: [recent, old] }), null, { days: null })).toBe(true);
+      expect(decide(makeThread({ pullRequests: [old] }), null, { days: null })).toBe(false);
+    },
+  );
+
+  it("keeps unknown and open links active even after the inactivity window", () => {
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    const unknown = linkedRequest(2, null);
+    const open = linkedRequest(3, {
+      ...terminalSnapshot("closed", NOW),
+      state: "open",
+      closedAt: null,
+    });
+    expect(decide(makeThread({ pullRequests: [merged, unknown] }))).toBe(false);
+    expect(decide(makeThread({ pullRequests: [merged, open] }))).toBe(false);
+    expect(
+      decide(makeThread({ pullRequests: [merged, { ...unknown, source: "stack-dismissed" }] })),
+    ).toBe(true);
+  });
+
+  it("honors merge settings and ignores missing terminal timestamps", () => {
+    const merged = linkedRequest(1, terminalSnapshot("merged", NOW));
+    expect(decide(makeThread({ pullRequests: [merged] }), null, { days: null, merge: false })).toBe(
+      false,
+    );
+    const missing = linkedRequest(2, { ...terminalSnapshot("merged", NOW), mergedAt: null });
+    expect(decide(makeThread({ pullRequests: [missing] }), null, { days: null })).toBe(false);
+    expect(decide(makeThread({ pullRequests: [missing, merged] }), null, { days: null })).toBe(
+      true,
+    );
   });
 });

@@ -870,20 +870,35 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View className="flex-1" />
         )}
         {pr ? (
-          <Text
-            accessibilityLabel={pr.accessibilityLabel}
-            className={cn(
-              "text-xs",
-              selected
-                ? materialYouStyleLayoutActive
-                  ? "text-thread-selected-foreground"
-                  : "text-user-bubble-foreground"
-                : pr.textClassName,
-            )}
-            style={{ fontFamily: MONO_FONT }}
-          >
-            #{pr.label}
-          </Text>
+          <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
+            {pr.kind === "stack" || pr.others > 0 ? (
+              <SymbolView
+                name={pr.kind === "stack" ? "square.3.layers.3d" : "arrow.triangle.pull"}
+                size={12}
+                tintColorClassName={
+                  selected
+                    ? materialYouStyleLayoutActive
+                      ? "accent-thread-selected-foreground"
+                      : "accent-user-bubble-foreground"
+                    : "accent-foreground-muted"
+                }
+              />
+            ) : null}
+            <Text
+              accessibilityLabel={pr.accessibilityLabel}
+              className={cn(
+                "text-xs",
+                selected
+                  ? materialYouStyleLayoutActive
+                    ? "text-thread-selected-foreground"
+                    : "text-user-bubble-foreground"
+                  : pr.textClassName,
+              )}
+              style={{ fontFamily: MONO_FONT }}
+            >
+              {pr.kind === "stack" || pr.others > 0 ? pr.label : `#${pr.label}`}
+            </Text>
+          </View>
         ) : null}
         {props.providerInstance ? (
           <ProviderInstanceIcon
