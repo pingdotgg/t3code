@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
+  TextGenerationError,
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
@@ -58,6 +59,7 @@ import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
+const isTextGenerationError = Schema.is(TextGenerationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -355,7 +357,9 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.thread-title.failed"
+      | "provider.branch-name.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -399,8 +403,35 @@ const make = Effect.gen(function* () {
     if (isProviderWorkspaceMissingError(failReason?.error)) {
       return failReason.error.message;
     }
+    if (isTextGenerationError(failReason?.error)) {
+      return failReason.error.message;
+    }
     return Cause.pretty(cause);
   };
+
+  const reportTextGenerationFailure = Effect.fn("reportTextGenerationFailure")(function* (
+    threadId: ThreadId,
+    kind: "provider.thread-title.failed" | "provider.branch-name.failed",
+    summary: string,
+    cause: Cause.Cause<unknown>,
+  ) {
+    if (Cause.hasInterruptsOnly(cause)) return;
+    yield* appendProviderFailureActivity({
+      threadId,
+      kind,
+      summary,
+      detail: formatFailureDetail(cause),
+      turnId: null,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    }).pipe(
+      Effect.catchCause((reportCause) =>
+        Effect.logWarning("provider command reactor failed to report text generation failure", {
+          threadId,
+          cause: Cause.pretty(reportCause),
+        }),
+      ),
+    );
+  });
 
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
@@ -953,7 +984,16 @@ const make = Effect.gen(function* () {
           cwd,
           oldBranch,
           cause: Cause.pretty(cause),
-        }),
+        }).pipe(
+          Effect.andThen(
+            reportTextGenerationFailure(
+              input.threadId,
+              "provider.branch-name.failed",
+              "Could not generate or rename the worktree branch",
+              cause,
+            ),
+          ),
+        ),
       ),
     );
   });
@@ -1004,7 +1044,16 @@ const make = Effect.gen(function* () {
             threadId: input.threadId,
             cwd: input.cwd,
             cause: Cause.pretty(cause),
-          }),
+          }).pipe(
+            Effect.andThen(
+              reportTextGenerationFailure(
+                input.threadId,
+                "provider.thread-title.failed",
+                "Could not generate the thread title",
+                cause,
+              ),
+            ),
+          ),
         ),
       );
     },
@@ -1133,7 +1182,17 @@ const make = Effect.gen(function* () {
           return Effect.logWarning("provider command reactor failed to regenerate thread title", {
             threadId: event.payload.threadId,
             cause: Cause.pretty(cause),
-          }).pipe(Effect.as({ _tag: "Completed", title: undefined } as const));
+          }).pipe(
+            Effect.andThen(
+              reportTextGenerationFailure(
+                event.payload.threadId,
+                "provider.thread-title.failed",
+                "Could not regenerate the thread title",
+                cause,
+              ),
+            ),
+            Effect.as({ _tag: "Completed", title: undefined } as const),
+          );
         }),
       );
       if (result._tag === "Superseded") {

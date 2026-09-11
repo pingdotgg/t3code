@@ -27,12 +27,15 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { it as effectIt } from "@effect/vitest";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -167,6 +170,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly clock?: Clock.Clock;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -480,7 +484,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
-    runtime = ManagedRuntime.make(layer);
+    runtime = ManagedRuntime.make(
+      input?.clock
+        ? layer.pipe(Layer.provideMerge(Layer.succeed(Clock.Clock, input.clock)))
+        : layer,
+    );
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
@@ -1382,6 +1390,128 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("reports exhausted title and branch generation without failing the turn", () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const harness = yield* Effect.promise(() => createHarness({ clock }));
+      const attempts = yield* Queue.unbounded<number>();
+      let attempt = 0;
+      harness.generateThreadTitle.mockReturnValue(
+        Effect.gen(function* () {
+          yield* Queue.offer(attempts, ++attempt);
+          return yield* new TextGenerationError({
+            operation: "generateThreadTitle",
+            detail: "Configured provider is unavailable",
+          });
+        }),
+      );
+      harness.generateBranchName.mockReturnValue(
+        Effect.fail(
+          new TextGenerationError({
+            operation: "generateBranchName",
+            detail: "Configured writer is unavailable",
+          }),
+        ),
+      );
+      const failures = yield* Effect.promise(() =>
+        harness.runEffect(
+          harness.engine.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "thread.activity-appended" &&
+                (event.payload.activity.kind === "provider.thread-title.failed" ||
+                  event.payload.activity.kind === "provider.branch-name.failed"),
+            ),
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkIn(scope!, { startImmediately: true }),
+          ),
+        ),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("generation-error-branch"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Investigate reconnects",
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project-worktree",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("generation-error-turn"),
+        threadId: ThreadId.make("thread-1"),
+        titleSeed: "Investigate reconnects",
+        message: {
+          messageId: asMessageId("generation-error-message"),
+          role: "user",
+          text: "Investigate reconnects",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      expect(yield* Queue.take(attempts)).toBe(1);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Queue.take(attempts)).toBe(2);
+      yield* TestClock.adjust("4 seconds");
+      expect(yield* Queue.take(attempts)).toBe(3);
+      yield* Fiber.join(failures);
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads[0]!;
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(thread.session?.status).not.toBe("error");
+      expect(thread.branch).toBe("t3code/1234abcd");
+      expect(
+        thread.activities.filter((activity) => activity.kind === "provider.thread-title.failed"),
+      ).toHaveLength(1);
+      expect(thread.activities).toContainEqual(
+        expect.objectContaining({
+          kind: "provider.branch-name.failed",
+          tone: "error",
+          payload: expect.objectContaining({
+            detail: expect.stringContaining("Configured writer is unavailable"),
+          }),
+        }),
+      );
+    }),
+  );
+
+  it("does not report cancellation as a title generation failure", async () => {
+    const harness = await createHarness();
+    harness.generateThreadTitle.mockReturnValue(Effect.interrupt);
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cancelled-generation-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("cancelled-generation-message"),
+          role: "user",
+          text: "Review cancellation",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cancelled-generation-request"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.drain();
+    const thread = (await harness.readModel()).threads[0]!;
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    expect(
+      thread.activities.filter((activity) => activity.kind === "provider.thread-title.failed"),
+    ).toEqual([]);
+  });
+
   it("retries thread title generation after a transient failure", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1776,6 +1906,15 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Keep title after failure");
     expect(thread?.titleRegeneration).toBeNull();
+    expect(thread?.activities).toContainEqual(
+      expect.objectContaining({
+        kind: "provider.thread-title.failed",
+        summary: "Could not regenerate the thread title",
+        payload: expect.objectContaining({
+          detail: expect.stringContaining("disabled in test harness"),
+        }),
+      }),
+    );
   });
 
   it("retries a failed completion and continues regenerating", async () => {
