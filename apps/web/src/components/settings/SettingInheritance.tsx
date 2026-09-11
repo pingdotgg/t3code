@@ -58,7 +58,7 @@ export function settingInheritanceLayers(
   }
   layers.push({
     key: "environment",
-    label: target.projectId === null ? target.label : target.label.split(" · ")[0]!,
+    label: target.label,
     value: formatValue(environmentValue),
     effective: projectSource !== "project" && environmentSet,
     set: environmentSet,
@@ -160,7 +160,10 @@ export function SettingInheritance({
                               : "text-muted-foreground",
                           )}
                         >
-                          {layer.label}
+                          {/* The heading already names the environment when several are listed. */}
+                          {targets.length > 1 && layer.key === "environment"
+                            ? "Environment"
+                            : layer.label}
                         </span>
                         <span
                           className={cn(

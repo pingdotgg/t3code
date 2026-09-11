@@ -69,6 +69,7 @@ export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnviron
  */
 export interface ScopedSettingsTarget {
   readonly environmentId: EnvironmentId;
+  /** The environment's label; a project is the same project on every environment. */
   readonly label: string;
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
@@ -91,7 +92,7 @@ export function resolveScopedSettingsTargets(
       return [
         {
           environmentId: member.environmentId,
-          label: `${environment.label} · ${member.workspaceRoot}`,
+          label: environment.label,
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,

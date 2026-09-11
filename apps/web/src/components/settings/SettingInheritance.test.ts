@@ -29,7 +29,7 @@ describe("settingInheritanceLayers", () => {
     };
     const resolved = resolveProjectSettings(settings, projectId);
     const layers = settingInheritanceLayers(
-      { environmentId, label: "Laptop · /repo", projectId, ...resolved },
+      { environmentId, label: "Laptop", projectId, ...resolved },
       settings,
       "defaultAutoPull",
     );
@@ -41,7 +41,7 @@ describe("settingInheritanceLayers", () => {
     const inherited = settingInheritanceLayers(
       {
         environmentId,
-        label: "Laptop · /repo",
+        label: "Laptop",
         projectId,
         ...resolveProjectSettings(settings, ProjectId.make("other")),
       },
