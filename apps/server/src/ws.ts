@@ -2068,6 +2068,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverRefreshUsageSummary]: (input) =>
+          observeRpcEffect(WS_METHODS.serverRefreshUsageSummary, usage.refreshSummary(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverGetUsageThreadBreakdown]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetUsageThreadBreakdown,
+            usage.readThreadBreakdown(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverRefreshUsageRates]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRefreshUsageRates, usage.refreshRates, {
             "rpc.aggregate": "server",
