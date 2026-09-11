@@ -696,7 +696,13 @@ describe("resolveThreadSwitchTimeline", () => {
         {
           kind: "message",
           message: {
+            id: MessageId.make("preview-message"),
             role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
             attachments: [
               {
                 type: "image",
@@ -716,7 +722,13 @@ describe("resolveThreadSwitchTimeline", () => {
         {
           kind: "message",
           message: {
+            id: MessageId.make("preview-message"),
             role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
             attachments: [
               {
                 type: "image",
