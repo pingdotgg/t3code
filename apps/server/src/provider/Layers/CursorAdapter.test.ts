@@ -124,6 +124,44 @@ function waitForJsonLogMatch(
   });
 }
 
+const transportFailureText = "Error: RetriableError: [unavailable] Error";
+
+// A mock agent that answers prompts with a leaked Cursor transport diagnostic
+// and logs every request so tests can count prompt attempts.
+async function makeTransportFailureWrapper(extraEnv?: Record<string, string>) {
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-transport-failure-"));
+  const requestLogPath = NodePath.join(dir, "requests.ndjson");
+  await NodeFSP.writeFile(requestLogPath, "", "utf8");
+  const wrapperPath = await makeMockAgentWrapper({
+    T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+    T3_ACP_PROMPT_RESPONSE_TEXT: transportFailureText,
+    ...extraEnv,
+  });
+  return { wrapperPath, requestLogPath };
+}
+
+async function countPromptRequests(requestLogPath: string) {
+  const requests = await readJsonLines(requestLogPath);
+  return requests.filter((entry) => entry.method === "session/prompt").length;
+}
+
+// Transport-failure retries back off on the clock. Pump it in small hops until
+// the effect settles; the mock agent runs on the real clock, so each hop also
+// gives its stdio replies a scheduler turn to land.
+function pumpRetryClock<A, E, R>(effect: Effect.Effect<A, E, R>) {
+  return Effect.raceFirst(
+    effect,
+    Effect.gen(function* () {
+      for (let attempt = 0; attempt < 400; attempt += 1) {
+        yield* TestClock.adjust("50 millis");
+      }
+      return yield* Effect.die(
+        new Error("Timed out pumping the test clock through transport-failure retries."),
+      );
+    }),
+  );
+}
+
 // Tests mutate `ServerSettingsService` mid-flight (e.g. setting
 // `providers.cursor.binaryPath` to a mock ACP wrapper). The adapter
 // captures `cursorSettings` once at construction, so without a resolver
@@ -162,15 +200,54 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
-  it.effect("rejects a Cursor transport error returned as a successful assistant answer", () =>
+  it.effect("retries a prompt whose only output was a Cursor transport error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-retry");
+      // Only the first prompt fails; the retry gets the default answer.
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper({ T3_ACP_PROMPT_RESPONSE_TEXT_PROMPT_LIMIT: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* pumpRetryClock(
+        adapter.sendTurn({ threadId, input: "continue", attachments: [] }),
+      );
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(String(completed[0]?.turnId), String(turn.turnId));
+      assert.deepStrictEqual(completed[0]?.payload, { state: "completed", stopReason: "end_turn" });
+      // The retry continues the turn instead of opening a new one.
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.started").length, 1);
+      const deltas = runtimeEvents.flatMap((event) =>
+        event.type === "content.delta" ? [event.payload.delta] : [],
+      );
+      assert.deepStrictEqual(deltas, [transportFailureText, "hello from mock"]);
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 2);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails the turn once Cursor transport error retries are exhausted", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-transport-error-answer");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({
-          T3_ACP_PROMPT_RESPONSE_TEXT: "Error: RetriableError: WritableIterable is closed",
-        }),
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper(),
       );
       yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
       const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
@@ -184,17 +261,105 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         cwd: process.cwd(),
         runtimeMode: "full-access",
       });
-      const error = yield* adapter
-        .sendTurn({ threadId, input: "continue", attachments: [] })
-        .pipe(Effect.flip);
+      const error = yield* pumpRetryClock(
+        adapter.sendTurn({ threadId, input: "continue", attachments: [] }).pipe(Effect.flip),
+      );
       assert.equal(error._tag, "ProviderAdapterRequestError");
       if (error._tag === "ProviderAdapterRequestError") {
         assert.equal(error.detail, "Cursor reported a transport failure.");
-        assert.equal(error.cause, "Error: RetriableError: WritableIterable is closed");
+        assert.equal(error.cause, transportFailureText);
       }
       yield* adapter.stopSession(threadId);
       const runtimeEvents = yield* Fiber.join(runtimeEventsFiber);
       assert.isFalse(runtimeEvents.some((event) => event.type === "turn.completed"));
+      // The initial attempt plus one retry per configured backoff.
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 3);
+    }),
+  );
+
+  it.effect("does not retry a Cursor transport error once the prompt did work", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-after-work");
+      // Assistant text, a tool call, then the diagnostic as its own segment.
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper({ T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const error = yield* pumpRetryClock(
+        adapter.sendTurn({ threadId, input: "continue", attachments: [] }).pipe(Effect.flip),
+      );
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      if (error._tag === "ProviderAdapterRequestError") {
+        assert.equal(error.detail, "Cursor reported a transport failure.");
+      }
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 1);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("settles as cancelled when interrupted while waiting to retry a transport error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-interrupt");
+      const { wrapperPath, requestLogPath } = yield* Effect.promise(() =>
+        makeTransportFailureWrapper(),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const sawDiagnostic = yield* Deferred.make<void>();
+      yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "content.delta"),
+        Stream.take(1),
+        Stream.runForEach(() => Deferred.succeed(sawDiagnostic, undefined).pipe(Effect.asVoid)),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "continue", attachments: [] })
+        .pipe(Effect.forkChild);
+      // The diagnostic is projected right before the adapter starts its backoff;
+      // 10ms hops stay well short of the first delay, so the interrupt below
+      // lands while the adapter is waiting to retry.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if (yield* Deferred.isDone(sawDiagnostic)) {
+            return;
+          }
+          yield* TestClock.adjust("10 millis");
+        }
+        throw new Error("Timed out waiting for the mock agent's transport diagnostic.");
+      });
+      yield* adapter.interruptTurn(threadId);
+      const turn = yield* pumpRetryClock(Fiber.join(sendTurnFiber));
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(String(completed[0]?.turnId), String(turn.turnId));
+      assert.deepStrictEqual(completed[0]?.payload, {
+        state: "cancelled",
+        stopReason: "cancelled",
+      });
+      assert.equal(yield* Effect.promise(() => countPromptRequests(requestLogPath)), 1);
+      yield* adapter.stopSession(threadId);
     }),
   );
 

@@ -52,6 +52,12 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+// Caps how many leading prompts answer with T3_ACP_PROMPT_RESPONSE_TEXT; later
+// prompts fall back to the default text so a retry can be told apart.
+const promptResponseTextPromptLimit =
+  process.env.T3_ACP_PROMPT_RESPONSE_TEXT_PROMPT_LIMIT === undefined
+    ? undefined
+    : Number(process.env.T3_ACP_PROMPT_RESPONSE_TEXT_PROMPT_LIMIT);
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
@@ -76,6 +82,13 @@ let currentFast = false;
 let promptCount = 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
+
+function promptResponseTextFor(prompt: number): string | undefined {
+  if (promptResponseTextPromptLimit !== undefined && prompt > promptResponseTextPromptLimit) {
+    return undefined;
+  }
+  return promptResponseText;
+}
 
 function promptIdFromRequestMeta(
   request: Pick<AcpSchema.PromptRequest, "_meta">,
@@ -878,7 +891,7 @@ const program = Effect.gen(function* () {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "after tool" },
+            content: { type: "text", text: promptResponseTextFor(promptCount) ?? "after tool" },
           },
         });
 
@@ -1223,7 +1236,7 @@ const program = Effect.gen(function* () {
         sessionId: requestedSessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: promptResponseText ?? "hello from mock" },
+          content: { type: "text", text: promptResponseTextFor(promptCount) ?? "hello from mock" },
         },
       });
 
