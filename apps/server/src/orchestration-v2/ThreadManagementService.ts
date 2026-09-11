@@ -609,7 +609,7 @@ const make = Effect.gen(function* () {
           runId: selectedRun.id,
         });
       }
-      return { threadId: input.threadId, run, timedOut: true };
+      return { threadId: input.threadId, run, timedOut: !isTerminalRunStatus(run.status) };
     });
 
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = (input) =>

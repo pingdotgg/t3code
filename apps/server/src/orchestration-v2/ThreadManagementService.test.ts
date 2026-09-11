@@ -12,6 +12,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
@@ -348,3 +352,75 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     expect(error).toMatchObject({ threadId, cause: importError });
   }).pipe(Effect.provide(testLayer));
 });
+
+for (const scenario of [
+  { finalStatus: "completed" as const, timedOut: false },
+  { finalStatus: "running" as const, timedOut: true },
+  { finalStatus: "missing" as const },
+]) {
+  it.effect(`waitForThread timeout final read when selected run is ${scenario.finalStatus}`, () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:wait-timeout");
+      const threadId = ThreadId.make("thread:thread-management:wait-timeout");
+      const runId = RunId.make("run:thread-management:wait-timeout");
+      const loopRead = yield* Deferred.make<void>();
+      let reads = 0;
+      const projection = (status: "running" | "completed" | "missing") =>
+        ({
+          thread: { id: threadId, projectId, deletedAt: null },
+          runs: status === "missing" ? [] : [{ id: runId, status }],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const testLayer = layer.pipe(
+        Layer.provide(
+          Layer.mock(OrchestratorV2)({
+            getThreadProjection: () =>
+              Effect.gen(function* () {
+                reads += 1;
+                if (reads === 1) {
+                  return projection("running");
+                }
+                if (reads === 2) {
+                  yield* Deferred.succeed(loopRead, undefined);
+                  return yield* Effect.never;
+                }
+                return projection(
+                  scenario.finalStatus === "missing" ? "missing" : scenario.finalStatus,
+                );
+              }),
+          }),
+        ),
+      );
+      const service = yield* ThreadManagementService.pipe(Effect.provide(testLayer));
+      const fiber = yield* service
+        .waitForThread({
+          projectId,
+          threadId,
+          runId,
+          timeoutMs: 1,
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(loopRead);
+      yield* TestClock.adjust(Duration.millis(1));
+      const result = yield* Fiber.join(fiber);
+
+      if (scenario.finalStatus === "missing") {
+        expect(result._tag).toBe("Failure");
+        expect(result).toMatchObject({
+          failure: expect.any(ThreadManagementRunNotFoundError),
+        });
+        expect(result).toMatchObject({
+          failure: { threadId, runId },
+        });
+      } else {
+        expect(result._tag).toBe("Success");
+        expect(result).toMatchObject({
+          success: {
+            threadId,
+            timedOut: scenario.timedOut,
+            run: { id: runId, status: scenario.finalStatus },
+          },
+        });
+      }
+    }),
+  );
+}
