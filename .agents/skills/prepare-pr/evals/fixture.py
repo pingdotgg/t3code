@@ -302,7 +302,7 @@ def service_transaction(root, args):
             return
         raise RuntimeError("unsupported fixture command; run `gh fixture --help`")
     except (OSError, subprocess.CalledProcessError, RuntimeError) as exc:
-        print(str(exc), file=sys.stderr)
+        print(getattr(exc, "stderr", None) or str(exc), file=sys.stderr)
         raise SystemExit(1)
 
 
