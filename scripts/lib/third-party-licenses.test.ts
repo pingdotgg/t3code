@@ -206,13 +206,16 @@ describe("third-party license generation", () => {
     if (typeof plugin.configureServer !== "function") {
       throw new Error("Expected the license plugin to define a configureServer hook.");
     }
-    plugin.configureServer({
-      middlewares: {
-        use(handler: typeof middleware) {
-          middleware = handler;
+    plugin.configureServer.call(
+      {} as never,
+      {
+        middlewares: {
+          use(handler: typeof middleware) {
+            middleware = handler;
+          },
         },
-      },
-    } as never);
+      } as never,
+    );
     if (!middleware) throw new Error("Expected the license plugin to register middleware.");
 
     const responseBody = await new Promise<string>((resolve, reject) => {
