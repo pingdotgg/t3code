@@ -150,7 +150,21 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         message: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per question response.`,
       });
     }
+    if (canonicalCommand.type === "thread.turn.start") {
+      const clientAttachmentIds = new Set<string>();
+      for (const attachment of attachments) {
+        if (attachment.id === undefined) continue;
+        if (clientAttachmentIds.has(attachment.id)) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: `Attachment '${attachment.name}' cannot be sent: duplicate attachment id.`,
+          });
+        }
+        clientAttachmentIds.add(attachment.id);
+      }
+    }
     const claimedAttachmentPaths: string[] = [];
+    // Context records bind to attachments by the id the client knew; they follow the rename.
+    const finalAttachmentIdByClientId = new Map<string, string>();
     const normalizedAttachments = yield* Effect.forEach(
       attachments,
       (attachment) =>
@@ -211,6 +225,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
               ),
             );
             claimedAttachmentPaths.push(claim.finalPath);
+            finalAttachmentIdByClientId.set(attachment.id, claim.finalId);
 
             return normalizedAttachment;
           }
@@ -271,6 +286,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
                 }),
             ),
           );
+          if (attachment.id !== undefined) {
+            finalAttachmentIdByClientId.set(attachment.id, attachmentId);
+          }
 
           return persistedAttachment;
         }),
@@ -296,11 +314,28 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...(attachments.length > 0 ? { attachmentsByQuestionId } : {}),
       };
     }
+    const context = canonicalCommand.message.context;
+    const normalizedContext =
+      context === undefined
+        ? undefined
+        : {
+            ...context,
+            records: context.records.map((record) =>
+              (record.kind === "image" || record.kind === "file") && "attachmentId" in record
+                ? {
+                    ...record,
+                    attachmentId:
+                      finalAttachmentIdByClientId.get(record.attachmentId) ?? record.attachmentId,
+                  }
+                : record,
+            ),
+          };
     return {
       ...canonicalCommand,
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
+        ...(normalizedContext !== undefined ? { context: normalizedContext } : {}),
       },
     } satisfies OrchestrationCommand;
   });

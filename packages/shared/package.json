@@ -199,6 +199,14 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./composerContextReferences": {
+      "types": "./src/composerContextReferences.ts",
+      "import": "./src/composerContextReferences.ts"
+    },
+    "./composerContextLegacy": {
+      "types": "./src/composerContextLegacy.ts",
+      "import": "./src/composerContextLegacy.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"

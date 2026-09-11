@@ -1,5 +1,6 @@
 export * from "./baseSchemas.ts";
 export * from "./assistantCitations.ts";
+export * from "./composerContext.ts";
 export * from "./background.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
