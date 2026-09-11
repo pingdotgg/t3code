@@ -6,22 +6,29 @@ import {
   type ServerSelfUpdateResult,
   type ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessArchitecture,
+  HostProcessExecutablePath,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { HttpClient } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   PinnedRuntimePreflightBlockedError,
 } from "./pinnedRuntime.ts";
@@ -171,6 +178,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const execPath = yield* HostProcessExecutablePath;
+  const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
+  // Archive-distributed targets download from GitHub Releases. The client is
+  // optional so callers without one (tests, npm-only hosts) still construct.
+  const httpClient = Option.getOrUndefined(yield* Effect.serviceOption(HttpClient.HttpClient));
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -216,12 +228,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         fs,
         path,
         runner,
+        httpClient,
+        platform,
+        arch,
         validate: (runtime) =>
           runner
             .run({
-              command: execPath,
+              command: pinnedRuntimeCommand(runtime, execPath).command,
               args: [
-                runtime.entryPath,
+                ...pinnedRuntimeCommand(runtime, execPath).args,
                 "__service-preflight",
                 "--database-path",
                 serverConfig.dbPath,

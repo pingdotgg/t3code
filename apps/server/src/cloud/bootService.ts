@@ -1,4 +1,5 @@
 import {
+  HostProcessArchitecture,
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
@@ -12,11 +13,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
@@ -52,7 +55,13 @@ function quoteSystemdValue(value: string): string {
 }
 
 export interface BootServicePlan {
-  readonly nodePath: string;
+  /**
+   * What the service manager executes. npm-distributed runtimes run the
+   * standalone launcher script with the installing Node; archive-distributed
+   * runtimes run their own executable, which hosts the launcher as a hidden
+   * subcommand so the machine never needs Node.
+   */
+  readonly program: ReadonlyArray<string>;
   readonly launcherPath: string;
   readonly baseDir: string;
   readonly logPath: string;
@@ -73,7 +82,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
-    `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
+    `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
     "KillMode=mixed",
@@ -124,8 +133,7 @@ export function renderBootServicePlist(
     `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
-    `    <string>${escapeXmlText(plan.nodePath)}</string>`,
-    `    <string>${escapeXmlText(plan.launcherPath)}</string>`,
+    ...plan.program.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
     `  </array>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
@@ -505,7 +513,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
   const uid = yield* HostProcessUserId;
+  // Archive-distributed versions download from GitHub Releases; npm versions
+  // never touch HTTP, so callers without a client still work.
+  const httpClient = Option.getOrUndefined(yield* Effect.serviceOption(HttpClient.HttpClient));
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.string("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
@@ -544,7 +556,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, "boot-service.log");
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
   const launcherSourcePath =
     host.launcherSourcePath ??
     path.join(path.dirname(runtimePaths.entryPath), SERVICE_LAUNCHER_FILE);
@@ -568,7 +580,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
-    nodePath: host.execPath,
+    program:
+      runtimePaths.layout === "archive"
+        ? [runtimePaths.entryPath, "__service-launcher"]
+        : [host.execPath, launcherPath],
     launcherPath,
     baseDir: input.baseDir,
     logPath,
@@ -708,11 +723,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       fs,
       path,
       runner,
+      httpClient,
+      platform,
+      arch,
       validate: (runtime) =>
         runner
           .run({
-            command: host.execPath,
-            args: [runtime.entryPath, "--version"],
+            command: pinnedRuntimeCommand(runtime, host.execPath).command,
+            args: [...pinnedRuntimeCommand(runtime, host.execPath).args, "--version"],
             timeout: Duration.seconds(30),
           })
           .pipe(
@@ -750,9 +768,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
-    const launcherSource = yield* fs
-      .readFileString(launcherSourcePath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    // Archive runtimes host the launcher in the executable itself; there is
+    // no standalone script to copy.
+    const launcherSource =
+      runtimePaths.layout === "archive"
+        ? undefined
+        : yield* fs
+            .readFileString(launcherSourcePath)
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
 
     const installed = yield* fs
       .exists(unitPath)
@@ -786,7 +809,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* writeDurably(launcherPath, launcherSource);
+      if (launcherSource !== undefined) {
+        yield* writeDurably(launcherPath, launcherSource);
+      }
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -836,7 +861,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
       yield* Effect.all([
         fs.readFileString(unitPath),
-        fs.exists(launcherPath),
+        runtimePaths.layout === "archive" ? Effect.succeed(true) : fs.exists(launcherPath),
         fs.exists(runtimePaths.entryPath),
         fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
         fs.readFileString(statePath).pipe(Effect.option),

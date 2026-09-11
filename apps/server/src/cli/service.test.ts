@@ -105,7 +105,7 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
       Effect.sync(() => {
         installOptions.push(options);
         return {
-          nodePath: "/test/node",
+          program: ["/test/node", "/test/service-launcher.mjs"],
           launcherPath: "/test/service-launcher.mjs",
           baseDir: "/test/t3",
           unitPath: serviceStatus.unitPath,

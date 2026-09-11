@@ -26,7 +26,6 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
-import { isEntrypoint } from "./entrypoint.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
@@ -41,14 +40,29 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
+// Mirrors pinnedRuntimePaths: archive-distributed versions are unpacked
+// release archives whose executable runs on its own, npm versions are a
+// bin.mjs the launcher's Node runs. Kept inline so this file stays on Node
+// built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
+  const archive = /-preview\.\d{8}\.\d+$/.test(version);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const executableName = process.platform === "win32" ? "t3.exe" : "t3";
   return {
     versionDir,
-    entryPath: NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: archive
+      ? NodePath.join(versionDir, executableName)
+      : NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
+    executable: archive,
   };
 };
+
+const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) =>
+  paths.executable
+    ? { command: paths.entryPath, args: ["serve"] }
+    : { command: process.execPath, args: [paths.entryPath, "serve"] };
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -402,7 +416,8 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
+    const spawnArguments = runtimeSpawnArguments(paths);
+    const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
@@ -602,7 +617,7 @@ export class Launcher {
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const baseDir = process.env.T3CODE_HOME?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
@@ -610,18 +625,4 @@ async function main(): Promise<void> {
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
   await new Launcher(baseDir, state).run();
-}
-
-if (
-  isEntrypoint({
-    moduleUrl: import.meta.url,
-    entryPath: process.argv[1],
-    runtimeMain: import.meta.main,
-  })
-) {
-  main().catch((cause: unknown) => {
-    const error = cause instanceof Error ? cause : new Error(String(cause));
-    process.stderr.write(`[service-launcher] ${error.message}\n`);
-    process.exitCode = 1;
-  });
 }

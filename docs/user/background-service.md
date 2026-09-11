@@ -25,6 +25,19 @@ Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
+Preview builds (`t3@preview`) install as a self-contained download from the
+T3 Code GitHub release instead of through npm, so the machine running the
+service does not need Node.js or npm once the CLI is on it. To get the CLI
+onto a machine without Node, run the install script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pingdotgg/t3code/main/scripts/install.sh | sh
+```
+
+It places `t3` in `~/.local/bin` and reuses the same download when you later
+run `t3 service install`. Set `T3CODE_VERSION` to pin an exact version, or
+`T3CODE_RELEASE_BASE_URL` to download from a mirror.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

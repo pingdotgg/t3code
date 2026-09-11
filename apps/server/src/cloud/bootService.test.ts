@@ -25,7 +25,7 @@ import {
 
 it("keeps systemd pinned to the stable launcher rather than a versioned server", () => {
   const unit = BootService.renderBootServiceUnit({
-    nodePath: "/usr/bin/node",
+    program: ["/usr/bin/node", "/home/theo/.t3/runtime/service-launcher.mjs"],
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
@@ -37,9 +37,24 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
   expect(unit).not.toContain("versions/1.2.3");
 });
 
+it("runs archive-distributed runtimes as their own executable", () => {
+  const unit = BootService.renderBootServiceUnit({
+    program: ["/home/theo/.t3/runtime/versions/1.3.0-preview.20260911.7/t3", "__service-launcher"],
+    launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
+    baseDir: "/home/theo/.t3",
+    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
+    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+  });
+
+  expect(unit).toContain(
+    "ExecStart=/home/theo/.t3/runtime/versions/1.3.0-preview.20260911.7/t3 __service-launcher",
+  );
+  expect(unit).not.toContain("node");
+});
+
 it("survives the kernel OOM-killing a greedy agent child", () => {
   const unit = BootService.renderBootServiceUnit({
-    nodePath: "/usr/bin/node",
+    program: ["/usr/bin/node", "/home/theo/.t3/runtime/service-launcher.mjs"],
     launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
     baseDir: "/home/theo/.t3",
     logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
@@ -50,7 +65,7 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
 });
 
 const macPlan = {
-  nodePath: "/opt/homebrew/bin/node",
+  program: ["/opt/homebrew/bin/node", "/Users/theo/.t3/runtime/service-launcher.mjs"],
   launcherPath: "/Users/theo/.t3/runtime/service-launcher.mjs",
   baseDir: "/Users/theo/.t3",
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
@@ -116,7 +131,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const sourceLauncher = path.join(home, "service-launcher.mjs");
   const statePath = path.join(baseDir, "runtime", "service-state.json");
   yield* fs.writeFileString(sourceLauncher, "export {};\n");
-  const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3");
+  const runtime = pinnedRuntimePaths(path, baseDir, "1.2.3", "linux");
   yield* fs.makeDirectory(path.dirname(runtime.entryPath), { recursive: true });
   yield* fs.writeFileString(runtime.entryPath, "export {};\n");
   yield* fs.writeFileString(
