@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
@@ -63,6 +64,10 @@ import {
   validateClaudeReplayRecordingSelection,
   type ClaudeRecordingQueryMode,
 } from "./claudeReplayRecordingConfig.ts";
+import {
+  DENIED_WRITE_POLICY,
+  TOOL_CALL_DENIED_WRITE_PROMPT,
+} from "../src/orchestration-v2/testkit/fixtures/tool_call_denied_write/input.ts";
 
 const CLAUDE_RECORDINGS = {
   simple: {
@@ -135,6 +140,14 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
     runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+  },
+  tool_call_denied_write: {
+    prompts: [TOOL_CALL_DENIED_WRITE_PROMPT],
+    defaultTranscriptFile: "fixtures/tool_call_denied_write/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    runtimePolicyOverride: DENIED_WRITE_POLICY,
+    permissionDecision: "decline",
   },
   tool_call_restricted_granular: {
     prompts: [TOOL_CALL_WRITE_PROMPT],
@@ -271,11 +284,20 @@ if (recording === undefined) {
 }
 
 const positionalOutputPath = process.argv[2]?.startsWith("--") ? undefined : process.argv[2];
+const path = await Effect.runPromise(
+  Effect.service(Path.Path).pipe(Effect.provide(NodeServices.layer)),
+);
 const outputPath =
   readArgValue("--out") ??
   positionalOutputPath ??
-  new URL(`../src/orchestration-v2/testkit/${recording.defaultTranscriptFile}`, import.meta.url)
-    .pathname;
+  (await Effect.runPromise(
+    path.fromFileUrl(
+      new URL(
+        `../src/orchestration-v2/testkit/${recording.defaultTranscriptFile}`,
+        import.meta.url,
+      ),
+    ),
+  ));
 
 function encodeTranscriptNdjson(
   transcript: Awaited<ReturnType<typeof recordClaudeAgentSdkReplayTranscript>>,
@@ -286,15 +308,6 @@ function encodeTranscriptNdjson(
     ...entries.map((entry) => JSON.stringify(entry)),
     "",
   ].join("\n");
-}
-
-function dirname(filePath: string): string {
-  const normalized = filePath.replace(/\/+$/u, "");
-  const lastSlash = normalized.lastIndexOf("/");
-  if (lastSlash < 0) {
-    return ".";
-  }
-  return lastSlash === 0 ? "/" : normalized.slice(0, lastSlash);
 }
 
 function joinPath(directory: string, fileName: string): string {
@@ -418,12 +431,15 @@ try {
       ? {}
       : { allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions }),
     ...(queryPolicy.installPermissionCallback ? { enablePermissionCallback: true } : {}),
+    ...("permissionDecision" in recording
+      ? { permissionDecision: recording.permissionDecision }
+      : {}),
     ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
   });
   await runFileSystem(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(dirname(outputPath), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
       yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
     }),
   );

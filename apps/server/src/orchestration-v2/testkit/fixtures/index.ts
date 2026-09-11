@@ -54,6 +54,8 @@ import { todoListInput } from "./todo_list/input.ts";
 import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
 import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor_output.ts";
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
+import { DENIED_WRITE_POLICY, toolCallDeniedWriteInput } from "./tool_call_denied_write/input.ts";
+import { assertToolCallDeniedWriteClaudeOutput } from "./tool_call_denied_write/claude_output.ts";
 import { assertToolCallReadOnlyOnRequestClaudeOutput } from "./tool_call_read_only_on_request/claude_output.ts";
 import { assertToolCallReadOnlyOnRequestOutput } from "./tool_call_read_only_on_request/codex_output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
@@ -298,6 +300,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestOutput,
+      },
+    ],
+  },
+  {
+    name: "tool_call_denied_write",
+    buildInput: toolCallDeniedWriteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./tool_call_denied_write/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimePolicyOverride: DENIED_WRITE_POLICY,
+        assertOutput: assertToolCallDeniedWriteClaudeOutput,
       },
     ],
   },
@@ -785,13 +803,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
 ];
-
-// TODO(claude-v2/approvals-denied): add denied write fixtures after the live query runner records
-// Claude denial callback responses. Cross-reference
-// `tool_call_read_only_on_request/claude_transcript.ndjson`,
-// `tool_call_workspace_never/claude_transcript.ndjson`,
-// `tool_call_restricted_granular/claude_transcript.ndjson`, and
-// docs/orchestration-v2/provider-capability-system.md.
 
 // TODO(claude-v2/context-transfer): add provider-switch handoff and return fixtures when portable
 // context handoff is implemented. Cross-reference docs/orchestration-v2/provider-switching-and-context.md

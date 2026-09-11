@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
+import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   CLAUDE_PROVIDER,
   CLAUDE_DEFAULT_INSTANCE_ID,
@@ -296,6 +297,7 @@ function isClaudeSdkReplayMessage(frame: unknown): frame is SDKMessage {
     type === "assistant" ||
     type === "user" ||
     type === "result" ||
+    type === "stream_event" ||
     type === "system" ||
     type === "rate_limit_event"
   );
@@ -1267,6 +1269,16 @@ async function recordMessagesUntilFirstToolUse(input: {
   }
 }
 
+async function openRecordingQuery(input: Parameters<typeof query>[0]) {
+  const executablePath = await Effect.runPromise(
+    resolveClaudeSdkExecutablePath("claude", process.env),
+  );
+  return query({
+    ...input,
+    options: { ...input.options, pathToClaudeCodeExecutable: executablePath },
+  });
+}
+
 async function recordClaudeStreamingQuery(input: {
   readonly scenario: string;
   readonly prompts: ReadonlyArray<string>;
@@ -1338,7 +1350,7 @@ async function recordClaudeStreamingQuery(input: {
     label: "query.open",
     frame: makeClaudeQueryOpenFrame({ options }),
   });
-  const queryRuntime = query({
+  const queryRuntime = await openRecordingQuery({
     prompt: promptQueue,
     options,
   });
@@ -1476,7 +1488,7 @@ async function recordClaudeActiveSteeringQuery(input: {
     label: "query.open",
     frame: makeClaudeQueryOpenFrame({ options }),
   });
-  const queryRuntime = query({
+  const queryRuntime = await openRecordingQuery({
     prompt: promptQueue,
     options,
   });
@@ -1563,7 +1575,7 @@ async function recordClaudeRestartingQueries(input: {
     });
 
     try {
-      const queryRuntime = query({
+      const queryRuntime = await openRecordingQuery({
         prompt: promptQueue,
         options,
       });
@@ -1648,7 +1660,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
     label: "query.open:source",
     frame: makeClaudeQueryOpenFrame({ options: sourceOptions }),
   });
-  const sourceRuntime = query({
+  const sourceRuntime = await openRecordingQuery({
     prompt: sourcePromptQueue,
     options: sourceOptions,
   });
@@ -1726,7 +1738,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
       frame: makeClaudePromptOfferFrame(resumedMessage),
     });
 
-    const resumedRuntime = query({
+    const resumedRuntime = await openRecordingQuery({
       prompt: resumedPromptQueue,
       options: resumedOptions,
     });
@@ -1830,7 +1842,7 @@ async function recordClaudeForkSessionQuery(input: {
     label: "query.open:source",
     frame: makeClaudeQueryOpenFrame({ options: sourceOptions }),
   });
-  const sourceRuntime = query({
+  const sourceRuntime = await openRecordingQuery({
     prompt: sourcePromptQueue,
     options: sourceOptions,
   });
@@ -1938,7 +1950,7 @@ async function recordClaudeForkSessionQuery(input: {
         label: `query.open:fork${labelSuffix}`,
         frame: makeClaudeQueryOpenFrame({ options: targetOptions }),
       });
-      const targetRuntime = query({
+      const targetRuntime = await openRecordingQuery({
         prompt: targetPromptQueue,
         options: targetOptions,
       });
@@ -1996,7 +2008,7 @@ async function recordClaudeForkSessionQuery(input: {
         label: "query.open:source-continuation",
         frame: makeClaudeQueryOpenFrame({ options: continuationOptions }),
       });
-      const continuationRuntime = query({
+      const continuationRuntime = await openRecordingQuery({
         prompt: continuationPromptQueue,
         options: continuationOptions,
       });
@@ -2085,7 +2097,7 @@ export async function recordInterruptedClaudeQuery(input: {
     label: input.queryOpenLabel,
     frame: makeClaudeQueryOpenFrame({ options }),
   });
-  const runtime = query({
+  const runtime = await openRecordingQuery({
     prompt: promptQueue,
     options,
   });
@@ -2269,7 +2281,7 @@ async function recordClaudeInterruptRestartQuery(input: {
   });
 
   try {
-    const secondRuntime = query({
+    const secondRuntime = await openRecordingQuery({
       prompt: secondPromptQueue,
       options: secondOptions,
     });
