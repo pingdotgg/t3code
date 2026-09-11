@@ -3958,6 +3958,288 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not adopt a task child whose parent session is unverified", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-unverified-parent");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const foreignSessionId = "ses_foreign_task_child";
+      const enqueue = makeOpenCodeEventQueue();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate to a foreign session",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      enqueue({
+        id: "evt-foreign-task",
+        type: "message.part.updated",
+        properties: {
+          sessionID: parentSessionId,
+          time: 1,
+          part: {
+            id: "part-foreign-task",
+            sessionID: parentSessionId,
+            messageID: "msg-foreign-task",
+            type: "tool",
+            callID: "call-foreign-task",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { prompt: "Foreign", subagent_type: "explore" },
+              output: "started",
+              title: "Delegating",
+              metadata: { sessionId: foreignSessionId },
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-foreign-busy",
+        type: "session.status",
+        properties: { sessionID: foreignSessionId, status: { type: "busy" } },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-parent-idle",
+        type: "session.status",
+        properties: { sessionID: parentSessionId, status: { type: "idle" } },
+      } satisfies OpenCodeEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(
+        events.some(
+          (event) =>
+            (event.type === "task.started" ||
+              event.type === "task.progress" ||
+              event.type === "task.updated") &&
+            event.payload.taskId === foreignSessionId,
+        ),
+        false,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("discovers a resumed child session from its first event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-resumed-discovery");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_resumed_child";
+      runtimeMock.state.sessionParentById.set(childSessionId, parentSessionId);
+      const enqueue = makeOpenCodeEventQueue();
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.started" || event.type === "task.updated"),
+        ),
+        Stream.takeUntil(
+          (event) => event.type === "task.updated" && event.payload.status === "running",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Resume a child",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      enqueue({
+        id: "evt-resumed-busy",
+        type: "session.status",
+        properties: { sessionID: childSessionId, status: { type: "busy" } },
+      } satisfies OpenCodeEvent);
+
+      const events = Array.from(
+        yield* Fiber.join(taskEventsFiber).pipe(Effect.timeout("2 seconds")),
+      );
+      NodeAssert.partialDeepStrictEqual(events[0], {
+        type: "task.started",
+        payload: { taskId: childSessionId },
+      });
+      NodeAssert.equal(events[1]?.type, "task.updated");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("re-admits a child session after it is deleted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-readmit");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child_readmit";
+      const enqueue = makeOpenCodeEventQueue();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate twice",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      const taskPart = {
+        id: "part-readmit-task",
+        sessionID: parentSessionId,
+        messageID: "msg-readmit-task",
+        type: "tool",
+        callID: "call-readmit-task",
+        tool: "task",
+        state: {
+          status: "completed",
+          input: { description: "Inspect", prompt: "Inspect", subagent_type: "explore" },
+          output: "started",
+          title: "Delegating",
+          metadata: { parentSessionId, sessionId: childSessionId },
+          time: { start: 1, end: 2 },
+        },
+      } satisfies ToolPart;
+      enqueue({
+        id: "evt-readmit-task",
+        type: "message.part.updated",
+        properties: { sessionID: parentSessionId, part: taskPart, time: 1 },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-readmit-deleted",
+        type: "session.deleted",
+        properties: {
+          info: { id: childSessionId, parentID: parentSessionId, title: "Child session" },
+        },
+      });
+      enqueue({
+        id: "evt-readmit-task-again",
+        type: "message.part.updated",
+        properties: { sessionID: parentSessionId, part: taskPart, time: 2 },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-readmit-parent-idle",
+        type: "session.status",
+        properties: { sessionID: parentSessionId, status: { type: "idle" } },
+      } satisfies OpenCodeEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.filter((event) => event.type === "task.started").length, 2);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("publishes a child's real title after it starts on the session-id fallback", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-title-refresh");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child_title_refresh";
+      const enqueue = makeOpenCodeEventQueue();
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.started" || event.type === "task.updated"),
+        ),
+        Stream.takeUntil(
+          (event) => event.type === "task.updated" && event.payload.title === "Investigate routing",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate behind a placeholder title",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      enqueue({
+        id: "evt-title-task",
+        type: "message.part.updated",
+        properties: {
+          sessionID: parentSessionId,
+          time: 1,
+          part: {
+            id: "part-title-task",
+            sessionID: parentSessionId,
+            messageID: "msg-title-task",
+            type: "tool",
+            callID: "call-title-task",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: { prompt: "Investigate" },
+              output: "started",
+              title: "Delegating",
+              metadata: { parentSessionId, sessionId: childSessionId },
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-title-updated",
+        type: "session.updated",
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: childSessionId,
+            parentID: parentSessionId,
+            title: "Investigate routing",
+          },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(taskEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.partialDeepStrictEqual(events[0], {
+        type: "task.started",
+        payload: { taskId: childSessionId, title: childSessionId },
+      });
+      NodeAssert.partialDeepStrictEqual(events[1], {
+        type: "task.updated",
+        payload: { taskId: childSessionId, title: "Investigate routing" },
+      });
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("keeps parent turn state isolated from child session events", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

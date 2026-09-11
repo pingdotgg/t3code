@@ -133,6 +133,10 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
+/**
+ * Returns the lowercased host of a git remote URL (including any explicit port),
+ * or null when the URL cannot be parsed.
+ */
 export function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -191,6 +195,12 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+/**
+ * Classifies a git remote host (for example `github.com` or
+ * `github.example.com`) as a source control provider. Matching is by exact name
+ * or DNS label, so an SSH alias such as `github-personal` must be resolved to
+ * its canonical hostname before calling this.
+ */
 export function detectSourceControlProviderFromHost(
   host: string,
 ): SourceControlProviderInfo | null {
@@ -235,6 +245,10 @@ export function detectSourceControlProviderFromHost(
   };
 }
 
+/**
+ * Classifies a git remote URL by its parsed host. SSH aliases and `insteadOf`
+ * rewrites are not resolved here; callers resolve them before re-classifying.
+ */
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {

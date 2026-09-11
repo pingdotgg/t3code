@@ -328,3 +328,23 @@ it.effect("keeps a remote unknown when its SSH host alias cannot be resolved", (
     assert.strictEqual(provider.kind, "unknown");
   }),
 );
+
+it.effect("resolves an SSH host alias carrying an explicit port", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "ssh://git@github-personal:2222/noueii/t3code.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            input.command === "ssh" && input.args.includes("github-personal")
+              ? processOutput("hostname github.com\n")
+              : processOutput(""),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "github");
+  }),
+);

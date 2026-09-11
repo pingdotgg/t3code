@@ -343,6 +343,13 @@ interface OpenCodeSessionContext {
   readonly relatedSessionIds: Set<string>;
   readonly startedTaskSessionIds: Set<string>;
   readonly childTaskInfoBySessionId: Map<string, OpenCodeChildTaskInfo>;
+  /**
+   * Sessions whose ancestry lookup has already been scheduled. A resumed child
+   * emits events before any `session.created`, so the first one triggers a
+   * one-shot discovery; the id stays here to keep unrelated sessions from
+   * re-triggering a `session.get` walk on every event.
+   */
+  readonly childRelationDiscoverySessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
@@ -1660,6 +1667,10 @@ export function makeOpenCodeAdapter(
       }
     };
 
+    /**
+     * Records the display title and subagent role seen for a child session,
+     * preserving the previous value for fields not supplied by this event.
+     */
     const rememberOpenCodeChildTask = (
       context: OpenCodeSessionContext,
       sessionId: string,
@@ -1674,6 +1685,10 @@ export function makeOpenCodeAdapter(
       return next;
     };
 
+    /**
+     * Builds the shared `task.*` linkage for a child, falling back to its session
+     * id when neither a title nor a role is known yet.
+     */
     const openCodeChildTaskLinkage = (context: OpenCodeSessionContext, sessionId: string) => {
       const info = context.childTaskInfoBySessionId.get(sessionId);
       const title = info?.title ?? info?.role ?? sessionId;
@@ -1685,6 +1700,7 @@ export function makeOpenCodeAdapter(
       } as const;
     };
 
+    /** Emits `task.started` once per child session, no matter how it was discovered. */
     const emitOpenCodeChildTaskStarted = Effect.fn("emitOpenCodeChildTaskStarted")(function* (
       context: OpenCodeSessionContext,
       sessionId: string,
@@ -1708,6 +1724,10 @@ export function makeOpenCodeAdapter(
       });
     });
 
+    /**
+     * Translates a known child session's event into `task.progress` / `task.updated`
+     * without touching parent turn state.
+     */
     const handleOpenCodeChildEvent = Effect.fn("handleOpenCodeChildEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -2183,6 +2203,37 @@ export function makeOpenCodeAdapter(
       retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
     });
 
+    /**
+     * A resumed child session emits events without a preceding `session.created`,
+     * so its first event does not match `relatedSessionIds` and would otherwise be
+     * dropped. Resolve its ancestry once and replay that event as child activity.
+     */
+    const scheduleChildRelationDiscovery = Effect.fn("scheduleChildRelationDiscovery")(function* (
+      context: OpenCodeSessionContext,
+      event: OpenCodeSubscribedEvent,
+      sessionId: string,
+    ) {
+      if (
+        context.relatedSessionIds.has(sessionId) ||
+        context.childRelationDiscoverySessionIds.has(sessionId)
+      ) {
+        return;
+      }
+      context.childRelationDiscoverySessionIds.add(sessionId);
+      const run = Effect.gen(function* () {
+        const related = yield* isRelatedOpenCodeSession(context, sessionId).pipe(
+          Effect.match({
+            onFailure: () => false,
+            onSuccess: (value) => value,
+          }),
+        );
+        if (related) {
+          yield* handleOpenCodeChildEvent(context, event, sessionId);
+        }
+      }).pipe(Effect.catchCause(() => Effect.void));
+      yield* run.pipe(Effect.forkIn(context.sessionScope));
+    });
+
     const schedulePendingRequestRecovery = Effect.fn("schedulePendingRequestRecovery")(function* (
       context: OpenCodeSessionContext,
     ) {
@@ -2353,9 +2404,27 @@ export function makeOpenCodeAdapter(
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
           addRelatedOpenCodeSession(context, session.id);
           const title = trimText(session.title);
-          rememberOpenCodeChildTask(context, session.id, {
-            title: title && !isOpenCodeDefaultTitle(title) ? title : undefined,
-          });
+          const nextTitle = title && !isOpenCodeDefaultTitle(title) ? title : undefined;
+          const priorTitle = context.childTaskInfoBySessionId.get(session.id)?.title;
+          const alreadyStarted = context.startedTaskSessionIds.has(session.id);
+          const nextInfo = rememberOpenCodeChildTask(context, session.id, { title: nextTitle });
+          // A child that started on its session-id fallback had no real title to
+          // show. Publish it once it arrives instead of waiting for the next
+          // status event to refresh the linkage.
+          if (alreadyStarted && priorTitle === undefined && nextInfo.title !== undefined) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId: context.activeTurnId,
+                raw: event,
+              })),
+              type: "task.updated",
+              payload: {
+                taskId: RuntimeTaskId.make(session.id),
+                ...openCodeChildTaskLinkage(context, session.id),
+              },
+            });
+          }
         }
       }
 
@@ -2384,6 +2453,15 @@ export function makeOpenCodeAdapter(
             return;
           }
         }
+      }
+      if (
+        payloadSessionId !== undefined &&
+        payloadSessionId !== context.openCodeSessionId &&
+        !context.relatedSessionIds.has(payloadSessionId) &&
+        !isOpenCodeChildRequestEvent(event)
+      ) {
+        yield* scheduleChildRelationDiscovery(context, event, payloadSessionId);
+        return;
       }
       const isChildEvent =
         payloadSessionId !== undefined &&
@@ -2415,6 +2493,9 @@ export function makeOpenCodeAdapter(
         yield* handleOpenCodeChildEvent(context, event, payloadSessionId);
         if (event.type === "session.deleted") {
           context.relatedSessionIds.delete(payloadSessionId);
+          context.startedTaskSessionIds.delete(payloadSessionId);
+          context.childTaskInfoBySessionId.delete(payloadSessionId);
+          context.childRelationDiscoverySessionIds.delete(payloadSessionId);
         }
         return;
       }
@@ -2640,8 +2721,12 @@ export function makeOpenCodeAdapter(
                 typeof metadata.parentSessionId === "string"
                   ? trimText(metadata.parentSessionId)
                   : undefined;
+              // A spawned session must prove ancestry against a parent session
+              // we already own. Metadata carrying only `sessionId` cannot, so
+              // adopting it would let an unrelated session on a shared server
+              // emit activity under this thread.
               const hasValidParent =
-                metadataParentSessionId === undefined ||
+                metadataParentSessionId !== undefined &&
                 context.relatedSessionIds.has(metadataParentSessionId);
               if (childSessionId && hasValidParent) {
                 const alreadyStarted = context.startedTaskSessionIds.has(childSessionId);
@@ -3206,6 +3291,7 @@ export function makeOpenCodeAdapter(
           relatedSessionIds: new Set([started.openCodeSession.id]),
           startedTaskSessionIds: new Set(),
           childTaskInfoBySessionId: new Map(),
+          childRelationDiscoverySessionIds: new Set(),
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),

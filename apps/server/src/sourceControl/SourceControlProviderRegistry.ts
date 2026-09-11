@@ -135,6 +135,10 @@ interface SourceControlRemoteCandidate {
   readonly provider: SourceControlProviderInfo | null;
 }
 
+/**
+ * Picks the provider context for a repository: the `origin` remote wins, then the
+ * first recognized provider, then the first remote with any provider.
+ */
 function selectProviderContext(
   remotes: ReadonlyArray<SourceControlRemoteCandidate>,
 ): SourceControlProvider.SourceControlProviderContext | null {
@@ -286,10 +290,12 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           Effect.gen(function* () {
             let provider = detectSourceControlProviderFromRemoteUrl(remote.url);
             if ((provider === null || provider.kind === "unknown") && isSshRemoteUrl(remote.url)) {
-              const host = parseRemoteHost(remote.url);
-              if (host !== null) {
-                const canonicalHost = yield* resolveSshHostAlias({ process, cwd, host });
-                if (canonicalHost !== null && canonicalHost !== host) {
+              // `parseRemoteHost` keeps an explicit port (`host:2222`), which is
+              // not a valid ssh alias, so resolve the bare hostname.
+              const hostname = parseRemoteHost(remote.url)?.replace(/:\d+$/u, "");
+              if (hostname) {
+                const canonicalHost = yield* resolveSshHostAlias({ process, cwd, host: hostname });
+                if (canonicalHost !== null && canonicalHost !== hostname) {
                   provider = detectSourceControlProviderFromHost(canonicalHost) ?? provider;
                 }
               }
