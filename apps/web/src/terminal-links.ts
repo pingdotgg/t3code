@@ -217,3 +217,14 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
 
   return formatFilePathPosition({ ...position, path: resolvedPath });
 }
+
+/**
+ * Resolves a workspace-relative file path against the workspace root. Unlike
+ * terminal links, a leading `~/` is a literal folder name inside the
+ * workspace, not the user's home directory.
+ */
+export function resolveWorkspaceFilePath(rawPath: string, cwd: string): string {
+  if (isAbsolutePath(rawPath)) return rawPath;
+  const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
+  return joinPath(cwd, rawPath, separator);
+}
