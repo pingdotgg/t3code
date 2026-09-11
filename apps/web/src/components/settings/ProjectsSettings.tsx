@@ -1,21 +1,12 @@
-import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { useEnvironments } from "../../state/environments";
-import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
-import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { SettingsScopeSelects } from "./SettingsScopeSelects";
-import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
-import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import { EnvironmentId } from "@t3tools/contracts";
 
-export function ProjectsSettings({
-  value,
-  onScopeChange,
-}: {
-  value: SettingsScopeSearch;
-  onScopeChange: (scope: SettingsScopeSearch) => void;
-}) {
-  const groups = useSettingsProjectGroups();
-  const { environments } = useEnvironments();
-  const scope = resolveSettingsScope(value, groups, environments);
+import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
+import { useSettingsScope } from "./SettingsScopeContext";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
+
+/** Project identity and checkout management for the selected project. */
+export function ProjectsSettings() {
+  const { search: value, scope } = useSettingsScope();
   // The panel follows remembered members when grouping replaces a project key.
   const projectScope =
     scope.kind === "project" ||
@@ -24,16 +15,6 @@ export function ProjectsSettings({
       (scope.reason === "project-missing" || scope.reason === "checkout-missing"));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="scrollbar-gutter-both shrink-0 overflow-y-auto">
-        <WorkspacePageContainer className="items-end pb-0">
-          <SettingsScopeSelects
-            value={value}
-            groups={groups}
-            environments={environments}
-            onChange={onScopeChange}
-          />
-        </WorkspacePageContainer>
-      </div>
       {value.project && projectScope ? (
         <ProjectSettingsPanel
           projectKey={value.project}
@@ -43,11 +24,10 @@ export function ProjectsSettings({
       ) : scope.kind === "unavailable" ? (
         <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>
       ) : (
-        <ProjectDefaultsSettings
-          environmentId={scope.kind === "environment" ? scope.environmentId : null}
-        />
+        <SettingsScopeNotice target="project">
+          Choose a project to manage its name, icon, checkouts and actions.
+        </SettingsScopeNotice>
       )}
     </div>
   );
 }
-import { EnvironmentId } from "@t3tools/contracts";

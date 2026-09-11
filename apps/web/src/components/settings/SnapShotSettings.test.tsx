@@ -26,6 +26,7 @@ vi.mock("react/compiler-runtime", async () => {
 });
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("./SettingsScopeContext", () => ({ useOptionalSettingsScope: () => null }));
 const bridge = vi.hoisted(() => ({
   getSnapShotState: vi.fn<() => Promise<DesktopSnapShotState>>(),
   setSnapShotShortcutSuppressed: vi.fn(),

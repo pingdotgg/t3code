@@ -7,7 +7,7 @@ import {
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
-} from "./SettingsScopeSelects.logic";
+} from "./settingsScopeAxis";
 
 const first = {
   environmentId: EnvironmentId.make("first"),

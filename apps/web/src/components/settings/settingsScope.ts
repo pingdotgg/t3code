@@ -6,8 +6,13 @@ import type {
 } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 
+/**
+ * Two axes. `machine` narrows the environment axis (absent = all
+ * environments); `project` and `checkout` narrow the project axis (absent =
+ * environment defaults). Device-local preferences are not a scope: they
+ * render regardless of the selection because they never touch a server.
+ */
 export interface SettingsScopeSearch {
-  scope?: "device" | "all" | undefined;
   project?: string | undefined;
   machine?: string | undefined;
   checkout?: string | undefined;
@@ -21,7 +26,7 @@ type ScopeTargets = {
 
 export type ResolvedSettingsScope = ScopeTargets &
   (
-    | { kind: "device" | "all" }
+    | { kind: "all" }
     | { kind: "environment"; environmentId: EnvironmentId }
     | {
         kind: "project";
@@ -41,9 +46,8 @@ export type ResolvedSettingsScope = ScopeTargets &
       }
   );
 
-/** Explicit broad targets replace narrower selections; stale IDs remain visible to the resolver. */
+/** Stale IDs remain visible to the resolver so a removed target reads as unavailable, not as "all". */
 export function validateSettingsScopeSearch(raw: Record<string, unknown>): SettingsScopeSearch {
-  if (raw.scope === "device" || raw.scope === "all") return { scope: raw.scope };
   const stringValue = (value: unknown) =>
     typeof value === "string" && value.trim().length > 0 ? value : undefined;
   const project = stringValue(raw.project);
@@ -74,17 +78,6 @@ export function resolveSettingsScope(
     environmentIds: [],
   });
 
-  if (search.scope === "device") {
-    return { kind: "device", label: "This device", members: [], environmentIds: [] };
-  }
-  if (search.scope === "all") {
-    return {
-      kind: "all",
-      label: "All environments",
-      members: [],
-      environmentIds: environments.map((environment) => environment.environmentId),
-    };
-  }
   if (search.checkout && !search.project) {
     return unavailable("project-required", "Select a project to choose one of its checkouts.");
   }

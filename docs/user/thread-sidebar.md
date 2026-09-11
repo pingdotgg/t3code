@@ -86,10 +86,12 @@ settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
 
 Change these rules in **Settings → General**. They continue to run when your apps
-are closed. Changes apply to connected environments that support shared settings;
-offline environments and older servers keep their previous values. If connected
-environments disagree, **Apply to all** copies your current settings to those named
-in the warning. Changing a rule does not reopen already settled threads.
+are closed. On web and desktop, choose an environment at the top to change only
+its rules, or **All environments** to update connected environments together.
+Mixed values show where the selected environments disagree. Mobile applies these
+rules to connected environments that support shared settings. Offline environments
+and older servers keep their previous values. Changing a rule does not reopen
+already settled threads.
 
 ## Link a pull request
 
