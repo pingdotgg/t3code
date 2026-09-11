@@ -1,32 +1,40 @@
-/**
- * Auto-balance provider catalogue.
- *
- * When a draft runs on "Auto balance", the composer must offer every provider
- * that *any* routable machine serves — not just the primary environment's
- * list. Otherwise a provider that exists on only one machine can never be
- * selected, and therefore never routed to.
- *
- * The union built here is selection truth only. Routing stays per-environment:
- * `environmentSupportsModelSelection` decides which machines may serve a
- * selection, evaluated against each environment's own server config, and the
- * server remains authoritative at turn start.
- *
- * @module autoBalanceProviders
- */
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import type {
-  EnvironmentId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderModel,
+import {
+  type EnvironmentId,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
+import { getAppModelOptionsForInstance, type AppModelOption } from "./modelSelection";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+  type ProviderInstanceEntry,
+} from "./providerInstances";
 
-/**
- * Whether an environment takes part in automatic routing at all: connected
- * and not opted out via a zero weight. Mirrors the base of the candidate
- * filter in `ChatView`; the provider/model match is layered on top.
- */
+export interface AutoBalanceEnvironment {
+  environmentId: EnvironmentId;
+  providers: ReadonlyArray<ServerProvider>;
+  settings: UnifiedSettings;
+}
+
+export interface AutoBalanceProviderCatalog {
+  entries: ReadonlyArray<ProviderInstanceEntry>;
+  modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>;
+  targetsByInstance: ReadonlyMap<
+    ProviderInstanceId,
+    ReadonlyArray<{
+      environmentId: EnvironmentId;
+      instanceId: ProviderInstanceId;
+      driver: ProviderDriverKind;
+      models: ReadonlyArray<AppModelOption>;
+    }>
+  >;
+}
+
+/** Only connected machines opted into balancing contribute choices. */
 export function isAutoBalanceRoutableEnvironment(input: {
   connectionPhase: EnvironmentConnectionPhase;
   environmentId: EnvironmentId;
@@ -35,10 +43,7 @@ export function isAutoBalanceRoutableEnvironment(input: {
   return input.connectionPhase === "connected" && (input.weights[input.environmentId] ?? 50) > 0;
 }
 
-/**
- * Whether one environment's snapshot of an instance may serve a turn.
- * Same bar the load-balancing candidates apply per environment.
- */
+/** Probe health is checked in addition to the owning machine's settings. */
 export function isProviderSnapshotRoutable(snapshot: ServerProvider): boolean {
   return (
     snapshot.enabled &&
@@ -49,118 +54,140 @@ export function isProviderSnapshotRoutable(snapshot: ServerProvider): boolean {
   );
 }
 
-/**
- * Whether an environment can serve an exact composer selection: a routable
- * snapshot of the instance (or any instance of the driver when nothing is
- * picked yet) that also lists the selected model. A `null` model keeps the
- * previous provider-level behavior.
- */
+/** Picker keys never leave the picker: real instance IDs remain environment-local. */
+export function autoBalancePickerInstanceId(
+  driver: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
+): ProviderInstanceId {
+  return JSON.stringify([driver, instanceId]) as ProviderInstanceId;
+}
+
+/** Resolve provider visibility and custom/hidden models using each machine's settings. */
 export function environmentSupportsModelSelection(input: {
   providers: ReadonlyArray<ServerProvider>;
+  settings: UnifiedSettings;
   instanceId: ProviderInstanceId | null;
   driver: ProviderDriverKind;
   model: string | null;
+  preserveUnavailableModel?: boolean;
 }): boolean {
-  const { instanceId, driver, model } = input;
-  return input.providers.some(
-    (provider) =>
-      (instanceId === null || provider.instanceId === instanceId) &&
-      provider.driver === driver &&
-      isProviderSnapshotRoutable(provider) &&
-      (model === null ||
-        provider.models.some(
-          (candidate) => candidate.slug === model || candidate.aliases?.includes(model) === true,
+  return applyProviderInstanceSettings(
+    deriveProviderInstanceEntries(input.providers),
+    input.settings,
+  ).some(
+    (entry) =>
+      (input.instanceId === null || entry.instanceId === input.instanceId) &&
+      entry.driverKind === input.driver &&
+      entry.enabled &&
+      isProviderSnapshotRoutable(entry.snapshot) &&
+      (input.model === null ||
+        getAppModelOptionsForInstance(
+          input.settings,
+          entry,
+          input.preserveUnavailableModel ? input.model : null,
+        ).some(
+          (model) => model.slug === input.model || model.aliases?.includes(input.model!) === true,
         )),
   );
 }
 
-interface CollectedInstance {
-  snapshots: Array<{ environmentId: EnvironmentId; snapshot: ServerProvider }>;
-  models: Map<string, ServerProviderModel>;
-  order: number;
-}
-
 /**
- * Merge several environments' `ServerProvider[]` into one catalogue, keyed by
- * instance id. Input order wins: environments arrive primary-first, so the
- * first-seen snapshot and model record survive collisions.
- *
- * The representative snapshot per instance prefers the preferred environment
- * (the draft's current, possibly already balanced, machine) but falls back to
- * a ready snapshot elsewhere — otherwise an instance that is ready on exactly
- * one machine would render as not-ready in the picker.
+ * Selection-only union. The composer continues using its routed environment's
+ * provider snapshots for capabilities, options and dispatch. Preferred-machine
+ * metadata wins duplicate slugs; disabled providers never contribute models.
  */
-export function deriveAutoBalanceProviderStatuses(input: {
-  environments: ReadonlyArray<{
-    environmentId: EnvironmentId;
-    providers: ReadonlyArray<ServerProvider>;
-  }>;
+export function deriveAutoBalanceProviderCatalog(input: {
+  environments: ReadonlyArray<AutoBalanceEnvironment>;
   preferredEnvironmentId?: EnvironmentId | null;
-}): ServerProvider[] {
-  const { environments, preferredEnvironmentId } = input;
-  const byInstance = new Map<string, CollectedInstance>();
+  attachmentEnvironmentId?: EnvironmentId | null;
+  currentSelection?:
+    | { instanceId: ProviderInstanceId; driver: ProviderDriverKind; model: string }
+    | undefined;
+}): AutoBalanceProviderCatalog {
+  const entries = new Map<ProviderInstanceId, ProviderInstanceEntry>();
+  const models = new Map<ProviderInstanceId, Map<string, AppModelOption>>();
+  const targets = new Map<
+    ProviderInstanceId,
+    Array<{
+      environmentId: EnvironmentId;
+      instanceId: ProviderInstanceId;
+      driver: ProviderDriverKind;
+      models: ReadonlyArray<AppModelOption>;
+    }>
+  >();
+  const environments = input.environments
+    .filter(
+      (environment) =>
+        input.attachmentEnvironmentId == null ||
+        environment.environmentId === input.attachmentEnvironmentId,
+    )
+    .sort(
+      (a, b) =>
+        Number(b.environmentId === input.preferredEnvironmentId) -
+        Number(a.environmentId === input.preferredEnvironmentId),
+    );
   for (const environment of environments) {
-    for (const snapshot of environment.providers) {
-      const key = snapshot.instanceId as string;
-      let collected = byInstance.get(key);
-      if (!collected) {
-        collected = { snapshots: [], models: new Map(), order: byInstance.size };
-        byInstance.set(key, collected);
+    for (const entry of applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(environment.providers),
+      environment.settings,
+    )) {
+      if (!entry.enabled || !isProviderSnapshotRoutable(entry.snapshot)) continue;
+      const key = autoBalancePickerInstanceId(entry.driverKind, entry.instanceId);
+      const current = input.currentSelection;
+      const options = getAppModelOptionsForInstance(
+        environment.settings,
+        entry,
+        environment.environmentId === input.preferredEnvironmentId &&
+          current?.instanceId === entry.instanceId &&
+          current.driver === entry.driverKind
+          ? current.model
+          : null,
+      );
+      const previous = entries.get(key);
+      if (!previous || (previous.status !== "ready" && entry.status === "ready")) {
+        entries.set(key, { ...entry, instanceId: key });
       }
-      collected.snapshots.push({ environmentId: environment.environmentId, snapshot });
-      for (const model of snapshot.models) {
-        if (!collected.models.has(model.slug)) {
-          collected.models.set(model.slug, model);
-        }
-      }
+      const merged = models.get(key) ?? new Map<string, AppModelOption>();
+      for (const model of options)
+        if (
+          !merged.has(model.slug) ||
+          (merged.get(model.slug)?.isUnavailable && !model.isUnavailable)
+        )
+          merged.set(model.slug, model);
+      models.set(key, merged);
+      const group = targets.get(key) ?? [];
+      group.push({
+        environmentId: environment.environmentId,
+        instanceId: entry.instanceId,
+        driver: entry.driverKind,
+        models: options,
+      });
+      targets.set(key, group);
     }
   }
-  const merged: ServerProvider[] = [];
-  for (const collected of [...byInstance.values()].sort((a, b) => a.order - b.order)) {
-    const isPreferred = (environmentId: EnvironmentId): boolean =>
-      preferredEnvironmentId != null && environmentId === preferredEnvironmentId;
-    const representative =
-      collected.snapshots.find(
-        ({ environmentId, snapshot }) =>
-          isPreferred(environmentId) &&
-          snapshot.status === "ready" &&
-          isProviderSnapshotRoutable(snapshot),
-      )?.snapshot ??
-      collected.snapshots.find(
-        ({ snapshot }) => snapshot.status === "ready" && isProviderSnapshotRoutable(snapshot),
-      )?.snapshot ??
-      collected.snapshots.find(
-        ({ environmentId, snapshot }) =>
-          isPreferred(environmentId) && isProviderSnapshotRoutable(snapshot),
-      )?.snapshot ??
-      collected.snapshots.find(({ snapshot }) => isProviderSnapshotRoutable(snapshot))?.snapshot ??
-      collected.snapshots.find(({ environmentId }) => isPreferred(environmentId))?.snapshot ??
-      collected.snapshots[0]?.snapshot;
-    // Unreachable: `snapshots` is non-empty by construction, but indexed
-    // access types as possibly undefined.
-    if (!representative) continue;
-    merged.push({ ...representative, models: [...collected.models.values()] });
-  }
-  return merged;
+  return {
+    entries: sortProviderInstanceEntries([...entries.values()]),
+    modelOptionsByInstance: new Map(
+      [...models].map(([key, values]) => [key, [...values.values()]]),
+    ),
+    targetsByInstance: targets,
+  };
 }
 
-/**
- * Whether pinning a new provider/model selection must clear an already
- * balanced machine so candidates recompute for the new selection. Without the
- * reset the draft would send to (or block on) a machine that cannot serve
- * what the user just picked.
- */
-export function shouldResetAutoBalanceRouting(input: {
-  automaticEnvironment: boolean;
-  pinnedEnvironmentId: EnvironmentId | null | undefined;
-  previousInstanceId: ProviderInstanceId | null;
-  previousModel: string | null;
-  nextInstanceId: ProviderInstanceId;
-  nextModel: string;
-}): boolean {
-  if (!input.automaticEnvironment || input.pinnedEnvironmentId == null) return false;
+/** Map a picker-only key back to a supporting environment and its real instance ID. */
+export function resolveAutoBalancePickerSelection(
+  catalog: AutoBalanceProviderCatalog,
+  key: ProviderInstanceId,
+  model: string,
+) {
+  const targets = catalog.targetsByInstance.get(key) ?? [];
+  const matches = (candidate: AppModelOption) =>
+    candidate.slug === model || candidate.aliases?.includes(model);
   return (
-    input.previousInstanceId !== input.nextInstanceId ||
-    (input.previousModel ?? null) !== input.nextModel
+    targets.find((target) =>
+      target.models.some((candidate) => !candidate.isUnavailable && matches(candidate)),
+    ) ??
+    targets.find((target) => target.models.some(matches)) ??
+    null
   );
 }
