@@ -87,11 +87,15 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_TAILSCALE_SERVE_PORT",
 ] as const;
 
-// Sensitive env vars that the WSL backend needs but Windows process.env won't
-// forward across the wsl.exe boundary without WSLENV. The dev-server URL is
-// handled separately via a `--dev-url` CLI flag because WSLENV translation of
+// Env vars that the WSL backend needs but Windows process.env won't forward
+// across the wsl.exe boundary without WSLENV. The dev-server URL is handled
+// separately via a `--dev-url` CLI flag because WSLENV translation of
 // URL-shaped values (colons / slashes) is unreliable.
-const WSL_FORWARDED_ENV_NAMES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const WSL_FORWARDED_ENV_NAMES = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "T3CODE_OTLP_PROTOCOL",
+] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
