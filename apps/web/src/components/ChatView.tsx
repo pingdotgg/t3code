@@ -389,6 +389,7 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   latestTurnStartFailureId,
   scheduleEnvironmentReconnectWarning,
+  scheduleStopBackgroundWorkTimeout,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldDockDraftHeroForSubmission,
@@ -5730,8 +5731,18 @@ export default function ChatView(props: ChatViewProps) {
     // returning only means the request was accepted.
     if (activeBackgroundLiveness === null) {
       setIsStoppingBackgroundWork(false);
+      return;
     }
-  }, [activeBackgroundLiveness]);
+    if (!isStoppingBackgroundWork) {
+      return;
+    }
+    // A missed task completion event or delayed provider interrupt must not
+    // freeze the Stop affordance permanently on "Stopping...". Re-enable Stop
+    // after the timeout window so the user is never wedged.
+    return scheduleStopBackgroundWorkTimeout(() => {
+      setIsStoppingBackgroundWork(false);
+    });
+  }, [activeBackgroundLiveness, isStoppingBackgroundWork]);
   useEffect(() => {
     // Per-thread state: switching threads while A's stop is pending must not
     // disable B's Stop button (review finding).
