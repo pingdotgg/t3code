@@ -1173,6 +1173,42 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it.each([1, 2])(
+    "restores archived draft permissions from schema version %s",
+    async (schemaVersion) => {
+      const project = {
+        environmentId: EnvironmentId.make("environment-1"),
+        projectId: ProjectId.make("project-1"),
+        createdAt: "2026-09-05T12:00:00.000Z",
+      };
+      composerDraftFileMocks.setDocument({
+        schemaVersion,
+        drafts: {},
+        signedOutDrafts: {
+          "account-1": {
+            drafts: {
+              "new-task:implicit-id": { text: "archived", attachments: [], project },
+              "new-task:explicit-id": {
+                text: "configured",
+                attachments: [],
+                project,
+                runtimeMode: "approval-required",
+              },
+            },
+            queuedMessages: [],
+          },
+        },
+      });
+      await restoreCloudComposerDrafts("account-1");
+      expect(getComposerDraftSnapshot("new-task:implicit-id").runtimeMode).toBe(
+        schemaVersion === 1 ? "full-access" : undefined,
+      );
+      expect(getComposerDraftSnapshot("new-task:explicit-id").runtimeMode).toBe(
+        "approval-required",
+      );
+    },
+  );
+
   it("migrates archived signed-out new-task drafts the same way as live ones", () => {
     const decoded = decodePersistedComposerState({
       schemaVersion: 1,
@@ -1190,6 +1226,7 @@ describe("mobile composer drafts", () => {
     expect(archived[0]?.[0]).toMatch(/^new-task:[0-9a-z]+-[0-9a-z]+$/);
     expect(archived[0]?.[1]).toMatchObject({
       text: "archived",
+      runtimeMode: "full-access",
       project: { environmentId: "environment-1", projectId: "project-1" },
     });
   });

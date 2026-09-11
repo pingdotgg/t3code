@@ -217,6 +217,19 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
   );
 }
 
+function preserveLegacyDraftRuntimeMode(
+  key: string,
+  draft: ComposerDraft,
+  preserveLegacyRuntimeMode: boolean,
+): ComposerDraft {
+  return preserveLegacyRuntimeMode &&
+    isNewTaskDraftKey(key) &&
+    draft.runtimeMode === undefined &&
+    (!isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
+    ? { ...draft, runtimeMode: DEFAULT_RUNTIME_MODE }
+    : draft;
+}
+
 function normalizePersistedDrafts(
   drafts: Record<string, ComposerDraft>,
   preserveLegacyRuntimeMode: boolean,
@@ -242,16 +255,9 @@ function normalizePersistedDrafts(
           draft.workspaceSelection === undefined
             ? { ...draft, modelSelection: undefined }
             : draft;
-        const shouldPreserveLegacyRuntimeMode =
-          preserveLegacyRuntimeMode &&
-          key.startsWith("new-task:") &&
-          normalized.runtimeMode === undefined &&
-          (!isEmptyDraft(normalized) || (normalized.importedShareIds?.length ?? 0) > 0);
         return migrateLegacyNewTaskDraft(
           key,
-          shouldPreserveLegacyRuntimeMode
-            ? { ...normalized, runtimeMode: DEFAULT_RUNTIME_MODE }
-            : normalized,
+          preserveLegacyDraftRuntimeMode(key, normalized, preserveLegacyRuntimeMode),
           now,
         );
       })
@@ -334,10 +340,14 @@ export function decodePersistedComposerState(value: unknown): {
           id,
           {
             // Archived drafts come back through restoreCloudComposerDrafts
-            // without another decode, so they get the same key migration.
+            // without another decode, so both migrations must happen here.
             drafts: Object.fromEntries(
               Object.entries(saved.drafts).map(([key, draft]) =>
-                migrateLegacyNewTaskDraft(key, draft, now),
+                migrateLegacyNewTaskDraft(
+                  key,
+                  preserveLegacyDraftRuntimeMode(key, draft, preserveLegacyRuntimeMode),
+                  now,
+                ),
               ),
             ),
             queuedMessages: saved.queuedMessages.map(decodeQueuedThreadMessage),
