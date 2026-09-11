@@ -5,8 +5,9 @@ import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPa
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 
 /**
- * Providers are machine state, so the page always shows one environment: the
- * chosen one, or the representative when the crumb reads "All environments".
+ * Providers are machine state, so the page shows one environment at a time:
+ * the chosen one, or the representative of the selection. A project crumb
+ * narrows the candidates to the environments that project is registered on.
  */
 function SettingsProvidersRoute() {
   const target = Route.useSearch();

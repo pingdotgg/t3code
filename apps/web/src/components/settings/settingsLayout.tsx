@@ -392,7 +392,7 @@ export function SettingsRow({
         state={inheritance.state}
         summary={inheritance.summary}
         targets={context.targets}
-        environmentSettingsById={environmentSettingsById}
+        environments={context.connectedEnvironments}
         keys={settingKeys}
       />
     ) : null;

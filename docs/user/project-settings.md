@@ -18,9 +18,8 @@ while a project is selected.
 When the selected environments disagree, the control shows **Mixed** in place of a value and the
 layers icon turns amber. Picking a value applies it to every selected environment.
 
-Providers and diagnostics are per machine: their breadcrumb ends at the environment, and they
-show the primary environment until you pick another. Every other setting fans out to the
-selection.
+Providers and diagnostics are per machine: they show one environment at a time, the primary
+one until you pick another. Every other setting fans out to the selection.
 
 ## Defaults and inheritance
 

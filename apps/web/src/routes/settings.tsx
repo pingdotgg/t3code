@@ -53,12 +53,6 @@ const DEVICE_ONLY_PATHS = new Set([
   "/settings/snap-shot",
   "/settings/connections",
 ]);
-/**
- * Pages that read one machine's state (binaries, credentials, processes) and
- * cannot fan out. They show the environment crumb only and open on the primary
- * environment instead of asking.
- */
-const SINGLE_ENVIRONMENT_PATHS = new Set(["/settings/providers", "/settings/diagnostics"]);
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();
@@ -129,7 +123,6 @@ function SettingsContentLayout() {
   const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
-  const environmentOnly = SINGLE_ENVIRONMENT_PATHS.has(location.pathname);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -168,7 +161,7 @@ function SettingsContentLayout() {
               pathname={location.pathname}
               scope={
                 showScope
-                  ? { value: search, groups, environments, onChange: selectScope, environmentOnly }
+                  ? { value: search, groups, environments, onChange: selectScope }
                   : undefined
               }
             />

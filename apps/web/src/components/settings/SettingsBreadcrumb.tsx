@@ -48,8 +48,6 @@ export interface SettingsScopeBreadcrumbProps {
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
   readonly onChange: (next: SettingsScopeSearch) => void;
-  /** Pages that are per machine have no project axis to show. */
-  readonly environmentOnly?: boolean;
 }
 
 /**
@@ -85,14 +83,10 @@ export function SettingsBreadcrumb({
           <WorkspaceBreadcrumbItem className="min-w-0 shrink">
             <EnvironmentScopeMenu {...scope} />
           </WorkspaceBreadcrumbItem>
-          {scope.environmentOnly ? null : (
-            <>
-              <WorkspaceBreadcrumbSeparator />
-              <WorkspaceBreadcrumbItem className="min-w-0 shrink">
-                <ProjectScopeMenu {...scope} />
-              </WorkspaceBreadcrumbItem>
-            </>
-          )}
+          <WorkspaceBreadcrumbSeparator />
+          <WorkspaceBreadcrumbItem className="min-w-0 shrink">
+            <ProjectScopeMenu {...scope} />
+          </WorkspaceBreadcrumbItem>
         </>
       ) : null}
     </WorkspaceBreadcrumb>
