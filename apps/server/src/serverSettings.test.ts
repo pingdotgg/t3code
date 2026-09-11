@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -1277,6 +1278,79 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
       assert.notInclude(persisted, "sk-terminal-secret");
       assert.include(persisted, '"valueRedacted": true');
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const legacyProject = ProjectId.make("project-legacy");
+      const scriptedProject = ProjectId.make("project-scripted");
+      const script = {
+        id: "check",
+        name: "Check",
+        command: "npm test",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      };
+      const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+      for (const [projectId, modelJson, envMode, autoPull, scripts] of [
+        [legacyProject, JSON.stringify(model), "worktree", 1, "[]"],
+        [scriptedProject, null, null, 0, JSON.stringify([script])],
+      ] as const) {
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, default_model_selection_json,
+            default_thread_env_mode, auto_pull, scripts_json, created_at, updated_at
+          )
+          VALUES (
+            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelJson},
+            ${envMode}, ${autoPull}, ${scripts},
+            ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+          )
+        `;
+      }
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          projectAgentBrowserAccessOverrides: { [legacyProject]: false },
+          projectAutoPullOverrides: { [scriptedProject]: true },
+          projectScriptOverrides: { [legacyProject]: null },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isTrue(settings.projectSettingsFolded);
+      assert.deepEqual(settings.projectSettingsOverrides, {
+        [legacyProject]: {
+          enableAgentBrowserAccess: false,
+          defaultModelSelection: model,
+          defaultThreadEnvMode: "worktree",
+          defaultAutoPull: true,
+        },
+        [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },
+      });
+      // Derived legacy views keep older clients reading the same values.
+      assert.deepEqual(settings.projectAutoPullOverrides, {
+        [legacyProject]: true,
+        [scriptedProject]: true,
+      });
+      assert.deepEqual(settings.projectScriptOverrides, { [scriptedProject]: [script] });
+
+      // A reset survives the next load: the fold does not run again.
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: { [legacyProject]: null },
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      const persisted = yield* decodeServerSettings(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.parse(raw),
+      );
+      assert.isTrue(persisted.projectSettingsFolded);
+      assert.isUndefined(persisted.projectSettingsOverrides[legacyProject]);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

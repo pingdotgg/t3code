@@ -37,7 +37,7 @@ import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCi
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -864,34 +864,36 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
    * "off" silently becoming "on" would violate the user's stated choice,
    * whereas the reverse costs an agent one toolset and is visible immediately.
    */
-  const agentBrowserAccessEnabled = Effect.fn("ProviderService.agentBrowserAccessEnabled")(
+  const agentAccessSettings = Effect.fn("ProviderService.agentAccessSettings")(
     function* (threadId: ThreadId) {
       const settings = yield* serverSettings.getSettings;
-      if (Object.keys(settings.projectAgentBrowserAccessOverrides).length === 0) {
-        return settings.enableAgentBrowserAccess;
+      const overridden = Object.values(settings.projectSettingsOverrides).some(
+        (entry) =>
+          entry.enableAgentBrowserAccess !== undefined ||
+          entry.enableAgentDeviceAccess !== undefined,
+      );
+      if (!overridden) {
+        return {
+          browser: settings.enableAgentBrowserAccess,
+          device: settings.enableAgentDeviceAccess,
+        };
       }
       // Provider-only runtimes may omit orchestration. An unresolved project
-      // must not bypass an explicit browser override.
-      if (Option.isNone(projectionQuery)) return false;
+      // must not bypass an explicit project override.
+      if (Option.isNone(projectionQuery)) return { browser: false, device: false };
       const thread = yield* projectionQuery.value.getThreadShellById(threadId);
-      if (Option.isNone(thread)) return false;
-      return resolveProjectAgentBrowserAccess(settings, thread.value.projectId);
+      if (Option.isNone(thread)) return { browser: false, device: false };
+      const resolved = resolveProjectSettings(settings, thread.value.projectId).settings;
+      return {
+        browser: resolved.enableAgentBrowserAccess,
+        device: resolved.enableAgentDeviceAccess,
+      };
     },
     Effect.catch((cause) =>
       Effect.logWarning(
-        "Could not read server settings; withholding agent browser access for this session.",
+        "Could not read server settings; withholding agent browser and device access for this session.",
         { cause },
-      ).pipe(Effect.as(false)),
-    ),
-  );
-
-  const agentDeviceAccessEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.enableAgentDeviceAccess),
-    Effect.catch((cause) =>
-      Effect.logWarning(
-        "Could not read server settings; withholding agent device access for this session.",
-        { cause },
-      ).pipe(Effect.as(false)),
+      ).pipe(Effect.as({ browser: false, device: false })),
     ),
   );
 
@@ -899,8 +901,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
   ) {
     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
-    if (yield* agentBrowserAccessEnabled(threadId)) capabilities.add("preview");
-    if (yield* agentDeviceAccessEnabled) capabilities.add("device");
+    const access = yield* agentAccessSettings(threadId);
+    if (access.browser) capabilities.add("preview");
+    if (access.device) capabilities.add("device");
     return capabilities;
   });
 

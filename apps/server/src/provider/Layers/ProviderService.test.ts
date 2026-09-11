@@ -4802,7 +4802,7 @@ describe("agent browser access", () => {
   const startSessionWith = (
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
-    projectOverride?: boolean,
+    projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -4880,8 +4880,21 @@ describe("agent browser access", () => {
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
             enableAgentDeviceAccess,
-            projectAgentBrowserAccessOverrides:
-              projectOverride === undefined ? {} : { [projectId]: projectOverride },
+            projectSettingsOverrides:
+              projectOverride === undefined
+                ? {}
+                : typeof projectOverride === "boolean"
+                  ? { [projectId]: { enableAgentBrowserAccess: projectOverride } }
+                  : {
+                      [projectId]: {
+                        ...(projectOverride.browser !== undefined
+                          ? { enableAgentBrowserAccess: projectOverride.browser }
+                          : {}),
+                        ...(projectOverride.device !== undefined
+                          ? { enableAgentDeviceAccess: projectOverride.device }
+                          : {}),
+                      },
+                    },
           }),
         ),
         Layer.provide(serverConfigTestLayer),
@@ -4963,6 +4976,16 @@ describe("agent browser access", () => {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, true);
       assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a project device override grants device access when the environment denies it", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-project-device-on");
+      const issued = yield* startSessionWith({ browser: false, device: false }, threadId, {
+        device: true,
+      });
+      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

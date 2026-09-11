@@ -486,6 +486,59 @@ describe("ThreadSettlementReactor", () => {
     ),
   );
 
+  it.effect("a project override settles only that project's inactive threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const overriddenProject = ProjectId.make("overridden-project");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("inherits-thread"),
+              makeThread("overridden-thread", { projectId: overriddenProject }),
+            ],
+            [makeProject(), makeProject(overriddenProject, "/workspace/overridden")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: {
+              [overriddenProject]: { sidebarAutoSettleAfterDays: 1 },
+            },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("overridden-thread")],
+          );
+
+          // Clearing the override is a settlement change, so the sweep re-arms.
+          yield* fixture.updateSettings({
+            projectSettingsOverrides: { [overriddenProject]: null },
+            sidebarAutoSettleAfterDays: 1,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          // The static snapshot never records the first settlement, so the
+          // second sweep dispatches for both; the inheriting thread is new.
+          assert.include(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ThreadId.make("inherits-thread"),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("starts without clients and skips protected threads before pull request lookup", () =>
     Effect.scoped(
       Effect.gen(function* () {
