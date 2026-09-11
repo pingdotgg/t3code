@@ -123,6 +123,51 @@ const seed = Effect.gen(function* () {
 });
 
 describe("peer thread MCP", () => {
+  it.effect("keeps retry IDs distinct across caller IDs containing delimiters", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-peer-retry-" });
+        yield* Effect.gen(function* () {
+          yield* seed;
+          const engine = yield* OrchestrationEngineService;
+          const secondCaller = ThreadId.make("caller:b");
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("seed-second-caller"),
+            threadId: secondCaller,
+            projectId,
+            title: "Second caller",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          });
+          const first = result(yield* call("create_thread", { title: "First", commandId: "b:c" }));
+          const second = result(
+            yield* call(
+              "create_thread",
+              { title: "Second", commandId: "c" },
+              { ...scope, threadId: secondCaller },
+            ),
+          );
+          expect(second.threadId).not.toBe(first.threadId);
+          expect(
+            result(yield* call("read_thread", { threadId: first.threadId })).thread.title,
+          ).toBe("First");
+          expect(
+            result(yield* call("read_thread", { threadId: second.threadId })).thread.title,
+          ).toBe("Second");
+          expect(
+            result(yield* call("create_thread", { title: "First", commandId: "b:c" })),
+          ).toEqual(first);
+        }).pipe(Effect.provide(makeLayer(`${directory}/state.sqlite`)));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect(
     "persists commands across service restart and deduplicates caller retry IDs through MCP",
     () =>

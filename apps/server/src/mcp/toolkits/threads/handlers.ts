@@ -66,7 +66,9 @@ const make = Effect.gen(function* () {
   const commandId = (caller: OrchestrationThreadShell, id?: CommandId) =>
     id === undefined
       ? uuid.pipe(Effect.map(CommandId.make))
-      : Effect.succeed(CommandId.make(`mcp:${caller.id}:${id}`));
+      : Effect.succeed(
+          CommandId.make(`mcp:${encodeURIComponent(caller.id)}:${encodeURIComponent(id)}`),
+        );
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const failed = () => new ThreadToolError({ message: "Thread operation failed." });
   const load = Effect.fn("ThreadsToolkit.load")(function* (threadId: ThreadId) {
