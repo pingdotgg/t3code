@@ -416,7 +416,6 @@ final class WebSocketRPCRaceTests: XCTestCase {
             connector: SequencedConnector(connections: [connection]),
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
-        addTeardownBlock { await client.stop() }
         let request = Task {
             await gate.wait()
             return try await client.request("server.cancelledBeforeInstall", as: JSONValue.self)
