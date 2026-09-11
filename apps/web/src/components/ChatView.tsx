@@ -4223,9 +4223,10 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, deviceState.onboardingCompleted, deviceState.hostStatus]);
   // A device the agent opens floats over chat like an agent-driven browser,
   // or becomes a panel tab when floating previews are off. Sessions opened by
-  // another client arrive the same way. The first snapshot is a baseline:
-  // persisted tabs restore themselves, and existing sessions must not
-  // resurrect closed tabs.
+  // another client arrive the same way; sheet layouts get neither. The first
+  // snapshot is a baseline: persisted tabs restore themselves, and existing
+  // sessions must not resurrect closed tabs. A session whose device summary
+  // has not arrived yet stays out of the baseline so a later snapshot opens it.
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
   const previousDeviceSessions = useRef(new Map<string, Set<string>>());
   useEffect(() => {
@@ -4235,14 +4236,19 @@ export default function ChatView(props: ChatViewProps) {
       (session) => session.threadId === activeThreadRef.threadId,
     );
     const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
-    const previous = previousDeviceSessions.current.get(threadKey);
-    previousDeviceSessions.current.set(threadKey, new Set(sessions.map(key)));
-    if (!previous) return;
-    for (const session of sessions) {
-      if (previous?.has(key(session))) continue;
-      const device = deviceState.devices.find(
+    const deviceFor = (session: (typeof sessions)[number]) =>
+      deviceState.devices.find(
         (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
       );
+    const previous = previousDeviceSessions.current.get(threadKey);
+    previousDeviceSessions.current.set(
+      threadKey,
+      new Set(sessions.filter((session) => deviceFor(session) !== undefined).map(key)),
+    );
+    if (!previous || shouldUseRightPanelSheet) return;
+    for (const session of sessions) {
+      if (previous.has(key(session))) continue;
+      const device = deviceFor(session);
       if (!device) continue;
       const target = {
         hostId: session.hostId,
@@ -4254,7 +4260,6 @@ export default function ChatView(props: ChatViewProps) {
         usePreviewMiniPlayerStore.getState().open(activeThreadRef, { kind: "device", ...target });
         continue;
       }
-      if (shouldUseRightPanelSheet) continue;
       const existing = useRightPanelStore
         .getState()
         .byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces.some(
