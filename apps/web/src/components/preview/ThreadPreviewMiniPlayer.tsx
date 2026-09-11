@@ -12,6 +12,10 @@ import {
 } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import {
+  findActiveBrowserRecordingRuntimeTabId,
+  useActiveBrowserRecordingTabIds,
+} from "~/browser/browserRecording";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import type { BrowserViewportResizeDirection } from "~/browser/browserViewportLayout";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -151,6 +155,10 @@ function BrowserMiniPlayer({
   const previewState = useThreadPreviewState(threadRef);
   const snapshot = previewState.sessions[tabId] ?? null;
   const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
+  const recordingTabIds = useActiveBrowserRecordingTabIds();
+  const recording =
+    recordingTabIds.has(runtimeTabId) ||
+    findActiveBrowserRecordingRuntimeTabId(threadRef, tabId) !== null;
   const desktopOverlay = previewState.desktopByTabId[tabId] ?? null;
   const fittedSourceContent = useBrowserSurfaceStore(
     (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
@@ -189,6 +197,7 @@ function BrowserMiniPlayer({
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
       label="Floating browser preview"
+      recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
         <Tooltip>
@@ -314,6 +323,7 @@ function MiniPlayerShell({
   label,
   onOpenInPanel,
   pillActions,
+  recording = false,
   cornerRadius = frameCornerRadius,
   children,
 }: {
@@ -324,6 +334,7 @@ function MiniPlayerShell({
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
+  readonly recording?: boolean;
   /** The clip radius for a given frame; the pill stays inside the curve. */
   readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
@@ -443,9 +454,18 @@ function MiniPlayerShell({
             style={{ right: pillInset, top: pillInset }}
           >
             <div
-              aria-hidden="true"
-              className="absolute right-0 top-0 size-2 rounded-full bg-foreground/25 shadow-sm ring-1 ring-background/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
-            />
+              role={recording ? "status" : undefined}
+              aria-label={recording ? "Recording preview" : undefined}
+              aria-hidden={!recording}
+              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+            >
+              <span
+                className={cn(
+                  "block size-2 rounded-full shadow-sm ring-1 ring-background/70",
+                  recording ? "bg-red-500 motion-safe:animate-status-pulse" : "bg-foreground/25",
+                )}
+              />
+            </div>
             <div
               className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 active:cursor-grabbing"
               onPointerDown={(event) => beginGesture(event, null)}
@@ -453,6 +473,11 @@ function MiniPlayerShell({
               onPointerUp={endGesture}
               onPointerCancel={endGesture}
             >
+              {recording ? (
+                <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
+                  <span className="size-2 rounded-full bg-red-500 motion-safe:animate-status-pulse" />
+                </span>
+              ) : null}
               <Tooltip>
                 <TooltipTrigger
                   render={
