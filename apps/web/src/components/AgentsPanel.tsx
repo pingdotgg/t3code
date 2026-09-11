@@ -153,19 +153,19 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   ].filter((value): value is string => value !== null);
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+    <div className="grid h-[62px] grid-cols-[6px_minmax(0,1fr)_auto] grid-rows-[20px_18px_16px] items-center gap-x-2 rounded-md px-1.5 py-1">
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
         {role ? (
-          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
+          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[10px] text-muted-foreground">
             {role}
           </span>
         ) : null}
       </span>
-      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
+      <span className="col-start-3 row-start-1 min-w-14 text-right text-[11px] text-muted-foreground/80">
         <span className="inline-flex items-center gap-1">
           <AgentElapsed agent={agent} />
           {agent.status === "completed" ? (
@@ -181,7 +181,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       >
         {activity ?? visuals.label}
       </span>
-      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
+      <span className="col-start-2 col-end-4 row-start-3 truncate text-[10px] tabular-nums text-muted-foreground/70">
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{visuals.label}</span>
@@ -232,7 +232,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
           >
             <span
               className={cn(
-                "font-mono text-[.65rem]",
+                "text-[10px] font-medium",
                 phase.state === "running"
                   ? "text-info-foreground"
                   : phase.state === "done"
@@ -245,7 +245,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
             </span>
             <span className="flex items-center gap-0.5">
               {phase.members.length === 0 ? (
-                <span className="font-mono text-[.6rem] text-muted-foreground/50">–</span>
+                <span className="text-[10px] text-muted-foreground/50">–</span>
               ) : (
                 phase.members.map((member) => <StatusDot key={member.id} status={member.status} />)
               )}
@@ -279,21 +279,21 @@ function WorkflowScriptView({
     <div className="mx-1.5 mb-1 rounded-md border border-border/60 bg-background/60">
       <div className="flex items-center gap-2 border-b border-border/50 px-2 py-1">
         <Braces aria-hidden className="size-3 text-muted-foreground" />
-        <span className="truncate font-mono text-[.65rem] text-muted-foreground">
+        <span className="truncate font-mono text-[10px] text-muted-foreground">
           {scriptPath.split("/").at(-1)}
         </span>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close script"
-          className="ml-auto text-muted-foreground hover:text-foreground"
+          className="ml-auto rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <X aria-hidden className="size-3" />
         </button>
       </div>
       <div className="max-h-72 overflow-auto p-2">
         {result._tag === "Success" ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-[.7rem] leading-relaxed text-foreground/90">
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-foreground/90">
             {result.value.contents}
             {result.value.truncated ? "\n… (truncated)" : ""}
           </pre>
@@ -336,7 +336,7 @@ function PhaseSection({
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         className={cn(
-          "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-[.65rem] font-medium uppercase tracking-wider hover:bg-accent/40",
+          "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-left text-[11px] font-medium transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           phase.state === "done"
             ? "text-success-foreground"
             : phase.state === "running"
@@ -351,7 +351,7 @@ function PhaseSection({
         )}
         {phase.state === "done" ? <Check aria-hidden className="size-3" /> : null}
         <span>{phase.title}</span>
-        <span className="font-normal normal-case text-muted-foreground/70">
+        <span className="font-normal text-muted-foreground/70">
           {phase.state === "pending" && phase.members.length === 0
             ? "pending"
             : phase.state === "done"
@@ -396,7 +396,7 @@ function ExpandedWorkflowSection({
   const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
   return (
     <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
-      <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[11px] font-medium text-muted-foreground">
         <StatusDot status={group.workflow.status} />
         <span className="min-w-0 truncate">
           {group.workflow.workflowName ?? group.workflow.title}
@@ -406,7 +406,7 @@ function ExpandedWorkflowSection({
             type="button"
             onClick={() => setScriptOpen((value) => !value)}
             className={cn(
-              "rounded-sm border border-border/60 px-1 font-mono normal-case hover:text-foreground",
+              "rounded-sm border border-border/60 px-1 font-mono text-[10px] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               scriptOpen && "text-foreground",
             )}
             aria-expanded={scriptOpen}
@@ -414,14 +414,14 @@ function ExpandedWorkflowSection({
             {"{}"} script
           </button>
         ) : null}
-        <span className="ml-auto font-mono normal-case text-muted-foreground/80">
+        <span className="ml-auto tabular-nums text-muted-foreground/80">
           {settled}/{members.length} settled
         </span>
         <button
           type="button"
           onClick={onCollapse}
           aria-label="Collapse workflow"
-          className="text-muted-foreground hover:text-foreground"
+          className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronDown aria-hidden className="size-3" />
         </button>
@@ -476,14 +476,14 @@ function CollapsedWorkflowSection({
       <button
         type="button"
         onClick={onExpand}
-        className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
+        className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-expanded={false}
       >
         <StatusDot status={failed > 0 ? "failed" : group.workflow.status} />
         <span className="truncate text-sm">
           {group.workflow.workflowName ?? group.workflow.title}
         </span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
+        <span className="ml-auto flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
           <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
@@ -554,7 +554,7 @@ export function AgentsPanel({
           ))}
           {model.directAgents.length > 0 ? (
             <section>
-              <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+              <div className="px-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
                 Direct spawns
               </div>
               {model.directAgents.map((agent) => (
@@ -564,7 +564,7 @@ export function AgentsPanel({
           ) : null}
         </div>
       </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
+      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-2">
           {model.runningCount + model.waitingCount > 0 ? (
             <span className="text-info-foreground">

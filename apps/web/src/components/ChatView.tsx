@@ -153,6 +153,7 @@ import {
   deriveAgentPanelModel,
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { useDevSubagentActivities } from "../dev/useDevSubagentActivities";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -2175,7 +2176,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  // Dev-only: `?dev-agents=<scenario>` swaps in fabricated subagent activities
+  // so the Agents panel and the chat's spawn CTA can be worked on without
+  // running a real fleet. No-op (and tree-shaken) in production builds.
+  const threadActivities = useDevSubagentActivities(activeThread?.activities ?? EMPTY_ACTIVITIES);
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
