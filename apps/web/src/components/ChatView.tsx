@@ -420,6 +420,7 @@ import {
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
+  timelineHasEphemeralPreviewUrls,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
@@ -3358,7 +3359,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
-  if (!threadDetailLoading && timelineEntries.length > 0) {
+  if (
+    !threadDetailLoading &&
+    timelineEntries.length > 0 &&
+    !timelineHasEphemeralPreviewUrls(timelineEntries)
+  ) {
     rememberReadyThreadTimeline({
       threadKey: activeThreadKey,
       entries: timelineEntries,

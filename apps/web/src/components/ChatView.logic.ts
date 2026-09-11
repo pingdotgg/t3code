@@ -742,6 +742,17 @@ export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
   }
 }
 
+export function timelineHasEphemeralPreviewUrls(
+  entries: ReadonlyArray<Pick<TimelineEntry, "kind"> & { message?: ChatMessage }>,
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.kind === "message" &&
+      entry.message !== undefined &&
+      collectUserMessageBlobPreviewUrls(entry.message).length > 0,
+  );
+}
+
 export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[] {
   if (message.role !== "user" || !message.attachments) {
     return [];

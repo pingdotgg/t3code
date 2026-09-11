@@ -66,6 +66,7 @@ import {
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   threadKeysShareEnvironment,
+  timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -687,6 +688,31 @@ describe("resolveThreadSwitchTimeline", () => {
   it("treats a foreign held timeline as paint-only", () => {
     expect(isPaintOnlyThreadTimeline("env-1:thread-a", "env-1:thread-b")).toBe(true);
     expect(isPaintOnlyThreadTimeline("env-1:thread-b", "env-1:thread-b")).toBe(false);
+  });
+
+  it("does not remember a timeline that still has handoff blob previews", () => {
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            role: "user",
+            attachments: [{ type: "image", previewUrl: "blob:handoff" }],
+          },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            role: "user",
+            attachments: [{ type: "image", previewUrl: "https://cdn.example/a.png" }],
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 });
 
