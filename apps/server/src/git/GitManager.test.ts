@@ -1731,6 +1731,64 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch lookup reports the terminal PR a reused branch has outgrown", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      const releasedHead = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "next.md"), "next\n");
+      yield* runGit(repoDir, ["add", "next.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Work after the release merged"]);
+      yield* runGit(repoDir, ["push", "origin", "develop"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 3,
+                title: "Release develop into main",
+                url: "https://github.com/pingdotgg/t3code/pull/3",
+                baseRefName: "main",
+                headRefName: "develop",
+                headRefOid: releasedHead.stdout.trim(),
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch: "develop" });
+      const outgrown = yield* manager.branchSupersededPullRequest({
+        cwd: repoDir,
+        branch: "develop",
+        pullRequest: { number: 3, url: "https://github.com/pingdotgg/t3code/pull/3" },
+      });
+      // A different change request on the same branch is not what was rejected,
+      // so a thread holding it keeps its historical reference.
+      const other = yield* manager.branchSupersededPullRequest({
+        cwd: repoDir,
+        branch: "develop",
+        pullRequest: { number: 9, url: "https://github.com/pingdotgg/t3code/pull/9" },
+      });
+
+      expect(pullRequest).toBeNull();
+      expect(outgrown).toBe(true);
+      expect(other).toBe(false);
+    }),
+  );
+
   it.effect("status keeps a merged PR while its branch still sits on the merged commit", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
