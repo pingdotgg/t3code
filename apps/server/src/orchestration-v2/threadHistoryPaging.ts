@@ -7,13 +7,17 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Centralized page budgets for progressive client hydration. Sized for relay
- * cold opens: dozens of rows and about 1 MiB of encoded JSON per page.
+ * Match the V1 conversation windows. Item/byte budgets only apply to histories
+ * without turn starts; tool activity must not split an ordinary conversation turn.
  */
 export const THREAD_HISTORY_PAGE_POLICY = {
+  maxUserTurns: 10,
   maxItems: 75,
   maxEncodedBytes: 1_048_576,
 } as const;
+
+export const OLDER_THREAD_USER_TURN_LIMIT = 20;
+export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
 
 /** Extra rows let the projection query retain an inclusive cursor and prove another page exists. */
 export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
@@ -22,6 +26,7 @@ export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxI
 export const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 
 export type ThreadHistoryPagePolicy = {
+  readonly maxUserTurns?: number | undefined;
   readonly maxItems: number;
   readonly maxEncodedBytes: number;
 };
@@ -143,10 +148,24 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
   return parsed as ThreadHistoryCursorPayload;
 }
 
+export function isThreadHistoryTurnStart(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "user_message" &&
+    (item.inputIntent === "turn_start" || item.inputIntent === "queued_turn")
+  );
+}
+
+/** Steering belongs to its existing turn and must not consume another page slot. */
+export function isThreadHistoryUserTurn(item: OrchestrationV2TurnItem): boolean {
+  return (
+    isThreadHistoryTurnStart(item) && item.type === "user_message" && item.createdBy === "user"
+  );
+}
+
 /**
- * Walk a chronological timeline from `startIndex` backward, collecting rows
- * under count and byte budgets. Always includes at least one row when available
- * so a single oversized item cannot deadlock pagination.
+ * Walk a chronological timeline backward from the exclusive end, collecting rows
+ * through complete user turns. Histories without turn starts use row budgets
+ * and always admit at least one row so oversized items cannot deadlock paging.
  */
 function selectOlderTimelinePage(input: {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
@@ -164,17 +183,26 @@ function selectOlderTimelinePage(input: {
 
   const selected: OrchestrationV2ProjectedTurnItem[] = [];
   let encodedBytes = 0;
+  let userTurns = 0;
+  let rawTurns = 0;
+  const turnLimit = input.items.slice(0, end).some((row) => isThreadHistoryTurnStart(row.item))
+    ? policy.maxUserTurns
+    : undefined;
   for (let index = end - 1; index >= 0; index -= 1) {
     const row = input.items[index]!;
-    const rowBytes = rowCost(row);
+    const rowBytes = turnLimit === undefined ? rowCost(row) : 0;
     if (
       selected.length > 0 &&
-      (selected.length >= policy.maxItems || encodedBytes + rowBytes > policy.maxEncodedBytes)
+      (turnLimit === undefined
+        ? selected.length >= policy.maxItems || encodedBytes + rowBytes > policy.maxEncodedBytes
+        : userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)
     ) {
       break;
     }
     selected.push(row);
     encodedBytes += rowBytes;
+    if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
+    if (isThreadHistoryTurnStart(row.item)) rawTurns += 1;
   }
   selected.reverse();
 
@@ -248,7 +276,10 @@ export function selectHistoryPageFromCursor(input: {
     items: input.items,
     exclusiveEndIndex: anchorIndex,
     snapshotSequence: input.snapshotSequence,
-    ...(input.policy === undefined ? {} : { policy: input.policy }),
+    policy: input.policy ?? {
+      ...THREAD_HISTORY_PAGE_POLICY,
+      maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
+    },
   });
 }
 
@@ -424,6 +455,7 @@ export function buildBoundedThreadProjection(input: {
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = {
+    maxUserTurns: policy.maxUserTurns,
     maxItems: policy.maxItems,
     // Zero still admits the first row via the at-least-one rule.
     maxEncodedBytes: windowBudget,

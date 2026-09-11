@@ -312,3 +312,40 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
   });
 });
+
+it("does not scan every row against every run for a streaming item update", () => {
+  let runReads = 0;
+  const runs = Array.from({ length: 100 }, (_, index) => ({
+    ...run,
+    get id() {
+      runReads++;
+      return RunId.make(`run-${index}`);
+    },
+  }));
+  const items = Array.from({ length: 1000 }, (_, index) =>
+    commandItem(`item-${index}`, "before", index),
+  );
+  const projection = {
+    ...emptyProjection,
+    runs,
+    turnItems: items,
+    visibleTurnItems: items.map((item, position) => ({
+      item,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+    })),
+  };
+  const payload = commandItem("item-999", "after", 999);
+  const next = applyOrchestrationV2ProjectionEvent(projection, {
+    id: "stream-update",
+    type: "turn-item.updated",
+    threadId,
+    occurredAt: now,
+    payload,
+  } as OrchestrationV2DomainEvent);
+  expect(next?.visibleTurnItems.at(-1)?.item).toBe(payload);
+  expect(next?.visibleTurnItems[0]).toBe(projection.visibleTurnItems[0]);
+  expect(runReads).toBeLessThanOrEqual(100);
+});

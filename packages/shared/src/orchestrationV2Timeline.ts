@@ -71,3 +71,42 @@ export function isOrchestrationV2TurnItemVisible(input: {
     items: input.items,
   });
 }
+
+/** Index once when reconciling a whole timeline after run/attempt state changes. */
+export function createOrchestrationV2TurnItemVisibility(input: {
+  readonly runs: ReadonlyArray<TimelineRun>;
+  readonly attempts: ReadonlyArray<TimelineRunAttempt>;
+  readonly items: ReadonlyArray<TimelineTurnItem>;
+}): (item: TimelineTurnItem) => boolean {
+  const statuses = new Map(input.runs.map((run) => [run.id, run.status]));
+  const supersededRoots = new Map<
+    TimelineRunAttempt["runId"],
+    Set<TimelineRunAttempt["rootNodeId"]>
+  >();
+  for (const attempt of input.attempts) {
+    if (attempt.status !== "superseded") continue;
+    let roots = supersededRoots.get(attempt.runId);
+    if (roots === undefined) supersededRoots.set(attempt.runId, (roots = new Set()));
+    roots.add(attempt.rootNodeId);
+  }
+  const interruptRuns = new Set(
+    input.items.filter((item) => item.type === "run_interrupt_request").map((item) => item.runId),
+  );
+  return (item) => {
+    const status = item.runId === null ? undefined : statuses.get(item.runId);
+    if (status === "rolled_back") return false;
+    if (
+      status === "cancelled" &&
+      item.type === "user_message" &&
+      item.inputIntent === "queued_turn"
+    )
+      return false;
+    return !(
+      item.type === "run_interrupt_result" &&
+      item.runId !== null &&
+      item.nodeId !== null &&
+      supersededRoots.get(item.runId)?.has(item.nodeId) === true &&
+      !interruptRuns.has(item.runId)
+    );
+  };
+}
