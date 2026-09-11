@@ -6,12 +6,14 @@ import {
   type ProviderInstanceId,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { readLocalApi } from "../../localApi";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -19,6 +21,8 @@ import {
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
+import { useProjects } from "../../state/entities";
+import { projectEnvironment } from "../../state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,6 +52,8 @@ export function ProjectDefaultsSettings({
   environmentId: EnvironmentId | null;
 }) {
   const { environments } = useEnvironments();
+  const projects = useProjects();
+  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clientSettings = useClientSettings();
   const updateClientSettings = useUpdateClientSettings();
@@ -65,6 +71,15 @@ export function ProjectDefaultsSettings({
     (environment) =>
       environment.connection.phase === "connected" && environment.serverConfig !== null,
   );
+  const targetEnvironmentIds = new Set(targets.map((target) => target.environmentId));
+  const modelOverrides = projects.filter(
+    (project) =>
+      targetEnvironmentIds.has(project.environmentId) && project.defaultModelSelection !== null,
+  );
+  const skipped = scoped.filter(
+    (environment) => !targetEnvironmentIds.has(environment.environmentId),
+  );
+  const resettingModels = saving.has("projectModelOverrides");
   const representative =
     targets.find((environment) => environment.environmentId === primaryEnvironmentId) ?? targets[0];
   const serverSettings = representative?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
@@ -96,11 +111,13 @@ export function ProjectDefaultsSettings({
       target.serverConfig?.settings.enableAgentBrowserAccess !==
       serverSettings.enableAgentBrowserAccess,
   );
-  const disabled = (key: keyof ServerSettingsPatch) => targets.length === 0 || saving.has(key);
+  const disabled = (key: keyof ServerSettingsPatch) =>
+    targets.length === 0 || saving.has(key) || (key === "defaultModelSelection" && resettingModels);
   const mixedAutoPull = targets.some(
     (target) => target.serverConfig?.settings.defaultAutoPull !== serverSettings.defaultAutoPull,
   );
 
+  /** Explains why a model cannot be used by every connected machine in the current scope. */
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
     for (const target of targets) {
@@ -126,6 +143,7 @@ export function ProjectDefaultsSettings({
     return null;
   }
 
+  /** Saves machine defaults without changing project overrides, reporting partial failures. */
   async function save(patch: ServerSettingsPatch) {
     const keys = Object.keys(patch);
     if (targets.length === 0 || keys.some((key) => savingRef.current.has(key))) return;
@@ -153,6 +171,75 @@ export function ProjectDefaultsSettings({
       }
     } finally {
       for (const key of keys) savingRef.current.delete(key);
+      setSaving(new Set(savingRef.current));
+    }
+  }
+
+  /**
+   * Confirms and clears scoped project overrides so they inherit future machine defaults.
+   * Failed updates leave their overrides available for retry; existing threads are untouched.
+   */
+  async function resetProjectModels() {
+    const api = readLocalApi();
+    if (
+      !api ||
+      modelOverrides.length === 0 ||
+      savingRef.current.has("projectModelOverrides") ||
+      savingRef.current.has("defaultModelSelection")
+    )
+      return;
+
+    savingRef.current.add("projectModelOverrides");
+    setSaving(new Set(savingRef.current));
+    try {
+      const skippedDescription =
+        skipped.length > 0
+          ? `Offline or unavailable machines are skipped: ${skipped.map((target) => target.label).join(", ")}.`
+          : "";
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(
+          [
+            `Reset ${modelOverrides.length} project model override${modelOverrides.length === 1 ? "" : "s"} on ${targets.map((target) => target.label).join(", ")}?`,
+            "These projects will use their machine's default model for new threads and inherit later changes to that default.",
+            "Existing threads keep their current models.",
+            skippedDescription,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        ),
+      );
+      if (confirmed._tag === "Failure" || !confirmed.value) return;
+
+      const failed: string[] = [];
+      for (const project of modelOverrides) {
+        const result = await updateProject({
+          environmentId: project.environmentId,
+          input: { projectId: project.id, defaultModelSelection: null },
+        });
+        if (result._tag === "Failure") {
+          const machine = targets.find((target) => target.environmentId === project.environmentId);
+          failed.push(`${project.title} (${machine?.label ?? "unknown machine"})`);
+        }
+      }
+      const resetCount = modelOverrides.length - failed.length;
+      toastManager.add({
+        type: failed.length > 0 ? "error" : "success",
+        title:
+          failed.length > 0
+            ? "Some project model overrides could not be reset"
+            : "Project models now use machine defaults",
+        description: [
+          `${resetCount} project model override${resetCount === 1 ? "" : "s"} reset. Existing threads are unchanged.`,
+          failed.length > 0
+            ? `Could not reset ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? ` and ${failed.length - 3} more` : ""}. Try again to retry remaining overrides.`
+            : "",
+          skippedDescription,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+    } finally {
+      savingRef.current.delete("projectModelOverrides");
       setSaving(new Set(savingRef.current));
     }
   }
@@ -270,6 +357,29 @@ export function ProjectDefaultsSettings({
             ) : (
               <span className="text-sm text-muted-foreground">No providers available</span>
             )
+          }
+        />
+        <SettingsRow
+          title="Project model overrides"
+          description="Reset existing project overrides to use each machine's default model, including future changes. Existing threads keep their models."
+          status={
+            targets.length === 0
+              ? undefined
+              : modelOverrides.length > 0
+                ? `${modelOverrides.length} override${modelOverrides.length === 1 ? "" : "s"}`
+                : skipped.length > 0
+                  ? "Connected projects inherit"
+                  : "All projects inherit"
+          }
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={modelOverrides.length === 0 || disabled("defaultModelSelection")}
+              onClick={resetProjectModels}
+            >
+              {resettingModels ? "Resetting overrides…" : "Use default for all projects"}
+            </Button>
           }
         />
         <SettingsRow
