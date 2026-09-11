@@ -3,6 +3,7 @@ import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
@@ -22,6 +23,55 @@ const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 const isCursorReplayFrameMismatchError = Schema.is(CursorReplayFrameMismatchError);
 
 describe("CursorAdapterV2 replay testkit", () => {
+  it.effect("wakes a paused run waiter when another operation mismatches", () =>
+    Effect.gen(function* () {
+      const agentId = "agent-paused-mismatch";
+      const runId = "run-paused-mismatch";
+      const runner = makeCursorAgentSdkReplayRunner({
+        provider: CURSOR_PROVIDER,
+        protocol: CURSOR_AGENT_SDK_PROTOCOL,
+        version: "test",
+        scenario: "paused-run-mismatch",
+        entries: [
+          {
+            type: "expect_outbound",
+            frame: { type: "agent.open", operation: "create", options: {} },
+          },
+          { type: "emit_inbound", frame: { type: "agent.opened", agentId } },
+          { type: "expect_outbound", frame: { type: "run.start", message: "hello", options: {} } },
+          { type: "emit_inbound", frame: { type: "run.started", runId, agentId } },
+          { type: "expect_outbound", frame: { type: "run.cancel", runId } },
+        ],
+      });
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-paused-mismatch"),
+        providerSessionId: ProviderSessionId.make("provider-session-paused-mismatch"),
+      });
+      const run = yield* session.send({ message: "hello" });
+      const waiter = yield* run.wait.pipe(Effect.forkChild({ startImmediately: true }));
+      const closeError = yield* session.close.pipe(Effect.flip);
+      const waitError = yield* Fiber.join(waiter).pipe(Effect.flip);
+      assert.isTrue(isCursorAgentSdkRunnerError(closeError));
+      assert.isTrue(isCursorAgentSdkRunnerError(waitError));
+      if (!isCursorAgentSdkRunnerError(closeError) || !isCursorAgentSdkRunnerError(waitError)) {
+        return;
+      }
+      assert.isTrue(isCursorReplayFrameMismatchError(closeError.cause));
+      assert.isTrue(isCursorReplayFrameMismatchError(waitError.cause));
+      if (
+        !isCursorReplayFrameMismatchError(closeError.cause) ||
+        !isCursorReplayFrameMismatchError(waitError.cause)
+      ) {
+        return;
+      }
+      assert.strictEqual(closeError.cause.cursor, 4);
+      assert.deepEqual(closeError.cause.expected, { type: "run.cancel", runId });
+      assert.deepEqual(closeError.cause.actual, { type: "agent.close", agentId });
+      assert.strictEqual(closeError.cause, waitError.cause);
+    }),
+  );
   const runtimeInstructions = buildRuntimeInstructions({
     harness: "Cursor",
     model: "composer-2.5",
