@@ -770,7 +770,14 @@ describe("lifted card clearance", () => {
     right: 260,
     width: 260,
   });
-  const apply = (cardTop: number, cardHeight: number, y: number, listTop = 136, offset = 32) =>
+  const apply = (
+    cardTop: number,
+    cardHeight: number,
+    y: number,
+    listTop = 136,
+    offset = 32,
+    contentTop?: number,
+  ) =>
     restrictBelowSidebarLabel(
       {
         transform: { ...stationary, y },
@@ -786,6 +793,7 @@ describe("lifted card clearance", () => {
         windowRect: null,
       },
       offset,
+      contentTop,
     );
 
   it.each([36, 82])("keeps a %ipx row below empty Pins even past the top edge", (height) => {
@@ -793,6 +801,11 @@ describe("lifted card clearance", () => {
       const transform = apply(511, height, pointerY - 529);
       expect(511 + transform.y).toBe(168);
     }
+  });
+
+  it("uses the scrolled list origin instead of a virtual row container", () => {
+    expect(apply(511, 36, -200, 511, 32, 136).y).toBe(-200);
+    expect(apply(511, 36, -800, 511, 32, -164).y).toBe(-643);
   });
 
   it("preserves pointer movement below the label", () => {

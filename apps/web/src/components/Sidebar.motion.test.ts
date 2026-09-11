@@ -36,8 +36,15 @@ class TestRow {
     readonly name: string,
     public offsetHeight = 82,
   ) {}
+  get firstElementChild(): TestRow | null {
+    return this.children[0] ?? null;
+  }
   getBoundingClientRect() {
-    return { top: this.offsetTop + this.dragTranslate, height: this.offsetHeight };
+    return {
+      top: this.offsetTop + this.dragTranslate,
+      left: this.offsetLeft,
+      height: this.offsetHeight,
+    };
   }
   setAttribute(name: string, value: string) {
     this.removeAttribute(name);
@@ -65,12 +72,18 @@ class TestRow {
   });
 }
 
-function fixture(rows: TestRow[]) {
+function fixture(rows: TestRow[], virtual = false) {
   const media = { matches: false };
   const parent = {
     children: rows,
     ownerDocument: { defaultView: { matchMedia: () => media } },
-    getBoundingClientRect: () => ({ top: 0 }),
+    getBoundingClientRect: () => ({ top: 0, left: 0 }),
+    scrollTop: 50,
+    scrollLeft: 0,
+    querySelectorAll: () =>
+      parent.children.filter((row) =>
+        row.attributes.some((attribute) => attribute.name === "data-sidebar-list-key"),
+      ),
     append(node: TestRow) {
       parent.children.push(node);
       node.remove.mockImplementation(() => {
@@ -81,6 +94,7 @@ function fixture(rows: TestRow[]) {
   function layout(next: TestRow[]) {
     let top = 8;
     for (const row of next) {
+      if (virtual) row.setAttribute("data-sidebar-list-key", row.name);
       row.offsetTop = top;
       top += row.offsetHeight + 1;
     }
@@ -90,7 +104,7 @@ function fixture(rows: TestRow[]) {
     ];
   }
   layout(rows);
-  const motion = createSidebarListMotion(parent as unknown as HTMLUListElement);
+  const motion = createSidebarListMotion(parent as unknown as HTMLUListElement, { virtual });
   return { motion, layout, media, parent };
 }
 
@@ -170,6 +184,25 @@ describe("sidebar list motion", () => {
     // b already sits where it lands; c closes its 16px gap.
     expect(b.animations).toHaveLength(0);
     expectMove(c, 16);
+  });
+
+  it("preserves child drag transforms when releasing virtual rows in a scrolled viewport", () => {
+    const [a, b] = [new TestRow("a wrapper"), new TestRow("b wrapper")];
+    const [aRow, bRow] = [new TestRow("a"), new TestRow("b")];
+    a.children = [aRow];
+    b.children = [bRow];
+    const { motion, layout } = fixture([a, b], true);
+    aRow.offsetTop = a.offsetTop;
+    bRow.offsetTop = b.offsetTop;
+    motion.update(false);
+    aRow.dragTranslate = 130;
+    bRow.dragTranslate = -83;
+    motion.release();
+    layout([b, a]);
+    aRow.dragTranslate = bRow.dragTranslate = 0;
+    motion.update(true);
+    expectMove(a, 47);
+    expect(b.animate).not.toHaveBeenCalled();
   });
 
   it("does not glide on release when motion is reduced", () => {
@@ -257,6 +290,22 @@ describe("sidebar list motion", () => {
     layout([b, a]);
     motion.update(true);
     expect(a.animate).toHaveBeenCalledTimes(2);
+  });
+
+  it("excludes virtual exit clones from later row motion", () => {
+    const a = new TestRow("a");
+    const b = new TestRow("b");
+    const { motion, layout, parent } = fixture([a, b], true);
+    motion.update(true);
+    layout([b]);
+    motion.update(true);
+    const clone = a.clones[0]!;
+    expect(parent.children.includes(clone)).toBe(true);
+    expect(parent.querySelectorAll().length).toBe(1);
+    expect(parent.querySelectorAll()[0]).toBe(b);
+    motion.update(true);
+    expect(clone.animations).toHaveLength(1);
+    expect(clone.clones).toHaveLength(0);
   });
 
   it("fades a collapsed-shelf exit at its current visual box and a new wake in", () => {
