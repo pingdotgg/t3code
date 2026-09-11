@@ -12,6 +12,7 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
+
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
@@ -183,6 +186,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   // Archive-distributed targets download from GitHub Releases. The client is
   // optional so callers without one (tests, npm-only hosts) still construct.
   const httpClient = Option.getOrUndefined(yield* Effect.serviceOption(HttpClient.HttpClient));
+  const releaseBaseUrl = Option.getOrUndefined(
+    yield* Config.string(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+  );
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -231,6 +237,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         httpClient,
         platform,
         arch,
+        releaseBaseUrl,
         validate: (runtime) =>
           runner
             .run({

@@ -16,6 +16,8 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
 
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
+
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -518,6 +520,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   // Archive-distributed versions download from GitHub Releases; npm versions
   // never touch HTTP, so callers without a client still work.
   const httpClient = Option.getOrUndefined(yield* Effect.serviceOption(HttpClient.HttpClient));
+  const releaseBaseUrl = Option.getOrUndefined(
+    yield* Config.string(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+  );
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.string("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
@@ -726,6 +731,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       httpClient,
       platform,
       arch,
+      releaseBaseUrl,
       validate: (runtime) =>
         runner
           .run({
