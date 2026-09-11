@@ -5,6 +5,8 @@ import {
   AuthPreviewOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthTerminalReadScope,
+  AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -85,6 +87,27 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.subscribeDiscoveredLocalServers,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
+  it("separates passive terminal observation from operations that can change a shell", () => {
+    for (const method of [
+      WS_METHODS.terminalObserve,
+      WS_METHODS.subscribeTerminalEvents,
+      WS_METHODS.subscribeTerminalMetadata,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
+    }
+    for (const method of [
+      WS_METHODS.terminalAttach,
+      WS_METHODS.terminalOpen,
+      WS_METHODS.terminalWrite,
+      WS_METHODS.terminalResize,
+      WS_METHODS.terminalClear,
+      WS_METHODS.terminalRestart,
+      WS_METHODS.terminalClose,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
   });
 
