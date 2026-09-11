@@ -293,3 +293,38 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     assert.strictEqual(provider.kind, "azure-devops");
   }),
 );
+
+it.effect("resolves an SSH host alias before classifying the remote", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github-personal:noueii/t3code.git" }],
+      process: {
+        run: (input) =>
+          Effect.succeed(
+            input.command === "ssh" && input.args.includes("github-personal")
+              ? processOutput("hostname github.com\n")
+              : processOutput(""),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("keeps a remote unknown when its SSH host alias cannot be resolved", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github-personal:noueii/t3code.git" }],
+      process: {
+        run: () => Effect.succeed(processOutput("")),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "unknown");
+  }),
+);

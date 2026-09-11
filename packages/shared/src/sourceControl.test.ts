@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   sourceControlRepositorySelector,
+  detectSourceControlProviderFromHost,
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
@@ -137,6 +138,17 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+  });
+});
+
+describe("detectSourceControlProviderFromHost", () => {
+  it("classifies canonical and self-hosted hosts", () => {
+    expect(detectSourceControlProviderFromHost("github.com")?.kind).toBe("github");
+    expect(detectSourceControlProviderFromHost("gitlab.example.com")?.kind).toBe("gitlab");
+  });
+
+  it("leaves SSH aliases unknown, because upstream resolves them first", () => {
+    expect(detectSourceControlProviderFromHost("github-personal")?.kind).toBe("unknown");
   });
 });
 

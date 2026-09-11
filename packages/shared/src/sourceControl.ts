@@ -133,7 +133,7 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
-function parseRemoteHost(remoteUrl: string): string | null {
+export function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
     return null;
@@ -191,13 +191,9 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
-export function detectSourceControlProviderFromRemoteUrl(
-  remoteUrl: string,
+export function detectSourceControlProviderFromHost(
+  host: string,
 ): SourceControlProviderInfo | null {
-  const host = parseRemoteHost(remoteUrl);
-  if (!host) {
-    return null;
-  }
   const hostname = parseHostName(host);
 
   if (isGitHubHost(hostname)) {
@@ -237,6 +233,16 @@ export function detectSourceControlProviderFromRemoteUrl(
     name: host,
     baseUrl: toBaseUrl(host),
   };
+}
+
+export function detectSourceControlProviderFromRemoteUrl(
+  remoteUrl: string,
+): SourceControlProviderInfo | null {
+  const host = parseRemoteHost(remoteUrl);
+  if (!host) {
+    return null;
+  }
+  return detectSourceControlProviderFromHost(host);
 }
 
 /**

@@ -8,8 +8,13 @@ import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
-import type { SourceControlProviderKind } from "@t3tools/contracts";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  detectSourceControlProviderFromHost,
+  detectSourceControlProviderFromRemoteUrl,
+  isSshRemoteUrl,
+  parseRemoteHost,
+} from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
@@ -124,18 +129,20 @@ function unsupportedProvider(
   });
 }
 
+interface SourceControlRemoteCandidate {
+  readonly name: string;
+  readonly url: string;
+  readonly provider: SourceControlProviderInfo | null;
+}
+
 function selectProviderContext(
-  remotes: ReadonlyArray<{
-    readonly name: string;
-    readonly url: string;
-  }>,
+  remotes: ReadonlyArray<SourceControlRemoteCandidate>,
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = detectSourceControlProviderFromRemoteUrl(remote.url);
-    if (provider) {
+    if (remote.provider) {
       candidates.push({
-        provider,
+        provider: remote.provider,
         remoteName: remote.name,
         remoteUrl: remote.url,
       });
@@ -149,6 +156,46 @@ function selectProviderContext(
     null
   );
 }
+
+// `ssh -G` prints the effective configuration for a host, which is how a
+// ~/.ssh/config `Host` alias (e.g. `github-personal`) maps back to its canonical
+// hostname. Only a hostname-shaped host is passed through, so an alias can never
+// smuggle an option into the command.
+const SSH_HOST_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+const SSH_CONFIG_HOSTNAME_PATTERN = /^hostname\s+(\S+)\s*$/im;
+const SSH_HOST_RESOLUTION_TIMEOUT_MS = 5_000;
+
+const resolveSshHostAlias = Effect.fn("SourceControlProviderRegistry.resolveSshHostAlias")(
+  function* (input: {
+    readonly process: VcsProcess.VcsProcess["Service"];
+    readonly cwd: string;
+    readonly host: string;
+  }): Effect.fn.Return<string | null> {
+    if (!SSH_HOST_PATTERN.test(input.host)) {
+      return null;
+    }
+
+    const output = yield* input.process
+      .run({
+        operation: "source-control.detect.resolve-ssh-host",
+        command: "ssh",
+        args: ["-G", input.host],
+        cwd: input.cwd,
+        allowNonZeroExit: true,
+        timeoutMs: SSH_HOST_RESOLUTION_TIMEOUT_MS,
+        maxOutputBytes: 16_000,
+        appendTruncationMarker: true,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+
+    if (output === null || output.exitCode !== 0) {
+      return null;
+    }
+
+    const hostname = SSH_CONFIG_HOSTNAME_PATTERN.exec(output.stdout)?.[1]?.toLowerCase();
+    return hostname && hostname.length > 0 ? hostname : null;
+  },
+);
 
 function bindProviderContext(
   provider: SourceControlProvider.SourceControlProvider["Service"],
@@ -235,7 +282,26 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        const context = selectProviderContext(remotes.remotes);
+        const candidates = yield* Effect.forEach(remotes.remotes, (remote) =>
+          Effect.gen(function* () {
+            let provider = detectSourceControlProviderFromRemoteUrl(remote.url);
+            if ((provider === null || provider.kind === "unknown") && isSshRemoteUrl(remote.url)) {
+              const host = parseRemoteHost(remote.url);
+              if (host !== null) {
+                const canonicalHost = yield* resolveSshHostAlias({ process, cwd, host });
+                if (canonicalHost !== null && canonicalHost !== host) {
+                  provider = detectSourceControlProviderFromHost(canonicalHost) ?? provider;
+                }
+              }
+            }
+            return {
+              name: remote.name,
+              url: remote.url,
+              provider,
+            } satisfies SourceControlRemoteCandidate;
+          }),
+        );
+        const context = selectProviderContext(candidates);
 
         return yield* refineUnknownRemoteProvider({
           specs: discoverySpecs,
