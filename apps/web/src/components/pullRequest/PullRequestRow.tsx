@@ -1,4 +1,4 @@
-import { SearchIcon, UserCheckIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
 
@@ -14,6 +14,7 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestApprovalGlyph,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
 
@@ -137,6 +138,26 @@ function PullRequestRowImpl({
               }
             />
           ) : null}
+          {/* Only a verdict somebody has actually given: "review required" is the absence of
+              one, and saying so on every unreviewed row would say nothing. */}
+          {entry.reviewDecision === "approved" ? (
+            <PullRequestApprovalGlyph />
+          ) : entry.reviewDecision === "changes-requested" ? (
+            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
+              Changes requested
+            </span>
+          ) : null}
+          {entry.checksState === undefined ? null : (
+            <PullRequestChecksPopover
+              checksState={entry.checksState}
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+            />
+          )}
           <PullRequestDiffStat
             additions={entry.additions}
             deletions={entry.deletions}
@@ -195,35 +216,6 @@ function PullRequestRowImpl({
             labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
           />
           {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-          {/* Only a verdict somebody has actually given: "review required" is the absence of
-              one, and saying so on every unreviewed row would say nothing. */}
-          {entry.reviewDecision === "approved" ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                <UserCheckIcon
-                  aria-hidden
-                  className="size-3.5 text-emerald-600/90 dark:text-emerald-400/80"
-                />
-                <span className="sr-only">Approved</span>
-              </TooltipTrigger>
-              <TooltipPopup>Approved</TooltipPopup>
-            </Tooltip>
-          ) : entry.reviewDecision === "changes-requested" ? (
-            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
-              Changes requested
-            </span>
-          ) : null}
-          {entry.checksState === undefined ? null : (
-            <PullRequestChecksPopover
-              checksState={entry.checksState}
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-            />
-          )}
         </PullRequestMetaLine>
         <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
           <span className="hidden @sm/pr-row:inline">
