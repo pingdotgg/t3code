@@ -64,12 +64,13 @@ function useMobileNavigationHistoryCoordinator(
       if (action.type !== "NAVIGATE") return history.cancelPendingTraversal();
       const state = navigation.getState()!;
       const targetRootKey = target.location.transitionKey.split("/")[0]!;
-      const targetRouteExists = state.routes.some((route) => route.key === targetRootKey);
-      const currentRootKey = state.routes[state.index]?.key;
-      if (target.direction === "back" && targetRouteExists && targetRootKey !== currentRootKey) {
+      const targetRouteIndex = state.routes.findIndex((route) => route.key === targetRootKey);
+      const targetRouteExists = targetRouteIndex >= 0;
+      if (target.direction === "back" && targetRouteExists && targetRouteIndex < state.index) {
+        // Pop by count so the recorded route instance is restored; popTo
+        // matches by name and would reuse a newer route with the same name.
         navigation.dispatch({
-          ...StackActions.popTo(action.payload.name, action.payload.params),
-          source: currentRootKey,
+          ...StackActions.pop(state.index - targetRouteIndex),
           target: state.key,
         });
       } else if (target.direction === "forward" && !targetRouteExists) {
