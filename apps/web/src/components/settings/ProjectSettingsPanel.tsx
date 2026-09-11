@@ -1,6 +1,6 @@
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import { AuthOrchestrationOperateScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -27,7 +27,6 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -281,7 +280,7 @@ function ProjectDetail({
       }
       return AsyncResult.success(undefined);
     },
-    [environmentById, group.memberProjects, reportFailure, updateProject],
+    [checkProjectAccess, environmentById, group.memberProjects, reportFailure, updateProject],
   );
 
   const renameGroup = useCallback(
@@ -431,6 +430,7 @@ function ProjectDetail({
             <Button
               size="sm"
               variant="outline"
+              disabled={!editableIds.has(member.environmentId)}
               onClick={() => void removeMembers([member])}
               aria-label={`Remove checkout ${member.workspaceRoot}`}
             >

@@ -28,6 +28,7 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import {
   isProjectScopedSettingKey,
   listProjectOverrides,
+  type ProjectOverrideEntry,
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
@@ -443,9 +444,8 @@ export function SettingsRow({
         overridingProjects={overridingProjects}
         {...(canWriteSettings
           ? {
-              onClearOverrides: (
-                entries: readonly import("./scopedSettings").ProjectOverrideEntry[],
-              ) => clearProjectOverrides(entries, scopedKeys),
+              onClearOverrides: (entries: readonly ProjectOverrideEntry[]) =>
+                clearProjectOverrides(entries, scopedKeys),
             }
           : {})}
       />
