@@ -14,6 +14,10 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import {
+  runtimeModesForProvider,
+  visibleRuntimeModeForProvider,
+} from "@t3tools/shared/runtimeMode";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
@@ -319,6 +323,7 @@ type ThreadSettingsSubmenuPage =
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
+  readonly providerDriver?: string;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
@@ -373,6 +378,7 @@ type ThreadSettingsSessionValue = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
+  readonly availableRuntimeModes: ReadonlyArray<RuntimeMode>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
@@ -406,6 +412,12 @@ function ThreadSettingsSessionProvider(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  const displayedProviderDriver = pendingModel?.providerDriver ?? props.providerDriver;
+  const availableRuntimeModes = runtimeModesForProvider(displayedProviderDriver);
+  const visibleRuntimeMode = visibleRuntimeModeForProvider(
+    props.runtimeMode,
+    displayedProviderDriver,
+  );
 
   const isApplied = useCallback(
     (option: ModelOption) =>
@@ -501,7 +513,8 @@ function ThreadSettingsSessionProvider(
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
-      runtimeMode: props.runtimeMode,
+      availableRuntimeModes,
+      runtimeMode: visibleRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
       providerExpansionOverrides,
@@ -535,10 +548,11 @@ function ThreadSettingsSessionProvider(
       providerFilter,
       props.onUpdateRuntimeMode,
       props.providerGroups,
-      props.runtimeMode,
       searchQuery,
       showLegacyToggle,
       toggleProvider,
+      availableRuntimeModes,
+      visibleRuntimeMode,
     ],
   );
 
@@ -910,7 +924,9 @@ function ThreadSettingsChoiceContent(props: {
   const submenuContent =
     props.submenu.kind === "runtime"
       ? {
-          rows: RUNTIME_MODE_CHOICES.map((choice) => ({
+          rows: RUNTIME_MODE_CHOICES.filter((choice) =>
+            session.availableRuntimeModes.includes(choice.mode),
+          ).map((choice) => ({
             id: choice.mode,
             label: choice.label,
             description: choice.description,
@@ -1301,6 +1317,7 @@ export function NewTaskThreadSettingsRouteScreen() {
   return (
     <ThreadSettingsSessionProvider
       environmentId={flow.selectedEnvironmentId}
+      providerDriver={flow.selectedModelOption?.providerDriver}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}

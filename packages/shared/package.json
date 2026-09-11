@@ -199,6 +199,10 @@
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
     },
+    "./runtimeMode": {
+      "types": "./src/runtimeMode.ts",
+      "import": "./src/runtimeMode.ts"
+    },
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"

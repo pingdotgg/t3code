@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
+import {
+  runtimeModesForProvider,
+  visibleRuntimeModeForProvider,
+} from "@t3tools/shared/runtimeMode";
 
 import {
   buildModelOptions,
@@ -13,6 +17,26 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("keeps OpenCode permissions when a custom instance has no live status", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("work-assistant"),
+      model: "opencode/big-pickle",
+    };
+    const config = {
+      providers: [],
+      settings: {
+        providerInstances: {
+          "work-assistant": { driver: "opencode", enabled: false },
+        },
+      },
+    } as unknown as ServerConfig;
+    const option = buildModelOptions(config, selection)[0];
+
+    expect(option?.providerDriver).toBe("opencode");
+    expect(runtimeModesForProvider(option?.providerDriver)).not.toContain("auto");
+    expect(visibleRuntimeModeForProvider("auto", option?.providerDriver)).toBe("approval-required");
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [
