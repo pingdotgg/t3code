@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, memo, useContext, useMemo } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
@@ -9,7 +9,6 @@ import {
   nativeMarkdownListItemBlocks,
   nativeMarkdownNodePosition,
 } from "./nativeMarkdownText";
-import { pendingCodeHighlight } from "./pendingCodeHighlight";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
 import type {
   MarkdownCodeHighlighter,
@@ -18,15 +17,11 @@ import type {
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
 } from "./SelectableMarkdownText.types";
+import { useHighlightedCode, type HighlightedCode } from "./useHighlightedCode";
 
 /** Set by SelectableMarkdownText so images anywhere in the block tree can use it. */
 export const MarkdownImageRendererContext = createContext<MarkdownImageRenderer | null>(null);
 
-type HighlightedCode = ReadonlyArray<ReadonlyArray<MarkdownHighlightedToken>>;
-
-const highlightedCodeCache = new Map<string, HighlightedCode>();
-const highlightedCodePromiseCache = new Map<string, Promise<HighlightedCode>>();
-const HIGHLIGHTED_CODE_CACHE_LIMIT = 64;
 const MONO_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
   android: "monospace",
@@ -70,121 +65,6 @@ function SelectableNode(props: {
       onLinkPress={props.onLinkPress}
     />
   );
-}
-
-function codeHighlightCacheKey(
-  code: string,
-  language: string | undefined,
-  theme: "light" | "dark",
-): string {
-  return `${theme}:${language ?? "text"}:${code}`;
-}
-
-function cacheHighlightedCode(key: string, tokens: HighlightedCode): void {
-  highlightedCodeCache.delete(key);
-  highlightedCodeCache.set(key, tokens);
-
-  while (highlightedCodeCache.size > HIGHLIGHTED_CODE_CACHE_LIMIT) {
-    const oldestKey = highlightedCodeCache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    highlightedCodeCache.delete(oldestKey);
-  }
-}
-
-function loadHighlightedCode(
-  code: string,
-  language: string | undefined,
-  theme: "light" | "dark",
-  highlightCode: MarkdownCodeHighlighter,
-  session: object,
-): Promise<HighlightedCode> {
-  const key = codeHighlightCacheKey(code, language, theme);
-  const cached = highlightedCodeCache.get(key);
-  if (cached) {
-    return Promise.resolve(cached);
-  }
-
-  const pending = highlightedCodePromiseCache.get(key);
-  if (pending) {
-    return pending;
-  }
-
-  const promise = highlightCode({ code, language, theme, session })
-    .then((tokens) => {
-      cacheHighlightedCode(key, tokens);
-      highlightedCodePromiseCache.delete(key);
-      return tokens;
-    })
-    .catch((error) => {
-      highlightedCodePromiseCache.delete(key);
-      throw error;
-    });
-  highlightedCodePromiseCache.set(key, promise);
-  return promise;
-}
-
-function useHighlightedCode(
-  code: string,
-  language: string | undefined,
-  theme: "light" | "dark",
-  highlightCode: MarkdownCodeHighlighter,
-): HighlightedCode | null {
-  const [session] = useState(() => ({}));
-  const key = codeHighlightCacheKey(code, language, theme);
-  const ready = useMemo(
-    () => highlightedCodeCache.get(key) ?? highlightCode.read?.({ code, language, theme, session }),
-    [code, language, theme, key, highlightCode, session],
-  );
-  const [highlighted, setHighlighted] = useState<{
-    readonly key: string;
-    readonly code: string;
-    readonly language: string | undefined;
-    readonly theme: "light" | "dark";
-    readonly tokens: HighlightedCode | null;
-  }>(() => ({
-    code,
-    language,
-    theme,
-    key,
-    tokens: highlightedCodeCache.get(key) ?? null,
-  }));
-
-  useEffect(() => {
-    if (ready) return;
-    let active = true;
-    const cached = highlightedCodeCache.get(key);
-    if (cached) {
-      cacheHighlightedCode(key, cached);
-      setHighlighted({ code, language, theme, key, tokens: cached });
-      return () => {
-        active = false;
-      };
-    }
-
-    void loadHighlightedCode(code, language, theme, highlightCode, session)
-      .then((tokens) => {
-        if (active) {
-          setHighlighted({ code, language, theme, key, tokens });
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setHighlighted({ code, language, theme, key, tokens: null });
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [code, highlightCode, key, language, theme, ready, session]);
-
-  if (ready) return ready;
-  if (highlighted.key === key) return highlighted.tokens;
-  if (highlighted.tokens && highlighted.language === language && highlighted.theme === theme) {
-    return pendingCodeHighlight(highlighted.code, code, highlighted.tokens);
-  }
-  return null;
 }
 
 const HighlightedCodeLine = memo(function HighlightedCodeLine(props: {
