@@ -18,6 +18,7 @@ export function AndroidHeaderIconButton(props: {
   readonly icon: AppSymbolName;
   readonly onPress?: () => void;
   readonly disabled?: boolean;
+  readonly filled?: boolean;
 }) {
   return (
     <Pressable
@@ -27,14 +28,21 @@ export function AndroidHeaderIconButton(props: {
       hitSlop={8}
       onPress={props.onPress}
       className={cn(
-        "size-11 items-center justify-center rounded-full bg-subtle",
+        "size-11 items-center justify-center rounded-full",
+        props.filled ? "bg-primary" : "bg-subtle",
         props.disabled && "opacity-55",
       )}
     >
       <SymbolView
         name={props.icon}
         size={20}
-        tintColorClassName={props.disabled ? "accent-icon-subtle" : "accent-foreground"}
+        tintColorClassName={
+          props.disabled
+            ? "accent-icon-subtle"
+            : props.filled
+              ? "accent-primary-foreground"
+              : "accent-foreground"
+        }
         type="monochrome"
       />
     </Pressable>

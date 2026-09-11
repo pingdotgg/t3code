@@ -570,6 +570,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly mode: FileViewMode;
   } | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
+  const { appearance, setCodeWordBreak } = useAppearancePreferences();
+  const codeWordBreak = appearance.codeWordBreak;
+  const primaryColor = useUniwindTheme()["--color-primary"];
   const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
@@ -585,6 +588,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       ? modeOverride.mode
       : defaultViewMode(relativePath);
   const resolvedActiveMode = isVideoFile ? "preview" : canPreview ? activeMode : "source";
+  const handleToggleWordBreak = useCallback(() => {
+    setCodeWordBreak(!codeWordBreak);
+  }, [codeWordBreak, setCodeWordBreak]);
   const assetPreviewPath = isBrowserFile || isImageFile || isVideoFile ? relativePath : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
@@ -866,6 +872,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           onBack={handleBack}
           trailing={
             <>
+              {resolvedActiveMode === "source" ? (
+                <AndroidHeaderIconButton
+                  accessibilityLabel={codeWordBreak ? "Disable word wrap" : "Enable word wrap"}
+                  icon="arrow.left.and.line.vertical.and.arrow.right"
+                  onPress={handleToggleWordBreak}
+                  filled={codeWordBreak}
+                />
+              ) : null}
               {fileInspector.supported ? (
                 <AndroidHeaderIconButton
                   accessibilityLabel={
@@ -905,6 +919,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             icon="sidebar.right"
             onPress={toggleAuxiliaryPane}
             separateBackground
+          />
+        ) : null}
+        {resolvedActiveMode === "source" ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={codeWordBreak ? "Disable word wrap" : "Enable word wrap"}
+            icon="arrow.left.and.line.vertical.and.arrow.right"
+            onPress={handleToggleWordBreak}
+            separateBackground
+            tintColor={codeWordBreak ? primaryColor : undefined}
           />
         ) : null}
         <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
