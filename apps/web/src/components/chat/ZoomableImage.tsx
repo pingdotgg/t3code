@@ -8,6 +8,8 @@ import {
   type Ref,
 } from "react";
 
+import { AttachmentImage } from "../media/AttachmentImage";
+
 const MAX_ZOOM = 8;
 
 export interface ZoomableImageHandle {
@@ -18,11 +20,13 @@ export interface ZoomableImageHandle {
 export function ZoomableImage({
   src,
   name,
+  mimeType,
   onError,
   ref,
 }: {
   src: string;
   name: string;
+  mimeType?: string | undefined;
   onError: () => void;
   ref?: Ref<ZoomableImageHandle>;
 }) {
@@ -216,7 +220,9 @@ export function ZoomableImage({
           setDragging(false);
         }}
       >
-        <img
+        <AttachmentImage
+          name={name}
+          mimeType={mimeType}
           src={src}
           alt={name}
           draggable={false}

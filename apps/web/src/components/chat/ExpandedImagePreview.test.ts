@@ -42,6 +42,27 @@ describe("resolveMarkdownMediaPreview", () => {
 });
 
 describe("buildExpandedImagePreview", () => {
+  it("keeps MIME type for stored images without a filename extension", () => {
+    const preview = buildExpandedImagePreview(
+      [
+        {
+          type: "image",
+          id: "heic-1",
+          name: "photo",
+          mimeType: "image/heic",
+          sizeBytes: 3,
+          previewUrl: "blob:heic",
+        },
+      ],
+      "heic-1",
+    );
+    expect(preview?.images[0]).toMatchObject({
+      name: "photo",
+      mimeType: "image/heic",
+      src: "blob:heic",
+    });
+  });
+
   it("keeps window capture details with the expanded image", () => {
     const source = {
       kind: "snap-shot" as const,
