@@ -1393,6 +1393,7 @@ export const make = Effect.gen(function* () {
             action === "allow-accessibility" ? "accessibility" : "screen-recording",
             path.join(environment.dirname, "snapshot-permission-preload.cjs"),
             owner,
+            environment.resolveResourcePathCandidates("icon.png"),
           ),
         ).pipe(
           Effect.catch((cause) =>

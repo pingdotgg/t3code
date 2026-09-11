@@ -5,7 +5,7 @@ import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 const mocks = vi.hoisted(() => ({
   granted: false,
-  getFileIcon: vi.fn(),
+  createFromPath: vi.fn(),
   startDrag: vi.fn(),
   showItemInFolder: vi.fn(),
   send: vi.fn(),
@@ -51,9 +51,8 @@ vi.mock("electron", async () => {
   return {
     app: {
       getPath: () => "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code",
-      getName: () => "T3 Code (Nightly)",
-      getFileIcon: mocks.getFileIcon,
     },
+    nativeImage: { createFromPath: mocks.createFromPath },
     BrowserWindow: class extends MockWindow {},
     ipcMain: new EventEmitter(),
     screen: {
@@ -73,7 +72,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   mocks.granted = false;
-  mocks.getFileIcon.mockResolvedValue({ toDataURL: () => "data:image/png;base64,abc" });
+  const icon = { toDataURL: () => "data:image/png;base64,abc" };
+  mocks.createFromPath.mockReturnValue({ isEmpty: () => false, resize: () => icon });
   mocks.loadURL.mockResolvedValue(undefined);
   windows.length = 0;
   helper = new MacPermissionHelper();
@@ -82,7 +82,9 @@ afterEach(() => {
   helper.close();
   vi.useRealTimers();
 });
-const open = () => helper.show("accessibility", "/bundle/snapshot-permission-preload.cjs", null);
+const iconPaths = ["/bundle/prod-resources/icon.png"];
+const open = () =>
+  helper.show("accessibility", "/bundle/snapshot-permission-preload.cjs", null, iconPaths);
 function send(action: string, trusted = true) {
   const window = windows.at(-1)!;
   Electron.ipcMain.emit(
@@ -109,20 +111,16 @@ it("drags the running app bundle only for the helper's own renderer", async () =
   send("drag", false);
   expect(mocks.startDrag).not.toHaveBeenCalled();
   send("drag");
+  expect(mocks.createFromPath).toHaveBeenCalledWith("/bundle/prod-resources/icon.png");
   expect(mocks.startDrag).toHaveBeenCalledWith({
     file: "/Applications/T3 Code (Nightly).app",
-    icon: await mocks.getFileIcon.mock.results[0]!.value,
+    icon: mocks.createFromPath.mock.results[0]!.value.resize(),
   });
   send("finder");
   expect(mocks.showItemInFolder).toHaveBeenCalledWith("/Applications/T3 Code (Nightly).app");
 });
-it("rechecks permissions, reports restart guidance, and releases resources when granted", async () => {
+it("rechecks permissions and releases resources when granted", async () => {
   await open();
-  send("check");
-  expect(mocks.send).toHaveBeenCalledWith(
-    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
-    expect.stringContaining("quit and reopen"),
-  );
   mocks.granted = true;
   vi.advanceTimersByTime(1000);
   expect(windows[0]!.destroyed).toBe(true);
@@ -131,7 +129,7 @@ it("rechecks permissions, reports restart guidance, and releases resources when 
 });
 it("keeps only one helper and cleans up on dismissal", async () => {
   await open();
-  await helper.show("screen-recording", "/preload.cjs", null);
+  await helper.show("screen-recording", "/preload.cjs", null, iconPaths);
   expect(windows[0]!.destroyed).toBe(true);
   expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(1);
   send("close");
@@ -143,10 +141,9 @@ it("does not open for a permission already granted", async () => {
   await open();
   expect(windows).toHaveLength(0);
 });
-it("does not reopen after disposal while the icon is loading", async () => {
-  const loading = open();
-  helper.close();
-  await loading;
+it("does not show a helper with a missing packaged icon", async () => {
+  mocks.createFromPath.mockReturnValueOnce({ isEmpty: () => true });
+  await expect(open()).rejects.toThrow("packaged T3 Code icon is missing");
   expect(windows).toHaveLength(0);
 });
 it("cleans up when the helper page fails to load", async () => {
@@ -162,16 +159,13 @@ it("offers the Finder fallback when native dragging fails", async () => {
     throw new Error("drag failed");
   });
   send("drag");
-  expect(mocks.send).toHaveBeenCalledWith(
-    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
-    expect.stringContaining("Show in Finder"),
-  );
+  expect(mocks.showItemInFolder).toHaveBeenCalledWith("/Applications/T3 Code (Nightly).app");
   expect(windows[0]!.destroyed).toBe(false);
 });
 
 it("returns focus to onboarding when the permission is granted", async () => {
   const owner = new Electron.BrowserWindow({});
-  await helper.show("screen-recording", "/preload.cjs", owner);
+  await helper.show("screen-recording", "/preload.cjs", owner, iconPaths);
   mocks.granted = true;
   vi.advanceTimersByTime(1000);
   expect(owner.show).toHaveBeenCalledOnce();
@@ -181,9 +175,17 @@ it("returns focus to onboarding when the permission is granted", async () => {
 });
 it("closes the helper and stops checking when onboarding's window closes", async () => {
   const owner = new Electron.BrowserWindow({});
-  await helper.show("accessibility", "/preload.cjs", owner);
+  await helper.show("accessibility", "/preload.cjs", owner, iconPaths);
   owner.destroy();
   expect(windows[1]!.destroyed).toBe(true);
   expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("uses the packaged PNG when an earlier resource candidate is absent", async () => {
+  mocks.createFromPath.mockReturnValueOnce({ isEmpty: () => true });
+  await helper.show("accessibility", "/preload.cjs", null, ["/missing/icon.png", ...iconPaths]);
+  send("drag");
+  expect(mocks.startDrag).toHaveBeenCalled();
+  expect(mocks.createFromPath).toHaveBeenLastCalledWith(iconPaths[0]);
 });
