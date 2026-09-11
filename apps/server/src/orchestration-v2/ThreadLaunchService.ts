@@ -483,11 +483,35 @@ const make = Effect.gen(function* () {
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
       return yield* Effect.gen(function* () {
+        const reusableLaunchReceipt =
+          input.threadId === undefined &&
+          Option.isSome(launchReceipt) &&
+          launchReceipt.value.status === "accepted" &&
+          launchReceipt.value.commandType === "thread.create"
+            ? launchReceipt.value
+            : undefined;
         const candidateThreadId =
           input.threadId ??
+          reusableLaunchReceipt?.threadId ??
           (yield* ids.allocate
             .thread({ projectId: input.projectId })
             .pipe(Effect.mapError(mapError(input, "create-thread"))));
+
+        if (reusableLaunchReceipt !== undefined) {
+          const shell = yield* threads
+            .getThreadShell(candidateThreadId)
+            .pipe(Effect.mapError(mapError(input, "create-thread", candidateThreadId)));
+          if (shell === null) {
+            return yield* mapError(input, "create-thread", candidateThreadId)("Thread not found.");
+          }
+          if (shell.projectId !== input.projectId) {
+            return yield* mapError(
+              input,
+              "resolve-project",
+              candidateThreadId,
+            )("Project identity changed.");
+          }
+        }
 
         if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
           yield* validateReusableThread(input, candidateThreadId);

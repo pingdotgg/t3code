@@ -55,6 +55,7 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const projectId = ProjectId.make("project:launch-test");
+const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -72,6 +73,12 @@ const project = {
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
   deletedAt: null,
+} as const;
+
+const otherProject = {
+  ...project,
+  id: otherProjectId,
+  title: "Other",
 } as const;
 
 const adapter = {
@@ -129,7 +136,14 @@ function makeHarness(options: HarnessOptions = {}) {
       bootstrap: () => Effect.die("unused"),
       update: () => Effect.die("unused"),
       delete: () => Effect.die("unused"),
-      getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+      getById: (id) =>
+        Effect.succeed(
+          id === projectId
+            ? Option.some(project)
+            : id === otherProjectId
+              ? Option.some(otherProject)
+              : Option.none(),
+        ),
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
       snapshot: Effect.die("unused"),
     }),
@@ -1237,6 +1251,129 @@ for (const failurePoint of ["worktree", "setup"] as const) {
       }),
   );
 }
+
+it.effect("replays a server-allocated launch", () =>
+  Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const allowSetup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.as({ status: "no-script" as const }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const { threadId: _unusedThreadId, ...rest } = launchInput({
+        command: "command:launch:allocated-retry",
+        thread: "unused",
+        message: "Only once",
+      });
+      const first = yield* launches.launch(rest);
+      yield* Deferred.await(setupEntered);
+      const retry = yield* launches.launch(rest);
+      assert.equal(first.threadId, retry.threadId);
+      assert.isFalse(first.resumed);
+      assert.isTrue(retry.resumed);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
+      assert.equal(retry.projection.messages.length, 1);
+      assert.equal(retry.projection.runs.length, 1);
+      assert.equal(retry.projection.messages.length, first.projection.messages.length);
+      assert.equal(retry.projection.runs.length, first.projection.runs.length);
+      assert.equal(retry.projection.messages[0]?.id, first.projection.messages[0]?.id);
+      assert.equal(retry.projection.runs[0]?.id, first.projection.runs[0]?.id);
+      yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects a server-allocated launch replay with a mismatching thread id", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const { threadId: _unusedThreadId, ...rest } = launchInput({
+      command: "command:launch:allocated-mismatch",
+      thread: "unused",
+      message: "Mismatch",
+    });
+    const first = yield* launches.launch(rest);
+    const failed = yield* launches
+      .launch({
+        ...rest,
+        threadId: ThreadId.make("thread:launch:allocated-mismatch"),
+      })
+      .pipe(Effect.flip);
+    assert.notEqual(first.threadId, ThreadId.make("thread:launch:allocated-mismatch"));
+    assert.equal(failed._tag, "ThreadLaunchError");
+    assert.equal(failed.operation, "create-thread");
+    assert.include(String(failed.cause), "cannot be replayed");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("rejects a server-allocated launch receipt from another project", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const { threadId: _unusedThreadId, ...rest } = launchInput({
+      command: "command:launch:allocated-wrong-project",
+      thread: "unused",
+      message: "Wrong project",
+    });
+    const first = yield* launches.launch(rest);
+    const failed = yield* launches
+      .launch({
+        ...rest,
+        projectId: otherProjectId,
+      })
+      .pipe(Effect.flip);
+    assert.equal(failed._tag, "ThreadLaunchError");
+    assert.equal(failed.operation, "resolve-project");
+    assert.equal(failed.threadId, first.threadId);
+    assert.equal(failed.cause, "Project identity changed.");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("does not treat an unrelated accepted command receipt as a launch", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const threadId = ThreadId.make("thread:launch:unrelated-receipt");
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("command:launch:unrelated-receipt:create"),
+      threadId,
+      projectId,
+      title: "Existing",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* threads.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:launch:unrelated-receipt"),
+      threadId,
+      expectedEmpty: true,
+    });
+    const { threadId: _unusedThreadId, ...rest } = launchInput({
+      command: "command:launch:unrelated-receipt",
+      thread: "unused",
+      message: "Should not become a launch",
+    });
+    const failed = yield* launches.launch(rest).pipe(Effect.flip);
+    assert.equal(failed._tag, "ThreadLaunchError");
+    assert.equal(failed.operation, "create-thread");
+    assert.include(String(failed.cause), "cannot be replayed");
+    const projection = yield* threads.getThreadProjection(threadId);
+    assert.equal(projection.messages.length, 0);
+    assert.equal(projection.runs.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("deduplicates retried launch side effects in-process", () =>
   Effect.gen(function* () {
