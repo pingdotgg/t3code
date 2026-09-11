@@ -6,6 +6,57 @@ import UIKit
 @Suite("Chat Markdown")
 struct MarkdownDocumentTests {
     @Test
+    func continuousSelectionStopsAtRichBlocks() throws {
+        let document = try #require(MarkdownRenderCache.shared.documentImmediately(
+            for: MarkdownContentRevision("""
+            # Heading
+
+            First paragraph.
+
+            Second paragraph.
+
+            > A separate blockquote.
+
+            Last paragraph.
+            """)
+        ))
+        #expect(MarkdownContinuousSelection.groups(in: document.blocks) == [0..<3, 3..<4, 4..<5])
+    }
+
+    @Test @MainActor
+    func continuousSelectionIncludesHeadingsLinksAndNestedLists() throws {
+        let document = try #require(MarkdownRenderCache.shared.documentImmediately(
+            for: MarkdownContentRevision("""
+            ## Checklist
+
+            Read the [docs](https://example.com).
+
+            - First item
+              - Nested item
+            - Second item
+
+            3. Third item
+            4. Fourth item
+
+            Final paragraph with **bold** and `code`.
+            """)
+        ))
+        let groups = MarkdownContinuousSelection.groups(in: document.blocks)
+        #expect(groups == [0..<document.blocks.count])
+        let text = MarkdownContinuousSelection.attributedText(blocks: document.blocks)
+        #expect(text.string == "Checklist\nRead the docs.\n•\tFirst item\n•\tNested item\n•\tSecond item\n3.\tThird item\n4.\tFourth item\nFinal paragraph with bold and code.")
+        let docsRange = (text.string as NSString).range(of: "docs")
+        #expect((text.attribute(.link, at: docsRange.location, effectiveRange: nil) as? URL)?.absoluteString == "https://example.com")
+        let nestedRange = (text.string as NSString).range(of: "Nested item")
+        let nestedStyle = try #require(text.attribute(.paragraphStyle, at: nestedRange.location, effectiveRange: nil) as? NSParagraphStyle)
+        #expect(nestedStyle.headIndent == 64)
+        let finalRange = (text.string as NSString).range(of: "Final paragraph")
+        let finalStyle = try #require(text.attribute(.paragraphStyle, at: finalRange.location, effectiveRange: nil) as? NSParagraphStyle)
+        #expect(finalStyle.headIndent == 0)
+
+    }
+
+    @Test
     func ordinaryMarkdownKeepsItsTextAndLineEndingsWithoutCitations() {
         let source = """
         # A long response
