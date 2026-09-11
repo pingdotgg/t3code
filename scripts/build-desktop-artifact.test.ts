@@ -349,8 +349,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(preview, "publish");
-      assert.notProperty(previewChannel, "publish");
+      assert.strictEqual(preview.publish, null);
+      assert.strictEqual(previewChannel.publish, null);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
