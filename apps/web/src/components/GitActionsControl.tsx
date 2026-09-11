@@ -1984,7 +1984,7 @@ export default function GitActionsControl({
               size="sm"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
             >
-              Checkout feature branch & continue
+              Check out feature branch & continue
             </Button>
           </DialogFooter>
         </DialogPopup>
