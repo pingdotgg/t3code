@@ -3939,6 +3939,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           if (
             resetsAtMs !== undefined &&
             Number.isFinite(resetsAtMs) &&
+            resetsAtMs > nowMs &&
             resetsAtMs <= nowMs + CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
           ) {
             context.turnState.usageLimitResetsAtMsByType.set(limitType, resetsAtMs);
