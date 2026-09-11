@@ -1504,6 +1504,7 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
@@ -5214,6 +5215,22 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [togglePreviewPanel],
   );
+  const refreshCheckoutBranchForNextTurn = useCallback(
+    async (fallback: string | null): Promise<AtomCommandResult<string | null, unknown>> => {
+      if (!serverThread || !gitStatusCwd) return AsyncResult.success(fallback);
+      const status = await refreshVcsStatus({ environmentId, input: { cwd: gitStatusCwd } });
+      return mapAtomCommandResult(status, (current) => {
+        const mismatch = resolveCheckoutBranchMismatch({
+          effectiveEnvMode: serverThread.worktreePath === null ? "local" : "worktree",
+          activeWorktreePath: serverThread.worktreePath,
+          activeThreadBranch: serverThread.branch,
+          currentGitBranch: current.refName,
+        });
+        return mismatch?.currentBranch ?? serverThread.branch;
+      });
+    },
+    [environmentId, gitStatusCwd, refreshVcsStatus, serverThread],
+  );
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
       threadId: ThreadId;
@@ -5228,12 +5245,18 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
+      const branchResult = input.branch
+        ? await refreshCheckoutBranchForNextTurn(input.branch)
+        : AsyncResult.success(null);
+      if (branchResult._tag === "Failure") {
+        return mapAtomCommandResult(branchResult, () => undefined);
+      }
       const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
         currentModelSelection: serverThread.modelSelection,
         ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
         currentBranch: serverThread.branch,
         currentWorktreePath: serverThread.worktreePath,
-        ...(input.branch ? { nextBranch: input.branch } : {}),
+        ...(branchResult.value ? { nextBranch: branchResult.value } : {}),
       });
       if (metadataUpdate) {
         result = mapAtomCommandResult(
@@ -5286,6 +5309,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       environmentId,
       serverThread,
+      refreshCheckoutBranchForNextTurn,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       updateThreadMetadata,
@@ -9158,6 +9182,20 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
+    const branchResult = checkoutBranchMismatch
+      ? await refreshCheckoutBranchForNextTurn(activeThreadBranch)
+      : AsyncResult.success(activeThreadBranch);
+    if (branchResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(branchResult)) {
+        const error = squashAtomCommandFailure(branchResult);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to refresh branch.",
+        );
+      }
+      finish();
+      return;
+    }
     const createResult = await createThread({
       environmentId,
       input: {
@@ -9167,7 +9205,7 @@ export default function ChatView(props: ChatViewProps) {
         modelSelection: nextThreadModelSelection,
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
-        branch: checkoutBranchMismatch?.currentBranch ?? activeThreadBranch,
+        branch: branchResult.value,
         worktreePath: activeThread.worktreePath,
         createdAt,
       },
@@ -9256,6 +9294,8 @@ export default function ChatView(props: ChatViewProps) {
     beginLocalDispatch,
     activeEnvironmentUnavailable,
     checkoutBranchMismatch,
+    refreshCheckoutBranchForNextTurn,
+    setThreadError,
     createThread,
     deleteThread,
     isConnecting,
