@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -383,9 +384,15 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     "dist-exe",
     `t3-${targetKey}${input.platform === "win" ? ".exe" : ""}`,
   );
+  // The unsuffixed host build is only a valid stand-in when it was built for
+  // this platform and architecture; otherwise a missing target must fail.
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostKey = `${hostPlatform === "win32" ? "win" : hostPlatform}-${yield* HostProcessArchitecture}`;
   const builtExecutable = (yield* fs.exists(targetExecutable))
     ? targetExecutable
-    : path.join(serverDir, "dist-exe", executableName);
+    : targetKey === hostKey
+      ? path.join(serverDir, "dist-exe", executableName)
+      : targetExecutable;
   const webClient = path.join(serverDir, "dist/client");
   const resourceMonitorDir = Option.getOrElse(input.resourceMonitorDir, () =>
     path.join(serverDir, "dist/resource-monitor"),

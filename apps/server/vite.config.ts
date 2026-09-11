@@ -34,13 +34,18 @@ const packExecutable = process.env.T3CODE_PACK_EXE === "1";
 // When set, tsdown injects the bundle into a downloaded Node of that target
 // instead of the host Node, which is how the arm64 macOS runner produces the
 // x64 archive. Cross-building is safe because the code cache is off.
+//
+// The Node inside the executable is pinned here rather than taken from the
+// build host, so every archive of a release embeds the same runtime no matter
+// which Node happens to run the build.
+const SEA_NODE_VERSION = "26.8.2";
 const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
 const packExecutableTargets = packExecutableTarget
   ? [
       {
         platform: packExecutableTarget.split("-")[0] as "darwin" | "linux" | "win",
         arch: packExecutableTarget.split("-")[1] as "arm64" | "x64",
-        nodeVersion: process.versions.node,
+        nodeVersion: SEA_NODE_VERSION,
       },
     ]
   : undefined;
