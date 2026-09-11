@@ -106,6 +106,10 @@ export function buildComposerSlashCommandItems(input: {
   return items;
 }
 
+/**
+ * Apply a command pick to the active draft range, preserving exact skill sources and returning
+ * any requested interaction mode.
+ */
 export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
@@ -144,7 +148,10 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
-/** Shared autocomplete for thread composers and unsent new-task drafts. */
+/**
+ * Provide workspace-aware command suggestions and selection handlers for the thread and new-task
+ * composers.
+ */
 export function useComposerCommandMenu({
   draftMessage,
   ownerKey,

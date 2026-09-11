@@ -45,7 +45,8 @@ class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
 /**
  * Map `grok inspect --json` output onto provider skills. Entries without a
  * name or a filesystem path are skipped; `userInvocable: false` skills are
- * kept but disabled so pickers that filter on `enabled` hide them.
+ * kept but disabled so pickers that filter on `enabled` hide them. Distinct
+ * paths remain separate even when they share a name.
  */
 function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSkill> | undefined {
   let parsed: unknown;

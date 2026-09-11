@@ -30,6 +30,10 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
+/**
+ * Keep the first entry for each name and normalized path so same-name skills from distinct files
+ * remain selectable.
+ */
 export function dedupeProviderSkillsBySource(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
@@ -60,6 +64,10 @@ export function isProviderSkillUserInvocable(
   return skill.enabled && skill.userInvocable !== false;
 }
 
+/**
+ * Return user-invocable sources when skill suggestions are enabled, retaining distinct files
+ * with the same name.
+ */
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
@@ -69,10 +77,18 @@ export function getProviderSkillsForSlashMenu(
     : [];
 }
 
+/**
+ * Serialize a menu selection with its exact source instead of relying on provider name
+ * resolution.
+ */
 export function formatProviderSkillReference(skill: ServerProviderSkill): string {
   return serializeSkillReference(skill);
 }
 
+/**
+ * Include the source path when another invocable skill shares this name so users can distinguish
+ * menu choices.
+ */
 export function formatProviderSkillMenuDescription(
   skill: ServerProviderSkill,
   skills: ReadonlyArray<ServerProviderSkill>,

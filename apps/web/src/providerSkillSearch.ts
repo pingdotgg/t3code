@@ -69,6 +69,10 @@ export function scoreProviderSkill(skill: ServerProviderSkill, query: string): n
   return Math.min(...scores);
 }
 
+/**
+ * Rank invocable skill sources for autocomplete without collapsing same-name choices from
+ * different files.
+ */
 export function searchProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
   query: string,

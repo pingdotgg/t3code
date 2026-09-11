@@ -62,6 +62,10 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       ),
     );
 
+  /**
+   * Refresh the selected instance's workspace inventory for source authorization; disabled
+   * instances and failed discovery must not authorize a turn.
+   */
   const getSkills: ProviderAdapterRegistryShape["getSkills"] = Effect.fn("getSkills")(
     function* (instanceId, cwd) {
       const instance = yield* registry.getInstance(instanceId);

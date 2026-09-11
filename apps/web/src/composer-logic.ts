@@ -61,6 +61,10 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
+/**
+ * Map a visible editor cursor to serialized prompt offsets, treating each inline chip as one
+ * position.
+ */
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
@@ -138,6 +142,10 @@ export function clampCollapsedComposerCursor(text: string, cursorInput: number):
   );
 }
 
+/**
+ * Map serialized prompt offsets back to editor positions, collapsing each inline chip to one
+ * position.
+ */
 export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
   const expandedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);

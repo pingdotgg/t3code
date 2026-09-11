@@ -606,6 +606,10 @@ function buildCodexCollaborationMode(input: {
   };
 }
 
+/**
+ * Build Codex turn parameters, carrying authorized skill selections as native path-bound inputs
+ * alongside text and images.
+ */
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;

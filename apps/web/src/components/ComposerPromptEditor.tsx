@@ -251,6 +251,7 @@ type ComposerSkillMetadata = {
   description: string | null;
 };
 
+/** Index chip metadata by exact path, with first-by-name lookup retained for legacy drafts. */
 function skillMetadataByName(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ReadonlyMap<string, ComposerSkillMetadata> {
@@ -307,6 +308,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     return "composer-skill";
   }
 
+  /** Preserve the selected source when Lexical clones a skill chip during editor updates. */
   static override clone(node: ComposerSkillNode): ComposerSkillNode {
     return new ComposerSkillNode(
       node.__skillName,
@@ -317,6 +319,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     );
   }
 
+  /** Restore persisted chips, accepting older drafts that stored only a skill name. */
   static override importJSON(serializedNode: SerializedComposerSkillNode): ComposerSkillNode {
     return $createComposerSkillNode(
       serializedNode.skillName,
@@ -326,6 +329,10 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     ).updateFromJSON(serializedNode);
   }
 
+  /**
+   * Create a chip from a serialized skill reference, falling back to a bare name for legacy
+   * callers.
+   */
   constructor(
     skillName: string,
     skillLabel: string,
@@ -341,6 +348,10 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     this.__skillSource = skillSource ?? `$${normalizedSkillName}`;
   }
 
+  /**
+   * Persist the selected source with the display metadata so draft reloads retain skill
+   * identity.
+   */
   override exportJSON(): SerializedComposerSkillNode {
     return {
       ...super.exportJSON(),
@@ -363,6 +374,10 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     return false;
   }
 
+  /**
+   * Return the invocation source for copy and prompt submission, independent of the visible
+   * label.
+   */
   override getTextContent(): string {
     return this.__skillSource;
   }
@@ -851,6 +866,7 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
   }
 }
 
+/** Rebuild the editor from serialized draft text, resolving source-bound skill metadata by path. */
 function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,

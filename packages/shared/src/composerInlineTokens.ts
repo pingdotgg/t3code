@@ -19,6 +19,10 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
 }
 
+/**
+ * Encode a selected skill as a Markdown reference that preserves its exact file through storage
+ * and transport.
+ */
 export function serializeSkillReference(skill: { name: string; path: string }): string {
   const path = encodeURI(skill.path).replace(
     /[()?#]/g,
@@ -96,6 +100,10 @@ function collectMarkdownCodeRanges(text: string): Array<{ start: number; end: nu
   return ranges.sort((left, right) => left.start - right.start);
 }
 
+/**
+ * Parse absolute SKILL.md references outside Markdown code, retaining source offsets for
+ * composer chips. Malformed references remain prose.
+ */
 function collectSkillReferenceTokens(
   text: string,
 ): Extract<ComposerInlineToken, { type: "skill" }>[] {
@@ -209,6 +217,10 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Collect file and skill chips in source order. Pass prior tokens to preserve an existing chip
+ * at the end of an edited draft.
+ */
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},

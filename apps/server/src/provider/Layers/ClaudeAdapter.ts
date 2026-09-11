@@ -1464,6 +1464,10 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
+/**
+ * Build SDK content with native skill dispatch planned only from user text. Keep exact-file
+ * fallback instructions in a separate block so they cannot trigger name-based dispatch.
+ */
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {

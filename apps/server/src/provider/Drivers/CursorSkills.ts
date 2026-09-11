@@ -215,6 +215,10 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   return skills;
 });
 
+/**
+ * Inspect project and user skill roots by source path, returning partial results with a failure
+ * reason when scanning is incomplete.
+ */
 const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -260,6 +264,10 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
   return (yield* inspectCursorSkills(cwd, environment)).skills;
 });
 
+/**
+ * Discover Cursor skill sources for provider snapshots, failing when the scan cannot establish a
+ * complete inventory.
+ */
 export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
