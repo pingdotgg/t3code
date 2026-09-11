@@ -64,8 +64,10 @@ import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
+  fromSelectedEnvironmentIds,
   readUsagePagePreferences,
   saveUsagePagePreferences,
+  toSelectedEnvironmentIds,
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
@@ -106,8 +108,12 @@ export function UsagePage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  // Restored from the same preferences that remember the metric and period,
+  // so a deselected environment stays deselected across visits.
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
-    useState<ReadonlySet<EnvironmentId> | null>(null);
+    useState<ReadonlySet<EnvironmentId> | null>(
+      toSelectedEnvironmentIds(preferences.selectedEnvironmentIds),
+    );
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
@@ -150,7 +156,11 @@ export function UsagePage() {
 
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
-    const nextPreferences = { metric, windowDays: days };
+    const nextPreferences = {
+      metric,
+      windowDays: days,
+      selectedEnvironmentIds: fromSelectedEnvironmentIds(selectedEnvironmentIds),
+    };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
     setWindowSelection({
@@ -159,7 +169,21 @@ export function UsagePage() {
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
-    const nextPreferences = { metric: nextMetric, windowDays };
+    const nextPreferences = {
+      metric: nextMetric,
+      windowDays,
+      selectedEnvironmentIds: fromSelectedEnvironmentIds(selectedEnvironmentIds),
+    };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
+  };
+  const selectEnvironments = (ids: ReadonlySet<EnvironmentId> | null) => {
+    setSelectedEnvironmentIds(ids);
+    const nextPreferences = {
+      metric,
+      windowDays,
+      selectedEnvironmentIds: fromSelectedEnvironmentIds(ids),
+    };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
   };
@@ -214,7 +238,7 @@ export function UsagePage() {
             environments={environments}
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
-            onSelectionChange={setSelectedEnvironmentIds}
+            onSelectionChange={selectEnvironments}
             showUsageStatus={!showingLimits}
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
