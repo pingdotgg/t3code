@@ -6,6 +6,10 @@
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
 
+On web and desktop, the date fields beside the presets accept a custom range of up to 90 days.
+Drag across a daily chart to zoom to that range, and double-click the chart to return to the range
+you had before zooming.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 

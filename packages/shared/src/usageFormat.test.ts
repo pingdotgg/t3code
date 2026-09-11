@@ -2,10 +2,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  compareUsageDays,
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  makeCustomWindow,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -66,8 +68,48 @@ describe("hourly usage formatting", () => {
 
       expect(makeWindow(1, now, "hour").timeZone).toBe("UTC");
       expect(makeWindow(30, now).timeZone).toBe("UTC");
+      expect(makeCustomWindow("2026-08-01", "2026-08-11").timeZone).toBe("UTC");
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("compareUsageDays", () => {
+  it("orders valid calendar days", () => {
+    expect(compareUsageDays("2026-08-03", "2026-08-11")).toBe(-1);
+    expect(compareUsageDays("2026-08-11", "2026-08-03")).toBe(1);
+    expect(compareUsageDays("2026-08-03", "2026-08-03")).toBe(0);
+  });
+
+  it("rejects impossible and malformed days", () => {
+    expect(compareUsageDays("2026-02-29", "2026-03-01")).toBeNull();
+    expect(compareUsageDays("10000-01-01", "9999-12-31")).toBeNull();
+    expect(compareUsageDays("", "2026-03-01")).toBeNull();
+  });
+});
+
+describe("makeCustomWindow", () => {
+  it("builds a daily window over the inclusive range", () => {
+    expect(makeCustomWindow("2026-08-03", "2026-08-11")).toMatchObject({
+      sinceDay: "2026-08-03",
+      untilDay: "2026-08-11",
+      resolution: "day",
+    });
+  });
+
+  it("swaps out-of-order bounds from a right-to-left drag", () => {
+    expect(makeCustomWindow("2026-08-11", "2026-08-03")).toMatchObject({
+      sinceDay: "2026-08-03",
+      untilDay: "2026-08-11",
+    });
+  });
+
+  it("caps ranges at 90 days", () => {
+    expect(makeCustomWindow("2026-01-01", "2026-12-31").untilDay).toBe("2026-03-31");
+  });
+
+  it("rejects invalid bounds", () => {
+    expect(() => makeCustomWindow("2026-02-30", "2026-03-01")).toThrow(RangeError);
   });
 });

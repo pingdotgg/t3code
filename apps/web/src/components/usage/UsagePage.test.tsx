@@ -4,9 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
+  customWindow: false,
+  zoomToDays: undefined as ((since: string, until: string) => void) | undefined,
+  resetZoom: undefined as (() => void) | undefined,
   useUsage: vi.fn(),
   metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
+  setWindowSelection: vi.fn(),
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -18,7 +22,8 @@ vi.mock("react", async (importOriginal) => {
         ? { metric: testState.metric, windowDays: 30 }
         : typeof initial === "function"
           ? {
-              days: 1,
+              days: testState.customWindow ? 30 : 1,
+              custom: testState.customWindow,
               window: {
                 sinceDay: "2026-08-10",
                 untilDay: "2026-08-11",
@@ -33,7 +38,9 @@ vi.mock("react", async (importOriginal) => {
             : initial === "model"
               ? testState.breakdown
               : initial,
-      vi.fn(),
+      typeof initial === "function" && initial !== readUsagePagePreferences
+        ? testState.setWindowSelection
+        : vi.fn(),
     ]),
   };
 });
@@ -41,6 +48,7 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -58,7 +66,16 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 }));
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
-vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageProviderChart", () => ({
+  UsageProviderChart: (props: {
+    onZoomToDays?: (since: string, until: string) => void;
+    onResetZoom?: () => void;
+  }) => {
+    testState.zoomToDays = props.onZoomToDays;
+    testState.resetZoom = props.onResetZoom;
+    return <div />;
+  },
+}));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
@@ -140,8 +157,12 @@ const environments = [
 ];
 
 beforeEach(() => {
+  testState.customWindow = false;
+  testState.zoomToDays = undefined;
+  testState.resetZoom = undefined;
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.setWindowSelection.mockReset();
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -228,4 +249,27 @@ describe("UsagePage model breakdown", () => {
       "unpriced-model",
     ]);
   });
+});
+
+it("restores the original custom window after repeated chart zooms", () => {
+  testState.customWindow = true;
+  renderToStaticMarkup(<UsagePage />);
+  expect(testState.zoomToDays).toBeTypeOf("function");
+  testState.zoomToDays?.("2026-08-10", "2026-08-10");
+  testState.zoomToDays?.("2026-08-11", "2026-08-11");
+  testState.resetZoom?.();
+  expect(testState.setWindowSelection).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      custom: true,
+      window: expect.objectContaining({ sinceDay: "2026-08-10", untilDay: "2026-08-11" }),
+    }),
+  );
+});
+
+it("keeps an unzoomed custom range when the plot is double-clicked", () => {
+  testState.customWindow = true;
+  renderToStaticMarkup(<UsagePage />);
+  expect(testState.resetZoom).toBeTypeOf("function");
+  testState.resetZoom?.();
+  expect(testState.setWindowSelection).not.toHaveBeenCalled();
 });

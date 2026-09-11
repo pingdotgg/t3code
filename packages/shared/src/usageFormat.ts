@@ -14,6 +14,8 @@ const CURRENCY = new Intl.NumberFormat("en-US", {
 });
 
 const INTEGER = new Intl.NumberFormat("en-US");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_CUSTOM_WINDOW_DAYS = 90;
 
 export function formatUsd(value: number): string {
   return CURRENCY.format(value);
@@ -170,15 +172,8 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
-/**
- * The window the page requests, expressed in the viewer's own time zone so days
- * line up with what they actually experienced.
- */
-export function makeWindow(
-  days: number,
-  now = new Date(),
-  resolution: UsageResolution = "day",
-): UsageSummaryInput {
+/** The viewer's zone and a `YYYY-MM-DD` formatter for it; unknown zones fall back to UTC. */
+function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
   let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let format: Intl.DateTimeFormat;
   try {
@@ -198,6 +193,53 @@ export function makeWindow(
       day: "2-digit",
     });
   }
+  return { timeZone, format };
+}
+
+/** Strict `YYYY-MM-DD` calendar day, rejecting impossible dates such as `2026-02-30`. */
+function isUsageDay(value: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+  );
+}
+
+/** Orders two `YYYY-MM-DD` days, or returns null when either is not a real calendar day. */
+export function compareUsageDays(left: string, right: string): -1 | 0 | 1 | null {
+  if (!isUsageDay(left) || !isUsageDay(right)) return null;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * A daily window over an inclusive day range from the date inputs or a chart
+ * drag. Out-of-order bounds are swapped, and spans are capped at the largest
+ * preset (90 days) so day enumeration stays bounded.
+ */
+export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSummaryInput {
+  const comparison = compareUsageDays(sinceDay, untilDay);
+  if (comparison === null) throw new RangeError("Usage window bounds must be YYYY-MM-DD dates");
+  const [first, last] = comparison <= 0 ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  const maxLast = new Date(Date.parse(`${first}T00:00:00Z`) + (MAX_CUSTOM_WINDOW_DAYS - 1) * DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+  return {
+    sinceDay: UsageDay.make(first),
+    untilDay: UsageDay.make(last > maxLast ? maxLast : last),
+    timeZone: viewerDayFormat().timeZone,
+    resolution: "day",
+  };
+}
+
+/**
+ * The window the page requests, expressed in the viewer's own time zone so days
+ * line up with what they actually experienced.
+ */
+export function makeWindow(
+  days: number,
+  now = new Date(),
+  resolution: UsageResolution = "day",
+): UsageSummaryInput {
+  const { timeZone, format } = viewerDayFormat();
   const untilDay = format.format(now);
   if (resolution === "hour") {
     // Minute-aligned bounds keep labels readable while still representing an
