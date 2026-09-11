@@ -3307,7 +3307,7 @@ describe("ClaudeAdapterLive", () => {
       const firstTurnSettled = yield* Deferred.make<void>();
       const completedFiber = yield* adapter.streamEvents.pipe(
         Stream.tap((event) =>
-          event.type === "session.state.changed" && event.payload.reason === "api_retry:1/2"
+          event.type === "session.state.changed" && event.payload.reason === "session_state:idle"
             ? Deferred.succeed(firstTurnSettled, undefined).pipe(Effect.asVoid)
             : Effect.void,
         ),
@@ -3358,12 +3358,8 @@ describe("ClaudeAdapterLive", () => {
       } as unknown as SDKMessage);
       harness.query.emit({
         type: "system",
-        subtype: "api_retry",
-        attempt: 1,
-        max_retries: 2,
-        retry_delay_ms: 1,
-        error_status: 502,
-        error: { type: "api_error" },
+        subtype: "session_state_changed",
+        state: "idle",
         session_id: "sdk-session-consecutive-usage",
         uuid: "consecutive-usage-barrier",
       } as unknown as SDKMessage);
@@ -4330,7 +4326,7 @@ describe("ClaudeAdapterLive", () => {
           if (
             receipt &&
             event.type === "session.state.changed" &&
-            event.payload.reason === "api_retry:1/1"
+            event.payload.reason === "session_state:idle"
           ) {
             yield* Deferred.succeed(receipt, undefined);
           }
@@ -4338,15 +4334,12 @@ describe("ClaudeAdapterLive", () => {
       ).pipe(Effect.forkChild);
       const drainSdkMessages = Effect.gen(function* () {
         receipt = yield* Deferred.make<void>();
-        // The heartbeat follows queued SDK messages without adding a warning.
+        // Session-state notifications still report between turns, so this
+        // receipt drains queued SDK messages even after a turn's result.
         query.emit({
           type: "system",
-          subtype: "api_retry",
-          attempt: 1,
-          max_retries: 1,
-          retry_delay_ms: 0,
-          error_status: 429,
-          error: { type: "rate_limit_error" },
+          subtype: "session_state_changed",
+          state: "idle",
           session_id: "sdk-session-limit",
           uuid: "usage-limit-drain",
         } as unknown as SDKMessage);
@@ -4847,10 +4840,10 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
-      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => runtimeEvents.push(event)),
-      ).pipe(Effect.forkChild);
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "session.exited",
+      ).pipe(Stream.runCollect, Effect.forkChild);
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -4904,8 +4897,8 @@ describe("ClaudeAdapterLive", () => {
         session_id: "sdk-session-1",
         uuid: "post-turn-retry",
       } as unknown as SDKMessage);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      harness.query.finish();
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
 
       const heartbeats = runtimeEvents
         .filter((event) => event.type === "session.state.changed")
@@ -4920,7 +4913,6 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(heartbeats, ["waiting:status:compacting"]);
       const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
       assert.equal(turnCompleted?.type, "turn.completed");
-      runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
