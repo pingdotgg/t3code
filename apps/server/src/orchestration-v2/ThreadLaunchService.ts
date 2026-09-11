@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
@@ -208,7 +209,10 @@ const make = Effect.gen(function* () {
     const initialMessage = input.initialMessage;
     const generateBranchNameFor = (cwd: string, message: ThreadLaunchInitialMessage) =>
       Effect.gen(function* () {
-        const settings = yield* serverSettings.getSettings;
+        const settings = resolveProjectSettings(
+          yield* serverSettings.getSettings,
+          input.projectId,
+        ).settings;
         const modelSelection =
           settings.sourceControlWriterModelSelection === null
             ? settings.textGenerationModelSelection

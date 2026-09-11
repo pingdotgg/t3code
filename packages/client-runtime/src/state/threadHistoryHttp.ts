@@ -25,12 +25,13 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, `/api/orchestration/threads/${input.threadId}/history`),
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
     request: ({ client, headers }) =>
-      client.orchestration.threadHistoryPage({
+      client.threadHistoryPage({
         params: { threadId: input.threadId },
         query: { cursor: input.cursor },
         headers: withOrchestrationProtocolHeader(headers),

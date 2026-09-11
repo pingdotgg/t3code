@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -523,8 +524,7 @@ export const make = Effect.gen(function* () {
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
       const continueAfterRestart = yield* settings.getSettings.pipe(
-        Effect.map((value) => value.continueThreadsAfterServerUpdate),
-        Effect.orElseSucceed(() => false),
+        Effect.orElseSucceed(() => null),
       );
       const threadIds = yield* projections
         .getRecoveryThreadIds("runtime")
@@ -548,7 +548,11 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        const result = yield* reconcileProjection(projection, trigger, continueAfterRestart);
+        const enabled =
+          continueAfterRestart !== null &&
+          resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
+            .continueThreadsAfterServerUpdate;
+        const result = yield* reconcileProjection(projection, trigger, enabled);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
@@ -572,14 +576,16 @@ export const make = Effect.gen(function* () {
   // this commits; reconciliation reads fresh state after shutdown, and delivery
   // rejects any source run that actually completed.
   const prepareForShutdown = Effect.gen(function* () {
-    const enabled = yield* settings.getSettings.pipe(
-      Effect.map((value) => value.continueThreadsAfterServerUpdate),
-      Effect.orElseSucceed(() => false),
-    );
+    const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
       const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+      if (
+        !resolveProjectSettings(enabled, projection.thread.projectId).settings
+          .continueThreadsAfterServerUpdate
+      )
+        continue;
       const run = restartContinuationRun(projection);
       if (!run) continue;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
