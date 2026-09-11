@@ -93,6 +93,15 @@ export function createIncrementalMarkdownPlugin(): Plugin<[], Root> {
     const original = this.parser;
     if (!original) return;
     parser ??= createIncrementalMarkdownParser((source, file) => original(source, file) as Root);
-    this.parser = parser;
+    const parseDocument = parser;
+    // ReactMarkdown creates a processor per render. Its first parse is the
+    // document; transforms can then parse synthetic recovery text on that same
+    // processor. Those parses must not read or replace the document's cache.
+    let documentParsed = false;
+    this.parser = (source, file) => {
+      if (documentParsed) return original(source, file);
+      documentParsed = true;
+      return parseDocument(source, file);
+    };
   };
 }

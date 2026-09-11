@@ -12,14 +12,24 @@ import { remarkGithubAlerts } from "./markdown-github-alerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
 import { remarkNormalizeListItemIndentation } from "./markdown-list-indentation";
 
-function render(source: string, incremental?: Plugin<[], Root>) {
+function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: string[]) {
   let tree: Root | undefined;
+  const observeParsing: Plugin<[], Root> = function () {
+    const original = this.parser;
+    if (original) {
+      this.parser = (text, file) => {
+        parsedSources?.push(text);
+        return original(text, file);
+      };
+    }
+  };
   const capture: Plugin<[], Root> = () => (root) => {
     tree = structuredClone(root);
   };
   const html = renderToStaticMarkup(
     <ReactMarkdown
       remarkPlugins={[
+        observeParsing,
         capture,
         remarkGfm,
         remarkGithubAlerts,
@@ -38,6 +48,20 @@ function render(source: string, incremental?: Plugin<[], Root>) {
 const prefix = "# Before\n\n```ts\nconst values = [1, 2];\n```\n\n";
 
 describe("incremental Markdown parsing", () => {
+  it("keeps the document prefix cached when list recovery parses contain fences", () => {
+    const source =
+      prefix +
+      "-       first block\n\n        ```ts\n        const nested = 1;\n        ```\n\n        tail";
+    const incremental = createIncrementalMarkdownPlugin();
+    const parsedSources: string[] = [];
+    expect(render(source, incremental, parsedSources)).toEqual(render(source));
+    parsedSources.length = 0;
+    const next = source + " more";
+    expect(render(next, incremental, parsedSources)).toEqual(render(next));
+    expect(parsedSources).not.toContain(next);
+    expect(parsedSources.some((text) => text.startsWith("t3-markdown-inline-prefix:"))).toBe(true);
+  });
+
   it.each([
     "a\n===\n\nb\n---\n",
     "- first\n\n  continued\n\n- next\n",
