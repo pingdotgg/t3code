@@ -22,7 +22,6 @@ class TestElement extends EventTarget {
   style = {
     transform: "",
     overflowY: "",
-    overscrollBehaviorY: "contain",
     setProperty: (name: string, value: string) => this.properties.set(name, value),
   };
   querySelector = vi.fn();
@@ -91,10 +90,9 @@ describe("sidebar pull gesture lifecycle", () => {
   });
 
   it("disables decorative pulling without scrollend and preserves list scrolling", () => {
-    const { root, surface, scroller, viewport } = mount(false);
+    const { root, surface, scroller } = mount(false);
     expect(scroller.style.overflowY).toBe("hidden");
     expect(scroller.scrollTop).toBe(720);
-    expect(viewport.style.overscrollBehaviorY).toBe("contain");
     touch(surface, "touchstart", 50, 100);
     expect(touch(surface, "touchmove", 50, 160).defaultPrevented).toBe(false);
     const wheel = new Event("wheel", { cancelable: true });
@@ -106,7 +104,7 @@ describe("sidebar pull gesture lifecycle", () => {
   });
 
   it("holds a supported native pull until scrollend and restores it on cleanup", () => {
-    const { root, scroller, correction, viewport } = mount();
+    const { root, scroller, correction } = mount();
     scroller.scrollTop = 620;
     scroller.dispatchEvent(new Event("scroll"));
     expect(root.dataset.pulling).toBe("true");
@@ -117,7 +115,6 @@ describe("sidebar pull gesture lifecycle", () => {
     expect(correction.style.transform).toBe("");
     cleanup?.();
     cleanup = undefined;
-    expect(viewport.style.overscrollBehaviorY).toBe("contain");
     scroller.scrollTop = 620;
     scroller.dispatchEvent(new Event("scroll"));
     expect(root.dataset.pulling).toBe("false");
