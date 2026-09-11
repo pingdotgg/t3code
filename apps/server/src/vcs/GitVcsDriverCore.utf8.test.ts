@@ -54,28 +54,26 @@ const initRepoWithCommit = (cwd: string) =>
     yield* git(cwd, ["commit", "-m", "initial commit"]);
   });
 
-it.layer(TestLayer)("GitVcsDriver UTF-8 review diff truncation", (it) => {
-  it.effect("keeps truncated multibyte output valid and within the byte budget", () =>
-    Effect.gen(function* () {
-      const cwd = yield* makeTmpDir();
-      yield* initRepoWithCommit(cwd);
-      yield* writeTextFile(cwd, "01-large-untracked.txt", `${"é".repeat(600_000)}\n`);
+it.effect("keeps truncated multibyte output valid and within the byte budget", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    yield* writeTextFile(cwd, "01-large-untracked.txt", `${"é".repeat(600_000)}\n`);
 
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const preview = yield* driver.getReviewDiffPreview({ cwd });
-      const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const preview = yield* driver.getReviewDiffPreview({ cwd });
+    const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
 
-      assert.isDefined(source);
-      assert.isTrue(source.truncated);
-      assert.include(source.diff, "01-large-untracked.txt");
-      assert.notInclude(source.diff, "\uFFFD");
+    assert.isDefined(source);
+    assert.isTrue(source.truncated);
+    assert.include(source.diff, "01-large-untracked.txt");
+    assert.notInclude(source.diff, "\uFFFD");
 
-      const truncatedMarker = "\n\n[truncated]";
-      assert.isTrue(source.diff.endsWith(truncatedMarker));
-      assert.isAtMost(
-        new TextEncoder().encode(source.diff.slice(0, -truncatedMarker.length)).byteLength,
-        1024 * 1024,
-      );
-    }),
-  );
-});
+    const truncatedMarker = "\n\n[truncated]";
+    assert.isTrue(source.diff.endsWith(truncatedMarker));
+    assert.isAtMost(
+      new TextEncoder().encode(source.diff.slice(0, -truncatedMarker.length)).byteLength,
+      1024 * 1024,
+    );
+  }).pipe(Effect.provide(TestLayer)),
+);
