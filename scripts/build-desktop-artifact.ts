@@ -2756,6 +2756,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    // electron-builder 26 defaults to its legacy AppImage runtime, which
+    // dynamically loads the system libfuse2 library. Pin the static runtime so
+    // the AppImage also launches on distributions that only provide FUSE 3.
+    buildConfig.toolsets = { appimage: "1.0.3" };
     buildConfig.linux = {
       target: [target],
       executableName: "t3code",
