@@ -1815,11 +1815,13 @@ export default function ChatView(props: ChatViewProps) {
     : localDraftError;
   // A usage-limit failure is not a broken thread; the banner calms to a
   // reached-your-limit notice with the window countdown instead of the raw
-  // provider error.
-  const usageLimitResetsAt =
+  // provider error. Keyed to the persisted usage-limit error text so a
+  // fresh local error (failed interrupt, attachment rejection) still shows
+  // the real failure instead of hiding behind the limit notice.
+  const usageLimitError =
     activeServerThread?.session?.status === "error" &&
     activeServerThread.session.lastErrorKind === "usage_limit"
-      ? (activeServerThread.session.lastErrorResetsAt ?? null)
+      ? (activeServerThread.session.lastError ?? null)
       : null;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
@@ -1833,6 +1835,12 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? threadError
     : null;
+  const usageLimitResetsAt =
+    visibleThreadError !== null &&
+    usageLimitError !== null &&
+    visibleThreadError === usageLimitError
+      ? (activeServerThread?.session?.lastErrorResetsAt ?? null)
+      : null;
   // Dismissing only mutates the session-scoped mask set, which does not
   // trigger a render on its own; setThreadError(null) can also bail when the
   // local shadow is already empty and the banner is driven purely by

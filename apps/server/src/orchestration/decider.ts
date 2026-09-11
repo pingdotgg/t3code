@@ -1411,18 +1411,39 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      // Arm only when the window is actually in the future; the provider
-      // reactor disarms separately when the failure clears early.
-      if (!(Date.parse(command.resumeAt) > Date.parse(command.createdAt))) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `thread ${command.threadId} usage-resume time ${command.resumeAt} is not in the future`,
-        });
-      }
       if (thread.session?.status === "running" || thread.session?.status === "starting") {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `thread ${command.threadId} has an active turn and cannot arm a usage-limit resume`,
+        });
+      }
+      // Arming is only meaningful for a thread actually parked on a
+      // provider-reported usage-limit failure with a known window end, and
+      // the resume time is the persisted one — never a client-chosen stamp.
+      const session = thread.session;
+      if (
+        session?.status !== "error" ||
+        session.lastErrorKind !== "usage_limit" ||
+        session.lastErrorResetsAt == null
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no usage-limit failure to arm a resume for`,
+        });
+      }
+      const resetsAt = session.lastErrorResetsAt;
+      if (command.resumeAt !== resetsAt) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} usage-resume time ${command.resumeAt} does not match the failure window ${resetsAt}`,
+        });
+      }
+      // Judge the window against the server clock: command.createdAt rides
+      // along with the client and may be stale or skewed.
+      if (!(Date.parse(resetsAt) > Date.parse(yield* nowIso))) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} usage-limit window already ended at ${resetsAt}`,
         });
       }
       const alreadyArmed = thread.usageLimitResumeAt === command.resumeAt;

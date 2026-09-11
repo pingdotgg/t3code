@@ -164,12 +164,31 @@ interface ClaudeTurnState {
   rejectedRateLimitTypes: Set<string>;
   latestAssistantRateLimited: boolean;
   /**
-   * Latest credible reset time (epoch ms) among windows that blocked this turn.
-   * Max across windows: a turn parked on two windows can only resume once the
-   * later one resets. Reported on turn.completed so clients can offer a resume
-   * with a countdown instead of a bare failure.
+   * Credible reset time (epoch ms) per blocked window type. Reported on
+   * turn.completed as the max across the windows still rejected at that
+   * moment — a turn parked on two windows can only resume once the later one
+   * resets, and a window that recovers must stop contributing its stamp.
    */
-  usageLimitResetsAtMs: number | undefined;
+  usageLimitResetsAtMsByType: Map<string, number>;
+}
+
+/**
+ * The failure's reset time: the latest stamp among the windows still blocked
+ * when the turn ended. A window that recovered earlier must not extend the
+ * wait past the windows that actually parked the turn.
+ */
+function maxUsageLimitResetMs(turn: {
+  readonly rejectedRateLimitTypes: ReadonlySet<string>;
+  readonly usageLimitResetsAtMsByType: ReadonlyMap<string, number>;
+}): number | undefined {
+  let max: number | undefined;
+  for (const limitType of turn.rejectedRateLimitTypes) {
+    const resetsAtMs = turn.usageLimitResetsAtMsByType.get(limitType);
+    if (resetsAtMs !== undefined && (max === undefined || resetsAtMs > max)) {
+      max = resetsAtMs;
+    }
+  }
+  return max;
 }
 
 interface AssistantTextBlockState {
@@ -3188,7 +3207,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
-        usageLimitResetsAtMs: undefined,
+        usageLimitResetsAtMsByType: new Map(),
       };
       context.session = {
         ...context.session,
@@ -3289,7 +3308,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       turn && (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited)
         ? {
             reason: "usage_limit" as const,
-            resetsAtMs: turn.usageLimitResetsAtMs,
+            resetsAtMs: maxUsageLimitResetMs(turn),
           }
         : undefined;
     const failureHint =
@@ -3920,11 +3939,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           if (
             resetsAtMs !== undefined &&
             Number.isFinite(resetsAtMs) &&
-            resetsAtMs <= nowMs + CLAUDE_USAGE_LIMIT_MAX_WAIT_MS &&
-            (context.turnState.usageLimitResetsAtMs === undefined ||
-              resetsAtMs > context.turnState.usageLimitResetsAtMs)
+            resetsAtMs <= nowMs + CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
           ) {
-            context.turnState.usageLimitResetsAtMs = resetsAtMs;
+            context.turnState.usageLimitResetsAtMsByType.set(limitType, resetsAtMs);
           }
         } else if (
           rateLimitInfo.status === "allowed" ||
@@ -3932,6 +3949,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           overageAllowed
         ) {
           context.turnState.rejectedRateLimitTypes.delete(limitType);
+          // A recovered window stops contributing its stamp; the failure's
+          // reset time (if any) comes from the windows still blocked.
+          context.turnState.usageLimitResetsAtMsByType.delete(limitType);
         }
       }
       if (blocked && context.turnState !== undefined) {
@@ -4994,7 +5014,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
-        usageLimitResetsAtMs: undefined,
+        usageLimitResetsAtMsByType: new Map(),
       };
 
       const updatedAt = yield* nowIso;

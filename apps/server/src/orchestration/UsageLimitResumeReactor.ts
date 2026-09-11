@@ -54,24 +54,48 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       dueThreads,
       Effect.fn("UsageLimitResumeReactor.resumeThread")(function* (thread) {
+        // Re-read the arm: a cancel (or a user turn, which disarms in the
+        // decider) may land between the sweep's snapshot and this dispatch,
+        // and an armed-then-cancelled thread must not receive an
+        // unsolicited continuation.
+        const current = yield* snapshots.getThreadShellById(thread.id);
+        if (
+          Option.isNone(current) ||
+          current.value.usageLimitResumeAt === null ||
+          current.value.usageLimitResumeAt === undefined ||
+          current.value.usageLimitResumeAt !== thread.usageLimitResumeAt
+        ) {
+          return;
+        }
         // The turn.start itself disarms the resume in the decider; if the
         // provider rejects the turn again the failure re-arms a fresh window.
-        yield* engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make(
-            `server:usage-limit-resume:${thread.id}:${yield* crypto.randomUUIDv4}`,
-          ),
-          threadId: ThreadId.make(thread.id),
-          message: {
-            messageId: MessageId.make(yield* crypto.randomUUIDv4),
-            role: "user",
-            text: USAGE_LIMIT_RESUME_PROMPT,
-            attachments: [],
-          },
-          runtimeMode: thread.runtimeMode,
-          interactionMode: thread.interactionMode,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
+        yield* engine
+          .dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(
+              `server:usage-limit-resume:${thread.id}:${yield* crypto.randomUUIDv4}`,
+            ),
+            threadId: ThreadId.make(thread.id),
+            message: {
+              messageId: MessageId.make(yield* crypto.randomUUIDv4),
+              role: "user",
+              text: USAGE_LIMIT_RESUME_PROMPT,
+              attachments: [],
+            },
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.failCause(cause)
+                : Effect.logWarning("usage-limit resume failed for thread", {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  }),
+            ),
+          );
       }),
       { concurrency: 1, discard: true },
     );

@@ -1607,12 +1607,19 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
         // A usage-limit failure keeps the failure classified until the next
         // failure overwrites it or the session recovers to ready/interrupted.
+        // Any other fresh failure (a failed turn with a different reason, or
+        // the session entering error) replaces the classification — the raw
+        // error text changes, so the class must follow it.
+        const isNewFailure =
+          (event.type === "session.state.changed" && event.payload.state === "error") ||
+          (event.type === "turn.completed" &&
+            normalizeRuntimeTurnState(event.payload.state) === "failed");
         const lastErrorKind =
           event.type === "turn.completed" &&
           normalizeRuntimeTurnState(event.payload.state) === "failed" &&
           event.payload.failureReason === "usage_limit"
             ? ("usage_limit" as const)
-            : status === "ready" || status === "interrupted"
+            : isNewFailure || status === "ready" || status === "interrupted"
               ? undefined
               : (thread.session?.lastErrorKind ?? undefined);
         const lastErrorResetsAt =
@@ -1628,7 +1635,9 @@ const make = Effect.gen(function* () {
                   }),
                 )
               : null
-            : undefined;
+            : isNewFailure || status === "ready" || status === "interrupted"
+              ? null
+              : (thread.session?.lastErrorResetsAt ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {

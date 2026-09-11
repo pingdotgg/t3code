@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { HourglassIcon, TimerResetIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -18,11 +19,25 @@ export function usageLimitBannerItem(input: {
   readonly onCancelAutoResume: () => void;
 }): ComposerBannerStackItem {
   const { threadId, resetsAt, autoResumeArmed, onArmAutoResume, onCancelAutoResume } = input;
+  // Track whether the window has passed so the arm action can't fire once
+  // the server would reject it; the countdown flips its label at the same
+  // moment, and a re-render every 30s is enough to catch the flip.
+  const [windowPassed, setWindowPassed] = useState(() => Date.now() >= Date.parse(resetsAt));
+  useEffect(() => {
+    if (windowPassed) return;
+    const interval = window.setInterval(() => {
+      if (Date.now() >= Date.parse(resetsAt)) {
+        setWindowPassed(true);
+      }
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [windowPassed, resetsAt]);
+  const armed = autoResumeArmed && !windowPassed;
   return {
     id: `thread-usage-limit:${threadId}`,
     variant: "warning",
     priority: "urgent",
-    icon: autoResumeArmed ? <TimerResetIcon /> : <HourglassIcon />,
+    icon: armed ? <TimerResetIcon /> : <HourglassIcon />,
     title: (
       <span className="flex min-w-0 items-center gap-1">
         <span className="shrink-0">You've used all your plan usage</span>
@@ -31,16 +46,17 @@ export function usageLimitBannerItem(input: {
         </span>
       </span>
     ),
-    description: autoResumeArmed
+    description: armed
       ? "This thread restarts on its own when the window resets."
       : "Tokens return when the window resets. You can also keep working on another plan.",
     actions: (
       <Button
         size="xs"
         variant="ghost"
-        onClick={autoResumeArmed ? onCancelAutoResume : onArmAutoResume}
+        onClick={armed ? onCancelAutoResume : onArmAutoResume}
+        disabled={windowPassed && !autoResumeArmed}
       >
-        {autoResumeArmed ? "Auto-resume on — cancel" : "Continue when tokens return"}
+        {armed ? "Auto-resume on — cancel" : "Continue when tokens return"}
       </Button>
     ),
   };

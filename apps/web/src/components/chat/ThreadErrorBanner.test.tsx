@@ -71,9 +71,10 @@ describe("ThreadErrorBanner", () => {
   });
 
   it("calms a usage-limit failure to a countdown notice instead of the raw error", () => {
+    const error = "Your org has used all tokens under the current rate limit";
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner
-        error="Your org has used all tokens under the current rate limit"
+        error={error}
         usageLimitResetsAt="2099-01-01T12:00:00.000Z"
         onDismiss={() => {}}
       />,
@@ -81,7 +82,7 @@ describe("ThreadErrorBanner", () => {
 
     expect(markup).toContain("Reached your plan&#x27;s usage limit");
     expect(markup).toContain("resets in");
-    expect(markup).not.toContain("rate limit exceeded");
+    expect(markup).not.toContain(error);
     expect(markup).not.toContain('aria-label="Dismiss error"');
   });
 
