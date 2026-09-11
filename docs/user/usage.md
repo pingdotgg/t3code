@@ -10,6 +10,12 @@ On web and desktop, the date fields beside the presets accept a custom range of 
 Drag across a daily chart to zoom to that range, and double-click the chart to return to the range
 you had before zooming.
 
+Usage is attributed to the project whose folder a session ran in, including sessions started
+outside T3 Code. On web and desktop, the breakdown's **Project** view ranks projects by the selected
+metric, and the project picker narrows the whole page to one project. Work that ran outside every
+project is grouped under "Outside projects". Grok Build sessions record no folder, so they count in
+the overall totals but not in the project breakdown or filter.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 

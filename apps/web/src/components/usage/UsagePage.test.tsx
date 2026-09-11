@@ -1,4 +1,4 @@
-import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -9,7 +9,8 @@ const testState = vi.hoisted(() => ({
   resetZoom: undefined as (() => void) | undefined,
   useUsage: vi.fn(),
   metric: "cost" as "cost" | "tokens" | "limits",
-  breakdown: "time" as "model" | "time",
+  breakdown: "time" as "model" | "project" | "time",
+  projectSelection: undefined as { key: string | null; label: string } | undefined,
   setWindowSelection: vi.fn(),
 }));
 
@@ -37,7 +38,9 @@ vi.mock("react", async (importOriginal) => {
             ? testState.metric
             : initial === "model"
               ? testState.breakdown
-              : initial,
+              : initial === undefined
+                ? testState.projectSelection
+                : initial,
       typeof initial === "function" && initial !== readUsagePagePreferences
         ? testState.setWindowSelection
         : vi.fn(),
@@ -156,17 +159,42 @@ const environments = [
   },
 ];
 
+const projectTotals = Object.freeze([
+  {
+    projectId: ProjectId.make("project-expensive"),
+    projectKey: "id:project-expensive",
+    project: "Expensive Project",
+    costUsd: 9,
+    totalTokens: 200,
+    records: 2,
+    unpricedRecords: 0,
+    costShare: 9 / 20,
+  },
+  {
+    projectId: null,
+    projectKey: null,
+    project: null,
+    costUsd: 7,
+    totalTokens: 900,
+    records: 1,
+    unpricedRecords: 0,
+    costShare: 7 / 20,
+  },
+]);
+
 beforeEach(() => {
   testState.customWindow = false;
   testState.zoomToDays = undefined;
   testState.resetZoom = undefined;
   testState.metric = "cost";
   testState.breakdown = "time";
+  testState.projectSelection = undefined;
   testState.setWindowSelection.mockReset();
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
       models: modelTotals,
+      projects: projectTotals,
       hourly: [
         {
           day: "2026-08-10",
@@ -210,6 +238,105 @@ describe("UsagePage hourly breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/\$11\.00.*\$13\.00/);
+  });
+});
+
+describe("UsagePage project breakdown", () => {
+  it("offers a lone project filter when unknown attribution remains in the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 10,
+        totalTokens: 300,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="Project filter"/g)).toHaveLength(2);
+  });
+
+  it("hides a lone project filter when it would not narrow the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 9,
+        totalTokens: 200,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).not.toContain('aria-label="Project filter"');
+  });
+
+  it("ranks projects by cost and labels unattributed work", () => {
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Expensive Project.*Outside projects/);
+    expect(body).toContain("$9.00");
+    expect(body).toContain("$7.00");
+    expect(body).toContain("45.0%");
+    expect(body).toContain("35.0%");
+  });
+
+  it("ranks projects by tokens when the token metric is selected", () => {
+    testState.metric = "tokens";
+    testState.breakdown = "project";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toMatch(/Outside projects.*Expensive Project/);
+  });
+
+  it("shows only the selected project in the project breakdown", () => {
+    testState.breakdown = "project";
+    testState.projectSelection = { key: "id:project-expensive", label: "Expensive Project" };
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    expect(body).toContain("Expensive Project");
+    expect(body).not.toContain("Outside projects");
+    expect(body).toContain("100.0%");
+  });
+
+  it("distinguishes unattributed usage from an empty window", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 1 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No project attribution in this window.");
+    expect(markup).not.toContain("No activity in this window.");
+  });
+
+  it("keeps the empty-window message when there is no usage", () => {
+    testState.breakdown = "project";
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: { ...usage.merged, projects: [], records: 0 },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).toContain("No activity in this window.");
+    expect(markup).not.toContain("No project attribution in this window.");
   });
 });
 

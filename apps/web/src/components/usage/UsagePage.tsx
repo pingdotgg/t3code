@@ -18,6 +18,7 @@ import {
   isModelCostUnknown,
   type DailyTotals,
   type HourlyTotals,
+  type ProjectTotals,
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
@@ -111,14 +112,19 @@ export function UsagePage() {
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshingRef = useRef(false);
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
+  // The label travels with the key so it survives a window where the project has no usage.
+  const [selectedProject, setSelectedProject] = useState<ProjectSelection | undefined>(undefined);
+  const projectFilter = selectedProject?.key;
+  const selectedProjectLabel = selectedProject?.label ?? null;
   const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
   const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
+    projectFilter,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -151,8 +157,31 @@ export function UsagePage() {
         : merged.models,
     [breakdown, merged.models, metric],
   );
+  const breakdownProjects = useMemo(() => {
+    const scoped =
+      projectFilter === undefined
+        ? merged.projects
+        : merged.projects.filter((project) => project.projectKey === projectFilter);
+    return metric === "tokens"
+      ? scoped.toSorted(
+          (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+        )
+      : scoped;
+  }, [merged.projects, metric, projectFilter]);
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
+  // Session figures are per transcript directory; a project filter cannot
+  // split them, so they only render unfiltered.
+  const sessionsKnown = projectFilter === undefined;
+  const onlyProject = merged.projects.length === 1 ? merged.projects[0] : undefined;
+  // Unknown attribution remains in the overall totals but is absent from the
+  // project list. Keep a lone known project selectable when that distinction
+  // lets the user remove unknown usage from the page.
+  const showProjectPicker =
+    merged.projects.length > 1 ||
+    projectFilter !== undefined ||
+    (onlyProject !== undefined &&
+      (onlyProject.totalTokens !== merged.totalTokens || onlyProject.costUsd !== merged.costUsd));
 
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
@@ -261,6 +290,13 @@ export function UsagePage() {
         </span>
       ) : null}
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
+        {showProjectPicker ? (
+          <UsageProjectSelect
+            projects={merged.projects}
+            selection={selectedProject}
+            onChange={setSelectedProject}
+          />
+        ) : null}
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -312,6 +348,13 @@ export function UsagePage() {
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
+        {showProjectPicker ? (
+          <UsageProjectSelect
+            projects={merged.projects}
+            selection={selectedProject}
+            onChange={setSelectedProject}
+          />
+        ) : null}
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -415,13 +458,17 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric !== "cost"
-                          ? `${formatCount(merged.sessions)} sessions`
-                          : merged.costQuality.unpricedShare > 0
-                            ? `${formatCount(merged.sessions)} sessions · API estimate excludes ${formatPercent(
+                        {(() => {
+                          const scope = sessionsKnown
+                            ? `${formatCount(merged.sessions)} sessions`
+                            : (selectedProjectLabel ?? "Outside projects");
+                          if (metric !== "cost") return scope;
+                          return merged.costQuality.unpricedShare > 0
+                            ? `${scope} · API estimate excludes ${formatPercent(
                                 merged.costQuality.unpricedShare,
                               )} unpriced records`
-                            : `${formatCount(merged.sessions)} sessions · API estimate`}
+                            : `${scope} · API estimate`;
+                        })()}
                       </span>
                     </div>
 
@@ -449,9 +496,11 @@ export function UsagePage() {
                                 <span className="truncate">
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
-                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
-                                  {sessionLabel}
-                                </span>
+                                {sessionsKnown ? (
+                                  <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                    {sessionLabel}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                             <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
@@ -528,12 +577,15 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "time") setBreakdown(value);
+                        if (value === "model" || value === "project" || value === "time") {
+                          setBreakdown(value);
+                        }
                       }}
                     >
                       {(
                         [
                           { value: "model", label: "Model" },
+                          { value: "project", label: "Project" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -544,7 +596,72 @@ export function UsagePage() {
                     </ToggleGroup>
                   </div>
 
-                  {breakdown === "model" ? (
+                  {breakdown === "project" ? (
+                    <table className="w-full table-fixed text-sm">
+                      <colgroup>
+                        <col className="w-2/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                        <col className="w-1/5" />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                          <th className="py-2 font-normal">Project</th>
+                          <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Share</th>
+                          <th className="py-2 text-right font-normal">Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {breakdownProjects.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                              {merged.records === 0
+                                ? "No activity in this window."
+                                : "No project attribution in this window."}
+                            </td>
+                          </tr>
+                        ) : (
+                          breakdownProjects.map((project) => (
+                            <tr
+                              key={project.projectKey ?? "\0"}
+                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                            >
+                              <td className="py-2">
+                                {project.project === null ? (
+                                  <span className="text-muted-foreground">Outside projects</span>
+                                ) : (
+                                  <span className="block truncate text-foreground">
+                                    {project.project}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 text-right text-foreground tabular-nums">
+                                {isModelCostUnknown(project) ? (
+                                  <span className="text-muted-foreground">Unpriced</span>
+                                ) : (
+                                  formatUsd(project.costUsd)
+                                )}
+                              </td>
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {isModelCostUnknown(project)
+                                  ? "—"
+                                  : formatPercent(
+                                      // A filtered table holds only the selected project.
+                                      projectFilter === undefined
+                                        ? project.costShare
+                                        : Number(project.costUsd > 0),
+                                    )}
+                              </td>
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {formatTokens(project.totalTokens)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  ) : breakdown === "model" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
                         <col className="w-2/5" />
@@ -738,6 +855,71 @@ function UsageDateRangeInputs({
         {...untilInput}
       />
     </div>
+  );
+}
+
+/** A picked project filter: a namespaced project key, or null for work outside every project. */
+interface ProjectSelection {
+  readonly key: string | null;
+  readonly label: string;
+}
+
+/**
+ * Select values are plain strings, so "all" and "outside" get sentinels while
+ * attributed projects carry the namespaced stable key from the merge layer.
+ */
+const ALL_PROJECTS_VALUE = "all";
+const OUTSIDE_PROJECTS_VALUE = "outside";
+const PROJECT_VALUE_PREFIX = "p:";
+
+function projectSelectValue(key: string | null): string {
+  return key === null ? OUTSIDE_PROJECTS_VALUE : `${PROJECT_VALUE_PREFIX}${key}`;
+}
+
+/** Narrows the whole page to one project's buckets. */
+function UsageProjectSelect({
+  projects,
+  selection,
+  onChange,
+}: {
+  readonly projects: readonly ProjectTotals[];
+  readonly selection: ProjectSelection | undefined;
+  readonly onChange: (selection: ProjectSelection | undefined) => void;
+}) {
+  return (
+    <Select
+      value={selection === undefined ? ALL_PROJECTS_VALUE : projectSelectValue(selection.key)}
+      onValueChange={(value) => {
+        const project = projects.find((entry) => projectSelectValue(entry.projectKey) === value);
+        onChange(
+          project === undefined
+            ? undefined
+            : { key: project.projectKey, label: project.project ?? "Outside projects" },
+        );
+      }}
+    >
+      <SelectTrigger
+        aria-label="Project filter"
+        size="compact"
+        variant="ghost"
+        className="w-auto max-w-48 min-w-0"
+      >
+        <SelectValue>
+          <span className="truncate">{selection?.label ?? "All projects"}</span>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
+        {projects.map((project) => (
+          <SelectItem
+            key={projectSelectValue(project.projectKey)}
+            value={projectSelectValue(project.projectKey)}
+          >
+            {project.project ?? "Outside projects"}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
   );
 }
 
