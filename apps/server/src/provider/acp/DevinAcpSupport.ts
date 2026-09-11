@@ -25,7 +25,9 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpSessionModeState } from "./AcpRuntimeModel.ts";
+import { collectSessionConfigOptionValues } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { isDevinModelDimOptionId, resolveDevinModelUid } from "../devinModelCatalog.ts";
 
 type DevinAcpRuntimeDevinSettings = Pick<DevinSettings, "binaryPath">;
 
@@ -202,9 +204,33 @@ export function applyDevinAcpModelSelection<E>(input: {
   readonly mapError: (context: DevinAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
+    // Devin's session config surface is just `model` + `mode`. The picker
+    // groups variants into one row per family with effort/speed/context
+    // options, so resolve those dims back to a concrete advertised uid
+    // before applying the model.
+    const configOptions = yield* input.runtime.getConfigOptions;
+    const modelOption =
+      configOptions.find((candidate) => candidate.category === "model") ??
+      configOptions.find((candidate) => candidate.id === "model");
+    const advertisedModelValues = modelOption ? collectSessionConfigOptionValues(modelOption) : [];
+
     const model = input.model?.trim();
     if (model) {
-      yield* input.runtime.setModel(model).pipe(
+      const resolvedModel =
+        advertisedModelValues.length > 0
+          ? resolveDevinModelUid({
+              model,
+              selections: input.selections,
+              advertisedValues: advertisedModelValues,
+              currentValue:
+                modelOption && "currentValue" in modelOption
+                  ? typeof modelOption.currentValue === "string"
+                    ? modelOption.currentValue
+                    : undefined
+                  : undefined,
+            })
+          : model;
+      yield* input.runtime.setModel(resolvedModel).pipe(
         Effect.mapError((cause) =>
           input.mapError({
             cause,
@@ -214,11 +240,11 @@ export function applyDevinAcpModelSelection<E>(input: {
       );
     }
 
-    // Devin's session config surface is just `model` + `mode`, but apply any
-    // selection that happens to match an advertised config option so future
-    // Devin options light up without an adapter change.
-    const configOptions = yield* input.runtime.getConfigOptions;
+    // Model-dim selections are already folded into the uid; apply any other
+    // selection that matches an advertised config option so future Devin
+    // options light up without an adapter change.
     for (const selection of input.selections ?? []) {
+      if (isDevinModelDimOptionId(selection.id)) continue;
       const option = configOptions.find((candidate) => candidate.id === selection.id);
       if (!option || option.id === "model") continue;
       yield* input.runtime

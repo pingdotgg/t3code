@@ -6,6 +6,7 @@ const SAMPLE_MODELS_JSON = {
   families: [
     {
       family_uid: "swe-2",
+      family_label: "SWE-2",
       slug: "swe-2",
       aliases: ["swe"],
       variants: [
@@ -16,34 +17,42 @@ const SAMPLE_MODELS_JSON = {
     },
     {
       family_uid: "devin-core",
+      family_label: "Adaptive",
       slug: "devin-core",
-      aliases: ["adaptive"],
       variants: [{ model_uid: "adaptive", label: "Adaptive" }],
     },
   ],
 };
 
 describe("devinModelsFromCatalog", () => {
-  it("flattens families into ServerProviderModel entries", () => {
+  it("groups effort variants into one row per family", () => {
     const models = devinModelsFromCatalog(SAMPLE_MODELS_JSON);
-    expect(models.map((model) => model.slug)).toEqual([
-      "swe-2-high",
-      "swe-2-medium",
-      "swe-2-max",
-      "adaptive",
-    ]);
+    expect(models.map((model) => model.slug)).toEqual(["swe-2", "adaptive"]);
 
-    const sweHigh = models[0]!;
-    expect(sweHigh).toMatchObject({
-      name: "SWE-2 High",
-      aliases: ["swe"],
+    const swe2 = models[0]!;
+    expect(swe2).toMatchObject({
+      name: "SWE-2",
       badge: "new",
       isCustom: false,
       isDefault: false,
     });
     // Family slug must not become `subProvider` — the picker strips that
     // prefix from the label, leaving bare effort names like "High".
-    expect(sweHigh.subProvider).toBeUndefined();
+    expect(swe2.subProvider).toBeUndefined();
+    // Variant uids stay reachable as aliases so stored flat selections like
+    // `swe-2-high` still resolve to the grouped row.
+    expect(swe2.aliases).toEqual(["swe", "swe-2-high", "swe-2-medium", "swe-2-max"]);
+
+    const effortDescriptor = swe2.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.id === "effort",
+    );
+    expect(effortDescriptor).toMatchObject({
+      type: "select",
+      label: "Reasoning",
+    });
+    expect(
+      effortDescriptor?.type === "select" ? effortDescriptor.options.map((o) => o.id) : [],
+    ).toEqual(["medium", "high", "max"]);
   });
 
   it("marks adaptive as the default model", () => {

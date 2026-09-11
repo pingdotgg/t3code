@@ -76,23 +76,9 @@ function buildDevinCliCommandMissingMessage(binaryPath: string): string {
 
 // ── `devin models list --format json` ────────────────────────────────────
 
-interface DevinModelVariant {
-  readonly model_uid: string;
-  readonly label: string;
-  readonly is_new?: boolean;
-  readonly is_beta?: boolean;
-}
+import { devinModelsFromCatalog, type DevinModelsListJson } from "../devinModelCatalog.ts";
 
-interface DevinModelFamily {
-  readonly family_uid?: string;
-  readonly slug?: string;
-  readonly aliases?: ReadonlyArray<string>;
-  readonly variants?: ReadonlyArray<DevinModelVariant>;
-}
-
-interface DevinModelsListJson {
-  readonly families?: ReadonlyArray<DevinModelFamily>;
-}
+export { devinModelsFromCatalog };
 
 function parseDevinModelsJson(raw: string): DevinModelsListJson | undefined {
   const trimmed = raw.trim();
@@ -110,56 +96,45 @@ function parseDevinModelsJson(raw: string): DevinModelsListJson | undefined {
   }
 }
 
-/** `adaptive` is Devin's recommended auto-router and the picker default. */
-const DEVIN_DEFAULT_MODEL_SLUG = "adaptive";
-
-export function devinModelsFromCatalog(
-  parsed: DevinModelsListJson | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  const models: ServerProviderModel[] = [];
-  for (const family of parsed?.families ?? []) {
-    const familyAliases = (family.aliases ?? []).filter(
-      (alias): alias is string => typeof alias === "string" && alias.trim().length > 0,
-    );
-    for (const variant of family.variants ?? []) {
-      const slug = typeof variant.model_uid === "string" ? variant.model_uid.trim() : "";
-      if (!slug) continue;
-      // Variant labels are already fully qualified ("Inkling High",
-      // "SWE-2 Max"), so no `subProvider` — the picker strips a leading
-      // subProvider from the name, which would leave only the effort
-      // suffix ("High") as the row title.
-      const name =
-        typeof variant.label === "string" && variant.label.trim() ? variant.label.trim() : slug;
-      models.push({
-        slug,
-        name,
-        ...(familyAliases.length > 0 ? { aliases: [...familyAliases] } : {}),
-        ...(variant.is_new === true ? { badge: "new" as const } : {}),
-        isCustom: false,
-        isDefault: slug === DEVIN_DEFAULT_MODEL_SLUG,
-        capabilities: null,
-      });
-    }
-  }
-  return models;
-}
-
-/** Static fallback so the picker is never empty when discovery fails. */
-const DEVIN_FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = [
-  "adaptive",
-  "swe-2-high",
-  "swe-2-medium",
-  "swe-2-max",
-  "swe-1-7",
-  "swe-1-7-lightning",
-  "swe-1-6-fast",
-].map((slug) => ({
-  slug,
-  name: slug,
-  isCustom: false,
-  isDefault: slug === DEVIN_DEFAULT_MODEL_SLUG,
-  capabilities: null,
-}));
+/**
+ * Static fallback so the picker is never empty when discovery fails. Uses
+ * the same grouped shape as live discovery: one row per base with effort
+ * descriptors.
+ */
+const DEVIN_FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = devinModelsFromCatalog({
+  families: [
+    {
+      family_uid: "adaptive",
+      family_label: "Adaptive",
+      variants: [{ model_uid: "adaptive" }],
+    },
+    {
+      family_uid: "swe-2",
+      family_label: "SWE-2",
+      aliases: ["swe"],
+      variants: [
+        { model_uid: "swe-2-high" },
+        { model_uid: "swe-2-medium" },
+        { model_uid: "swe-2-max" },
+      ],
+    },
+    {
+      family_uid: "swe-1.7",
+      family_label: "SWE-1.7",
+      variants: [{ model_uid: "swe-1-7" }, { model_uid: "swe-1-7-medium" }],
+    },
+    {
+      family_uid: "swe-1.7-lightning",
+      family_label: "SWE-1.7 Lightning",
+      variants: [{ model_uid: "swe-1-7-lightning" }, { model_uid: "swe-1-7-lightning-medium" }],
+    },
+    {
+      family_uid: "swe-1.6-fast",
+      family_label: "SWE-1.6 Fast",
+      variants: [{ model_uid: "swe-1-6-fast" }],
+    },
+  ],
+});
 
 function getDevinFallbackModels(devinSettings: DevinSettings): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(
