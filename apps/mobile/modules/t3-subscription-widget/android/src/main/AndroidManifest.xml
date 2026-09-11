@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <receiver android:name="expo.modules.t3subscriptionwidget.SubscriptionUsageWidget" android:exported="false" android:label="@string/t3_subscription_widget_name">
+      <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+      <meta-data android:name="android.appwidget.provider" android:resource="@xml/t3_subscription_widget_info" />
+    </receiver>
+  </application>
+</manifest>
