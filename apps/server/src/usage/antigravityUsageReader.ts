@@ -238,6 +238,8 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
               (source === "step" ? generationModels.get(idx) : "") ||
               modelName("", numberAt(usage, 1)) ||
               "antigravity-unknown",
+            // Project attribution reads only Claude and Codex working directories.
+            cwd: "",
             totals,
             reportedCostUsd: null,
             fast: false,

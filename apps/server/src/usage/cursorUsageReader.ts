@@ -233,6 +233,8 @@ export async function readCursorAccountUsage(
           timestampMs,
           model: event.model,
           sessionId,
+          // Account usage events record no working directory.
+          cwd: "",
           totals,
           reportedCostUsd,
           fast: false,
