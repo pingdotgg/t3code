@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -33,6 +34,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
+const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
@@ -119,12 +121,11 @@ function errorMessage(error: unknown): string {
 
 const decodeRow = (row: ScheduledTaskRow) =>
   Effect.gen(function* () {
-    const id = ScheduledTaskId.make(row.task_id);
     const schedule = yield* decodeScheduleJson(row.schedule_json);
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
     return yield* decodeTask({
-      id,
+      id: row.task_id,
       title: row.title,
       prompt: row.prompt,
       enabled: row.enabled === 1,
@@ -146,12 +147,13 @@ const decodeRow = (row: ScheduledTaskRow) =>
       runCount: row.run_count,
     });
   }).pipe(
-    Effect.mapError((cause) =>
-      taskError("Could not decode schedule task row.", {
-        taskId: ScheduledTaskId.make(row.task_id),
+    Effect.mapError((cause) => {
+      const decodedId = decodeTaskId(row.task_id);
+      return taskError("Could not decode schedule task row.", {
+        ...(Option.isSome(decodedId) ? { taskId: decodedId.value } : {}),
         cause,
-      }),
-    ),
+      });
+    }),
   );
 
 /** Select poll candidates before decoding their schedules or other JSON payloads. */
