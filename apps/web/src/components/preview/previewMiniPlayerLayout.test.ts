@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
+  type PreviewMiniPlayerObstacles,
   resizePreviewMiniPlayer,
   resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
@@ -13,6 +14,11 @@ import {
 
 const container = { width: 1_000, height: 700 };
 const source = { width: 1_600, height: 1_000 };
+const gap = PREVIEW_MINI_PLAYER_EDGE_GAP;
+// A centered composer stack with margins on each side.
+const composer = { left: 100, right: 900, height: 150 };
+const obstacles: PreviewMiniPlayerObstacles = { composer };
+const tallComposer: PreviewMiniPlayerObstacles = { composer: { ...composer, height: 300 } };
 
 describe("resolvePreviewMiniPlayerSourceSize", () => {
   it("uses the device viewport scaled by zoom", () => {
@@ -106,7 +112,7 @@ describe("resolvePreviewMiniPlayerFrame", () => {
       position: { x: 100, y: 80 },
       source,
       container,
-      bottomInset: 300,
+      obstacles: tallComposer,
     });
     expect(frame).toEqual({ x: 100, y: PREVIEW_MINI_PLAYER_EDGE_GAP, width: 602, height: 376 });
   });
@@ -194,9 +200,21 @@ describe("resizePreviewMiniPlayer", () => {
         delta: { x: 300, y: 0 },
         source,
         container,
-        bottomInset: 0,
       }),
     ).toEqual({ x: 12, y: 300, width: 620, height: 388 });
+  });
+
+  it("stops growing downward at the composer beneath the player's columns", () => {
+    expect(
+      resizePreviewMiniPlayer({
+        start: { x: 300, y: 100, width: 320, height: 200 },
+        direction: "south",
+        delta: { x: 0, y: 400 },
+        source,
+        container,
+        obstacles: tallComposer,
+      }),
+    ).toEqual({ x: 300, y: 100, width: 461, height: 288 });
   });
 
   it("respects the minimum size", () => {
@@ -213,20 +231,53 @@ describe("resizePreviewMiniPlayer", () => {
 });
 
 describe("clampPreviewMiniPlayerPosition", () => {
+  const player = { width: 360, height: 240 };
+
   it("keeps a dragged player within the chat viewport", () => {
-    expect(
-      clampPreviewMiniPlayerPosition({ x: 900, y: -40 }, container, { width: 360, height: 240 }),
-    ).toEqual({ x: 628, y: PREVIEW_MINI_PLAYER_EDGE_GAP });
+    expect(clampPreviewMiniPlayerPosition({ x: 900, y: -40 }, container, player)).toEqual({
+      x: 628,
+      y: gap,
+    });
   });
 
-  it("keeps the player above a growing composer inset", () => {
+  it("keeps the player above a growing composer", () => {
+    expect(
+      clampPreviewMiniPlayerPosition({ x: 500, y: 448 }, container, player, {
+        composer: { ...composer, height: 160 },
+      }),
+    ).toEqual({ x: 500, y: 288 });
+  });
+
+  it("lets the player drop into the margin beside the composer", () => {
     expect(
       clampPreviewMiniPlayerPosition(
-        { x: 500, y: 448 },
+        { x: 20, y: 500 },
         container,
-        { width: 360, height: 240 },
-        160,
+        { width: 60, height: 150 },
+        obstacles,
       ),
-    ).toEqual({ x: 500, y: 288 });
+    ).toEqual({ x: 20, y: 500 });
+  });
+
+  it("slides sideways past the composer when that is the shorter move", () => {
+    expect(
+      clampPreviewMiniPlayerPosition(
+        { x: 850, y: 500 },
+        container,
+        { width: 60, height: 150 },
+        obstacles,
+      ),
+    ).toEqual({ x: composer.right + gap, y: 500 });
+  });
+
+  it("sits above the composer when it is too wide for either margin", () => {
+    expect(
+      clampPreviewMiniPlayerPosition(
+        { x: 100, y: 100 },
+        container,
+        { width: 976, height: 500 },
+        obstacles,
+      ),
+    ).toEqual({ x: gap, y: 700 - 150 - gap - 500 });
   });
 });

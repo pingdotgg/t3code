@@ -77,12 +77,48 @@ export function resolveDeviceMiniPlayerCornerRadius(
   );
 }
 
+interface HorizontalSpan {
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * The composer stack docked to the bottom edge, in container coordinates. It
+ * only reserves the columns it covers, so the margins beside it stay open all
+ * the way down.
+ */
+export interface PreviewMiniPlayerObstacles {
+  readonly composer: (HorizontalSpan & { readonly height: number }) | null;
+}
+
+export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = { composer: null };
+
+const spanOf = (x: number, width: number): HorizontalSpan => ({ left: x, right: x + width });
+
+const spansOverlap = (a: HorizontalSpan, b: HorizontalSpan) => a.left < b.right && a.right > b.left;
+
+/** The lowest row (before the edge gap) open to a player covering these columns. */
+function floorFor(
+  span: HorizontalSpan,
+  container: PreviewMiniPlayerSize,
+  obstacles: PreviewMiniPlayerObstacles,
+): number {
+  const { composer } = obstacles;
+  return composer && spansOverlap(span, composer)
+    ? container.height - Math.max(0, composer.height)
+    : container.height;
+}
+
+// The largest box guaranteed to fit somewhere: full width, and the rows above the composer.
 const availableArea = (
   container: PreviewMiniPlayerSize,
-  bottomInset: number,
+  obstacles: PreviewMiniPlayerObstacles,
 ): PreviewMiniPlayerSize => ({
   width: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
-  height: container.height - Math.max(0, bottomInset) - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
+  height:
+    container.height -
+    Math.max(0, obstacles.composer?.height ?? 0) -
+    PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
 
 /**
@@ -117,25 +153,68 @@ function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize): number {
   );
 }
 
+const clampToContainer = (
+  position: PreviewMiniPlayerPosition,
+  container: PreviewMiniPlayerSize,
+  player: PreviewMiniPlayerSize,
+  bottom = container.height,
+): PreviewMiniPlayerPosition => ({
+  x: Math.min(
+    Math.max(position.x, PREVIEW_MINI_PLAYER_EDGE_GAP),
+    Math.max(
+      PREVIEW_MINI_PLAYER_EDGE_GAP,
+      container.width - player.width - PREVIEW_MINI_PLAYER_EDGE_GAP,
+    ),
+  ),
+  y: Math.min(
+    Math.max(position.y, PREVIEW_MINI_PLAYER_EDGE_GAP),
+    Math.max(PREVIEW_MINI_PLAYER_EDGE_GAP, bottom - player.height - PREVIEW_MINI_PLAYER_EDGE_GAP),
+  ),
+});
+
+const overlapsObstacle = (
+  position: PreviewMiniPlayerPosition,
+  player: PreviewMiniPlayerSize,
+  container: PreviewMiniPlayerSize,
+  obstacles: PreviewMiniPlayerObstacles,
+): boolean =>
+  position.y + player.height > floorFor(spanOf(position.x, player.width), container, obstacles);
+
+/**
+ * Keeps the player inside the container and off the composer. An overlapping
+ * player is pushed out along whichever side needs the smaller move, so a drag
+ * slides along the composer into the margin beside it instead of stopping at
+ * its top edge; when no side leaves it fully clear it sits above the composer.
+ */
 export function clampPreviewMiniPlayerPosition(
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,
   player: PreviewMiniPlayerSize,
-  bottomInset = 0,
+  obstacles: PreviewMiniPlayerObstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
 ): PreviewMiniPlayerPosition {
-  const reservedBottomSpace = Math.max(0, bottomInset);
-  const maxX = Math.max(
-    PREVIEW_MINI_PLAYER_EDGE_GAP,
-    container.width - player.width - PREVIEW_MINI_PLAYER_EDGE_GAP,
-  );
-  const maxY = Math.max(
-    PREVIEW_MINI_PLAYER_EDGE_GAP,
-    container.height - reservedBottomSpace - player.height - PREVIEW_MINI_PLAYER_EDGE_GAP,
-  );
-  return {
-    x: Math.min(Math.max(position.x, PREVIEW_MINI_PLAYER_EDGE_GAP), maxX),
-    y: Math.min(Math.max(position.y, PREVIEW_MINI_PLAYER_EDGE_GAP), maxY),
-  };
+  const inside = clampToContainer(position, container, player);
+  const { composer } = obstacles;
+  if (!composer || !overlapsObstacle(inside, player, container, obstacles)) return inside;
+  const gap = PREVIEW_MINI_PLAYER_EDGE_GAP;
+  const above = { x: inside.x, y: container.height - composer.height - gap - player.height };
+  const beside = [
+    { x: composer.left - gap - player.width, y: inside.y },
+    { x: composer.right + gap, y: inside.y },
+  ];
+  let best = clampToContainer(above, container, player);
+  let bestDistance = Math.abs(best.y - inside.y);
+  for (const candidate of beside) {
+    const clamped = clampToContainer(candidate, container, player);
+    if (clamped.x !== candidate.x || overlapsObstacle(candidate, player, container, obstacles)) {
+      continue;
+    }
+    const distance = Math.abs(candidate.x - inside.x);
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /**
@@ -149,19 +228,25 @@ export function resolvePreviewMiniPlayerFrame(input: {
   readonly position: PreviewMiniPlayerPosition | null;
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
-  readonly bottomInset?: number;
+  readonly obstacles?: PreviewMiniPlayerObstacles;
 }): PreviewMiniPlayerFrame {
-  const { width, position, source, container, bottomInset = 0 } = input;
+  const {
+    width,
+    position,
+    source,
+    container,
+    obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
+  } = input;
   const size = fitPreviewMiniPlayerWidth(
     width ?? defaultPreviewMiniPlayerWidth(source),
     source,
-    availableArea(container, bottomInset),
+    availableArea(container, obstacles),
   );
   const anchored = position ?? {
     x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
     y: PREVIEW_MINI_PLAYER_EDGE_GAP,
   };
-  return { ...clampPreviewMiniPlayerPosition(anchored, container, size, bottomInset), ...size };
+  return { ...clampPreviewMiniPlayerPosition(anchored, container, size, obstacles), ...size };
 }
 
 /**
@@ -177,16 +262,26 @@ export function resizePreviewMiniPlayer(input: {
   readonly delta: PreviewMiniPlayerPosition;
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
-  readonly bottomInset?: number;
+  readonly obstacles?: PreviewMiniPlayerObstacles;
 }): PreviewMiniPlayerFrame {
-  const { start, direction, delta, source, container, bottomInset = 0 } = input;
+  const {
+    start,
+    direction,
+    delta,
+    source,
+    container,
+    obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
+  } = input;
   const east = direction.includes("east");
   const west = direction.includes("west");
   const north = direction.includes("north");
   const south = direction.includes("south");
-  const available = availableArea(container, bottomInset);
+  const available = availableArea(container, obstacles);
   const right = start.x + start.width;
   const bottom = start.y + start.height;
+  // Growth stops where the player's current columns meet the composer. A wider
+  // player may reach new columns; the clamp below slides it clear of those.
+  const floor = floorFor(spanOf(start.x, start.width), container, obstacles);
   const max = {
     width: west
       ? right - PREVIEW_MINI_PLAYER_EDGE_GAP
@@ -196,7 +291,7 @@ export function resizePreviewMiniPlayer(input: {
     height: north
       ? bottom - PREVIEW_MINI_PLAYER_EDGE_GAP
       : south
-        ? container.height - Math.max(0, bottomInset) - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
+        ? floor - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
         : available.height,
   };
   const desiredWidth = start.width + (east ? delta.x : west ? -delta.x : 0);
@@ -219,7 +314,7 @@ export function resizePreviewMiniPlayer(input: {
     { x: west ? right - size.width : start.x, y: north ? bottom - size.height : start.y },
     container,
     size,
-    bottomInset,
+    obstacles,
   );
   return { ...position, ...size };
 }
