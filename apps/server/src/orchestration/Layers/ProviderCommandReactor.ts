@@ -1,3 +1,4 @@
+import { evaluateTurnStartLimits } from "../UsageLimitPolicy.ts";
 import {
   type ChatAttachment,
   CommandId,
@@ -1305,6 +1306,14 @@ const make = Effect.gen(function* () {
       return;
     }
     const { message, hasOtherUserMessages } = turnStart.value;
+    const isCompactCommand = isCompactCommandMessage(message);
+    // Compaction is the only way an over-limit thread can lower its context, so
+    // /compact and the messages queued behind it bypass the usage-limit gate below.
+    const bypassesContextLimit =
+      isCompactCommand ||
+      resumed !== undefined ||
+      compactingThreadIds.has(event.payload.threadId) ||
+      turnsAfterCompaction.has(event.payload.threadId);
     const appendTurnStartFailure = (summary: string, detail: string) =>
       appendProviderFailureActivity({
         threadId: event.payload.threadId,
@@ -1396,13 +1405,39 @@ const make = Effect.gen(function* () {
       });
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
+    const contextAdmissionAllowed = yield* Effect.gen(function* () {
+      if (authCommandHandled || bypassesContextLimit) return true;
+      const usageLimitSettings = yield* serverSettingsService.getSettings;
+      const latestThread = yield* projectionSnapshotQuery
+        .getThreadDetailById(event.payload.threadId, {
+          activityKinds: ["context-window.updated", "context-compaction"],
+          includeMessages: false,
+        })
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (!latestThread) {
+        yield* appendTurnStartFailure(
+          "Provider turn start failed",
+          "The thread disappeared before its provider turn could start.",
+        );
+        return false;
+      }
+      const violation = evaluateTurnStartLimits({
+        contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
+        activities: latestThread.activities,
+      });
+      if (violation) {
+        yield* appendTurnStartFailure("T3 usage limit stopped provider work", violation.detail);
+        return false;
+      }
+      return true;
+    }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(false))));
+    if (!contextAdmissionAllowed) return;
     if (authCommandHandled) {
       return;
     }
 
     yield* ensureThreadWorktree(thread);
 
-    const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {
       const project = yield* resolveProject(thread.projectId);
       const generationCwd =

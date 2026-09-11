@@ -64,6 +64,14 @@ anything. The command is offered only for providers that appear under **Usage �
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Limit thread context
+
+Long threads resend their whole conversation on every turn. T3 Code stops new turns in a thread
+once its latest reported context reaches the **Thread token limit**, 250,000 tokens by default.
+Change it in **Settings → General**; the limit belongs to the environment, so it applies to every
+provider and client connected to it. When a thread reaches the limit, send `/compact` to shrink
+its context, or start a new thread.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
