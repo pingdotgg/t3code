@@ -35,10 +35,15 @@ import {
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
-import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+import AgentActivity, {
+  type AgentActivityProps,
+  type AgentActivityRowProps,
+} from "../../widgets/AgentActivity";
+import AgentActivityWidget from "../../widgets/AgentActivityWidget";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+import { mergeWidgetActivities } from "./widgetSnapshot";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
 
@@ -120,6 +125,39 @@ let activeLiveActivityRegistrationRetry: ReturnType<typeof setTimeout> | null = 
 let relayTokenProvider: (() => Promise<string | null>) | null = null;
 let relayTokenProviderIdentity: string | null = null;
 let deviceRegistrationGeneration = 0;
+let widgetRefreshGeneration = 0;
+
+let relayWidgetSnapshot: Partial<AgentActivityProps> = {};
+let connectedWidgetRows: ReadonlyMap<string, ReadonlyArray<AgentActivityRowProps>> = new Map();
+let publishedWidgetIdentity: string | null = null;
+
+export function setConnectedAgentActivityWidgetActivities(
+  activities: ReadonlyMap<string, ReadonlyArray<AgentActivityRowProps>>,
+): void {
+  connectedWidgetRows = activities;
+  publishMergedAgentActivityWidget();
+}
+
+function publishAgentActivityWidget(props: Partial<AgentActivityProps>): void {
+  relayWidgetSnapshot = props;
+  publishMergedAgentActivityWidget();
+}
+
+function publishMergedAgentActivityWidget(): void {
+  if (!canRegisterRemoteLiveActivities()) return;
+  const props = mergeWidgetActivities(relayWidgetSnapshot, connectedWidgetRows);
+  // Token streaming changes timestamps without changing what the widget shows.
+  const identity = JSON.stringify(props, (key, value: unknown) =>
+    key === "updatedAt" ? undefined : value,
+  );
+  if (identity === publishedWidgetIdentity) return;
+  try {
+    AgentActivityWidget.updateSnapshot(props);
+    publishedWidgetIdentity = identity;
+  } catch (error) {
+    logRegistrationError("home-screen widget publication failed", error);
+  }
+}
 let activeDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
   operation: Promise<void>;
@@ -184,6 +222,8 @@ export function setAgentAwarenessRelayTokenProvider(
     }
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
+    widgetRefreshGeneration++;
+    publishAgentActivityWidget({});
     activeDeviceRegistration = null;
     pendingDeviceRegistration = null;
     registeredActivityPushTokens.clear();
@@ -235,6 +275,7 @@ export function setAgentAwarenessRelayTokenProvider(
 // the persisted registration would be wrong — the relay still holds a valid
 // registration and the next mount reuses it.
 export function releaseAgentAwarenessRelayTokenProvider(): void {
+  widgetRefreshGeneration++;
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
@@ -910,6 +951,9 @@ export function updateAgentAwarenessRegistrationPreferences(
 }
 
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
+  relayWidgetSnapshot = {};
+  connectedWidgetRows = new Map();
+  publishedWidgetIdentity = null;
   environmentConnections.clear();
   pushTokenSubscription?.remove();
   pushTokenSubscription = null;
@@ -922,6 +966,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
+  widgetRefreshGeneration++;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
@@ -1068,6 +1113,8 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       return;
     }
 
+    const accountGeneration = deviceRegistrationGeneration;
+    const widgetGeneration = ++widgetRefreshGeneration;
     let activities = yield* Effect.try({
       try: () => AgentActivity.getInstances(),
       catch: (cause) =>
@@ -1102,19 +1149,27 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
     // asked what the card would show first, so an idle open never creates an
     // empty lock-screen card, and an armed card is born with the real
     // aggregate instead of a placeholder.
+    const preferences =
+      activities.length === 0
+        ? yield* Effect.tryPromise({
+            try: () => loadPreferences(),
+            catch: (cause) =>
+              new AgentAwarenessOperationError({
+                operation: "load-live-activity-prime-preferences",
+                cause,
+              }),
+          }).pipe(Effect.orElseSucceed(() => null))
+        : null;
+    if (accountGeneration !== deviceRegistrationGeneration || !relayTokenProvider) return;
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (accountGeneration !== deviceRegistrationGeneration || !relayTokenProvider) return;
+    // Home-screen widgets do not depend on the Live Activities preference or
+    // an existing lock-screen card. Failed reads retain the last snapshot.
+    if (snapshot && widgetGeneration === widgetRefreshGeneration) {
+      publishAgentActivityWidget(snapshot.aggregate ?? {});
+    }
     if (activities.length === 0) {
-      const preferences = yield* Effect.tryPromise({
-        try: () => loadPreferences(),
-        catch: (cause) =>
-          new AgentAwarenessOperationError({
-            operation: "load-live-activity-prime-preferences",
-            cause,
-          }),
-      }).pipe(Effect.orElseSucceed(() => null));
-      // The toggle defaults to on: an unset preference (fresh install) must
-      // prime, so only an explicit false blocks it.
       if (preferences?.liveActivitiesEnabled !== false) {
-        const snapshot = yield* readAgentActivitySnapshot();
         // The snapshot request yields; an arm-on-send may have created the
         // card in the meantime. Re-check so two cards are never started.
         const armedMeanwhile = yield* Effect.try({
