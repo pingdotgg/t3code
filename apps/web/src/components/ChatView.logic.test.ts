@@ -60,8 +60,6 @@ import {
   threadShellHasStarted,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
-  scheduleStopBackgroundWorkTimeout,
-  STOP_BACKGROUND_WORK_TIMEOUT_MS,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
@@ -672,33 +670,6 @@ describe("shouldReleaseTimelineAnchorForToolActivity", () => {
     expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, runningTurnId: null })).toBe(
       false,
     );
-  });
-});
-
-describe("stop background work timeout", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("resets the stopping state after the timeout window", () => {
-    vi.useFakeTimers();
-    const onTimeout = vi.fn();
-
-    scheduleStopBackgroundWorkTimeout(onTimeout);
-    vi.advanceTimersByTime(STOP_BACKGROUND_WORK_TIMEOUT_MS - 1);
-    expect(onTimeout).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(onTimeout).toHaveBeenCalledOnce();
-  });
-
-  it("cancels the timeout when liveness clears before the grace window", () => {
-    vi.useFakeTimers();
-    const onTimeout = vi.fn();
-
-    const cancel = scheduleStopBackgroundWorkTimeout(onTimeout);
-    cancel();
-    vi.advanceTimersByTime(STOP_BACKGROUND_WORK_TIMEOUT_MS);
-
-    expect(onTimeout).not.toHaveBeenCalled();
   });
 });
 
