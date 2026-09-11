@@ -2748,7 +2748,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </DiffWorkerPoolProvider>
       )}
       {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-[length:var(--font-size-code,0.75rem)]">
           {renderablePatch.text}
         </pre>
       )}
