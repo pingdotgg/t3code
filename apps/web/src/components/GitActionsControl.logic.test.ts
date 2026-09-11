@@ -19,8 +19,8 @@ describe("canRewriteCommitMessages", () => {
     assert.isTrue(canRewriteCommitMessages(status({ aheadCount: 2 })));
   });
 
-  it("does not offer already-published upstream commits", () => {
-    assert.isFalse(canRewriteCommitMessages(status({ aheadCount: 0, aheadOfDefaultCount: 3 })));
+  it("offers feature-branch commits that are already published upstream", () => {
+    assert.isTrue(canRewriteCommitMessages(status({ aheadCount: 0, aheadOfDefaultCount: 3 })));
   });
 
   it("uses the default-branch delta when there is no upstream", () => {

@@ -1027,6 +1027,28 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("offers feature-branch commits that are already published upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+
+      yield* runGit(repoDir, ["checkout", "-b", "feature/published-message"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "published.txt"), "published\n");
+      yield* runGit(repoDir, ["add", "published.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Temporary message"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/published-message"]);
+
+      const { manager } = yield* makeManager();
+      const candidates = yield* manager.listRewriteableCommits({ cwd: repoDir });
+
+      expect(candidates.commits.map((commit) => commit.subject)).toEqual(["Temporary message"]);
+    }),
+  );
+
   it.effect("excludes base branch merges after rebasing unpublished commits", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

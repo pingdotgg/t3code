@@ -69,9 +69,7 @@ export function canRewriteCommitMessages(gitStatus: VcsStatusResult | null): boo
   if (!gitStatus || gitStatus.refName === null) {
     return false;
   }
-  return gitStatus.hasUpstream
-    ? gitStatus.aheadCount > 0
-    : Math.max(gitStatus.aheadCount, gitStatus.aheadOfDefaultCount ?? 0) > 0;
+  return Math.max(gitStatus.aheadCount, gitStatus.aheadOfDefaultCount ?? 0) > 0;
 }
 
 export function resolveGitActionProgressPresentation(input: {
