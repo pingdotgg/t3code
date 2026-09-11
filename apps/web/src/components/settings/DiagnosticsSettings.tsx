@@ -726,7 +726,7 @@ export function DiagnosticsSettingsPanel() {
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
   );
   const diagnosticsAccess = resolveUsageAccess({
-    connectionPhase: primaryEnvironment?.connection.phase ?? "available",
+    connectionPhase: environment?.connection.phase ?? "available",
     session: session.data,
     hasSessionError: session.error !== null,
   });
