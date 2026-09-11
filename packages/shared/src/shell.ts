@@ -298,7 +298,11 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  // Login shell only, no `-i`: interactive shells initialize job control, and
+  // tcsetpgrp on a controlling TTY owned by another process group stops the
+  // probe on SIGTTOU (SSH daemons started from a terminal hand sessions exactly
+  // that). Environment capture only needs the login startup files.
+  const output = execFile(shell, ["-lc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
   });

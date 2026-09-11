@@ -39,7 +39,7 @@ const withWindowsEnvironmentMocks = <A, E, R>(
   );
 
 describe("readPathFromLoginShell", () => {
-  it("uses a shell-agnostic printenv PATH probe", () => {
+  it("probes PATH through a login shell without interactive job control", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -62,7 +62,10 @@ describe("readPathFromLoginShell", () => {
     const [shell, args, options] = firstCall;
     expect(shell).toBe("/opt/homebrew/bin/fish");
     expect(args).toHaveLength(2);
-    expect(args?.[0]).toBe("-ilc");
+    // `-l` without `-i`: interactive job control stops the probe on SIGTTOU
+    // when the session inherits a controlling TTY owned by another pgrp.
+    expect(args?.[0]).toBe("-lc");
+    expect(args?.[0]).not.toContain("i");
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");

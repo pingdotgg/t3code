@@ -340,7 +340,10 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        // Login shell only, no `-i`: interactive job control stops the probe
+        // on SIGTTOU when the session inherits a controlling TTY owned by
+        // another process group. Environment capture needs only login files.
+        args: ["-lc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
