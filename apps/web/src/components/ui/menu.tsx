@@ -158,10 +158,8 @@ function MenuRadioGroup(props: MenuPrimitive.RadioGroup.Props) {
 function MenuRadioItem({
   className,
   children,
-  hideIndicator: _hideIndicator = false,
   ...props
 }: MenuPrimitive.RadioItem.Props & {
-  hideIndicator?: boolean;
 }) {
   return (
     <MenuPrimitive.RadioItem

@@ -348,7 +348,9 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
 }
 
 function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptions): number {
-  return Math.max(options.minWidth, Math.min(width, options.maxWidth));
+  // Whole pixels only: a fractional width lands the 1px edge border across
+  // two device pixels, where it shimmers on every nearby repaint.
+  return Math.round(Math.max(options.minWidth, Math.min(width, options.maxWidth)));
 }
 
 function SidebarRail({

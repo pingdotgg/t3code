@@ -398,7 +398,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {PREVIEW_ZOOM_LEVELS.map((level) => (
-              <SelectItem hideIndicator key={level} value={String(level)}>
+              <SelectItem key={level} value={String(level)}>
                 {zoomLabel(level)}
               </SelectItem>
             ))}
@@ -444,7 +444,7 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(APPEARANCE_LABELS).map(([value, label]) => (
-              <SelectItem hideIndicator key={value} value={value}>
+              <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>
             ))}
@@ -493,7 +493,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {BROWSER_RECORDING_FRAME_RATES.map((rate) => (
-              <SelectItem hideIndicator key={rate} value={String(rate)}>
+              <SelectItem key={rate} value={String(rate)}>
                 {rate} fps
               </SelectItem>
             ))}
@@ -540,7 +540,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
-              <SelectItem hideIndicator key={target} value={target}>
+              <SelectItem key={target} value={target}>
                 {LINK_TARGET_LABELS[target]}
               </SelectItem>
             ))}

@@ -2555,16 +2555,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="inherit">
+                  <SelectItem value="inherit">
                     Use global default
                   </SelectItem>
-                  <SelectItem hideIndicator value="repository">
+                  <SelectItem value="repository">
                     {PROJECT_GROUPING_MODE_LABELS.repository}
                   </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
+                  <SelectItem value="repository_path">
                     {PROJECT_GROUPING_MODE_LABELS.repository_path}
                   </SelectItem>
-                  <SelectItem hideIndicator value="separate">
+                  <SelectItem value="separate">
                     {PROJECT_GROUPING_MODE_LABELS.separate}
                   </SelectItem>
                 </SelectPopup>

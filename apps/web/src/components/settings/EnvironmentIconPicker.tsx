@@ -119,14 +119,14 @@ export function EnvironmentIconPicker({
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        <SelectItem hideIndicator value={AUTOMATIC_VALUE}>
+        <SelectItem value={AUTOMATIC_VALUE}>
           <span className="flex min-w-0 items-center gap-2">
             <EnvironmentMachineIcon kind={detected ?? "server"} className="size-3.5 shrink-0" />
             <span className="truncate">{automaticLabel}</span>
           </span>
         </SelectItem>
         {ENVIRONMENT_MACHINE_KINDS.map((kind) => (
-          <SelectItem hideIndicator key={kind} value={kind}>
+          <SelectItem key={kind} value={kind}>
             <span className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon kind={kind} className="size-3.5 shrink-0" />
               <span className="truncate">{ENVIRONMENT_MACHINE_KIND_LABELS[kind]}</span>

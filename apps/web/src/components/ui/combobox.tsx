@@ -212,11 +212,9 @@ function ComboboxItem({
   className,
   contentClassName,
   children,
-  hideIndicator: _hideIndicator = false,
   ...props
 }: ComboboxPrimitive.Item.Props & {
   contentClassName?: string;
-  hideIndicator?: boolean;
 }) {
   return (
     <ComboboxPrimitive.Item

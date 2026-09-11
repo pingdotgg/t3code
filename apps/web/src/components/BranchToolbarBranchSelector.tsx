@@ -633,20 +633,10 @@ export function BranchToolbarBranchSelector({
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
-          hideIndicator
           key={itemValue}
           index={index}
           value={itemValue}
           className="pe-2"
-          onClick={() => {
-            if (!prReference || !onCheckoutPullRequestRequest) {
-              return;
-            }
-            setIsBranchMenuOpen(false);
-            setBranchQuery("");
-            onComposerFocusRequest?.();
-            onCheckoutPullRequestRequest(prReference);
-          }}
         >
           <div className="flex min-w-0 items-center gap-2 py-1">
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -663,12 +653,10 @@ export function BranchToolbarBranchSelector({
     if (createBranchItemValue && itemValue === createBranchItemValue) {
       return (
         <ComboboxItem
-          hideIndicator
           key={itemValue}
           index={index}
           value={itemValue}
           className="pe-1.5"
-          onClick={() => createRef(trimmedBranchQuery)}
         >
           <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
         </ComboboxItem>
@@ -691,12 +679,10 @@ export function BranchToolbarBranchSelector({
             : null;
     return (
       <ComboboxItem
-        hideIndicator
         key={itemValue}
         index={index}
         value={itemValue}
         className="pe-1.5"
-        onClick={() => selectBranch(refName)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
@@ -721,6 +707,31 @@ export function BranchToolbarBranchSelector({
           index: eventDetails.index,
           animated: false,
         });
+      }}
+      onValueChange={(itemValue) => {
+        if (typeof itemValue !== "string" || itemValue.length === 0) {
+          return;
+        }
+        // Single selection path for pointer and keyboard. The items below
+        // carry no onClick so Base UI commits the pick exactly once.
+        if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
+          if (!prReference || !onCheckoutPullRequestRequest) {
+            return;
+          }
+          setIsBranchMenuOpen(false);
+          setBranchQuery("");
+          onComposerFocusRequest?.();
+          onCheckoutPullRequestRequest(prReference);
+          return;
+        }
+        if (createBranchItemValue && itemValue === createBranchItemValue) {
+          createRef(trimmedBranchQuery);
+          return;
+        }
+        const refName = branchByName.get(itemValue);
+        if (refName) {
+          selectBranch(refName);
+        }
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}

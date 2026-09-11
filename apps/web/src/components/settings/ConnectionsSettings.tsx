@@ -2978,16 +2978,16 @@ export function ConnectionsSettings() {
                 <SelectValue>{selectLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
+                <SelectItem value={BACKEND_VALUE_WSL_OFF}>
                   Off
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                  <SelectItem value={BACKEND_VALUE_DEFAULT_WSL}>
                     Default distro
                   </SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                    <SelectItem key={distro.name} value={distro.name}>
                       {distro.name}
                       {distro.isDefault ? " (default)" : ""}
                     </SelectItem>

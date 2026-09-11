@@ -4466,7 +4466,6 @@ export default function Sidebar() {
                         return (
                           <ComboboxItem
                             key={item.value}
-                            hideIndicator
                             value={item}
                             className="h-8 min-h-8 py-0 font-medium"
                             contentClassName="flex min-w-0 items-center gap-2"

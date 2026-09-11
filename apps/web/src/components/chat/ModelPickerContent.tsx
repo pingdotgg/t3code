@@ -852,7 +852,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (legacySection?.key === modelKey) {
                       return (
                         <ComboboxItem
-                          hideIndicator
                           index={index}
                           value={modelKey}
                           aria-expanded={legacySection.isExpanded}

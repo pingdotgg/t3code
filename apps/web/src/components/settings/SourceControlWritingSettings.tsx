@@ -131,7 +131,7 @@ export function SourceControlWritingSettingsSection() {
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
-                <SelectItem key={mode} hideIndicator value={mode}>
+                <SelectItem key={mode} value={mode}>
                   {MODE_OPTIONS[mode].label}
                 </SelectItem>
               ))}
