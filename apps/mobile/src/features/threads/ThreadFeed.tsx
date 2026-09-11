@@ -2213,11 +2213,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
+          resource={
+            imageSource._tag === "GitHubAttachment"
+              ? { _tag: "github-attachment", url: imageSource.uri }
+              : { _tag: "media-file", threadId: props.threadId, path: imageSource.path }
+          }
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}

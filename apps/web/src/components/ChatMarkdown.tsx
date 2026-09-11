@@ -1552,7 +1552,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "github-attachment" }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1596,7 +1596,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     asset: { environmentId: props.environmentId, resource },
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && "threadId" in resource
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -2997,7 +2997,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef } = use(ChatMarkdownRendererContext);
+    const { expandMedia, cwd, environmentId, imageBaseDir, threadRef } = use(
+      ChatMarkdownRendererContext,
+    );
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
@@ -3014,7 +3016,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
-    if (imageSource._tag === "Direct") {
+    if (imageSource._tag === "GitHubAttachment" && environmentId !== null) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={{ _tag: "github-attachment", url: imageSource.uri }}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          style={authoredSizeStyle}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
+    // Without an environment to proxy through, public GitHub uploads still load directly.
+    if (imageSource._tag === "Direct" || imageSource._tag === "GitHubAttachment") {
       const mediaSrc = resolveProtocolRelativeMediaUrl(imageSource.uri);
       const originalUrl =
         resolveExternalWebLinkHost(imageSource.uri) !== null ? imageSource.uri : undefined;

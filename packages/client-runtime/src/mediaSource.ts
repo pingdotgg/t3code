@@ -49,10 +49,18 @@ export interface ResolveMediaSourceInput {
   readonly imageEmbed?: boolean | undefined;
 }
 
-function classify(source: string, input: ResolveMediaSourceInput): MarkdownImageSource {
-  return input.resolvedFilePath === undefined
-    ? classifyMarkdownImageSource(source, input.workspaceRoot)
-    : { _tag: "WorkspaceFile", path: input.resolvedFilePath };
+function classify(
+  source: string,
+  input: ResolveMediaSourceInput,
+): Exclude<MarkdownImageSource, { readonly _tag: "GitHubAttachment" }> {
+  if (input.resolvedFilePath !== undefined) {
+    return { _tag: "WorkspaceFile", path: input.resolvedFilePath };
+  }
+  const classified = classifyMarkdownImageSource(source, input.workspaceRoot);
+  // Only the markdown image renderer proxies GitHub uploads; media previews open the URL as is.
+  return classified._tag === "GitHubAttachment"
+    ? { _tag: "Direct", uri: classified.uri }
+    : classified;
 }
 
 export function resolveMediaSource(

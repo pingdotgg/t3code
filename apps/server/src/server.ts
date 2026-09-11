@@ -10,6 +10,7 @@ import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as GitHubAttachmentProxy from "./assets/GitHubAttachmentProxy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import {
@@ -324,6 +325,12 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(SourceControlProviderRegistryLayerLive),
   Layer.provide(SourceControlRateLimit.layer),
+);
+
+const GitHubAttachmentProxyLive = GitHubAttachmentProxy.layer.pipe(
+  Layer.provide(GitHubCli.layer),
+  Layer.provide(VcsProcess.layer),
+  Layer.provide(FetchHttpClient.layer),
 );
 
 const GitManagerLayerLive = GitManager.layer.pipe(
@@ -778,6 +785,8 @@ const makeServerLayer = Layer.unwrap(
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
+      // Route fibers resolve this at serve time; providing it to makeRoutesLayer never reaches them.
+      Layer.provide(GitHubAttachmentProxyLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),

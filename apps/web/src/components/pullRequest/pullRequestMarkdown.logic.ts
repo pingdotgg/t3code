@@ -1,3 +1,5 @@
+import { isGitHubUserAttachmentUrl } from "@t3tools/contracts";
+
 import {
   findAndReplaceText,
   type MarkdownNode,
@@ -30,8 +32,6 @@ const VIDEO_TAG_MAX_LINES = 8;
 const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
-/** A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag. */
-const GITHUB_ASSET_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;
 const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
 /** Only a tag that owns its line is an embed; inline, it is prose the renderer should keep. */
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
@@ -50,7 +50,8 @@ function isWebUrl(url: string): boolean {
 function attachmentFromLine(line: string): { url: string; media: "video" | "unknown" } | null {
   const url = BARE_URL_PATTERN.exec(line.trim())?.[1];
   if (url === undefined || !isWebUrl(url)) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(url) || GITHUB_ASSET_PATTERN.test(url)) {
+  // A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag.
+  if (VIDEO_EXTENSION_PATTERN.test(url) || isGitHubUserAttachmentUrl(url)) {
     return { url, media: "video" };
   }
   return null;
