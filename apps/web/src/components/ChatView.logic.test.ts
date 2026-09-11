@@ -1181,6 +1181,61 @@ describe("resolveComposerProviderSelection", () => {
     ).toBe(importedEntry.instanceId);
   });
 
+  describe("confirmed account switches", () => {
+    const work = entry("claudeAgent", "claude_work", {
+      continuation: { groupKey: "claude:work" },
+    });
+    const personal = entry("claudeAgent", "claude_personal", {
+      continuation: { groupKey: "claude:personal" },
+    });
+    const entries = [work, personal];
+
+    function resolve(overrides: Parameters<typeof resolveComposerProviderSelection>[0]) {
+      return resolveComposerProviderSelection(overrides).selectedProviderEntry?.instanceId;
+    }
+
+    it("shows the account the user confirmed so the switch is visible before sending", () => {
+      expect(
+        resolve({
+          entries,
+          candidateInstanceIds: [personal.instanceId, work.instanceId],
+          lockedProvider: ProviderDriverKind.make("claudeAgent"),
+          lockedInstanceId: work.instanceId,
+          confirmedAccountSwitchInstanceId: personal.instanceId,
+        }),
+      ).toBe(personal.instanceId);
+    });
+
+    // A retained draft selection outlives the send that used it and syncs to
+    // the user's other devices, so it is not evidence that this thread's move
+    // was confirmed.
+    it("keeps the thread's own account when only a retained selection names another", () => {
+      expect(
+        resolve({
+          entries,
+          candidateInstanceIds: [personal.instanceId, work.instanceId],
+          lockedProvider: ProviderDriverKind.make("claudeAgent"),
+          lockedInstanceId: work.instanceId,
+        }),
+      ).toBe(work.instanceId);
+    });
+
+    it("refuses a confirmed account the driver lock excludes", () => {
+      const codex = entry("codex", "codex_default", {
+        continuation: { groupKey: "codex:default" },
+      });
+      expect(
+        resolve({
+          entries: [...entries, codex],
+          candidateInstanceIds: [work.instanceId],
+          lockedProvider: ProviderDriverKind.make("claudeAgent"),
+          lockedInstanceId: work.instanceId,
+          confirmedAccountSwitchInstanceId: codex.instanceId,
+        }),
+      ).toBe(work.instanceId);
+    });
+  });
+
   it("keeps the session driver authoritative over instance and draft selections", () => {
     const selected = entry("claudeAgent", "claude_work");
     const sessionEntry = entry("ollama", "local_models");

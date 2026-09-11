@@ -1107,6 +1107,68 @@ declaredCompaction.layer("ProviderService declared compaction", (it) => {
   );
 });
 
+const originalCompatibleInstanceId = ProviderInstanceId.make("codex-original");
+const targetCompatibleInstanceId = ProviderInstanceId.make("codex-target");
+const originalCompatibleAdapter = makeFakeCodexAdapter();
+const targetCompatibleAdapter = makeFakeCodexAdapter();
+const compatibleRegistry = makeStaticInstanceRegistry([
+  [originalCompatibleInstanceId, originalCompatibleAdapter.adapter],
+  [targetCompatibleInstanceId, targetCompatibleAdapter.adapter],
+]);
+const compatibleInstanceRouting = makeProviderServiceLayer({
+  registry: {
+    ...compatibleRegistry,
+    getInstanceInfo: (instanceId) =>
+      compatibleRegistry.getInstanceInfo(instanceId).pipe(
+        Effect.map((info) => ({
+          ...info,
+          continuationIdentity: {
+            driverKind: CODEX_DRIVER,
+            continuationKey: "codex:home:/shared-codex",
+          },
+        })),
+      ),
+  },
+});
+compatibleInstanceRouting.layer("ProviderServiceLive compatible instances", (it) => {
+  it.effect(
+    "resumes an idle conversation on another instance unless explicitly starting fresh",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const resumeCursor = { opaque: "saved-native-conversation" };
+
+        for (const startFreshConversation of [false, true]) {
+          const threadId = asThreadId(`thread-compatible-fresh-${startFreshConversation}`);
+          yield* directory.upsert({
+            threadId,
+            provider: CODEX_DRIVER,
+            providerInstanceId: originalCompatibleInstanceId,
+            status: "stopped",
+            runtimeMode: "approval-required",
+            resumeCursor,
+          });
+          targetCompatibleAdapter.startSession.mockClear();
+
+          const session = yield* provider.startSession(threadId, {
+            threadId,
+            providerInstanceId: targetCompatibleInstanceId,
+            runtimeMode: "approval-required",
+            ...(startFreshConversation ? { startFreshConversation } : {}),
+          });
+
+          assert.equal(session.providerInstanceId, targetCompatibleInstanceId);
+          assert.equal(targetCompatibleAdapter.startSession.mock.calls.length, 1);
+          assert.deepEqual(
+            targetCompatibleAdapter.startSession.mock.calls[0]?.[0]?.resumeCursor,
+            startFreshConversation ? undefined : resumeCursor,
+          );
+        }
+      }),
+  );
+});
+
 const antigravityDriver = ProviderDriverKind.make("antigravity");
 const replacementAntigravity = makeFakeCodexAdapter(antigravityDriver);
 const originalAntigravityInstanceId = ProviderInstanceId.make("antigravity-personal");
@@ -1143,9 +1205,9 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
 
         for (const originalAvailable of [true, false]) {
           originalAntigravityInstanceAvailable = originalAvailable;
-          for (const passCursor of [true, false]) {
+          for (const cursorSource of ["request", "binding", "none"]) {
             const threadId = asThreadId(
-              `thread-antigravity-instance-${originalAvailable}-${passCursor}`,
+              `thread-antigravity-instance-${originalAvailable}-${cursorSource}`,
             );
             const resumeCursor = { sessionId: "native-session" };
             yield* directory.upsert({
@@ -1154,7 +1216,7 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
               providerInstanceId: originalAntigravityInstanceId,
               status: "stopped",
               runtimeMode: "approval-required",
-              ...(passCursor ? {} : { resumeCursor }),
+              ...(cursorSource === "binding" ? { resumeCursor } : {}),
             });
             const originalBinding = yield* directory.getBinding(threadId);
             replacementAntigravity.startSession.mockClear();
@@ -1164,7 +1226,7 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
                 providerInstanceId: replacementAntigravityInstanceId,
                 threadId,
                 runtimeMode: "approval-required",
-                ...(passCursor ? { resumeCursor } : {}),
+                ...(cursorSource === "request" ? { resumeCursor } : {}),
               }),
             );
 
@@ -1177,6 +1239,51 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
           }
         }
       }),
+  );
+
+  it.effect("starts a fresh conversation on another instance when the caller asks for it", () =>
+    Effect.gen(function* () {
+      originalAntigravityInstanceAvailable = true;
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-antigravity-confirmed-switch");
+
+      yield* directory.upsert({
+        threadId,
+        provider: antigravityDriver,
+        providerInstanceId: originalAntigravityInstanceId,
+        status: "stopped",
+        runtimeMode: "approval-required",
+        resumeCursor: { sessionId: "native-session" },
+      });
+      replacementAntigravity.startSession.mockClear();
+
+      const binding = yield* directory.getBinding(threadId);
+      const error = yield* Effect.flip(
+        provider.startSession(threadId, {
+          providerInstanceId: replacementAntigravityInstanceId,
+          threadId,
+          runtimeMode: "approval-required",
+          startFreshConversation: true,
+          resumeCursor: { sessionId: "native-session" },
+        }),
+      );
+      assert.equal(error._tag, "ProviderValidationError");
+      assert.equal(replacementAntigravity.startSession.mock.calls.length, 0);
+      assert.deepEqual(yield* directory.getBinding(threadId), binding);
+
+      const session = yield* provider.startSession(threadId, {
+        providerInstanceId: replacementAntigravityInstanceId,
+        threadId,
+        runtimeMode: "approval-required",
+        startFreshConversation: true,
+      });
+
+      assert.equal(session.providerInstanceId, replacementAntigravityInstanceId);
+      assert.equal(replacementAntigravity.startSession.mock.calls.length, 1);
+      // The previous instance's cursor is unreadable here, so it must not travel.
+      assert.equal(replacementAntigravity.startSession.mock.calls[0]?.[0]?.resumeCursor, undefined);
+    }),
   );
 });
 

@@ -257,6 +257,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           provider_name,
           provider_session_id,
           provider_thread_id,
+          provider_account_revision,
           runtime_mode,
           active_turn_id,
           last_error,
@@ -268,6 +269,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'codex',
           'provider-session-1',
           'provider-thread-1',
+          42,
           'approval-required',
           'turn-1',
           NULL,
@@ -478,6 +480,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerAccountRevision: 42,
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -558,6 +561,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             threadId: ThreadId.make("thread-1"),
             status: "running",
             providerName: "codex",
+            providerAccountRevision: 42,
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
@@ -585,6 +589,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }
 
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads[0]?.session, snapshot.threads[0]?.session);
       assert.deepEqual(commandReadModel.threads[0]?.pullRequests, expectedPullRequests);
       assert.deepEqual(
         commandReadModel.threads[0]?.linkedPullRequest,

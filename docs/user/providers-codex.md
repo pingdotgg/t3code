@@ -39,11 +39,17 @@ from the other home.
 
 ## Switch accounts in an existing thread
 
-Choose the other account from the thread's model picker. T3 Code offers compatible
-Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
-not move the conversation into a separate Codex home.
+On web and desktop, choose the other account from the thread's model picker.
+Instances that share the thread's **CODEX_HOME path** continue the same Codex
+conversation. Mobile does not yet offer switches between shared-home accounts.
 
-If the account is missing from the picker, compare the home paths in provider
+Accounts with their own home are offered on all clients, and picking one asks you to confirm
+first: Codex cannot continue another home's conversation, so it starts fresh from
+your next message. Everything the thread already shows stays, and the agent reads
+the work so far from what you tell it. Older servers do not accept this and leave
+those accounts unselectable.
+
+If a same-home account is missing from the picker, compare the home paths in provider
 settings. If two instances show the same unexpected account or models, check their
 reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory

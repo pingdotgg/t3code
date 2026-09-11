@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { canSwitchProviderAccount } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -536,6 +537,12 @@ export function resolveComposerProviderSelection(input: {
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
   lockedProvider: ProviderDriverKind | null;
   lockedInstanceId: ProviderInstanceId | null | undefined;
+  /**
+   * Account this thread is moving to, once the user confirmed losing the
+   * provider conversation the current one holds. Never a retained selection:
+   * only a confirmation the caller is still holding may outrank the lock.
+   */
+  confirmedAccountSwitchInstanceId?: ProviderInstanceId | null | undefined;
 }) {
   const requestedInstanceId = input.candidateInstanceIds.find(
     (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
@@ -560,7 +567,24 @@ export function resolveComposerProviderSelection(input: {
       (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
       (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
   );
+  // The confirmed account outranks the lock: the thread moves to it on the
+  // next turn, so the composer has to show it now. Only that one entry gets
+  // this — every fallback below stays inside the lock, so nothing drifts onto
+  // another account on its own.
+  const confirmedAccountSwitch = input.entries.find(
+    (entry) =>
+      entry.instanceId === input.confirmedAccountSwitchInstanceId &&
+      entry.enabled &&
+      entry.isAvailable &&
+      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
+      canSwitchProviderAccount({
+        supported: true,
+        lockedContinuationGroupKey,
+        entryContinuationGroupKey: entry.continuationGroupKey,
+      }),
+  );
   const selectedProviderEntry =
+    confirmedAccountSwitch ??
     input.candidateInstanceIds
       .map((candidate) =>
         compatibleEntries.find(

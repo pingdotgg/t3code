@@ -1397,19 +1397,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        let canResumeBinding = persistedBinding?.providerInstanceId === resolvedInstanceId;
         if (
           persistedBinding?.provider === resolvedProvider &&
-          persistedBinding.providerInstanceId !== resolvedInstanceId &&
-          (input.resumeCursor != null || persistedBinding.resumeCursor != null)
+          persistedBinding.providerInstanceId !== resolvedInstanceId
         ) {
           const previousInstanceId = yield* requireBindingInstanceId(
             "ProviderService.startSession",
             persistedBinding,
           );
           const previousInfo = yield* registry.getInstanceInfo(previousInstanceId);
+          canResumeBinding =
+            previousInfo.continuationIdentity.continuationKey ===
+            instanceInfo.continuationIdentity.continuationKey;
+          // An incompatible account needs an explicit fresh start, never the old cursor.
           if (
-            previousInfo.continuationIdentity.continuationKey !==
-            instanceInfo.continuationIdentity.continuationKey
+            !canResumeBinding &&
+            (input.startFreshConversation !== true || input.resumeCursor != null)
           ) {
             return yield* toValidationError(
               "ProviderService.startSession",
@@ -1419,8 +1423,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const effectiveResumeCursor =
           input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
+          (canResumeBinding && input.startFreshConversation !== true
+            ? persistedBinding?.resumeCursor
             : undefined);
         const effectiveCwd =
           input.cwd ??
@@ -1432,8 +1436,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
               ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveResumeCursor !== undefined && canResumeBinding
                 ? "persisted"
                 : "none",
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,

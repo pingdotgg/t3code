@@ -1340,6 +1340,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
+          ...(command.providerAccountSwitchFrom !== undefined
+            ? { providerAccountSwitchFrom: command.providerAccountSwitchFrom }
+            : {}),
+          ...(command.providerAccountSwitchRevision !== undefined
+            ? { providerAccountSwitchRevision: command.providerAccountSwitchRevision }
+            : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
           runtimeMode: targetThread.runtimeMode,
           interactionMode: targetThread.interactionMode,
@@ -1710,6 +1716,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // Only durable owner changes invalidate account-switch confirmations.
+      // Stamp the event here so live clients, replay, and SQL use the same revision.
+      const previousRevision = thread.session?.providerAccountRevision ?? 0;
+      const providerAccountRevision =
+        thread.session?.providerInstanceId !== undefined &&
+        command.session.providerInstanceId !== undefined &&
+        thread.session.providerInstanceId !== command.session.providerInstanceId
+          ? previousRevision + 1
+          : previousRevision;
+      const { providerAccountRevision: _incomingRevision, ...session } = command.session;
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1721,7 +1737,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.session-set",
         payload: {
           threadId: command.threadId,
-          session: command.session,
+          session: {
+            ...session,
+            ...(providerAccountRevision > 0 ? { providerAccountRevision } : {}),
+          },
         },
       };
       // Only a session coming alive is activity worth waking a settled thread

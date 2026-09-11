@@ -898,13 +898,15 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
               }),
             ),
           ),
-          Layer.provide(
+          Layer.provideMerge(
             Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory),
           ),
           Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
           Layer.provide(AnalyticsService.layerTest),
         );
         const reactorLayer = ProviderCommandReactorLive.pipe(
+          Layer.provide(ThreadBackgroundLiveness.layer),
+          Layer.provide(ThreadPlanProgress.layer),
           Layer.provideMerge(providerLayer),
           Layer.provide(
             Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {

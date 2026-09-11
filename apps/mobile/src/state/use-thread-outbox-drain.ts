@@ -805,6 +805,12 @@ export function useThreadOutboxDrain(): void {
             attachments: prepared.attachments,
           },
           modelSelection: sendSettings.modelSelection,
+          ...(queuedMessage.providerAccountSwitchFrom !== undefined
+            ? { providerAccountSwitchFrom: queuedMessage.providerAccountSwitchFrom }
+            : {}),
+          ...(queuedMessage.providerAccountSwitchRevision !== undefined
+            ? { providerAccountSwitchRevision: queuedMessage.providerAccountSwitchRevision }
+            : {}),
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
           createdAt: queuedMessage.createdAt,

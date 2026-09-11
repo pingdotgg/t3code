@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import {
@@ -9,6 +9,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type ModelSelection,
+  type ProviderInstanceId,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -19,6 +20,16 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  resolveProviderAccountSwitchPrompt,
+  resolveTurnAccountSwitchConsent,
+  retainConfirmedAccountSwitch,
+} from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  resolveComposerModelSelection,
+  resolveThreadAccountLock,
+  type ConfirmedAccountSwitch,
+} from "../features/threads/thread-provider-account-switch";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
@@ -56,7 +67,7 @@ import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
-import { threadEnvironment } from "./threads";
+import { environmentThreadShells, threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import {
   composerAttachmentUploadBlockReason,
@@ -118,6 +129,9 @@ export function useThreadComposerState() {
   const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
+  // Drafts persist; consent lasts only while the owning account revision matches.
+  const [confirmedAccountSwitch, setConfirmedAccountSwitch] =
+    useState<ConfirmedAccountSwitch | null>(null);
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -205,7 +219,37 @@ export function useThreadComposerState() {
   const draftAttachments = selectedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
-  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const lockedInstanceId = resolveThreadAccountLock(selectedThreadShell);
+  const providerAccountRevision = selectedThreadShell?.session?.providerAccountRevision;
+  const selectedThreadKeyRef = useRef(selectedThreadKey);
+  useLayoutEffect(() => {
+    selectedThreadKeyRef.current = selectedThreadKey;
+    return () => {
+      selectedThreadKeyRef.current = null;
+    };
+  }, [selectedThreadKey]);
+  const scopedAccountSwitch =
+    confirmedAccountSwitch?.threadKey === selectedThreadKey
+      ? retainConfirmedAccountSwitch(
+          confirmedAccountSwitch,
+          lockedInstanceId,
+          providerAccountRevision,
+        )
+      : null;
+  useEffect(() => {
+    if (scopedAccountSwitch !== confirmedAccountSwitch)
+      setConfirmedAccountSwitch(scopedAccountSwitch);
+  }, [scopedAccountSwitch, confirmedAccountSwitch]);
+  const modelSelection = selectedThread
+    ? resolveComposerModelSelection({
+        draftSelection: selectedDraft?.modelSelection,
+        threadSelection: selectedThread.modelSelection,
+        threadKey: selectedThreadKey ?? "",
+        lockedInstanceId,
+        confirmedSwitch: scopedAccountSwitch,
+        providerAccountRevision,
+      })
+    : null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
@@ -326,7 +370,14 @@ export function useThreadComposerState() {
       return null;
     }
 
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const modelSelection = resolveComposerModelSelection({
+      draftSelection: draft.modelSelection,
+      threadSelection: thread.modelSelection,
+      threadKey,
+      lockedInstanceId: resolveThreadAccountLock(selectedThreadShell),
+      confirmedSwitch: scopedAccountSwitch,
+      providerAccountRevision,
+    });
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     if (
       selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -398,6 +449,11 @@ export function useThreadComposerState() {
       text,
       attachments,
       modelSelection,
+      // Offline delivery must retain the ownership revision the user confirmed.
+      ...resolveTurnAccountSwitchConsent({
+        confirmed: scopedAccountSwitch,
+        instanceId: modelSelection.instanceId,
+      }),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,
@@ -427,6 +483,8 @@ export function useThreadComposerState() {
     );
     return messageId;
   }, [
+    scopedAccountSwitch,
+    providerAccountRevision,
     selectedEnvironmentRuntime?.connectionState,
     selectedEnvironmentRuntime?.serverConfig,
     selectedThreadCreation,
@@ -571,17 +629,64 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
+      const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+      const provider = serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
       );
-      updateComposerDraftSettings(selectedThreadKey, {
-        modelSelection: value,
-        ...(provider?.showInteractionModeToggle === false
-          ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-          : {}),
+      const revision = selectedThreadShell?.session?.providerAccountRevision ?? 0;
+      const apply = (accountSwitchFrom?: ProviderInstanceId) => {
+        const confirmation =
+          accountSwitchFrom === undefined
+            ? null
+            : {
+                threadKey: selectedThreadKey,
+                from: accountSwitchFrom,
+                to: value.instanceId,
+                revision,
+              };
+        if (confirmation !== null && selectedThreadShell !== null) {
+          const current = appAtomRegistry.get(
+            environmentThreadShells.threadShellAtom({
+              environmentId: selectedThreadShell.environmentId,
+              threadId: selectedThreadShell.id,
+            }),
+          );
+          if (
+            selectedThreadKeyRef.current !== selectedThreadKey ||
+            retainConfirmedAccountSwitch(
+              confirmation,
+              resolveThreadAccountLock(current),
+              current?.session?.providerAccountRevision,
+            ) === null
+          )
+            return;
+        }
+        setConfirmedAccountSwitch(confirmation);
+        updateComposerDraftSettings(selectedThreadKey, {
+          modelSelection: value,
+          ...(provider?.showInteractionModeToggle === false
+            ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
+            : {}),
+        });
+      };
+      const lockedInstanceId = resolveThreadAccountLock(selectedThreadShell);
+      const prompt = resolveProviderAccountSwitchPrompt({
+        supported: serverConfig?.environment.capabilities.threadProviderAccountSwitch === true,
+        current: serverConfig?.providers.find(
+          (candidate) => candidate.instanceId === lockedInstanceId,
+        ),
+        next: provider,
       });
+      if (prompt && lockedInstanceId !== undefined) {
+        Alert.alert(prompt.title, prompt.body, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Switch", onPress: () => apply(lockedInstanceId) },
+        ]);
+        return;
+      }
+      apply();
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey, selectedThreadShell],
   );
 
   const onUpdateRuntimeMode = useCallback(
@@ -636,5 +741,6 @@ export function useThreadComposerState() {
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
+    providerAccountLock: lockedInstanceId,
   };
 }

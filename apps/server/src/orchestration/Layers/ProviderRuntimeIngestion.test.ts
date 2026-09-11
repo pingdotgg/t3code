@@ -714,6 +714,144 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("keeps startup events on another account from changing ownership before the switch commits", async () => {
+    const harness = await createHarness({
+      serverSettings: { enableLegacyTokenStreaming: false },
+    });
+    const threadId = asThreadId("thread-1");
+    const source = ProviderInstanceId.make("codex");
+    const target = ProviderInstanceId.make("codex-work");
+    const createdAt = "2026-01-01T00:00:01.000Z";
+    const bindAccount = (instanceId: ProviderInstanceId) =>
+      harness.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`bind-${instanceId}`),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "codex",
+          providerInstanceId: instanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+    const eventBase = { provider: ProviderDriverKind.make("codex"), threadId, createdAt };
+    await harness.emitAndDrain([
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "session.state.changed",
+        eventId: asEventId("first-session-ready"),
+        payload: { state: "ready" },
+      },
+    ]);
+    expect((await harness.readThreadShell()).session?.providerInstanceId).toBe(source);
+    await bindAccount(source);
+    const sourceTurnId = asTurnId("source-finishing-turn");
+    await harness.emitAndDrain([
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "turn.started",
+        eventId: asEventId("source-turn-started"),
+        turnId: sourceTurnId,
+      },
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "content.delta",
+        eventId: asEventId("source-buffered-answer"),
+        turnId: sourceTurnId,
+        itemId: asItemId("source-answer"),
+        payload: { streamKind: "assistant_text", delta: "Keep the source answer." },
+      },
+    ]);
+    const sourceSession = (await harness.readThreadShell()).session;
+
+    await harness.emitAndDrain([
+      {
+        ...eventBase,
+        providerInstanceId: target,
+        type: "session.state.changed",
+        eventId: asEventId("target-starting"),
+        payload: { state: "starting" },
+      },
+      {
+        ...eventBase,
+        providerInstanceId: target,
+        type: "session.exited",
+        eventId: asEventId("target-start-failed"),
+        payload: { reason: "process exited with code 1" },
+      },
+      {
+        ...eventBase,
+        providerInstanceId: target,
+        type: "runtime.error",
+        eventId: asEventId("target-start-error"),
+        payload: { message: "Target failed before binding." },
+      },
+    ]);
+    expect((await harness.readThreadShell()).session).toEqual(sourceSession);
+
+    await bindAccount(target);
+    const targetRevision = (await harness.readThreadShell()).session?.providerAccountRevision;
+    expect(targetRevision).toBeGreaterThan(sourceSession?.providerAccountRevision ?? 0);
+    await harness.emitAndDrain([
+      {
+        ...eventBase,
+        providerInstanceId: target,
+        type: "session.state.changed",
+        eventId: asEventId("target-ready"),
+        payload: { state: "ready" },
+      },
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "session.exited",
+        eventId: asEventId("source-late-exit"),
+        payload: {},
+      },
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "runtime.error",
+        eventId: asEventId("source-late-error"),
+        payload: { message: "Source exited after the switch." },
+      },
+      {
+        ...eventBase,
+        providerInstanceId: source,
+        type: "turn.aborted",
+        eventId: asEventId("source-late-terminal"),
+        turnId: sourceTurnId,
+        payload: { reason: "Account switched." },
+      },
+    ]);
+    expect((await harness.readThreadShell()).session).toMatchObject({
+      providerInstanceId: target,
+      providerAccountRevision: targetRevision,
+      status: "ready",
+    });
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.messages).toContainEqual(
+      expect.objectContaining({
+        turnId: sourceTurnId,
+        text: "Keep the source answer.",
+        streaming: false,
+      }),
+    );
+    expect(thread?.activities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "target-start-error", kind: "runtime.error" }),
+        expect.objectContaining({ id: "source-late-error", kind: "runtime.error" }),
+      ]),
+    );
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";

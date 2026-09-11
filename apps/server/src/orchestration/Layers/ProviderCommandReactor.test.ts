@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import {
   ModelSelection,
+  type OrchestrationCommand,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -27,6 +28,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -41,6 +43,7 @@ import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import {
   ProviderAdapterRequestError,
+  ProviderInstanceNotFoundError,
   ProviderWorkspaceMissingError,
   type ProviderServiceError,
 } from "../../provider/Errors.ts";
@@ -52,6 +55,10 @@ import {
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
+import {
+  ProviderSessionDirectory,
+  type ProviderRuntimeBinding,
+} from "../../provider/Services/ProviderSessionDirectory.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
@@ -119,6 +126,8 @@ describe("ProviderCommandReactor", () => {
     | OrchestrationEngineService
     | ProviderCommandReactor
     | ProjectionSnapshotQuery
+    | ThreadBackgroundLiveness.ThreadBackgroundLivenessService
+    | ThreadPlanProgress.ThreadPlanProgressService
     | SqlClient.SqlClient,
     unknown
   > | null = null;
@@ -171,6 +180,8 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
+    /** Instances the registry no longer knows, as if the user deleted them. */
+    readonly unconfiguredInstanceIds?: ReadonlyArray<string>;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -197,6 +208,10 @@ describe("ProviderCommandReactor", () => {
     );
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
+    // The persisted session directory: unlike `runtimeSessions` a binding
+    // survives a stop or a server restart, which is what lets the reactor
+    // recognise a real account switch on an idle thread.
+    const sessionBindings = new Map<ThreadId, ProviderRuntimeBinding>();
     const modelSelection = input?.threadModelSelection ?? {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-5-codex",
@@ -259,6 +274,13 @@ describe("ProviderCommandReactor", () => {
         Effect.tap((startedSession) =>
           Effect.sync(() => {
             runtimeSessions.push(startedSession);
+            sessionBindings.set(startedSession.threadId, {
+              threadId: startedSession.threadId,
+              provider: startedSession.provider,
+              ...(startedSession.providerInstanceId
+                ? { providerInstanceId: startedSession.providerInstanceId }
+                : {}),
+            });
           }),
         ),
       );
@@ -368,6 +390,9 @@ describe("ProviderCommandReactor", () => {
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
+        if (input?.unconfiguredInstanceIds?.includes(raw)) {
+          return Effect.fail(new ProviderInstanceNotFoundError({ instanceId: raw }));
+        }
         const driverKind = ProviderDriverKind.make(
           raw.startsWith("claude")
             ? "claudeAgent"
@@ -458,9 +483,17 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(
+        Layer.mock(ProviderSessionDirectory)({
+          getBinding: (threadId) =>
+            Effect.succeed(Option.fromUndefinedOr(sessionBindings.get(threadId))),
+        }),
+      ),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
       Layer.provideMerge(
@@ -497,6 +530,10 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const backgroundLiveness = await runtime.runPromise(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+    );
+    const planProgress = await runtime.runPromise(ThreadPlanProgress.ThreadPlanProgressService);
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -592,6 +629,8 @@ describe("ProviderCommandReactor", () => {
     return {
       engine,
       snapshotQuery,
+      backgroundLiveness,
+      planProgress,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       readPendingTurnStarts: () =>
         runtime!.runPromise(
@@ -619,6 +658,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      sessionBindings,
       stateDir,
       drain,
       runEffect,
@@ -2943,6 +2983,333 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
+  });
+
+  describe("manual account switching", () => {
+    const source = ProviderInstanceId.make("claude_work");
+    const target = ProviderInstanceId.make("claude_personal");
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+    type Harness = Awaited<ReturnType<typeof createHarness>>;
+    type TurnStart = Extract<OrchestrationCommand, { type: "thread.turn.start" }>;
+    const selection = (instanceId: ProviderInstanceId) => ({
+      instanceId,
+      model: "claude-opus-4-6",
+    });
+    const turn = (
+      id: string,
+      instanceId: ProviderInstanceId,
+      overrides: Partial<TurnStart> = {},
+    ): TurnStart => ({
+      type: "thread.turn.start",
+      commandId: CommandId.make(`cmd-${id}`),
+      threadId,
+      message: { messageId: asMessageId(id), role: "user", text: id, attachments: [] },
+      modelSelection: selection(instanceId),
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: now,
+      ...overrides,
+    });
+    const bindSource = (harness: Harness, resumeCursor?: unknown) => {
+      harness.sessionBindings.set(threadId, {
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: source,
+        ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+      });
+    };
+    const recordSourceProgress = (harness: Harness) => {
+      harness.planProgress.recordPlanProgress(threadId, [
+        { step: "Source work", status: "inProgress" },
+      ]);
+      harness.backgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId: "source-task",
+        taskType: "agent",
+        status: "running",
+        kind: "started",
+      });
+    };
+    const dispatchTurn = Effect.fn(function* (
+      harness: Harness,
+      command: TurnStart,
+      outcome: "session" | "failure" = "session",
+    ) {
+      const events = yield* harness.engine.subscribeDomainEvents;
+      const receipt = yield* events.pipe(
+        Stream.filter((event) =>
+          outcome === "failure"
+            ? event.type === "thread.activity-appended" &&
+              event.payload.activity.kind === "provider.turn.start.failed" &&
+              event.payload.threadId === command.threadId
+            : event.type === "thread.session-set" && event.payload.threadId === threadId,
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* harness.engine.dispatch(command);
+      yield* Fiber.join(receipt);
+      yield* Effect.promise(() => harness.drain());
+      return (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+    });
+
+    effectIt.effect.each(["active", "reaped"] as const)(
+      "starts fresh on a confirmed account with a %s runtime session",
+      (runtime) =>
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({ threadModelSelection: selection(source) }),
+          );
+          yield* dispatchTurn(harness, turn("first", source));
+          recordSourceProgress(harness);
+          if (runtime === "reaped") {
+            harness.runtimeSessions.length = 0;
+            yield* harness.engine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make("picked-target"),
+              threadId,
+              modelSelection: selection(target),
+            });
+          }
+          const thread = yield* dispatchTurn(
+            harness,
+            turn("switch", target, {
+              providerAccountSwitchFrom: source,
+              providerAccountSwitchRevision: 0,
+            }),
+          );
+          expect(harness.startSession).toHaveBeenCalledTimes(2);
+          const restart = harness.startSession.mock.calls[1]?.[1];
+          expect(restart).toMatchObject({
+            providerInstanceId: target,
+            startFreshConversation: true,
+          });
+          expect(restart).not.toHaveProperty("resumeCursor");
+          expect(thread.session?.providerInstanceId).toBe(target);
+          expect(thread.session?.providerAccountRevision).toBeGreaterThan(0);
+          expect(harness.planProgress.getThreadPlanProgress(threadId)).toBeNull();
+          expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+        }),
+    );
+
+    effectIt.effect.each(["active", "reaped"] as const)(
+      "keeps the switched account for a turn without model selection with a %s runtime",
+      (runtime) =>
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({ threadModelSelection: selection(source) }),
+          );
+          yield* dispatchTurn(harness, turn("first", source));
+          const switched = yield* dispatchTurn(
+            harness,
+            turn("switch", target, {
+              providerAccountSwitchFrom: source,
+              providerAccountSwitchRevision: 0,
+            }),
+          );
+          expect(switched.modelSelection.instanceId).toBe(source);
+          if (runtime === "reaped") harness.runtimeSessions.length = 0;
+          const { modelSelection: _, ...answer } = turn("answer", source);
+          const continued = yield* dispatchTurn(harness, answer);
+          expect(continued.session?.providerInstanceId).toBe(target);
+          expect(continued.session?.providerAccountRevision).toBe(
+            switched.session?.providerAccountRevision,
+          );
+          expect(harness.startSession).toHaveBeenCalledTimes(runtime === "reaped" ? 3 : 2);
+          expect(harness.startSession.mock.lastCall?.[1]).toMatchObject({
+            providerInstanceId: target,
+          });
+          expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+        }),
+    );
+
+    effectIt.effect("preserves the owner and consent after startup fails, then retries", () =>
+      Effect.gen(function* () {
+        let failStartup = true;
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: selection(target),
+            startSessionEffect: (session) =>
+              failStartup
+                ? Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: "claudeAgent",
+                      method: "thread.start",
+                      detail: "startup failed",
+                    }),
+                  )
+                : Effect.succeed(session),
+          }),
+        );
+        bindSource(harness);
+        recordSourceProgress(harness);
+        const binding = harness.sessionBindings.get(threadId);
+        const consent = { providerAccountSwitchFrom: source, providerAccountSwitchRevision: 0 };
+        const failed = yield* dispatchTurn(
+          harness,
+          turn("failed-switch", target, consent),
+          "failure",
+        );
+        expect(failed.session).toMatchObject({ status: "error", providerInstanceId: source });
+        expect(failed.session?.providerAccountRevision ?? 0).toBe(0);
+        expect(harness.sessionBindings.get(threadId)).toEqual(binding);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(harness.planProgress.getThreadPlanProgress(threadId)?.step).toBe("Source work");
+        expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+        failStartup = false;
+        const retried = yield* dispatchTurn(harness, turn("retry-switch", target, consent));
+        expect(retried.session?.providerInstanceId).toBe(target);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+        expect(harness.planProgress.getThreadPlanProgress(threadId)).toBeNull();
+        expect(harness.backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+      }),
+    );
+
+    effectIt.effect(
+      "restores the durable owner when a failed request finds inconsistent projection",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({ threadModelSelection: selection(target) }),
+          );
+          const projected = yield* dispatchTurn(harness, turn("initial-target", target));
+          bindSource(harness);
+          const callsBeforeFailure = harness.startSession.mock.calls.length;
+          const failed = yield* dispatchTurn(
+            harness,
+            turn("inconsistent-owner", target, {
+              providerAccountSwitchFrom: source,
+              providerAccountSwitchRevision: projected.session?.providerAccountRevision ?? 0,
+            }),
+            "failure",
+          );
+          expect(harness.startSession).toHaveBeenCalledTimes(callsBeforeFailure);
+          expect(failed.session).toMatchObject({ status: "error", providerInstanceId: source });
+          expect(harness.sessionBindings.get(threadId)?.providerInstanceId).toBe(source);
+        }),
+    );
+
+    for (const [name, consent] of [
+      ["no consent", {}],
+      ["no revision", { providerAccountSwitchFrom: source }],
+      ["wrong owner", { providerAccountSwitchFrom: target, providerAccountSwitchRevision: 0 }],
+      ["wrong revision", { providerAccountSwitchFrom: source, providerAccountSwitchRevision: 9 }],
+    ] as const) {
+      effectIt.effect(`rejects an incompatible move with ${name} before startup`, () =>
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({ threadModelSelection: selection(target) }),
+          );
+          // No cursor exists: rejection must not depend on resume state.
+          bindSource(harness);
+          const binding = harness.sessionBindings.get(threadId);
+          const thread = yield* dispatchTurn(
+            harness,
+            turn("unconfirmed-switch", target, consent),
+            "failure",
+          );
+          expect(harness.startSession).not.toHaveBeenCalled();
+          expect(harness.sendTurn).not.toHaveBeenCalled();
+          expect(harness.sessionBindings.get(threadId)).toEqual(binding);
+          expect(thread.session?.providerInstanceId).toBe(source);
+          expect(thread.session?.lastError).toContain("Select the target account again");
+        }),
+      );
+    }
+
+    effectIt.effect("rejects historical consent after A→B→A with identical timestamps", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ threadModelSelection: selection(source) }),
+        );
+        yield* dispatchTurn(harness, turn("first", source));
+        const oldConsent = { providerAccountSwitchFrom: source, providerAccountSwitchRevision: 0 };
+        const onTarget = yield* dispatchTurn(harness, turn("to-target", target, oldConsent));
+        const onSource = yield* dispatchTurn(
+          harness,
+          turn("back-to-source", source, {
+            providerAccountSwitchFrom: target,
+            providerAccountSwitchRevision: onTarget.session!.providerAccountRevision!,
+          }),
+        );
+        expect(onSource.session?.providerAccountRevision).toBeGreaterThan(
+          onTarget.session!.providerAccountRevision!,
+        );
+        const binding = harness.sessionBindings.get(threadId);
+        yield* dispatchTurn(harness, turn("old-offline-switch", target, oldConsent), "failure");
+        expect(harness.startSession).toHaveBeenCalledTimes(3);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+        expect(harness.sessionBindings.get(threadId)).toEqual(binding);
+      }),
+    );
+
+    effectIt.effect("does not automatically replace a deleted account", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: selection(target),
+            unconfiguredInstanceIds: [source],
+          }),
+        );
+        bindSource(harness);
+        const binding = harness.sessionBindings.get(threadId);
+        const thread = yield* dispatchTurn(harness, turn("deleted-source", target), "failure");
+        expect(harness.startSession).not.toHaveBeenCalled();
+        expect(harness.sessionBindings.get(threadId)).toEqual(binding);
+        expect(thread.session?.providerInstanceId).toBe(source);
+        expect(thread.session?.lastError).toContain("unknown provider instance");
+      }),
+    );
+
+    effectIt.effect("rejects an idle cross-driver request despite changed model metadata", () =>
+      Effect.gen(function* () {
+        const codex = ProviderInstanceId.make("codex");
+        const harness = yield* Effect.promise(() =>
+          createHarness({ threadModelSelection: selection(codex) }),
+        );
+        bindSource(harness);
+        const thread = yield* dispatchTurn(harness, turn("wrong-driver", codex), "failure");
+        expect(harness.startSession).not.toHaveBeenCalled();
+        expect(thread.session?.lastError).toContain("bound to driver 'claudeAgent'");
+      }),
+    );
+
+    effectIt.effect("does not compact a fresh target account", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ threadModelSelection: selection(source) }),
+        );
+        const started = yield* dispatchTurn(harness, turn("first", source));
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("idle-before-compact"),
+          threadId,
+          session: { ...started.session!, status: "ready" },
+          createdAt: now,
+        });
+        const thread = yield* dispatchTurn(
+          harness,
+          turn("compact", target, {
+            message: {
+              messageId: asMessageId("compact"),
+              role: "user",
+              text: "/compact",
+              attachments: [],
+            },
+            providerAccountSwitchFrom: source,
+            providerAccountSwitchRevision: 0,
+          }),
+          "failure",
+        );
+        expect(harness.startSession).toHaveBeenCalledTimes(1);
+        expect(harness.compactThread).not.toHaveBeenCalled();
+        expect(thread.session?.providerInstanceId).toBe(source);
+        expect(thread.session?.lastError).toContain("before compacting");
+      }),
+    );
   });
 
   it("restarts the provider session when the thread workspace changes", async () => {

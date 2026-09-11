@@ -11,11 +11,13 @@ import {
   MessageId,
   ModelSelection,
   ProjectId,
+  ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   type ModelSelection as ModelSelectionType,
   type ProjectId as ProjectIdType,
+  type ProviderInstanceId as ProviderInstanceIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
   type ServerProvider,
@@ -52,6 +54,11 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  // Legacy entries remain readable but carry no revision-bound switch consent.
+  providerAccountSwitchFrom: Schema.optional(ProviderInstanceId),
+  providerAccountSwitchRevision: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   // Present when the queued item creates a brand-new thread (pending task)
@@ -81,6 +88,8 @@ export interface QueuedThreadMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
+  readonly providerAccountSwitchFrom?: ProviderInstanceIdType;
+  readonly providerAccountSwitchRevision?: number;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;

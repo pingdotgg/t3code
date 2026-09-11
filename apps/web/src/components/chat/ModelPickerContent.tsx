@@ -5,6 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { canSwitchProviderAccount } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -132,6 +133,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    */
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
+  /**
+   * Whether this environment accepts moving a started thread to another
+   * account of the locked driver. Those accounts stay listed but unselectable
+   * without it, since the server would reject the switch on send.
+   */
+  providerAccountSwitchEnabled?: boolean;
   /**
    * All configured provider instances in display order. Used to render
    * the sidebar (one button per instance) and to resolve display names
@@ -275,9 +282,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (props.lockedProvider === null) return true;
       if (entry.driverKind !== props.lockedProvider) return false;
       if (!props.lockedContinuationGroupKey) return true;
-      return entry.continuationGroupKey === props.lockedContinuationGroupKey;
+      if (entry.continuationGroupKey === props.lockedContinuationGroupKey) return true;
+      return canSwitchProviderAccount({
+        supported: props.providerAccountSwitchEnabled === true,
+        lockedContinuationGroupKey: props.lockedContinuationGroupKey,
+        entryContinuationGroupKey: entry.continuationGroupKey,
+      });
     },
-    [props.lockedContinuationGroupKey, props.lockedProvider],
+    [props.lockedContinuationGroupKey, props.lockedProvider, props.providerAccountSwitchEnabled],
   );
 
   const selectableUnavailableInstanceIds = useMemo(() => {

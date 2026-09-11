@@ -8,6 +8,7 @@
  */
 import {
   RuntimeMode,
+  NonNegativeInt,
   IsoDateTime,
   OrchestrationSessionStatus,
   ProviderInstanceId,
@@ -26,6 +27,7 @@ export const ProjectionThreadSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(Schema.String),
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
+  providerAccountRevision: Schema.optional(NonNegativeInt),
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),

@@ -5,6 +5,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -46,6 +47,7 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { selectThreadProviderGroups } from "./thread-provider-account-switch";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -116,6 +118,8 @@ export interface ThreadComposerProps {
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
   readonly selectedThread: OrchestrationThreadShell;
+  /** Account that owns the thread's provider conversation, if it has one. */
+  readonly providerAccountLock: ProviderInstanceId | undefined;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
@@ -350,6 +354,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     selectedProviderStatus,
     hasThread: true,
     hasCompactableConversation: props.hasCompactableConversation,
+    compactDisabledReason:
+      props.providerAccountLock !== undefined &&
+      props.providerAccountLock !== currentModelSelection.instanceId
+        ? "Send a message on the selected account before compacting"
+        : null,
     onChangeDraftMessage: props.onChangeDraftMessage,
     onUpdateInteractionMode:
       selectedProviderStatus?.showInteractionModeToggle === false
@@ -486,11 +495,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [props.serverConfig, currentModelSelection],
   );
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
-  // An existing thread is bound to its harness: sessions can't move between
-  // provider instances, so the picker only offers the thread's own group.
+  // A started thread is bound to its provider: the picker offers its own
+  // account plus any account of the same provider this environment can move
+  // it to, and picking one of those asks for confirmation first.
   const threadProviderGroups = useMemo(
-    () => providerGroups.filter((group) => group.providerKey === currentModelSelection.instanceId),
-    [providerGroups, currentModelSelection.instanceId],
+    () =>
+      selectThreadProviderGroups({
+        groups: providerGroups,
+        lockedInstanceId: props.providerAccountLock,
+        providers: props.serverConfig?.providers ?? [],
+        accountSwitchSupported:
+          props.serverConfig?.environment.capabilities.threadProviderAccountSwitch === true,
+      }),
+    [providerGroups, props.providerAccountLock, props.serverConfig],
   );
   const currentModelOption =
     modelOptions.find(

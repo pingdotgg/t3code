@@ -1486,6 +1486,11 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+      // The reactor commits account changes after startup succeeds.
+      const matchesSessionAccount =
+        thread.session?.providerInstanceId === undefined ||
+        event.providerInstanceId === undefined ||
+        thread.session.providerInstanceId === event.providerInstanceId;
       const isTerminalTurn = event.type === "turn.completed" || event.type === "turn.aborted";
       const isCompactedThreadState =
         event.type === "thread.state.changed" && event.payload.state === "compacted";
@@ -1521,6 +1526,7 @@ const make = Effect.gen(function* () {
           : false;
 
       const shouldApplyThreadLifecycle = (() => {
+        if (!matchesSessionAccount) return false;
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }
@@ -1910,16 +1916,19 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "session.exited") {
+      if (event.type === "session.exited" && matchesSessionAccount) {
         yield* clearTurnStateForSession(thread.id);
       }
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = event.payload.message;
 
-        const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
-          ? true
-          : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
+        const shouldApplyRuntimeError =
+          matchesSessionAccount &&
+          (!STRICT_PROVIDER_LIFECYCLE_GUARD ||
+            activeTurnId === null ||
+            eventTurnId === undefined ||
+            sameId(activeTurnId, eventTurnId));
 
         if (shouldApplyRuntimeError) {
           yield* orchestrationEngine.dispatch({
@@ -2006,8 +2015,8 @@ const make = Effect.gen(function* () {
       // cleared on settle so a finished plan never lingers as stale UI.
       // Events carrying a turn id that conflicts with the active turn are
       // stale (superseded turn) and must neither overwrite nor clear the
-      // active turn's progress; session.exited always clears.
-      if (event.type === "session.exited") {
+      // active turn's progress; only the owning session's exit clears it.
+      if (event.type === "session.exited" && matchesSessionAccount) {
         threadPlanProgress.clearThreadPlanProgress(thread.id);
       } else if (!conflictsWithActiveTurn) {
         if (event.type === "turn.plan.updated") {
@@ -2048,7 +2057,7 @@ const make = Effect.gen(function* () {
           break;
         }
         case "session.exited":
-          threadBackgroundLiveness.clearThreadLiveness(thread.id);
+          if (matchesSessionAccount) threadBackgroundLiveness.clearThreadLiveness(thread.id);
           break;
         default:
           break;

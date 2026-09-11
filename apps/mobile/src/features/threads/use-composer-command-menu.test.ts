@@ -49,6 +49,24 @@ describe("mobile slash commands", () => {
     },
   );
 
+  it("disables compaction with a reason until the selected account starts a conversation", () => {
+    const input = {
+      query: "compact",
+      atMessageStart: true,
+      hasThread: true,
+      hasCompactableConversation: true,
+      allowInteractionMode: false,
+      selectedProviderStatus: { ...antigravity, slashCommands: [{ name: "compact" }] },
+    };
+    const reason = "Send a message on the selected account before compacting";
+    expect(buildComposerSlashCommandItems({ ...input, compactDisabledReason: reason })).toEqual([
+      expect.objectContaining({ label: "/compact", disabled: true, description: reason }),
+    ]);
+    expect(buildComposerSlashCommandItems(input)).toEqual([
+      expect.not.objectContaining({ disabled: true }),
+    ]);
+  });
+
   it("does not offer a native command inside the message", () => {
     expect(
       buildComposerSlashCommandItems({

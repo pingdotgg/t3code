@@ -86,3 +86,85 @@ export function shouldShowInstanceBadge(
   }
   return false;
 }
+
+/** What a client needs to decide whether two accounts can hand a thread over. */
+export type ProviderAccountSwitchCandidate = Pick<
+  ServerProvider,
+  "instanceId" | "driver" | "displayName" | "continuation"
+>;
+
+/** Unknown continuation groups stay locked; different groups require a fresh conversation. */
+export function canSwitchProviderAccount(input: {
+  readonly supported: boolean;
+  readonly lockedContinuationGroupKey: string | null | undefined;
+  readonly entryContinuationGroupKey: string | null | undefined;
+}): boolean {
+  return (
+    input.supported &&
+    Boolean(input.lockedContinuationGroupKey) &&
+    Boolean(input.entryContinuationGroupKey) &&
+    input.lockedContinuationGroupKey !== input.entryContinuationGroupKey
+  );
+}
+
+/** Both clients use the same confirmation for a supported account switch. */
+export function resolveProviderAccountSwitchPrompt(input: {
+  readonly supported: boolean;
+  readonly current: ProviderAccountSwitchCandidate | null | undefined;
+  readonly next: ProviderAccountSwitchCandidate | null | undefined;
+}): { readonly title: string; readonly body: string } | null {
+  const { current, next } = input;
+  if (!current || !next || current.instanceId === next.instanceId) return null;
+  if (current.driver !== next.driver) return null;
+  if (
+    !canSwitchProviderAccount({
+      supported: input.supported,
+      lockedContinuationGroupKey: current.continuation?.groupKey,
+      entryContinuationGroupKey: next.continuation?.groupKey,
+    })
+  ) {
+    return null;
+  }
+  const currentLabel = resolveProviderInstanceDisplayName(current);
+  const nextLabel = resolveProviderInstanceDisplayName(next);
+  return {
+    title: `Continue this thread on ${nextLabel}?`,
+    body: `${currentLabel} keeps the conversation it has been running. ${nextLabel} starts fresh from your next message. The messages shown here stay either way.`,
+  };
+}
+
+/** Consent expires when ownership changes, even if it later returns to the same account. */
+export function retainConfirmedAccountSwitch<
+  Confirmation extends { readonly from: string; readonly revision: number },
+>(
+  confirmation: Confirmation | null,
+  lockedInstanceId: string | null | undefined,
+  providerAccountRevision: number | undefined,
+): Confirmation | null {
+  return confirmation !== null &&
+    confirmation.from === lockedInstanceId &&
+    confirmation.revision === (providerAccountRevision ?? 0)
+    ? confirmation
+    : null;
+}
+
+/** Bind turn consent to the confirmed target and ownership revision. */
+export function resolveTurnAccountSwitchConsent<Instance extends string>(input: {
+  readonly confirmed: {
+    readonly from: Instance;
+    readonly to: Instance;
+    readonly revision: number;
+  } | null;
+  readonly instanceId: Instance | null | undefined;
+}): {
+  readonly providerAccountSwitchFrom?: Instance;
+  readonly providerAccountSwitchRevision?: number;
+} {
+  const { confirmed } = input;
+  return confirmed !== null && input.instanceId === confirmed.to
+    ? {
+        providerAccountSwitchFrom: confirmed.from,
+        providerAccountSwitchRevision: confirmed.revision,
+      }
+    : {};
+}

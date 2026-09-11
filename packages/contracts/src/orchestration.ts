@@ -532,6 +532,8 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
+  // Durable owner-change counter; sessions from before account switching use zero.
+  providerAccountRevision: Schema.optional(NonNegativeInt),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
@@ -1212,6 +1214,19 @@ export const ThreadTurnStartCommand = Schema.Struct({
     attachments: Schema.Array(ChatAttachment),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  /**
+   * Account the client confirmed leaving, when this turn moves the thread to
+   * another account of the same provider.
+   *
+   * Consent has to travel with the turn: the server cannot tell a confirmed
+   * move from a command written against a stale view of the thread, and a
+   * queued message can arrive long after another device moved the thread. A
+   * fresh provider conversation starts only while this still names the account
+   * that owns the current one and the confirmed revision still matches.
+   */
+  providerAccountSwitchFrom: Schema.optional(ProviderInstanceId),
+  /** Account revision observed when consent was given; guards against account round trips. */
+  providerAccountSwitchRevision: Schema.optional(NonNegativeInt),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
@@ -1233,6 +1248,8 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  providerAccountSwitchFrom: Schema.optional(ProviderInstanceId),
+  providerAccountSwitchRevision: Schema.optional(NonNegativeInt),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -1729,6 +1746,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),
+  /** See `ThreadTurnStartCommand.providerAccountSwitchFrom`. */
+  providerAccountSwitchFrom: Schema.optional(ProviderInstanceId),
+  providerAccountSwitchRevision: Schema.optional(NonNegativeInt),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(

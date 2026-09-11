@@ -888,6 +888,49 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.session-set", () => {
+    it("replays explicit account revisions after legacy events and reconnects", () => {
+      let thread = baseThread;
+      const occurredAt = "2026-04-01T08:00:00.000Z";
+      const updates = [
+        ["codex-a", "ready", 0],
+        ["codex-a", "stopped", 0],
+        ["codex-b", "ready", 1],
+        ["codex-b", "starting", 1],
+        ["codex-a", "ready", 2],
+        ["codex-a", "stopped", 2],
+      ] as const;
+      for (const [index, [account, status, revision]] of updates.entries()) {
+        // Round-trip the snapshot as a reconnect would before the next streamed event.
+        thread = JSON.parse(JSON.stringify(thread)) as OrchestrationThread;
+        const result = applyThreadDetailEvent(thread, {
+          ...baseEventFields,
+          sequence: index + 1,
+          occurredAt,
+          aggregateKind: "thread",
+          aggregateId: thread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status,
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make(account),
+              ...(revision > 0 ? { providerAccountRevision: revision } : {}),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: occurredAt,
+            },
+          },
+        });
+        expect(result.kind).toBe("updated");
+        if (result.kind !== "updated") throw new Error("Session event must update the thread");
+        thread = result.thread;
+        expect(thread.session?.providerAccountRevision ?? 0).toBe(revision);
+      }
+    });
+
     it("settles a running latestTurn when the session leaves the running status", () => {
       const threadWithRunningTurn: OrchestrationThread = {
         ...baseThread,

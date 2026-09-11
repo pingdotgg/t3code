@@ -354,6 +354,19 @@ describe("thread outbox", () => {
     expect(decodeQueuedThreadMessage({ ...message, schemaVersion: 4 })).toEqual(message);
   });
 
+  it("persists the ownership revision and preserves legacy entries without inventing consent", () => {
+    const legacy = {
+      ...queuedMessage({ messageId: "switch-1", createdAt: "2026-06-08T10:00:01.000Z" }),
+      providerAccountSwitchFrom: ProviderInstanceId.make("claude_work"),
+    };
+    const confirmed = { ...legacy, providerAccountSwitchRevision: 42 };
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(confirmed))).toEqual(confirmed);
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(legacy))).toEqual(legacy);
+    expect(
+      decodeQueuedThreadMessage(encodeQueuedThreadMessage(legacy)).providerAccountSwitchRevision,
+    ).toBeUndefined();
+  });
+
   it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {
     const legacyMessage = queuedMessage({
       messageId: "message-1",

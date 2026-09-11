@@ -857,6 +857,7 @@ function ThreadRouteContent(
       >
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          providerAccountLock={composer.providerAccountLock}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}

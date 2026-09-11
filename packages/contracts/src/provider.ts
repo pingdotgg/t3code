@@ -60,6 +60,11 @@ export const ProviderSessionStartInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  /** Start a new provider conversation, ignoring any resume state the thread's
+      previous provider instance persisted. Set only for a switch the user
+      confirmed: without it, moving a thread between instances that cannot read
+      each other's sessions is rejected rather than silently forked. */
+  startFreshConversation: Schema.optional(Schema.Boolean),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,

@@ -9,6 +9,7 @@ import {
   ProjectId,
   ThreadId,
   type ThreadPullRequestSnapshot,
+  type OrchestrationSession,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
@@ -45,6 +46,8 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
+import { decideOrchestrationCommand } from "../decider.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
@@ -292,6 +295,110 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-branch-pr-proje
             },
           ]);
         }
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-account-revision-")))(
+  "account revisions",
+  (it) => {
+    it.effect("persists decider revisions after legacy replay", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const store = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-account-revision");
+        const now = "2026-09-10T00:00:00.000Z";
+        const fields = {
+          aggregateKind: "thread" as const,
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        };
+        const created = yield* store.append({
+          ...fields,
+          type: "thread.created",
+          eventId: EventId.make("account-revision-created"),
+          payload: {
+            threadId,
+            projectId: ProjectId.make("account-revision-project"),
+            title: "Account revision",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex-a"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        let model = yield* projectEvent(createEmptyReadModel(now), created);
+        // Historical account moves had no revision. Replay and upgraded rows both
+        // remain at zero until the first owner change decided by the new server.
+        const updates = [
+          ["codex-a", "ready", undefined],
+          ["codex-b", "ready", undefined],
+          ["codex-a", "ready", undefined],
+          ["codex-a", "stopped", 0],
+          ["codex-b", "ready", 1],
+          ["codex-b", "starting", 1],
+          ["codex-a", "ready", 2],
+          ["codex-a", "stopped", 2],
+        ] as const;
+        for (const [index, [account, status, revision]] of updates.entries()) {
+          const session: OrchestrationSession = {
+            threadId,
+            status,
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make(account),
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          };
+          const decided =
+            revision === undefined
+              ? {
+                  ...fields,
+                  type: "thread.session-set" as const,
+                  eventId: EventId.make(`legacy-account-${index}`),
+                  payload: { threadId, session },
+                }
+              : yield* decideOrchestrationCommand({
+                  readModel: model,
+                  command: {
+                    type: "thread.session.set",
+                    commandId: CommandId.make(`set-account-${index}`),
+                    threadId,
+                    // Incoming status writes cannot overwrite the durable revision.
+                    session: { ...session, providerAccountRevision: 99 },
+                    createdAt: now,
+                  },
+                });
+          for (const next of Array.isArray(decided) ? decided : [decided]) {
+            if (next.type === "thread.session-set") {
+              assert.equal(next.payload.session.providerAccountRevision ?? 0, revision ?? 0);
+            }
+            const event = yield* store.append(next);
+            model = yield* projectEvent(model, event);
+          }
+          yield* pipeline.bootstrap;
+          const rows = yield* sql<{ readonly revision: number }>`
+            SELECT provider_account_revision AS revision
+            FROM projection_thread_sessions WHERE thread_id = ${threadId}
+          `;
+          assert.equal(rows[0]?.revision, revision ?? 0);
+          assert.equal(model.threads[0]?.session?.providerAccountRevision ?? 0, revision ?? 0);
+        }
+        yield* pipeline.bootstrap;
+        const rows = yield* sql<{ readonly revision: number }>`
+        SELECT provider_account_revision AS revision
+        FROM projection_thread_sessions WHERE thread_id = ${threadId}
+      `;
+        assert.equal(rows[0]?.revision, 2);
       }),
     );
   },

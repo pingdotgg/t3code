@@ -18,6 +18,7 @@ import type {
   ModelSelection,
   OrchestrationThreadShell,
   ProviderApprovalDecision,
+  ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
@@ -109,6 +110,12 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
+  /**
+   * Account that owns the thread's provider conversation. Resolved upstream:
+   * `selectedThread` carries the composer draft's model selection, which is
+   * where the thread is going, not where its conversation lives.
+   */
+  readonly providerAccountLock: ProviderInstanceId | undefined;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -1033,6 +1040,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     connectionState={props.connectionStateLabel}
                     environmentLabel={props.environmentLabel}
                     selectedThread={props.selectedThread}
+                    providerAccountLock={props.providerAccountLock}
                     hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                     serverConfig={props.serverConfig}
                     queueCount={props.selectedThreadQueueCount}

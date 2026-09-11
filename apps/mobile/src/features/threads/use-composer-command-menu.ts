@@ -37,6 +37,7 @@ export function buildComposerSlashCommandItems(input: {
   readonly atMessageStart: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
+  readonly compactDisabledReason?: string | null;
   /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly allowInteractionMode: boolean;
@@ -98,7 +99,11 @@ export function buildComposerSlashCommandItems(input: {
       type: "provider-slash-command",
       command,
       label: `/${command.name}`,
-      description: command.description ?? "",
+      description:
+        command.name === "compact" && input.compactDisabledReason
+          ? input.compactDisabledReason
+          : (command.description ?? ""),
+      ...(command.name === "compact" && input.compactDisabledReason ? { disabled: true } : {}),
     });
   }
   return items;
@@ -151,6 +156,7 @@ export function useComposerCommandMenu({
   selectedProviderStatus,
   hasThread,
   hasCompactableConversation,
+  compactDisabledReason,
   offersUsageLimits = false,
   enabled = true,
   onChangeDraftMessage,
@@ -164,6 +170,7 @@ export function useComposerCommandMenu({
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
+  readonly compactDisabledReason?: string | null;
   /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
@@ -281,6 +288,7 @@ export function useComposerCommandMenu({
         atMessageStart: trigger.rangeStart === 0,
         hasThread,
         hasCompactableConversation,
+        compactDisabledReason,
         offersUsageLimits,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
         selectedProviderStatus,
@@ -400,6 +408,7 @@ export function useComposerCommandMenu({
   }, [
     hasThread,
     hasCompactableConversation,
+    compactDisabledReason,
     onUpdateInteractionMode,
     pathSearch.entries,
     selectedProviderStatus,
@@ -410,7 +419,7 @@ export function useComposerCommandMenu({
 
   const onSelect = useCallback(
     (item: ComposerCommandItem) => {
-      if (!trigger) return;
+      if (!trigger || (item.type === "provider-slash-command" && item.disabled)) return;
 
       if (
         item.type === "provider-slash-command" &&

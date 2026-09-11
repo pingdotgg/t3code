@@ -233,6 +233,7 @@ export const make = Effect.gen(function* () {
       threadPullRequests: true,
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
+      threadProviderAccountSwitch: true,
       environmentIcon: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

@@ -225,6 +225,12 @@ import {
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
+import {
+  resolveProviderAccountSwitchPrompt,
+  resolveTurnAccountSwitchConsent,
+  retainConfirmedAccountSwitch,
+} from "@t3tools/client-runtime/state/provider-instance-display";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { cn, randomHex } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -308,7 +314,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { environmentThreadShells, threadEnvironment, useEnvironmentThread } from "../state/threads";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -1380,6 +1386,15 @@ type LocalThreadErrorEntry = {
   readonly at: number;
 };
 
+/** A same-provider account switch the user confirmed, until the next turn starts it. */
+type PendingAccountSwitch = {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly from: ProviderInstanceId;
+  readonly to: ProviderInstanceId;
+  readonly revision: number;
+};
+
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
@@ -2340,6 +2355,38 @@ export default function ChatView(props: ChatViewProps) {
     threadProvider,
     providers: providerStatuses,
   });
+  const providerAccountSwitchEnabled =
+    serverConfig?.environment.capabilities.threadProviderAccountSwitch === true;
+  // The account a started thread's provider conversation lives on. The
+  // composer, the picker, and the switch confirmation all lock to this one.
+  const lockedProviderInstanceId =
+    activeThread?.session?.providerInstanceId ?? activeThread?.modelSelection.instanceId;
+  const providerAccountRevision = activeThread?.session?.providerAccountRevision;
+  // Persisted drafts cannot stand in for consent to leave an account revision.
+  const [pendingAccountSwitch, setPendingAccountSwitch] = useState<PendingAccountSwitch | null>(
+    null,
+  );
+  const accountSwitchThreadKeyRef = useRef(activeThreadKey);
+  useLayoutEffect(() => {
+    accountSwitchThreadKeyRef.current = activeThreadKey;
+    return () => {
+      accountSwitchThreadKeyRef.current = null;
+    };
+  }, [activeThreadKey]);
+  const confirmedAccountSwitch =
+    pendingAccountSwitch?.environmentId === activeThread?.environmentId &&
+    pendingAccountSwitch?.threadId === activeThread?.id
+      ? retainConfirmedAccountSwitch(
+          pendingAccountSwitch,
+          lockedProviderInstanceId,
+          providerAccountRevision,
+        )
+      : null;
+  useEffect(() => {
+    if (confirmedAccountSwitch !== pendingAccountSwitch)
+      setPendingAccountSwitch(confirmedAccountSwitch);
+  }, [confirmedAccountSwitch, pendingAccountSwitch]);
+  const confirmedAccountSwitchInstanceId = confirmedAccountSwitch?.to ?? null;
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
   const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
@@ -2604,14 +2651,16 @@ export default function ChatView(props: ChatViewProps) {
           activeProjectDefaultModelSelection?.instanceId,
         ],
         lockedProvider,
-        lockedInstanceId:
-          activeThread?.session?.providerInstanceId ?? activeThread?.modelSelection.instanceId,
+        lockedInstanceId: lockedProviderInstanceId,
+        confirmedAccountSwitchInstanceId,
       }),
     [
       activeProjectDefaultModelSelection?.instanceId,
       activeThread?.modelSelection.instanceId,
       activeThread?.session?.providerInstanceId,
+      confirmedAccountSwitchInstanceId,
       lockedProvider,
+      lockedProviderInstanceId,
       providerInstanceEntries,
       selectedProviderByThreadId,
     ],
@@ -5928,6 +5977,7 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
+    confirmedAccountSwitch !== null ||
     isWorking ||
     threadDetailLoading ||
     isPreparingWorktree ||
@@ -5938,11 +5988,13 @@ export default function ChatView(props: ChatViewProps) {
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable;
   const compactDisabledReason = compactDisabled
-    ? !activeProject
-      ? "Choose a project before compacting"
-      : !manualCompactionProviderAvailable
-        ? "Compaction is unavailable for this provider"
-        : "Compacting is unavailable right now"
+    ? confirmedAccountSwitch !== null
+      ? "Send a message on the selected account before compacting"
+      : !activeProject
+        ? "Choose a project before compacting"
+        : !manualCompactionProviderAvailable
+          ? "Compaction is unavailable for this provider"
+          : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -7236,6 +7288,10 @@ export default function ChatView(props: ChatViewProps) {
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
+          ...resolveTurnAccountSwitchConsent({
+            confirmed: confirmedAccountSwitch,
+            instanceId: ctxSelectedModelSelection.instanceId,
+          }),
           titleSeed: title,
           runtimeMode,
           interactionMode: sendInteractionMode,
@@ -7719,6 +7775,10 @@ export default function ChatView(props: ChatViewProps) {
               attachments: [],
             },
             modelSelection: ctxSelectedModelSelection,
+            ...resolveTurnAccountSwitchConsent({
+              confirmed: confirmedAccountSwitch,
+              instanceId: ctxSelectedModelSelection.instanceId,
+            }),
             titleSeed: activeThread.title,
             runtimeMode,
             interactionMode: nextInteractionMode,
@@ -7761,6 +7821,7 @@ export default function ChatView(props: ChatViewProps) {
       activeProposedPlan,
       acknowledgeActiveThreadWoke,
       beginLocalDispatch,
+      confirmedAccountSwitch,
       isConnecting,
       isSendBusy,
       isServerThread,
@@ -7957,8 +8018,9 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
-      if (!activeThread) return;
+    async (instanceId: ProviderInstanceId, model: string) => {
+      const thread = activeThread;
+      if (!thread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
       // are rejected by returning early; the server remains authoritative too.
@@ -7972,18 +8034,63 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      if (lockedProvider !== null && activeThread.session?.providerInstanceId) {
-        const currentEntry = providerStatuses.find(
-          (snapshot) => snapshot.instanceId === activeThread.session?.providerInstanceId,
+      // A stopped session still owns the conversation on its last account.
+      const currentInstanceId = lockedProvider === null ? undefined : lockedProviderInstanceId;
+      const currentEntry = currentInstanceId
+        ? providerStatuses.find((snapshot) => snapshot.instanceId === currentInstanceId)
+        : undefined;
+      const accountSwitchPrompt =
+        lockedProvider === null
+          ? null
+          : resolveProviderAccountSwitchPrompt({
+              supported: providerAccountSwitchEnabled,
+              current: currentEntry,
+              next: entry,
+            });
+      const currentGroupKey = currentEntry?.continuation?.groupKey;
+      const nextGroupKey = entry?.continuation?.groupKey;
+      if (
+        accountSwitchPrompt === null &&
+        currentGroupKey !== undefined &&
+        nextGroupKey !== undefined &&
+        currentGroupKey !== nextGroupKey
+      ) {
+        // A cross-account pick this environment will not accept.
+        scheduleComposerFocus();
+        return;
+      }
+      let confirmation: PendingAccountSwitch | null = null;
+      if (accountSwitchPrompt && currentInstanceId !== undefined) {
+        confirmation = {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+          from: currentInstanceId,
+          to: instanceId,
+          revision: providerAccountRevision ?? 0,
+        };
+        const confirmed = await requestConfirmDialog(
+          `${accountSwitchPrompt.title}\n${accountSwitchPrompt.body}`,
         );
-        if (
-          currentEntry?.continuation?.groupKey &&
-          entry?.continuation?.groupKey &&
-          currentEntry.continuation.groupKey !== entry.continuation.groupKey
-        ) {
+        if (confirmed !== true) {
           scheduleComposerFocus();
           return;
         }
+        const current = appAtomRegistry.get(
+          environmentThreadShells.threadShellAtom({
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+          }),
+        );
+        if (
+          accountSwitchThreadKeyRef.current !==
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ||
+          retainConfirmedAccountSwitch(
+            confirmation,
+            current?.session?.providerInstanceId ?? current?.modelSelection.instanceId,
+            current?.session?.providerAccountRevision,
+          ) === null
+        )
+          return;
       }
       const resolvedModel = resolveAppModelSelectionForInstance(
         instanceId,
@@ -8001,9 +8108,9 @@ export default function ChatView(props: ChatViewProps) {
       };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
-        hasStartedSession: activeThread.session !== null,
-        currentModelSelection: activeThread.modelSelection,
-        currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
+        hasStartedSession: thread.session !== null,
+        currentModelSelection: thread.modelSelection,
+        currentProviderInstanceId: thread.session?.providerInstanceId ?? null,
         nextModelSelection,
       });
       if (modelChangeBlockReason) {
@@ -8016,20 +8123,24 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       setComposerDraftModelSelection(
-        scopeThreadRef(activeThread.environmentId, activeThread.id),
+        scopeThreadRef(thread.environmentId, thread.id),
         nextModelSelection,
         { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      setPendingAccountSwitch(confirmation);
       scheduleComposerFocus();
     },
     [
       activeThread,
       lockedProvider,
+      lockedProviderInstanceId,
+      providerAccountRevision,
+      providerAccountSwitchEnabled,
+      providerStatuses,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
-      providerStatuses,
       settings,
     ],
   );
@@ -8693,6 +8804,8 @@ export default function ChatView(props: ChatViewProps) {
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
+                            providerAccountSwitchEnabled={providerAccountSwitchEnabled}
+                            confirmedAccountSwitchInstanceId={confirmedAccountSwitchInstanceId}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             providerCatalogKnown={serverConfig !== null}
                             activeProjectDefaultModelSelection={activeProjectDefaultModelSelection}

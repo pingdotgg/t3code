@@ -31,6 +31,7 @@ export type ComposerCommandItem =
       readonly id: string;
       readonly type: "provider-slash-command";
       readonly command: ServerProviderSlashCommand;
+      readonly disabled?: boolean;
       readonly label: string;
       readonly description: string;
     }
@@ -124,13 +125,19 @@ const CommandRow = memo(function CommandRow(props: {
   readonly isSlashSkill: boolean;
 }) {
   const iconName = itemIcon(props.item);
+  const disabled = props.item.type === "provider-slash-command" && props.item.disabled === true;
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
       onPress={props.onPress}
       className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
-      style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
+      style={{
+        borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth,
+        opacity: disabled ? 0.6 : 1,
+      }}
     >
       {props.item.type === "path" ? (
         <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
