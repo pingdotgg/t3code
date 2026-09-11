@@ -942,7 +942,11 @@ export function NewTaskDraftScreen(props: {
     if (voiceInput.blocksSubmission) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
-    if (!selectedProject || !draftKey || !selectedEnvironmentServerConfig) {
+    if (
+      !selectedProject ||
+      !draftKey ||
+      (environmentConnected && !selectedEnvironmentServerConfig)
+    ) {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
@@ -1096,7 +1100,7 @@ export function NewTaskDraftScreen(props: {
   const canStart =
     attachmentBlockReason === null &&
     !modelUnavailable &&
-    selectedEnvironmentServerConfig !== null &&
+    (!environmentConnected || selectedEnvironmentServerConfig !== null) &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&

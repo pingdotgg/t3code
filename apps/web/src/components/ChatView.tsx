@@ -8081,7 +8081,10 @@ export default function ChatView(props: ChatViewProps) {
       setStickyComposerModelSelection(nextModelSelection);
       if (isLocalDraftThread && composerRuntimeMode === null) {
         setDraftThreadContext(composerDraftTarget, {
-          runtimeMode: resolveNewThreadRuntimeMode(settings, instanceId),
+          runtimeMode: resolveNewThreadRuntimeMode(
+            environmentById.get(activeThread.environmentId)?.serverConfig?.settings,
+            instanceId,
+          ),
         });
       }
       scheduleComposerFocus();
@@ -8098,6 +8101,7 @@ export default function ChatView(props: ChatViewProps) {
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
+      environmentById,
     ],
   );
   const onEnvModeChange = useCallback(

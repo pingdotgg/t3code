@@ -904,7 +904,12 @@ export function EnvironmentProviderSettings({
       favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
-    const providerRuntimeModeDefault = settings.providerRuntimeModeDefaults[row.instanceId];
+    const providerRuntimeModeDefault = Object.hasOwn(
+      settings.providerRuntimeModeDefaults,
+      row.instanceId,
+    )
+      ? settings.providerRuntimeModeDefaults[row.instanceId]
+      : undefined;
 
     return (
       <ProviderInstanceCard
