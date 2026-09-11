@@ -914,3 +914,53 @@ describe("resolvePlanAgentHealPatch", () => {
     ).toEqual({ sourceControlWriterModelSelection: healed });
   });
 });
+
+describe("Devin account model selection", () => {
+  const driver = ProviderDriverKind.make("devin");
+  const instanceId = ProviderInstanceId.make("devin_work");
+  const selection = createModelSelection(instanceId, "swe-2-high");
+
+  it("keeps the thread model unavailable until the account catalog restores it", () => {
+    for (const models of [[], ["swe-1.6"], ["swe-2-high"]]) {
+      const providers = [provider({ provider: driver, instanceId, models })];
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: selection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
+      expect(state.selectedModel).toBe(selection.model);
+      const options = getCustomModelOptionsByInstance(
+        DEFAULT_UNIFIED_SETTINGS,
+        providers,
+        instanceId,
+        state.selectedModel,
+      ).get(instanceId);
+      expect(
+        options?.find((option) => option.slug === selection.model)?.isUnavailable === true,
+      ).toBe(!models.includes(selection.model));
+    }
+  });
+
+  it("excludes Devin from background generation even when its account has models", () => {
+    const providers = [
+      { ...provider({ instanceId: "codex", models: ["gpt-5.6-luna"] }), enabled: false },
+      {
+        ...provider({ provider: driver, instanceId, models: [selection.model] }),
+        supportsTextGeneration: false,
+      },
+    ];
+    expect(resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, providers)).toEqual(
+      NO_PROVIDER_MODEL_SELECTION,
+    );
+    expect(
+      resolveAppModelSelectionState(
+        { ...DEFAULT_UNIFIED_SETTINGS, textGenerationModelSelection: selection },
+        providers,
+      ),
+    ).toEqual(NO_PROVIDER_MODEL_SELECTION);
+  });
+});

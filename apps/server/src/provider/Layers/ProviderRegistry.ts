@@ -103,12 +103,18 @@ export function upsertProviderWorkspaceSnapshot(
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  const isDevin = provider.driver === ProviderDriverKind.make("devin");
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    !isDevin &&
+    provider.driver !== ProviderDriverKind.make("opencode")
+  ) {
     return true;
   }
 
   if (
-    (isAntigravity || isCodex) &&
+    (isAntigravity || isCodex || isDevin) &&
     (!provider.enabled || provider.auth.status === "unauthenticated")
   ) {
     return false;
@@ -148,7 +154,12 @@ const mergeProviderModels = (
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
+    if (
+      provider.driver === "devin" ||
+      !previousModel ||
+      hasModelCapabilities(model) ||
+      !hasModelCapabilities(previousModel)
+    ) {
       return model;
     }
     return {

@@ -141,9 +141,49 @@ function withDescriptorCurrentValue(
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  preserveUnavailableSelections?: boolean;
 }): ReadonlyArray<ProviderOptionDescriptor> {
   const { caps, selections } = input;
   const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
+
+  // Account catalogs can lose choices. Keep explicit selections visible and let
+  // the provider reject them instead of silently dispatching a different variant.
+  if (input.preserveUnavailableSelections) {
+    for (const selection of selections ?? []) {
+      const index = baseDescriptors.findIndex((descriptor) => descriptor.id === selection.id);
+      const descriptor = baseDescriptors[index];
+      if (!descriptor) {
+        baseDescriptors.push(
+          typeof selection.value === "boolean"
+            ? {
+                id: selection.id,
+                label: `${selection.id} (Unavailable)`,
+                type: "boolean",
+                currentValue: selection.value,
+              }
+            : {
+                id: selection.id,
+                label: selection.id,
+                type: "select",
+                currentValue: selection.value,
+                options: [{ id: selection.value, label: `${selection.value} (Unavailable)` }],
+              },
+        );
+      } else if (
+        descriptor.type === "select" &&
+        typeof selection.value === "string" &&
+        !descriptor.options.some((option) => option.id === selection.value)
+      ) {
+        baseDescriptors[index] = {
+          ...descriptor,
+          options: [
+            ...descriptor.options,
+            { id: selection.value, label: `${selection.value} (Unavailable)` },
+          ],
+        };
+      }
+    }
+  }
 
   return baseDescriptors.map((descriptor) =>
     withDescriptorCurrentValue(

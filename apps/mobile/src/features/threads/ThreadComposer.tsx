@@ -501,10 +501,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const providerOptionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
+        provider: currentModelOption?.providerDriver,
         capabilities: currentModelOption?.capabilities,
         selections: currentModelSelection.options,
       }),
-    [currentModelOption?.capabilities, currentModelSelection.options],
+    [
+      currentModelOption?.providerDriver,
+      currentModelOption?.capabilities,
+      currentModelSelection.options,
+    ],
   );
   const settingsOwnerId = composerOwnerKey;
   const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(

@@ -409,3 +409,30 @@ describe("mobile model options", () => {
     ).toBeNull();
   });
 });
+
+describe("Devin account model selection", () => {
+  it("preserves SWE-2 and marks it unavailable after an account catalog change", () => {
+    const selection = { instanceId: ProviderInstanceId.make("devin_work"), model: "swe-2-high" };
+    const config = {
+      providers: [
+        {
+          instanceId: selection.instanceId,
+          driver: "devin",
+          displayName: "Devin Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [{ slug: "swe-1.6", name: "SWE-1.6", capabilities: {} }],
+        },
+      ],
+    } as unknown as ServerConfig;
+    expect(resolveSelectableModelSelection(config, selection)).toBe(selection);
+    expect(resolveDefaultableModelSelection(config, selection)).toBe(selection);
+    expect(isModelSelectionUnavailable(config, selection)).toBe(true);
+    expect(
+      buildModelOptions(config, selection).find(
+        (option) => option.selection.model === selection.model,
+      ),
+    ).toMatchObject({ selection, isUnavailable: true, providerDriver: "devin" });
+  });
+});

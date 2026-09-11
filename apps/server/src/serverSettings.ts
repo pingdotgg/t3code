@@ -11,7 +11,6 @@
  * @module ServerSettings
  */
 import {
-  DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
@@ -330,11 +329,18 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   // instance wins over the legacy providers map, which decodes to defaults
   // (codex enabled) when the Providers UI has only written providerInstances.
   const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    const kind = ProviderDriverKind.make(driver);
+    // Account-discovered catalogs require an explicit model selection.
+    if (!DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[kind] && !DEFAULT_MODEL_BY_PROVIDER[kind])
+      return false;
     const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
     return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
   });
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
-  if (!fallback) {
+  const model = fallback
+    ? (DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ?? DEFAULT_MODEL_BY_PROVIDER[fallback])
+    : undefined;
+  if (!fallback || !model) {
     return settings;
   }
 
@@ -342,10 +348,7 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
     ...settings,
     textGenerationModelSelection: {
       instanceId: ProviderInstanceId.make(fallback),
-      model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_TEXT_GENERATION_MODEL,
+      model,
     } satisfies ModelSelection,
   };
 }

@@ -78,7 +78,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: props.model,
       options: selectedInstanceOptions,
     }) ??
-    (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
+    (activeEntry?.driverKind === "opencode" ||
+    activeEntry?.driverKind === "antigravity" ||
+    activeEntry?.driverKind === "devin"
       ? undefined
       : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel

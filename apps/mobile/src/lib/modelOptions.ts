@@ -61,7 +61,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/** Whether a known account-model selection needs setup or a different model. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -75,7 +75,7 @@ export function isModelSelectionUnavailable(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   return (
-    driver === "antigravity" &&
+    (driver === "antigravity" || driver === "devin") &&
     (!provider ||
       !provider.enabled ||
       !provider.installed ||
@@ -86,7 +86,7 @@ export function isModelSelectionUnavailable(
 }
 
 /**
- * Keep Antigravity selections when setup or catalog changes make them
+ * Keep Antigravity and Devin selections when setup or catalog changes make them
  * unavailable. Other providers fall through to the server default when they
  * are disabled, missing, or signed out. Without config, keep stored selections.
  */
@@ -102,7 +102,7 @@ export function resolveSelectableModelSelection(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
-  if (driver === "antigravity") {
+  if (driver === "antigravity" || driver === "devin") {
     return selection;
   }
   return provider &&
@@ -114,7 +114,7 @@ export function resolveSelectableModelSelection(
 }
 
 /**
- * Reject legacy models for implicit defaults, except Antigravity selections,
+ * Reject legacy models for implicit defaults, except Antigravity and Devin selections,
  * which must not silently change after a catalog update. Explicit picks in
  * the settings sheet are unaffected.
  */
@@ -128,7 +128,11 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
+  return provider?.driver !== "antigravity" &&
+    provider?.driver !== "devin" &&
+    model?.isLegacy === true
+    ? null
+    : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -158,7 +162,8 @@ export function buildModelOptions(
       !provider.enabled ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
-      (provider.driver === "antigravity" && provider.availability === "unavailable")
+      ((provider.driver === "antigravity" || provider.driver === "devin") &&
+        provider.availability === "unavailable")
     ) {
       continue;
     }
@@ -194,7 +199,7 @@ export function buildModelOptions(
       options.set(key, {
         ...existing,
         selection:
-          existing.providerDriver === "antigravity"
+          existing.providerDriver === "antigravity" || existing.providerDriver === "devin"
             ? fallbackModelSelection
             : normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
       });
