@@ -26,6 +26,19 @@ export interface SidebarProjectSnapshot extends Project {
   remoteEnvironmentLabels: readonly string[];
 }
 
+export function projectGroupsSpanEnvironments(
+  groups: ReadonlyArray<Pick<SidebarProjectSnapshot, "memberProjects">>,
+): boolean {
+  const environmentIds = new Set<EnvironmentId>();
+  for (const group of groups) {
+    for (const member of group.memberProjects) {
+      environmentIds.add(member.environmentId);
+      if (environmentIds.size > 1) return true;
+    }
+  }
+  return false;
+}
+
 export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
