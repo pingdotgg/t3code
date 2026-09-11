@@ -134,7 +134,10 @@ import {
   threadReplayEncodedBytes,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
-import { THREAD_HISTORY_SNAPSHOT_ROW_LIMIT } from "./orchestration-v2/threadHistoryPaging.ts";
+import {
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+  THREAD_HISTORY_PAGE_POLICY,
+} from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
   projectThreadProjectionForWire,
@@ -1275,6 +1278,7 @@ const makeWsRpcLayer = (
                 useBoundedSnapshot
                   ? threadManagement.getThreadSnapshotWindow(input.threadId, {
                       rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                      userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
                     })
                   : threadManagement.getThreadSnapshot(input.threadId)
               ).pipe(
