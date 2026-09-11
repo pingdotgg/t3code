@@ -58,9 +58,12 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 // A cold archive launch also downloads and unpacks a ~70 MB release archive
-// and may wait on another installer's lock, so it gets a larger budget.
-const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 300_000;
-const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 180;
+// and may wait on another installer's lock. The budgets nest: one download
+// is bounded, a waiter outlasts a full download plus extraction so it can
+// reuse the result, and the SSH command outlasts the waiter plus readiness.
+const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
+const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 300;
+const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 600_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -433,24 +436,27 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     # not both install: mkdir is the atomic lock, a stale lock older than
     # ten minutes is reclaimed, and the ready check repeats under the lock.
     T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+    # The lock is a directory renamed into place with its owner pid already
+    # inside, so it never exists without an owner. A lock whose owner is gone
+    # is stale regardless of age; a live owner is never reclaimed no matter
+    # how slow its download is, so two installers can never run at once.
+    T3_LOCK_CANDIDATE="$(mktemp -d "$HOME/.t3/runtime/versions/.lock-XXXXXX")"
+    printf '%s\\n' "$$" > "$T3_LOCK_CANDIDATE/pid"
     T3_LOCK_WAITED=0
-    while ! mkdir "$T3_LOCK" 2>/dev/null; do
-      # The holder records its pid; a lock whose owner is gone is stale
-      # regardless of age, and a live owner is never reclaimed no matter how
-      # slow its download is, so two installers can never run at once.
+    while ! mv "$T3_LOCK_CANDIDATE" "$T3_LOCK" 2>/dev/null || [ -d "$T3_LOCK_CANDIDATE" ]; do
       T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
-      if [ -n "$T3_LOCK_OWNER" ] && ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
+      if [ -z "$T3_LOCK_OWNER" ] || ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
         rm -rf "$T3_LOCK"
         continue
       fi
       if [ "$T3_LOCK_WAITED" -ge @@T3_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
+        rm -rf "$T3_LOCK_CANDIDATE"
         printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
         exit 1
       fi
       sleep 1
       T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
     done
-    printf '%s\\n' "$$" > "$T3_LOCK/pid"
     trap 'rm -rf "$T3_LOCK"' EXIT
   fi
   if ! t3_runtime_ready; then
@@ -468,7 +474,7 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
     trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
     t3_fetch() {
-      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time 600 "$1" -o "$2"
+      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time @@T3_ARCHIVE_DOWNLOAD_SECONDS@@ "$1" -o "$2"
       elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
       else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
       fi
@@ -803,6 +809,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
+      T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );

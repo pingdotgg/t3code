@@ -149,10 +149,16 @@ describe("ssh tunnel scripts", () => {
       script,
       'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
-    assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
-    assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 180 ]; then');
-    assert.include(script, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid"');
-    assert.include(script, 'kill -0 "$T3_LOCK_OWNER"');
+    // The owner pid is written before the lock is renamed into place, so an
+    // ownerless lock can only mean a crash mid-acquire and is reclaimed.
+    assert.include(script, 'printf \'%s\\n\' "$$" > "$T3_LOCK_CANDIDATE/pid"');
+    assert.include(script, 'while ! mv "$T3_LOCK_CANDIDATE" "$T3_LOCK" 2>/dev/null');
+    assert.include(
+      script,
+      'if [ -z "$T3_LOCK_OWNER" ] || ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then',
+    );
+    assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 300 ]; then');
+    assert.include(script, "--max-time 240");
     assert.notInclude(script, "-mmin");
     assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
     assert.isBelow(
@@ -359,7 +365,7 @@ describe("ssh tunnel scripts", () => {
       port: 2222,
     } as const;
     const spawner = ChildProcessSpawner.make(() =>
-      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 200_000)),
+      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 500_000)),
     );
     const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
@@ -371,7 +377,7 @@ describe("ssh tunnel scripts", () => {
         }),
       );
       yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.seconds(200));
+      yield* TestClock.adjust(Duration.seconds(500));
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
