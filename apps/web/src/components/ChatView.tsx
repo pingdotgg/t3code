@@ -8495,9 +8495,14 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
-                onCiteAssistantText={paintOnlyDisplayedTimeline ? undefined : citeAssistantText}
-                agentPanelModel={paintOnlyDisplayedTimeline ? undefined : agentPanelModel}
-                onOpenAgents={paintOnlyDisplayedTimeline ? undefined : addAgentsSurface}
+                {...(!paintOnlyDisplayedTimeline
+                  ? {
+                      onCiteAssistantText: citeAssistantText,
+                      agentPanelModel,
+                      onOpenAgents: addAgentsSurface,
+                      onUseArtifactTemplate: useArtifactTemplate,
+                    }
+                  : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
@@ -8523,7 +8528,6 @@ export default function ChatView(props: ChatViewProps) {
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
-                onUseArtifactTemplate={paintOnlyDisplayedTimeline ? undefined : useArtifactTemplate}
                 isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}

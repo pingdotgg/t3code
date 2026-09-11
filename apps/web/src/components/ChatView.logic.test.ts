@@ -697,7 +697,16 @@ describe("resolveThreadSwitchTimeline", () => {
           kind: "message",
           message: {
             role: "user",
-            attachments: [{ type: "image", previewUrl: "blob:handoff" }],
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "blob:handoff",
+              },
+            ],
           },
         },
       ]),
@@ -708,7 +717,16 @@ describe("resolveThreadSwitchTimeline", () => {
           kind: "message",
           message: {
             role: "user",
-            attachments: [{ type: "image", previewUrl: "https://cdn.example/a.png" }],
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "https://cdn.example/a.png",
+              },
+            ],
           },
         },
       ]),
