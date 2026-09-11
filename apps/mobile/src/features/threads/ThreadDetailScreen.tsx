@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -105,7 +106,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { ThreadRelationshipsBanner } from "./ThreadRelationshipsBanner";
-import { ThreadQueueControl } from "./ThreadQueueControl";
+import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
@@ -300,6 +301,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + 44;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const navigation = useNavigation();
+  const queuedCount = useThreadQueuedCount({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
@@ -391,6 +397,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // stable when reconnecting hands off to syncing and then to a running turn.
   const showFloatingStatus =
     showWorkingControl ||
+    queuedCount > 0 ||
     props.connectionStateLabel !== "connected" ||
     props.queuedMessages.length > 0 ||
     props.selectedThreadFeed.some(
@@ -995,6 +1002,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 status={floatingStatus}
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
+                queuedCount={queuedCount}
+                onOpenQueue={() => {
+                  Keyboard.dismiss();
+                  navigation.navigate("ThreadQueue", {
+                    environmentId: props.environmentId,
+                    threadId: props.selectedThread.id,
+                  });
+                }}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
                 {props.feedbackSubmissions.map((submission) => (
@@ -1030,10 +1045,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     />
                   </Animated.View>
                 ) : null}
-                <ThreadQueueControl
-                  environmentId={props.environmentId}
-                  threadId={props.selectedThread.id}
-                />
                 {props.activePendingApproval || props.activePendingUserInput ? (
                   <Animated.View
                     className="shrink-0 gap-3 px-4 pb-3"
