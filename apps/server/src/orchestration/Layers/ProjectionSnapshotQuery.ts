@@ -3417,6 +3417,21 @@ pending_approval_requests AS (
               ),
             );
 
+      const messagesEffect =
+        activityRead.mode === "raw" && activityRead.query?.includeMessages === false
+          ? Effect.succeed([])
+          : (bounds === undefined
+              ? listThreadMessageRowsByThread({ threadId })
+              : listThreadMessageRowsByThreadWindow({ threadId, ...bounds })
+            ).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
+                  "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
+                ),
+              ),
+            );
+
       const [
         threadRow,
         messageRows,
@@ -3435,17 +3450,7 @@ pending_approval_requests AS (
             ),
           ),
         ),
-        (bounds === undefined
-          ? listThreadMessageRowsByThread({ threadId })
-          : listThreadMessageRowsByThreadWindow({ threadId, ...bounds })
-        ).pipe(
-          Effect.mapError(
-            toPersistenceSqlOrDecodeError(
-              "ProjectionSnapshotQuery.getThreadDetailById:listMessages:query",
-              "ProjectionSnapshotQuery.getThreadDetailById:listMessages:decodeRows",
-            ),
-          ),
-        ),
+        messagesEffect,
         listThreadProposedPlanRowsByThread({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
