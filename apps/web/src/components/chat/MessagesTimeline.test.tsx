@@ -147,6 +147,8 @@ let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
 beforeAll(async () => {
+  const ElementStub = class ElementStub {};
+  vi.stubGlobal("Element", ElementStub);
   const classList = {
     add: () => {},
     remove: () => {},
@@ -161,6 +163,7 @@ beforeAll(async () => {
     clear: () => {},
   });
   vi.stubGlobal("window", {
+    Element: ElementStub,
     matchMedia,
     addEventListener: () => {},
     removeEventListener: () => {},
