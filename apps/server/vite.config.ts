@@ -48,7 +48,7 @@ const SEA_TARGETS = {
   "win-x64": { platform: "win", arch: "x64" },
 } as const;
 const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
-if (packExecutableTarget && !(packExecutableTarget in SEA_TARGETS)) {
+if (packExecutableTarget && !Object.hasOwn(SEA_TARGETS, packExecutableTarget)) {
   throw new Error(
     `T3CODE_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
   );
