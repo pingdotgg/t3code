@@ -51,7 +51,7 @@ public class T3TerminalModule: Module {
         view.mutedForegroundColorHex = mutedForegroundColor
       }
 
-      Events("onInput", "onResize")
+      Events("onInput", "onResize", "onLinkTap")
     }
   }
 }

@@ -54,7 +54,7 @@ class T3TerminalModule : Module() {
         view.mutedForegroundColorHex = mutedForegroundColor
       }
 
-      Events("onInput", "onResize")
+      Events("onInput", "onResize", "onLinkTap")
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()
