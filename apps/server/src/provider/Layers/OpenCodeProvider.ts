@@ -8,6 +8,7 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpClient } from "effect/unstable/http";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -27,6 +28,7 @@ import {
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
+import { readOpenCodeZaiUsageLimits } from "./zaiUsageLimits.ts";
 
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
@@ -367,7 +369,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
-  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
+  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner | HttpClient.HttpClient
 > {
   const openCodeRuntime = yield* OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
@@ -520,6 +522,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const usageLimits = yield* readOpenCodeZaiUsageLimits(
+    inventoryExit.value.inventory.providerList,
+    checkedAt,
+  );
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
@@ -531,6 +537,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       installed: true,
       version,
       status: connectedCount > 0 ? "ready" : "warning",
+      ...(usageLimits ? { usageLimits } : {}),
       auth: {
         status: connectedCount > 0 ? "authenticated" : "unknown",
         type: "opencode",
