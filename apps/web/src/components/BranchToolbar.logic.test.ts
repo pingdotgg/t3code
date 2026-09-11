@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  nativePressDetail,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -20,6 +21,7 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  shouldSuppressRapidBranchMenuToggle,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -832,5 +834,64 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+// The trailing press of a double-click must not toggle a just-opened menu
+// back shut: that is the open-flash-close in the bug report.
+describe("shouldSuppressRapidBranchMenuToggle", () => {
+  it("suppresses the trailing press of a double-click", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 2,
+        lastToggleAt: 1000,
+        now: 1200,
+      }),
+    ).toBe(true);
+  });
+
+  it("suppresses a rapid second press inside the double-click window", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 1,
+        lastToggleAt: 1000,
+        now: 1100,
+      }),
+    ).toBe(true);
+  });
+
+  it("lets a deliberate press through after the window", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 1,
+        lastToggleAt: 1000,
+        now: 2000,
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores closes that are not trigger presses", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "item-press",
+        nativeDetail: 2,
+        lastToggleAt: 1000,
+        now: 1050,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("nativePressDetail", () => {
+  it("reads the click count off the native event", () => {
+    expect(nativePressDetail({ detail: 2 })).toBe(2);
+  });
+
+  it("falls back to zero when there is no usable detail", () => {
+    expect(nativePressDetail(null)).toBe(0);
+    expect(nativePressDetail({})).toBe(0);
   });
 });

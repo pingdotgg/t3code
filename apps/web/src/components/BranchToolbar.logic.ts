@@ -311,3 +311,28 @@ export function shouldIncludeBranchPickerItem(input: {
     lowerItemValue.includes(sanitizedQuery)
   );
 }
+
+// A double-click fires two trigger presses: the second would toggle a
+// just-opened menu straight back shut (or re-open it right after a pick).
+// The trailing press carries a native detail of 2, and anything inside the
+// OS double-click window counts as the same gesture, so both are ignored.
+export const BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS = 350;
+
+export function nativePressDetail(event: unknown): number {
+  if (typeof event === "object" && event !== null && "detail" in event) {
+    const detail = (event as { detail?: unknown }).detail;
+    return typeof detail === "number" ? detail : 0;
+  }
+  return 0;
+}
+
+export function shouldSuppressRapidBranchMenuToggle(input: {
+  reason: string;
+  nativeDetail: number;
+  lastToggleAt: number;
+  now: number;
+}): boolean {
+  if (input.reason !== "trigger-press") return false;
+  if (input.nativeDetail > 1) return true;
+  return input.now - input.lastToggleAt < BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS;
+}
