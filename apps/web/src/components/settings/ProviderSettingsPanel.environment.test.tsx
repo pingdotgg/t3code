@@ -20,8 +20,13 @@ const atoms = vi.hoisted(() => ({
 }));
 
 const commands = vi.hoisted(() => ({
+  confirm: vi.fn(async () => true),
   refresh: vi.fn(),
   updateProvider: vi.fn(),
+}));
+
+vi.mock("../../localApi", () => ({
+  ensureLocalApi: () => ({ dialogs: { confirm: commands.confirm } }),
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -63,7 +68,11 @@ vi.mock("react/compiler-runtime", async () => {
 });
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => atoms.providers,
+  useAtomValue: (atom: symbol) => (atom === atoms.providersAtom ? atoms.providers : []),
+}));
+
+vi.mock("../../state/threads", () => ({
+  environmentThreadShells: { environmentThreadsAtom: () => Symbol.for("threads") },
 }));
 
 vi.mock("../../state/server", () => ({
@@ -301,7 +310,7 @@ describe("EnvironmentProviderSettings routing", () => {
     ).not.toBeNull();
   });
 
-  it("deletes and resets provider configuration without erasing shared preferences", () => {
+  it("deletes and resets provider configuration without erasing shared preferences", async () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -331,7 +340,10 @@ describe("EnvironmentProviderSettings routing", () => {
       (element) => element.props.instanceId === customId && element.props.mode === "editor",
     );
     expect(customCard).not.toBeNull();
-    (customCard?.props.onDelete as (() => void) | undefined)?.();
+    commands.confirm.mockResolvedValueOnce(false);
+    await (customCard?.props.onDelete as (() => Promise<void>) | undefined)?.();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    await (customCard?.props.onDelete as (() => Promise<void>) | undefined)?.();
 
     expect(settingsState.updateSettings).toHaveBeenLastCalledWith({
       providerInstances: {
@@ -356,7 +368,7 @@ describe("EnvironmentProviderSettings routing", () => {
       (element) => typeof element.props.onClick === "function",
     );
     expect(resetButton).not.toBeNull();
-    (resetButton?.props.onClick as (() => void) | undefined)?.();
+    await (resetButton?.props.onClick as (() => Promise<void>) | undefined)?.();
 
     const resetPatch = settingsState.updateSettings.mock.lastCall?.[0] as
       | Record<string, unknown>

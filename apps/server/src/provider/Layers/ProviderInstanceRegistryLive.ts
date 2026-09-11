@@ -34,6 +34,7 @@
  */
 import {
   providerInstanceConfigEnabledFlag,
+  providerInstanceRuntimeConfigEqual,
   ProviderInstanceId,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
@@ -64,13 +65,13 @@ import type { AnyProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh
- * child scope its `create` effect ran in + the original `entry` envelope
+ * child scope its `create` effect ran in + the current `entry` envelope
  * so `reconcile` can cheaply detect "no-op" updates.
  */
 interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
-  readonly entry: ProviderInstanceConfig;
+  entry: ProviderInstanceConfig;
 }
 
 /**
@@ -82,16 +83,6 @@ interface RegistryState {
   readonly unavailable: Ref.Ref<ReadonlyMap<ProviderInstanceId, ServerProvider>>;
   readonly changes: PubSub.PubSub<void>;
 }
-
-/**
- * Structural equality on `ProviderInstanceConfig` envelopes. Used by
- * `reconcile` to skip rebuilds when settings arrive unchanged. Config
- * payloads are opaque `unknown` at the envelope layer; `Equal.equals`
- * falls back to structural equality for plain records, which matches how
- * the schema decode output is constructed.
- */
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
 
 /**
  * Resolve an entry's enabled state. An explicit false on either the
@@ -202,14 +193,43 @@ const buildEntry = <R>(input: {
       };
     }
 
-    return {
-      kind: "live" as const,
-      live: {
-        instance: createResult.success,
-        scope: childScope,
-        entry,
+    const instance = createResult.success;
+    const { snapshotForCwd } = instance;
+    // Read presentation from the current envelope, including on later probe emissions.
+    const withPresentation = (snapshot: ServerProvider): ServerProvider => {
+      const { displayName: _displayName, accentColor: _accentColor, ...rest } = snapshot;
+      return {
+        ...rest,
+        ...(live.entry.displayName ? { displayName: live.entry.displayName } : {}),
+        ...(live.entry.accentColor ? { accentColor: live.entry.accentColor } : {}),
+      };
+    };
+    const live: LiveEntry = {
+      scope: childScope,
+      entry,
+      instance: {
+        ...instance,
+        get displayName() {
+          return live.entry.displayName;
+        },
+        get accentColor() {
+          return live.entry.accentColor;
+        },
+        snapshot: {
+          ...instance.snapshot,
+          getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withPresentation)),
+          refresh: instance.snapshot.refresh.pipe(Effect.map(withPresentation)),
+          streamChanges: instance.snapshot.streamChanges.pipe(Stream.map(withPresentation)),
+        },
+        ...(snapshotForCwd
+          ? {
+              snapshotForCwd: (cwd: string) =>
+                snapshotForCwd(cwd).pipe(Effect.map(withPresentation)),
+            }
+          : {}),
       },
     };
+    return { kind: "live" as const, live };
   });
 
 /**
@@ -242,7 +262,7 @@ const makeReconcile = <R>(input: {
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        if (nextEntry !== undefined && !providerInstanceRuntimeConfigEqual(live.entry, nextEntry)) {
           replacedIds.add(instanceId);
         }
       }
@@ -258,6 +278,7 @@ const makeReconcile = <R>(input: {
       const builtEntries = new Map<ProviderInstanceId, LiveEntry>();
       const builtUnavailable = new Map<ProviderInstanceId, ServerProvider>();
       let orderChanged = false;
+      let presentationChanged = false;
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
@@ -267,7 +288,9 @@ const makeReconcile = <R>(input: {
 
         const existing = previousEntries.get(instanceId);
         if (existing !== undefined && !replacedIds.has(instanceId)) {
-          // No-op update: keep the existing live entry and scope.
+          presentationChanged ||= !Equal.equals(existing.entry, entry);
+          existing.entry = entry;
+          // Presentation edits keep the adapter, subscriptions, and scope alive.
           builtEntries.set(instanceId, existing);
           continue;
         }
@@ -298,6 +321,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        presentationChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||

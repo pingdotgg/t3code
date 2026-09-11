@@ -30,6 +30,8 @@ import {
   type CursorSettings,
   type GrokSettings,
   type OpenCodeSettings,
+  DEFAULT_SERVER_SETTINGS,
+  type ProviderInstanceConfig,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
@@ -40,6 +42,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -59,6 +62,7 @@ import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import * as CodexResetCredit from "./codexResetCredit.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -335,6 +339,102 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "keeps live resources through presentation edits and closes them for runtime changes",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        let closed = 0;
+        const driver = {
+          ...CodexDriver,
+          create: (...args: Parameters<typeof CodexDriver.create>) =>
+            CodexDriver.create(...args).pipe(
+              Effect.tap(() => Effect.addFinalizer(() => Effect.sync(() => closed++))),
+            ),
+        };
+        let entry: ProviderInstanceConfig = {
+          driver: driver.driverKind,
+          displayName: "Personal",
+          accentColor: "#123456",
+          enabled: false,
+          environment: [{ name: "TEST_ACCOUNT", value: "personal", sensitive: false }],
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const original = (yield* registry.getInstance(instanceId))!;
+        const changes = yield* registry.subscribeChanges;
+
+        for (const presentation of [
+          { displayName: "Work", accentColor: "#123456" },
+          { displayName: "Work", accentColor: "#654321" },
+          { displayName: undefined, accentColor: undefined },
+        ]) {
+          entry = { ...structuredClone(entry), ...presentation };
+          yield* mutator.reconcile({ [instanceId]: entry });
+          expect(closed).toBe(0);
+          const current = (yield* registry.getInstance(instanceId))!;
+          expect(current).toBe(original);
+          expect(current.adapter).toBe(original.adapter);
+          expect(current).toMatchObject(presentation);
+          for (const snapshot of yield* Effect.all([
+            current.snapshot.getSnapshot,
+            current.snapshot.refresh,
+            current.snapshotForCwd!(process.cwd()),
+          ])) {
+            expect(snapshot.displayName).toBe(presentation.displayName);
+            expect(snapshot.accentColor).toBe(presentation.accentColor);
+            expect(Object.values(snapshot)).not.toContain(undefined);
+          }
+          yield* PubSub.take(changes);
+        }
+
+        yield* mutator.reconcile({ [instanceId]: structuredClone(entry) });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(original);
+
+        entry = {
+          ...entry,
+          environment: [{ name: "TEST_ACCOUNT", value: "work", sensitive: false }],
+        };
+        yield* mutator.reconcile({ [instanceId]: entry });
+        expect(closed).toBe(1);
+        expect((yield* registry.getInstance(instanceId))!.adapter).not.toBe(original.adapter);
+
+        yield* mutator.reconcile({});
+        expect(closed).toBe(2);
+        expect(yield* registry.listInstances).toEqual([]);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps a legacy default instance alive on its first display name edit", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const config = makeCodexConfig({});
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: deriveProviderInstanceConfigMap({
+          ...DEFAULT_SERVER_SETTINGS,
+          providers: { ...DEFAULT_SERVER_SETTINGS.providers, codex: config },
+        }),
+      });
+      const original = yield* registry.getInstance(instanceId);
+      const { enabled, ...configWithoutEnabled } = config;
+      yield* mutator.reconcile({
+        [instanceId]: {
+          driver: CodexDriver.driverKind,
+          enabled,
+          config: configWithoutEnabled,
+          displayName: "Personal",
+        },
+      });
+      expect(yield* registry.getInstance(instanceId)).toBe(original);
+      expect(original?.displayName).toBe("Personal");
     }).pipe(Effect.provide(testLayer)),
   );
 

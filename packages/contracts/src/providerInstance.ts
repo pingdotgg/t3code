@@ -34,6 +34,7 @@
  * @module providerInstance
  */
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -130,6 +131,15 @@ export const ProviderInstanceConfig = Schema.Struct({
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
+
+export const providerInstanceRuntimeConfigEqual = (
+  a: ProviderInstanceConfig,
+  b: ProviderInstanceConfig,
+): boolean =>
+  a.driver === b.driver &&
+  a.enabled === b.enabled &&
+  Equal.equals(a.environment, b.environment) &&
+  Equal.equals(a.config, b.config);
 
 /**
  * Map shape for `ServerSettings.providerInstances`. Keyed by

@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
+  providerInstanceRuntimeConfigEqual,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -34,6 +35,7 @@ import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
   useEnvironments,
@@ -42,6 +44,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
@@ -559,6 +562,7 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const threads = useAtomValue(environmentThreadShells.environmentThreadsAtom(environmentId));
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
@@ -778,7 +782,17 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
-  const updateProviderInstance = (
+  const confirmStoppingThreads = (instanceId: ProviderInstanceId) =>
+    !threads.some(
+      (thread) =>
+        (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId) === instanceId &&
+        (thread.session?.status === "running" || thread.session?.status === "starting"),
+    ) ||
+    ensureLocalApi().dialogs.confirm(
+      `Change this provider on ${environmentLabel}? This stops its running threads. Thread history is kept.`,
+    );
+
+  const updateProviderInstance = async (
     row: InstanceRow,
     next: ProviderInstanceConfig,
     options?: {
@@ -787,6 +801,11 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
+    if (
+      !providerInstanceRuntimeConfigEqual(row.instance, next) &&
+      !(await confirmStoppingThreads(row.instanceId))
+    )
+      return;
     updateSettings(
       buildProviderInstanceUpdatePatch({
         settings,
@@ -799,7 +818,13 @@ export function EnvironmentProviderSettings({
     );
   };
 
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
+  const deleteProviderInstance = async (id: ProviderInstanceId) => {
+    if (
+      !(await ensureLocalApi().dialogs.confirm(
+        `Delete this provider from ${environmentLabel}? This stops its running threads. Thread history is kept.`,
+      ))
+    )
+      return;
     updateSettings({
       providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
     });
@@ -849,7 +874,7 @@ export function EnvironmentProviderSettings({
     });
   };
 
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
+  const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
     type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
     const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
       string,
@@ -858,6 +883,7 @@ export function EnvironmentProviderSettings({
     const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
     const defaultLegacyProvider = defaultLegacyProviders[driverKind];
     if (defaultLegacyProvider === undefined) return;
+    if (!(await confirmStoppingThreads(defaultInstanceId))) return;
     updateSettings({
       providers: {
         ...settings.providers,

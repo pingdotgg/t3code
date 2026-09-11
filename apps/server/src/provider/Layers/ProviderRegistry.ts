@@ -677,10 +677,11 @@ export const ProviderRegistryLive = Layer.effect(
         // Snapshot current state without starting a probe. Managed providers
         // launch their startup refresh independently, so this closes the
         // subscription race without putting external work on the registry
-        // or HTTP server construction path.
+        // or HTTP server construction path. Include retained instances so
+        // presentation edits reach clients without replacing subscriptions.
         yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
+          instances,
+          (instance) =>
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
