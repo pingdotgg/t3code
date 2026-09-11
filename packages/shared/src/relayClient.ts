@@ -73,12 +73,12 @@ const CLOUDFLARED_RELEASE_ASSETS: Readonly<
 > = {
   "darwin-arm64": {
     url: "https://github.com/cloudflare/cloudflared/releases/download/2026.9.0/cloudflared-darwin-arm64.tgz",
-    sha256: "2d67b7315f96799123e19442580ce7c7616d6d7f322686fa829dd4e3fddfe715",
+    sha256: "c0eccb3758420d1f4e46cbf2b8ecde01d9802a154232a817f25133340009fcc7",
     archive: "tgz",
   },
   "darwin-x64": {
     url: "https://github.com/cloudflare/cloudflared/releases/download/2026.9.0/cloudflared-darwin-amd64.tgz",
-    sha256: "53481a9eed22fbf29cf3be7638d7c437acb423cdbe06e62639d8467b05d2f44f",
+    sha256: "8f2ecf41776d942bcc8070a56e7bafa4c5de70a1d1781110e2eb3774cca512a8",
     archive: "tgz",
   },
   "linux-arm64": {
