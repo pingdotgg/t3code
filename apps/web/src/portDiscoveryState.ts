@@ -12,6 +12,26 @@ import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
 
 const EMPTY_PORTS: ReadonlyArray<DiscoveredLocalServer> = Object.freeze([]);
+const portIndexCache = new WeakMap<
+  ReadonlyArray<DiscoveredLocalServer>,
+  ReadonlyMap<string, ReadonlyArray<DiscoveredLocalServer>>
+>();
+
+function indexDiscoveredPorts(
+  ports: ReadonlyArray<DiscoveredLocalServer>,
+): ReadonlyMap<string, ReadonlyArray<DiscoveredLocalServer>> {
+  const cached = portIndexCache.get(ports);
+  if (cached) return cached;
+  const byThreadId = new Map<string, DiscoveredLocalServer[]>();
+  for (const port of ports) {
+    if (port.terminal === null) continue;
+    const existing = byThreadId.get(port.terminal.threadId);
+    if (existing) existing.push(port);
+    else byThreadId.set(port.terminal.threadId, [port]);
+  }
+  portIndexCache.set(ports, byThreadId);
+  return byThreadId;
+}
 
 interface DiscoveredPortsState {
   readonly servers: ReadonlyArray<DiscoveredLocalServer>;
@@ -80,8 +100,26 @@ export function useThreadDiscoveredPorts(input: {
   return useMemo(
     () =>
       input.threadId
-        ? ports.filter((port) => port.terminal?.threadId === input.threadId)
+        ? (indexDiscoveredPorts(ports).get(input.threadId) ?? EMPTY_PORTS)
         : EMPTY_PORTS,
     [input.threadId, ports],
+  );
+}
+export function useTerminalDiscoveredPorts(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+  readonly terminalId: string | null;
+}): ReadonlyArray<DiscoveredLocalServer> {
+  const ports = useDiscoveredPorts(input.environmentId);
+  return useMemo(
+    () =>
+      input.threadId && input.terminalId
+        ? ports.filter(
+            (port) =>
+              port.terminal?.threadId === input.threadId &&
+              port.terminal.terminalId === input.terminalId,
+          )
+        : EMPTY_PORTS,
+    [input.terminalId, input.threadId, ports],
   );
 }

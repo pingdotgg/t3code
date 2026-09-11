@@ -86,6 +86,8 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
 
+`chat.newInWorktree` creates another conversation in the current checkout.
+
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
 ```json

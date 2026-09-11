@@ -3692,7 +3692,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             const visible = injected.elementState(element, "visible");
             const enabled = injected.elementState(element, "enabled");
             if (!visible.matches || !enabled.matches) return { notFound: true };
-            element.scrollIntoView({ block: "center", inline: "center" });
+            // "instant" bypasses CSS scroll-behavior: smooth; an animated scroll
+            // would leave the rect below computed mid-flight and the click
+            // landing on whatever occupies the stale coordinates.
+            element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
             const rect = element.getBoundingClientRect();
             return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
           } catch (error) {

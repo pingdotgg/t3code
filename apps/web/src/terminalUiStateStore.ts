@@ -1,11 +1,14 @@
 /**
- * Single Zustand store for terminal UI state keyed by scoped thread identity.
+ * Single Zustand store for terminal UI state keyed by WORKTREE identity.
+ *
+ * Callers pass a thread ref; the store resolves it to the thread's worktree
+ * scope key so every thread sharing a checkout shares one drawer layout
+ * (open state, height, terminal ids, splits).
  *
  * Terminal UI transition helpers are intentionally private to keep the public
  * API constrained to store actions/selectors.
  */
 
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -16,6 +19,11 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "./types";
+import {
+  migrateWorktreeScopedRecord,
+  readWorktreeScopedRecordValue,
+  resolveWorktreeScopeKeyForThreadRef,
+} from "./worktreeScope";
 
 interface ThreadTerminalUiState {
   terminalOpen: boolean;
@@ -36,20 +44,18 @@ interface PersistedTerminalUiStateStoreState {
 
 export function migratePersistedTerminalUiStateStoreState(
   persistedState: unknown,
-  _version: number,
+  version: number,
 ): PersistedTerminalUiStateStoreState {
-  if (!persistedState || typeof persistedState !== "object") {
+  // v5 re-keyed entries from thread keys to worktree scope keys; older
+  // thread-keyed entries can never match again, so they are dropped rather
+  // than left as unreachable garbage.
+  if (version < 5 || !persistedState || typeof persistedState !== "object") {
     return { terminalUiStateByThreadKey: {} };
   }
 
   const candidate = persistedState as PersistedTerminalUiStateStoreState;
-  const persistedUiStateByThreadKey =
+  const terminalUiStateByThreadKey =
     candidate.terminalUiStateByThreadKey ?? candidate.terminalStateByThreadKey ?? {};
-  const terminalUiStateByThreadKey = Object.fromEntries(
-    Object.entries(persistedUiStateByThreadKey).filter(([threadKey]) =>
-      parseScopedThreadKey(threadKey),
-    ),
-  );
 
   return { terminalUiStateByThreadKey };
 }
@@ -240,7 +246,7 @@ function isValidTerminalId(terminalId: string): boolean {
 }
 
 function terminalThreadKey(threadRef: ScopedThreadRef): string {
-  return scopedThreadKey(threadRef);
+  return resolveWorktreeScopeKeyForThreadRef(threadRef);
 }
 
 function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[] {
@@ -485,7 +491,8 @@ export function selectThreadTerminalUiState(
     return getDefaultThreadTerminalUiState();
   }
   return (
-    terminalUiStateByThreadKey[terminalThreadKey(threadRef)] ?? getDefaultThreadTerminalUiState()
+    readWorktreeScopedRecordValue(terminalUiStateByThreadKey, threadRef) ??
+    getDefaultThreadTerminalUiState()
   );
 }
 
@@ -498,23 +505,24 @@ function updateTerminalUiStateByThreadKey(
     return terminalUiStateByThreadKey;
   }
 
-  const threadKey = terminalThreadKey(threadRef);
-  const current = selectThreadTerminalUiState(terminalUiStateByThreadKey, threadRef);
+  const migrated = migrateWorktreeScopedRecord(terminalUiStateByThreadKey, threadRef);
+  const threadKey = migrated.key;
+  const current = migrated.record[threadKey] ?? getDefaultThreadTerminalUiState();
   const next = updater(current);
   if (next === current) {
-    return terminalUiStateByThreadKey;
+    return migrated.record;
   }
 
   if (isDefaultThreadTerminalUiState(next)) {
-    if (terminalUiStateByThreadKey[threadKey] === undefined) {
-      return terminalUiStateByThreadKey;
+    if (migrated.record[threadKey] === undefined) {
+      return migrated.record;
     }
-    const { [threadKey]: _removed, ...rest } = terminalUiStateByThreadKey;
+    const { [threadKey]: _removed, ...rest } = migrated.record;
     return rest;
   }
 
   return {
-    ...terminalUiStateByThreadKey,
+    ...migrated.record,
     [threadKey]: next,
   };
 }
@@ -529,15 +537,16 @@ function updateSuppressedTerminalId(
   if (normalizedTerminalId.length === 0) {
     return suppressedTerminalIdsByThreadKey;
   }
-  const threadKey = terminalThreadKey(threadRef);
-  const currentIds = suppressedTerminalIdsByThreadKey[threadKey] ?? [];
+  const migrated = migrateWorktreeScopedRecord(suppressedTerminalIdsByThreadKey, threadRef);
+  const threadKey = migrated.key;
+  const currentIds = migrated.record[threadKey] ?? [];
   const currentlySuppressed = currentIds.includes(normalizedTerminalId);
   if (currentlySuppressed === suppressed) {
-    return suppressedTerminalIdsByThreadKey;
+    return migrated.record;
   }
   if (suppressed) {
     return {
-      ...suppressedTerminalIdsByThreadKey,
+      ...migrated.record,
       [threadKey]: [...currentIds, normalizedTerminalId],
     };
   }
@@ -545,11 +554,11 @@ function updateSuppressedTerminalId(
   const remainingIds = currentIds.filter((id) => id !== normalizedTerminalId);
   if (remainingIds.length > 0) {
     return {
-      ...suppressedTerminalIdsByThreadKey,
+      ...migrated.record,
       [threadKey]: remainingIds,
     };
   }
-  return removeRecordEntry(suppressedTerminalIdsByThreadKey, threadKey);
+  return removeRecordEntry(migrated.record, threadKey);
 }
 
 function removeRecordEntry<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -577,7 +586,7 @@ interface TerminalUiStateStoreState {
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   reconcileTerminalIds: (threadRef: ScopedThreadRef, nextIds: string[]) => void;
-  clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
+  clearTerminalUiStateForKey: (threadKey: string) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeOrphanedTerminalUiStates: (activeThreadKeys: Set<string>) => void;
 }
@@ -594,8 +603,8 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         suppression?: { terminalId: string; suppressed: boolean },
       ) => {
         set((state) => {
-          const threadKey = terminalThreadKey(threadRef);
-          const suppressedTerminalIds = state.suppressedTerminalIdsByThreadKey[threadKey] ?? [];
+          const suppressedTerminalIds =
+            readWorktreeScopedRecordValue(state.suppressedTerminalIdsByThreadKey, threadRef) ?? [];
           const nextTerminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
             state.terminalUiStateByThreadKey,
             threadRef,
@@ -698,24 +707,17 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
               nextIds.filter((terminalId) => !suppressedIds.has(terminalId)),
             );
           }),
-        clearTerminalUiState: (threadRef) =>
+        clearTerminalUiStateForKey: (threadKey) =>
           set((state) => {
-            const threadKey = terminalThreadKey(threadRef);
-            const nextTerminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
-              state.terminalUiStateByThreadKey,
-              threadRef,
-              () => createDefaultThreadTerminalUiState(),
-            );
+            const hadTerminalUiState = state.terminalUiStateByThreadKey[threadKey] !== undefined;
             const hadSuppressedTerminalIds =
               state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
-            if (
-              nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
-              !hadSuppressedTerminalIds
-            ) {
-              return state;
-            }
+            if (!hadTerminalUiState && !hadSuppressedTerminalIds) return state;
             return {
-              terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
+              terminalUiStateByThreadKey: removeRecordEntry(
+                state.terminalUiStateByThreadKey,
+                threadKey,
+              ),
               suppressedTerminalIdsByThreadKey: removeRecordEntry(
                 state.suppressedTerminalIdsByThreadKey,
                 threadKey,
@@ -725,19 +727,23 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         removeTerminalUiState: (threadRef) =>
           set((state) => {
             const threadKey = terminalThreadKey(threadRef);
-            const hadTerminalUiState = state.terminalUiStateByThreadKey[threadKey] !== undefined;
-            const hadSuppressedTerminalIds =
-              state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
+            const migratedTerminalUiState = migrateWorktreeScopedRecord(
+              state.terminalUiStateByThreadKey,
+              threadRef,
+            ).record;
+            const migratedSuppressedTerminalIds = migrateWorktreeScopedRecord(
+              state.suppressedTerminalIdsByThreadKey,
+              threadRef,
+            ).record;
+            const hadTerminalUiState = migratedTerminalUiState[threadKey] !== undefined;
+            const hadSuppressedTerminalIds = migratedSuppressedTerminalIds[threadKey] !== undefined;
             if (!hadTerminalUiState && !hadSuppressedTerminalIds) {
               return state;
             }
             return {
-              terminalUiStateByThreadKey: removeRecordEntry(
-                state.terminalUiStateByThreadKey,
-                threadKey,
-              ),
+              terminalUiStateByThreadKey: removeRecordEntry(migratedTerminalUiState, threadKey),
               suppressedTerminalIdsByThreadKey: removeRecordEntry(
-                state.suppressedTerminalIdsByThreadKey,
+                migratedSuppressedTerminalIds,
                 threadKey,
               ),
             };
@@ -770,7 +776,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
     {
       name: TERMINAL_UI_STATE_STORAGE_KEY,
-      version: 4,
+      version: 5,
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({

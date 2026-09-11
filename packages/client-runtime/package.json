@@ -314,6 +314,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/worktree-grouping": {
+      "types": "./src/state/worktree-grouping.ts",
+      "default": "./src/state/worktree-grouping.ts"
     }
   },
   "scripts": {

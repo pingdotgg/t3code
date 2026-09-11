@@ -1,11 +1,7 @@
 import type { ThreadShell } from "./types";
 
 function normalizeWorktreePath(path: string | null): string | null {
-  const trimmed = path?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed;
+  return path && path.length > 0 ? path : null;
 }
 
 export function getOrphanedWorktreePathForThread(

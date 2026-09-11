@@ -1,3 +1,4 @@
+import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
@@ -412,7 +413,9 @@ function ThreadRouteContent(
   );
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+    threadId: selectedThread
+      ? worktreeResourceThreadId(selectedThread.projectId, selectedThread.worktreePath)
+      : null,
   });
   const terminalMenuSessions = useMemo(
     () =>
@@ -668,7 +671,7 @@ function ThreadRouteContent(
       stagePendingTerminalLaunch({
         target: {
           environmentId: selectedThread.environmentId,
-          threadId: selectedThread.id,
+          threadId: worktreeResourceThreadId(selectedThread.projectId, selectedThread.worktreePath),
           terminalId: targetTerminalId,
         },
         launch: {

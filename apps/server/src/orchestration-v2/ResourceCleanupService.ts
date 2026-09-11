@@ -1,3 +1,6 @@
+import { ThreadId } from "@t3tools/contracts";
+import { worktreeResourceThreadId } from "@t3tools/shared/worktreeResource";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -33,18 +36,30 @@ export class ResourceCleanupService extends Context.Reference<{
 export const live = Layer.effect(
   ResourceCleanupService,
   Effect.gen(function* () {
+    const projection = yield* ProjectionStoreV2;
     const terminals = yield* TerminalManager.TerminalManager;
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     return {
       cleanupTerminals: (threadId: string) =>
-        terminals
-          .close({ threadId, deleteHistory: true })
-          .pipe(
-            Effect.mapError(
-              (cause) => new ResourceCleanupError({ operation: "terminal", threadId, cause }),
-            ),
+        Effect.gen(function* () {
+          // Legacy thread-owned terminals still need cleanup after upgrading.
+          yield* terminals.close({ threadId, deleteHistory: true });
+          const thread = yield* projection.getThread(ThreadId.make(threadId));
+          if (thread.archivedAt === null && thread.deletedAt === null) return;
+          const snapshot = yield* projection.getShellSnapshot({ location: "active" });
+          const owner = worktreeResourceThreadId(thread.projectId, thread.worktreePath);
+          const hasSibling = snapshot.threads.some(
+            (sibling) =>
+              sibling.id !== threadId &&
+              worktreeResourceThreadId(sibling.projectId, sibling.worktreePath) === owner,
+          );
+          if (!hasSibling) yield* terminals.close({ threadId: owner, deleteHistory: true });
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ResourceCleanupError({ operation: "terminal", threadId, cause }),
           ),
+        ),
       cleanupAttachments: (attachmentIds: ReadonlyArray<string>) =>
         Effect.forEach(
           attachmentIds,

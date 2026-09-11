@@ -22,6 +22,7 @@ import {
   rememberPreviewUrl,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { resolveWorktreeCanonicalThreadRef } from "~/worktreeScope";
 
 import {
   browserDefaultOpenProfileId,
@@ -62,10 +63,13 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  // Preview sessions are worktree-scoped: open through the worktree's
+  // canonical thread id so sibling threads share one set of tabs.
+  const canonicalRef = resolveWorktreeCanonicalThreadRef(input.threadRef);
   const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
+    environmentId: canonicalRef.environmentId,
     input: {
-      threadId: input.threadRef.threadId,
+      threadId: canonicalRef.threadId,
       url: input.url,
       // Built here rather than via `openPreviewSession` because this path
       // maps the result differently, so the configured defaults have to be

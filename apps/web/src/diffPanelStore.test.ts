@@ -94,19 +94,31 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
   });
 
-  it("reconciles a missing turn selection to the latest available turn", () => {
-    const missingTurnId = RunId.make("turn-missing");
-    const latestTurnId = RunId.make("turn-latest");
-    useDiffPanelStore.getState().selectTurn(THREAD_REF, missingTurnId, "src/app.ts");
-    useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, [latestTurnId]);
+  it("reconciles to the latest turn without retaining a sibling's file path", () => {
+    const missingRunId = RunId.make("turn-missing");
+    const latestRunId = RunId.make("turn-latest");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, missingRunId, "src/app.ts");
+    useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, [latestRunId]);
 
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
     ).toEqual({
       kind: "turn",
-      turnId: latestTurnId,
-      filePath: "src/app.ts",
+      turnId: latestRunId,
+      filePath: null,
       revealRequestId: 1,
     });
+  });
+
+  it("falls back to checkout changes when a sibling has no turn diffs", () => {
+    useDiffPanelStore
+      .getState()
+      .selectTurn(THREAD_REF, RunId.make("turn-from-sibling"), "src/app.ts");
+
+    useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, []);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: null });
   });
 });

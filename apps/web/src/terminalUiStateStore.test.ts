@@ -173,19 +173,11 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["env-b-terminal"]);
   });
 
-  it("drops persisted entries whose thread keys are not valid scoped keys", () => {
+  it("drops pre-v5 persisted entries (thread-keyed state predates worktree scoping)", () => {
     const migrated = migratePersistedTerminalUiStateStoreState(
       {
         terminalStateByThreadKey: {
           [scopedThreadKey(THREAD_REF)]: {
-            terminalOpen: true,
-            terminalHeight: 320,
-            terminalIds: ["term-1"],
-            activeTerminalId: "term-1",
-            terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
-            activeTerminalGroupId: "group-term-1",
-          },
-          "legacy-thread-id": {
             terminalOpen: true,
             terminalHeight: 320,
             terminalIds: ["term-1"],
@@ -198,18 +190,25 @@ describe("terminalUiStateStore actions", () => {
       2,
     );
 
-    expect(migrated).toEqual({
-      terminalUiStateByThreadKey: {
-        [scopedThreadKey(THREAD_REF)]: {
-          terminalOpen: true,
-          terminalHeight: 320,
-          terminalIds: ["term-1"],
-          activeTerminalId: "term-1",
-          terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
-          activeTerminalGroupId: "group-term-1",
-        },
-      },
-    });
+    expect(migrated).toEqual({ terminalUiStateByThreadKey: {} });
+  });
+
+  it("passes v5 worktree-keyed entries through unchanged", () => {
+    const worktreeKey = "environment-a:project-1:/tmp/worktrees/feature";
+    const entry = {
+      terminalOpen: true,
+      terminalHeight: 320,
+      terminalIds: ["term-1"],
+      activeTerminalId: "term-1",
+      terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
+      activeTerminalGroupId: "group-term-1",
+    };
+    const migrated = migratePersistedTerminalUiStateStoreState(
+      { terminalUiStateByThreadKey: { [worktreeKey]: entry } },
+      5,
+    );
+
+    expect(migrated).toEqual({ terminalUiStateByThreadKey: { [worktreeKey]: entry } });
   });
 
   it("resets to default and clears persisted entry when closing the last terminal", () => {
@@ -285,11 +284,11 @@ describe("terminalUiStateStore actions", () => {
     ).toEqual(["term-2", "term-1"]);
   });
 
-  it("is a no-op when clearing terminal UI state for a thread with no state", () => {
+  it("is a no-op when clearing terminal UI state for a key with no state", () => {
     const store = useTerminalUiStateStore.getState();
     const before = useTerminalUiStateStore.getState();
 
-    store.clearTerminalUiState(THREAD_REF);
+    store.clearTerminalUiStateForKey(scopedThreadKey(THREAD_REF));
 
     expect(useTerminalUiStateStore.getState()).toBe(before);
   });

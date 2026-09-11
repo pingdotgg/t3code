@@ -1556,3 +1556,93 @@ it("excludes subagents from navigation, search and ordering while retaining user
     ),
   ).toEqual([fork.id, root.id]);
 });
+
+describe("mobile checkout groups", () => {
+  it("keeps settled and snoozed siblings with active work on a collapsed shelf", () => {
+    const active = makeThread({
+      id: ThreadId.make("group-active"),
+      title: "Active",
+      worktreePath: "/wt/shared",
+    });
+    const settled = makeThread({
+      id: ThreadId.make("group-settled"),
+      title: "Settled",
+      worktreePath: "/wt/shared",
+      settledOverride: "settled",
+    });
+    const snoozed = makeThread({
+      id: ThreadId.make("group-snoozed"),
+      title: "Snoozed",
+      worktreePath: "/wt/shared",
+      snoozedAt: NOW,
+      snoozedUntil: "2026-07-01T00:00:00Z",
+    });
+    const layout = buildThreadListV2Items({
+      groupWorktrees: true,
+      threads: [active, settled, snoozed],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: false,
+      settledShelfExpanded: false,
+    });
+    expect(layout.items.map((entry) => entry.thread.id).sort()).toEqual(
+      [active.id, settled.id, snoozed.id].sort(),
+    );
+    expect(layout.items.find((entry) => entry.thread.id === settled.id)?.variant).toBe("slim");
+    expect(layout.items.find((entry) => entry.thread.id === snoozed.id)?.snoozed).toBe(true);
+    const rows = buildThreadListV2ListItems({ ...layout, groupWorktrees: true, pendingTasks: [] });
+    expect(rows.filter((row) => row.type === "v2-worktree")).toHaveLength(1);
+  });
+
+  it("separates environments and local checkouts, and searches every member", () => {
+    const first = makeThread({ id: ThreadId.make("local-1"), title: "First", worktreePath: null });
+    const second = makeThread({
+      id: ThreadId.make("local-2"),
+      title: "Find this",
+      worktreePath: null,
+    });
+    const remote = makeThread({
+      id: ThreadId.make("remote"),
+      title: "Remote",
+      environmentId: EnvironmentId.make("remote"),
+      worktreePath: null,
+    });
+    const input = {
+      groupWorktrees: true,
+      threads: [first, second, remote],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    };
+    const layout = buildThreadListV2Items(input);
+    const rows = buildThreadListV2ListItems({ ...layout, groupWorktrees: true, pendingTasks: [] });
+    expect(rows.filter((row) => row.type === "v2-worktree")).toHaveLength(2);
+    expect(
+      buildThreadListV2Items({ ...input, searchQuery: "Find this" }).items.map(
+        (entry) => entry.thread.id,
+      ),
+    ).toEqual([second.id]);
+  });
+
+  it("does not split a checkout at the settled page limit", () => {
+    const threads = ["a", "b", "c"].map((id) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: id,
+        worktreePath: "/wt/settled",
+        settledOverride: "settled",
+      }),
+    );
+    const layout = buildThreadListV2Items({
+      groupWorktrees: true,
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledLimit: 1,
+    });
+    expect(layout.items).toHaveLength(3);
+    expect(layout.hiddenSettledCount).toBe(0);
+  });
+});

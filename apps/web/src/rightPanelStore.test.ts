@@ -1,5 +1,6 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -19,6 +20,11 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {},
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
   useRightPanelStore.setState({
     byThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
@@ -184,6 +190,24 @@ describe("rightPanelStore", () => {
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
       chosen,
     );
+  });
+
+  it("preserves a sibling's manual panel choice when a delayed automatic request arrives", () => {
+    const projectRef = scopeProjectRef(refA.environmentId, ProjectId.make("shared-project"));
+    for (const ref of [refA, refB]) {
+      useComposerDraftStore
+        .getState()
+        .setLogicalProjectDraftThreadId(ref.threadId, projectRef, DraftId.make(ref.threadId), {
+          threadId: ref.threadId,
+          worktreePath: "/repo/shared",
+        });
+    }
+    const store = useRightPanelStore.getState();
+    const revision = store.getUserActionRevision(refA);
+    store.openFile(refB, "src/app.ts");
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("file");
+    expect(store.getUserActionRevision(refA)).toBe(store.getUserActionRevision(refB));
   });
 
   it("allows automatic panels for a later turn after a manual choice", () => {
@@ -929,6 +953,20 @@ describe("rightPanelStore", () => {
       resourceId: "term-1",
       terminalIds: ["term-2"],
       activeTerminalId: "term-2",
+    });
+  });
+
+  it("removes terminal surfaces without discarding other checkout panels", () => {
+    useRightPanelStore.getState().open(refA, "diff");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+
+    const stateKey = Object.keys(useRightPanelStore.getState().byThreadKey)[0]!;
+    useRightPanelStore.getState().removeTerminalSurfacesForKey(stateKey);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
     });
   });
 

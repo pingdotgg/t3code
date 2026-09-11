@@ -2,8 +2,10 @@ import {
   FILL_PREVIEW_VIEWPORT,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
+  type PreviewResizeInput,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 
 /**
@@ -66,4 +68,22 @@ export function previewAutomationDefaultViewport(
   return !reusedExistingTab && viewport._tag === "fill"
     ? DEFAULT_PREVIEW_AUTOMATION_VIEWPORT
     : null;
+}
+
+export function previewAutomationOpenResizeTarget(
+  threadRef: ScopedThreadRef,
+  tabId: string,
+  viewport: PreviewViewportSetting,
+): {
+  readonly environmentId: ScopedThreadRef["environmentId"];
+  readonly input: PreviewResizeInput;
+} {
+  return {
+    environmentId: threadRef.environmentId,
+    input: {
+      threadId: threadRef.threadId,
+      tabId,
+      viewport,
+    },
+  };
 }

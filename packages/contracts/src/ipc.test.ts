@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import { DesktopEnvironmentBootstrapSchema, DesktopPreviewAutomationStatusSchema } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +34,31 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopPreviewAutomationStatusSchema", () => {
+  const decode = Schema.decodeUnknownSync(DesktopPreviewAutomationStatusSchema);
+
+  it("accepts composite runtime tab ids longer than public preview tab ids", () => {
+    const tabId = JSON.stringify([
+      "a129857b-712f-4955-bdd7-0749b327e98f",
+      `worktree:00a4614b-a6de-41db-9e7e-0c03ce8b203b:${encodeURIComponent(
+        "/Users/example/.t3/worktrees/repository/a-long-checkout-name-for-preview-automation",
+      )}`,
+      "8ede8f09-68f7-41ae-87e7-f226cea41a97",
+      "tab_5",
+    ]);
+    const status = {
+      available: true,
+      visible: false,
+      tabId,
+      url: "https://example.com",
+      title: "Example",
+      loading: false,
+    };
+
+    expect(tabId.length).toBeGreaterThan(128);
+    expect(decode(status)).toEqual(status);
   });
 });

@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
+import { resolveWorktreeCanonicalThreadRef } from "~/worktreeScope";
 
 interface ClosePreviewSessionInput<E> {
   readonly closePreview: (input: {
@@ -26,9 +27,12 @@ export async function closePreviewSession<E>(
   input: ClosePreviewSessionInput<E>,
 ): Promise<AtomCommandResult<void, E>> {
   beginPreviewSessionClose(input.threadRef, input.tabId);
+  // Preview sessions are worktree-scoped: close through the worktree's
+  // canonical thread id, matching how the session was opened.
+  const canonicalRef = resolveWorktreeCanonicalThreadRef(input.threadRef);
   const result = await input.closePreview({
-    environmentId: input.threadRef.environmentId,
-    input: { threadId: input.threadRef.threadId, tabId: input.tabId },
+    environmentId: canonicalRef.environmentId,
+    input: { threadId: canonicalRef.threadId, tabId: input.tabId },
   });
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
