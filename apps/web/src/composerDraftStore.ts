@@ -383,12 +383,12 @@ export interface ComposerThreadDraftState {
    * legacy kind-keyed drafts round-trip unchanged.
    */
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
-  /** Routing key of the last picked instance (see `modelSelectionByProvider`). */
+  /** Local instance override, released after a successful submission. */
   activeProvider: ProviderInstanceId | null;
   /**
-   * True only when a human picked the active selection in the composer.
-   * Absent/false means seeded (project default / sticky), so later seeds
-   * may replace it. Legacy entries predate the flag and read as seeded.
+   * True when a human picked a selection that has not been submitted yet.
+   * Otherwise the synchronized thread selection takes precedence over the
+   * cached selection. New drafts can still use project defaults / sticky state.
    */
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
@@ -574,6 +574,10 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
+  acknowledgeModelSelection: (
+    threadRef: ComposerThreadTarget,
+    submittedDraft: ComposerDraftModelState | null,
+  ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -683,6 +687,7 @@ export interface EffectiveComposerModelState {
 interface ComposerDraftModelState {
   activeProvider: ProviderInstanceId | null;
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  modelSelectionExplicit?: boolean;
 }
 
 function providerSelectionsFromModelSelection(
@@ -1154,10 +1159,7 @@ function legacyToModelSelectionByProvider(
 }
 
 export function deriveEffectiveComposerModelState(input: {
-  draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
-    | null
-    | undefined;
+  draft: ComposerDraftModelState | null | undefined;
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   /**
@@ -1211,7 +1213,11 @@ export function deriveEffectiveComposerModelState(input: {
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
       : input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
-  const activeSelection = instanceSelection ?? legacySelection;
+  const useThreadSelection =
+    input.draft?.modelSelectionExplicit !== true &&
+    input.threadModelSelection?.instanceId ===
+      (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider));
+  const activeSelection = useThreadSelection ? undefined : (instanceSelection ?? legacySelection);
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
     : ProviderInstanceId.make(input.selectedProvider);
@@ -1231,11 +1237,20 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
+  let modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
     providerSelectionsFromModelSelection(input.projectModelSelection) ??
     null;
+  const selectedOptionsSource = useThreadSelection ? input.threadModelSelection : activeSelection;
+  if (selectedOptionsSource) {
+    // Replace this instance's options as a complete snapshot, including an
+    // empty selection. Keep the other instances' cached options for switching.
+    modelOptions = {
+      ...modelOptions,
+      [selectedOptionsSource.instanceId]: selectedOptionsSource.options ?? [],
+    };
+  }
 
   return {
     selectedModel,
@@ -3021,6 +3036,30 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        acknowledgeModelSelection: (threadRef, submittedDraft) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey || !submittedDraft) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            // Sending can outlast another model/trait edit. Only consume the
+            // submitted choice, without touching newly typed content or caches.
+            if (
+              !current ||
+              (!current.modelSelectionExplicit && current.activeProvider === null) ||
+              current.modelSelectionByProvider !== submittedDraft.modelSelectionByProvider ||
+              current.activeProvider !== submittedDraft.activeProvider
+            ) {
+              return state;
+            }
+            const { modelSelectionExplicit: _explicit, ...retained } = current;
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: { ...retained, activeProvider: null },
+              },
+            };
+          });
+        },
         setModelSelection: (threadRef, modelSelection, opts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -3146,12 +3185,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Update the map entry for this provider
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
-            if (providerOpts) {
-              nextMap[instanceKey] = createModelSelection(
-                instanceKey,
-                currentForProvider?.model ?? fallbackModel,
-                providerOpts,
-              );
+            const selectedModel =
+              normalizeModelSlug(options?.model, normalizedProvider) ??
+              currentForProvider?.model ??
+              fallbackModel;
+            if (providerOpts || options?.model !== undefined) {
+              nextMap[instanceKey] = createModelSelection(instanceKey, selectedModel, providerOpts);
             } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
               const { options: _, ...rest } = currentForProvider;
               nextMap[instanceKey] = rest as ModelSelection;
@@ -3166,16 +3205,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextStickyMap[instanceKey] ??
                 base.modelSelectionByProvider[instanceKey] ??
                 createModelSelection(instanceKey, fallbackModel);
-              if (providerOpts) {
-                nextStickyMap[instanceKey] = createModelSelection(
-                  instanceKey,
-                  stickyBase.model,
-                  providerOpts,
-                );
-              } else if ((stickyBase.options?.length ?? 0) > 0) {
-                const { options: _, ...rest } = stickyBase;
-                nextStickyMap[instanceKey] = rest as ModelSelection;
-              }
+              nextStickyMap[instanceKey] = createModelSelection(
+                instanceKey,
+                options?.model !== undefined ? selectedModel : stickyBase.model,
+                providerOpts,
+              );
               nextStickyActiveProvider = options.instanceId
                 ? instanceKey
                 : (base.activeProvider ?? instanceKey);
@@ -4135,6 +4169,7 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,
+            modelSelectionExplicit: draft.modelSelectionExplicit ?? false,
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
@@ -4147,7 +4182,7 @@ export function useEffectiveComposerModelState(input: {
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   /**
-   * When supplied, the draft's saved selection for this instance takes
+   * When supplied, the draft's pending selection for this instance takes
    * precedence over the driver-kind bucket — so a custom `codex_personal`
    * instance reads its own model, not the default Codex's.
    */

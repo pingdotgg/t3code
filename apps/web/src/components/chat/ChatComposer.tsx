@@ -1407,7 +1407,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -1755,8 +1755,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
-    threadModelSelection: activeThreadModelSelection,
-    projectModelSelection: activeProjectDefaultModelSelection,
+    threadModelSelection: isServerThread ? activeThreadModelSelection : null,
+    projectModelSelection: isServerThread
+      ? activeProjectDefaultModelSelection
+      : activeThreadModelSelection,
     settings,
   });
   const providerSendBlockReason = getAntigravitySendBlockReason(

@@ -18,6 +18,7 @@ import {
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   collectAssistantCitations,
   serializeAssistantCitation,
@@ -67,6 +68,7 @@ import {
   COMPOSER_DRAFT_STORAGE_KEY,
   clearComposerDraftsEnvironment,
   composerDraftHasUserContent,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   type ComposerFileAttachment,
@@ -83,6 +85,7 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDeferredStorage } from "./lib/storage";
+import { resolveThreadMetadataUpdateForNextTurn } from "./components/ChatView.logic";
 
 function makeImage(input: {
   id: string;
@@ -1721,6 +1724,186 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 });
+
+describe.each([CODEX_INSTANCE, CODEX_SECONDARY_INSTANCE])(
+  "composerDraftStore synchronized thread model (%s)",
+  (instanceId) => {
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-model-sync"));
+    const sol = createModelSelection(
+      instanceId,
+      "gpt-5.6-sol",
+      toSelections({ reasoningEffort: "low" }),
+    );
+    const astra = createModelSelection(
+      instanceId,
+      "gpt-6-astra",
+      toSelections({ reasoningEffort: "high" }),
+    );
+
+    beforeEach(resetComposerDraftStore);
+
+    function nextSelection(threadModelSelection: ModelSelection) {
+      const state = deriveEffectiveComposerModelState({
+        draft: useComposerDraftStore.getState().getComposerDraft(threadRef),
+        providers: [
+          {
+            instanceId: threadModelSelection.instanceId,
+            driver: CODEX_DRIVER,
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            models: ["gpt-5.6-sol", "gpt-6-astra", "gpt-5.6-terra"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: {},
+            })),
+            slashCommands: [],
+            skills: [],
+          },
+        ],
+        selectedProvider: CODEX_DRIVER,
+        selectedInstanceId: threadModelSelection.instanceId,
+        threadModelSelection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
+      return createModelSelection(
+        threadModelSelection.instanceId,
+        state.selectedModel,
+        state.modelOptions?.[threadModelSelection.instanceId],
+      );
+    }
+
+    it("uses a remote model change after submitting the desktop selection", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, sol, { explicit: true });
+      store.setPrompt(threadRef, "First synthetic turn");
+      expect(nextSelection(sol)).toEqual(sol);
+      const submittedDraft = store.getComposerDraft(threadRef);
+      store.clearComposerContent(threadRef);
+      store.acknowledgeModelSelection(threadRef, submittedDraft);
+
+      // The synchronized thread now contains the selection saved by another client.
+      store.setPrompt(threadRef, "Next synthetic turn");
+      const next = nextSelection(astra);
+      expect(next).toEqual(astra);
+      expect(
+        resolveThreadMetadataUpdateForNextTurn({
+          currentModelSelection: astra,
+          nextModelSelection: next,
+          currentBranch: null,
+        }),
+      ).toBeNull();
+    });
+
+    it("keeps unsent content and per-instance caches while following remote model and option changes", () => {
+      const store = useComposerDraftStore.getState();
+      const otherInstance = ProviderInstanceId.make("codex_other");
+      const otherSelection = createModelSelection(
+        otherInstance,
+        "gpt-5.6-terra",
+        toSelections({ reasoningEffort: "xhigh" }),
+      );
+      store.setModelSelection(threadRef, otherSelection, { explicit: true });
+      store.setModelSelection(threadRef, sol, { explicit: true });
+      const submittedDraft = store.getComposerDraft(threadRef);
+      store.clearComposerContent(threadRef);
+      store.setPrompt(threadRef, "Keep this unsent text");
+      store.addImage(threadRef, makeImage({ id: "unsent-image", previewUrl: "blob:unsent-image" }));
+      store.addFiles(threadRef, [makeFile("unsent-file")]);
+      const unsentDraft = store.getComposerDraft(threadRef);
+      store.acknowledgeModelSelection(threadRef, submittedDraft);
+
+      expect(nextSelection(astra)).toEqual(astra);
+      const withoutOptions = createModelSelection(instanceId, astra.model);
+      expect(nextSelection(withoutOptions)).toEqual(withoutOptions);
+      const draft = store.getComposerDraft(threadRef);
+      expect(draft?.prompt).toBe(unsentDraft?.prompt);
+      expect(draft?.images).toBe(unsentDraft?.images);
+      expect(draft?.files).toBe(unsentDraft?.files);
+      expect(draft?.modelSelectionByProvider).toEqual({
+        [instanceId]: sol,
+        [otherInstance]: otherSelection,
+      });
+
+      store.setModelSelection(
+        threadRef,
+        createModelSelection(otherInstance, otherSelection.model),
+        { explicit: true },
+      );
+      expect(nextSelection(createModelSelection(otherInstance, sol.model))).toEqual(otherSelection);
+    });
+
+    it("keeps a new explicit local choice over the synchronized model", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, astra, { explicit: true });
+      const submittedDraft = store.getComposerDraft(threadRef);
+      store.clearComposerContent(threadRef);
+      store.acknowledgeModelSelection(threadRef, submittedDraft);
+      store.setModelSelection(threadRef, sol, { explicit: true });
+      expect(nextSelection(astra)).toEqual(sol);
+    });
+
+    it("does not consume a model choice made while a send is in flight", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, sol, { explicit: true });
+      const submittedDraft = store.getComposerDraft(threadRef);
+      store.clearComposerContent(threadRef);
+      store.setModelSelection(threadRef, astra, { explicit: true });
+      store.acknowledgeModelSelection(threadRef, submittedDraft);
+      expect(nextSelection(sol)).toEqual(astra);
+    });
+
+    it.each([{ options: toSelections({ reasoningEffort: "xhigh" }) }, { options: [] }])(
+      "edits traits on the synchronized model without restoring the cached model ($options)",
+      ({ options }) => {
+        const store = useComposerDraftStore.getState();
+        store.setModelSelection(threadRef, sol, { explicit: true });
+        store.acknowledgeModelSelection(threadRef, store.getComposerDraft(threadRef));
+        const current = nextSelection(astra);
+        store.setProviderModelOptions(threadRef, CODEX_DRIVER, options, {
+          instanceId,
+          model: current.model,
+          persistSticky: true,
+        });
+        const expected = createModelSelection(instanceId, astra.model, options);
+        expect(nextSelection(astra)).toEqual(expected);
+        expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[instanceId]).toEqual(
+          expected,
+        );
+      },
+    );
+
+    it("retains an unsent choice after clearing content for a failed submission", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, sol, { explicit: true });
+      store.clearComposerContent(threadRef);
+      // A failed send restores content without acknowledging the model selection.
+      store.setPrompt(threadRef, "Retry this synthetic turn");
+      expect(nextSelection(astra)).toEqual(sol);
+    });
+
+    it("follows remote selections after persisted draft rehydration", async () => {
+      vi.useFakeTimers();
+      try {
+        const store = useComposerDraftStore.getState();
+        store.setModelSelection(threadRef, sol, { explicit: true });
+        store.clearComposerContent(threadRef);
+        store.acknowledgeModelSelection(threadRef, store.getComposerDraft(threadRef));
+        await vi.advanceTimersByTimeAsync(300);
+        resetComposerDraftStore();
+        await useComposerDraftStore.persist.rehydrate();
+        expect(nextSelection(astra)).toEqual(astra);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  },
+);
 
 describe("composerDraftStore modelSelection", () => {
   const threadId = ThreadId.make("thread-model-options");
