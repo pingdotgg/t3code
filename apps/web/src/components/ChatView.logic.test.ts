@@ -612,6 +612,19 @@ describe("resolveThreadSwitchTimeline", () => {
     ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
   });
 
+  it("keeps the held thread workspace cwd with the snapshot", () => {
+    rememberReadyThreadTimeline({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+    expect(peekHeldThreadTimeline<string[]>()).toEqual({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+  });
+
   it("survives a ChatView remount by remembering the last ready timeline", () => {
     rememberReadyThreadTimeline(held);
     expect(peekHeldThreadTimeline<string[]>()).toEqual(held);

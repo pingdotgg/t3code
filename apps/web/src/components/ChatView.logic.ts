@@ -277,19 +277,24 @@ export function resolveDraftHeroState(input: {
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
   entries: T;
+  markdownCwd?: string | null;
+  workspaceRoot?: string | null;
 };
 
 const MAX_REMEMBERED_THREAD_TIMELINES = 16;
 
-let rememberedThreadTimelines = new Map<string, readonly unknown[]>();
+let rememberedThreadTimelines = new Map<string, HeldThreadTimeline<readonly unknown[]>>();
 let rememberedThreadTimelineOrder: string[] = [];
 let lastReadyThreadKey: string | null = null;
 
-function rememberThreadTimelineEntries(threadKey: string, entries: readonly unknown[]): void {
-  rememberedThreadTimelines.set(threadKey, entries);
+function rememberThreadTimelineEntries(held: HeldThreadTimeline<readonly unknown[]>): void {
+  if (held.threadKey === null) {
+    return;
+  }
+  rememberedThreadTimelines.set(held.threadKey, held);
   rememberedThreadTimelineOrder = [
-    ...rememberedThreadTimelineOrder.filter((key) => key !== threadKey),
-    threadKey,
+    ...rememberedThreadTimelineOrder.filter((key) => key !== held.threadKey),
+    held.threadKey,
   ];
   while (rememberedThreadTimelineOrder.length > MAX_REMEMBERED_THREAD_TIMELINES) {
     const evicted = rememberedThreadTimelineOrder.shift();
@@ -297,7 +302,7 @@ function rememberThreadTimelineEntries(threadKey: string, entries: readonly unkn
       rememberedThreadTimelines.delete(evicted);
     }
   }
-  lastReadyThreadKey = threadKey;
+  lastReadyThreadKey = held.threadKey;
 }
 
 export function rememberReadyThreadTimeline<T extends readonly unknown[]>(
@@ -306,7 +311,7 @@ export function rememberReadyThreadTimeline<T extends readonly unknown[]>(
   if (held.threadKey === null || held.entries.length === 0) {
     return;
   }
-  rememberThreadTimelineEntries(held.threadKey, held.entries);
+  rememberThreadTimelineEntries(held);
 }
 
 export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
@@ -315,7 +320,7 @@ export function peekRememberedThreadTimeline<T extends readonly unknown[]>(
   if (threadKey === null) {
     return null;
   }
-  return (rememberedThreadTimelines.get(threadKey) as T | undefined) ?? null;
+  return (rememberedThreadTimelines.get(threadKey)?.entries as T | undefined) ?? null;
 }
 
 export function peekHeldThreadTimeline<
@@ -324,11 +329,11 @@ export function peekHeldThreadTimeline<
   if (lastReadyThreadKey === null) {
     return null;
   }
-  const entries = rememberedThreadTimelines.get(lastReadyThreadKey);
-  if (entries === undefined || entries.length === 0) {
+  const held = rememberedThreadTimelines.get(lastReadyThreadKey);
+  if (held === undefined || held.entries.length === 0) {
     return null;
   }
-  return { threadKey: lastReadyThreadKey, entries: entries as T };
+  return held as HeldThreadTimeline<T>;
 }
 
 export function resetHeldThreadTimeline(): void {
