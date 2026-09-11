@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type EventId,
@@ -786,7 +787,11 @@ export const layer: Layer.Layer<
       startRootRun: (input) =>
         Effect.gen(function* () {
           const assistantStreamingEnabled = yield* serverSettings.getSettings.pipe(
-            Effect.map((settings) => settings.enableLegacyTokenStreaming),
+            Effect.map(
+              (settings) =>
+                resolveProjectSettings(settings, input.appThread.projectId).settings
+                  .enableLegacyTokenStreaming,
+            ),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
