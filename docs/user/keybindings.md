@@ -53,6 +53,8 @@ a shortcut.
 
 ## Commands with special behavior
 
+`navigation.back` and `navigation.forward` move through visited locations using `mod+[` and `mod+]`. Both are also available in the command palette.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 

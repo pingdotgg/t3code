@@ -171,6 +171,9 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
 
   return {
     ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
+    // Home and the split sidebar install native history items on the right.
+    // Suppress the shared headerLeft pair so those screens render one set.
+    headerLeft: () => null,
     headerTitle: () => (
       <WorkspaceConnectionTitle
         brand={<CompactBrandTitle />}
