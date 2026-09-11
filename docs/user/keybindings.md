@@ -60,6 +60,10 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+Desktop builds include **Restart T3 Code** in the command palette. It gracefully
+stops the desktop-managed server before relaunching the app, so saved window state
+is flushed first. Active tasks are interrupted.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

@@ -49,6 +49,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  RotateCwIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -1813,6 +1814,19 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  const restartApp = window.desktopBridge?.restartApp;
+  if (restartApp) {
+    actionItems.push({
+      kind: "action",
+      value: "action:restart-app",
+      searchTerms: ["restart", "relaunch", "reload", "desktop", "app", "t3 code"],
+      title: "Restart T3 Code",
+      description: "Active tasks will be interrupted",
+      icon: <RotateCwIcon className={ITEM_ICON_CLASS} />,
+      run: restartApp,
+    });
+  }
 
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).

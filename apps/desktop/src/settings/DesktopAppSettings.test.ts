@@ -24,6 +24,7 @@ const DesktopSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  mainWindowFullscreen: Schema.optionalKey(Schema.Boolean),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
@@ -107,6 +108,7 @@ describe("DesktopSettings", () => {
       {
         linuxPasswordStore: "auto",
         mainWindowBounds: null,
+        mainWindowFullscreen: false,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
@@ -136,6 +138,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "gnome-libsecret",
           mainWindowBounds: null,
+          mainWindowFullscreen: false,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
@@ -243,6 +246,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
+          mainWindowFullscreen: false,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
@@ -263,12 +267,14 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
           mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowFullscreen: true,
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });
 
         const loaded = yield* settings.load;
         assert.isNull(loaded.mainWindowBounds);
+        assert.isFalse(loaded.mainWindowFullscreen);
         assert.isFalse(loaded.mainWindowMaximized);
         assert.equal(loaded.serverExposureMode, "network-accessible");
       }),
@@ -299,6 +305,7 @@ describe("DesktopSettings", () => {
           assert.deepEqual(yield* settings.load, {
             linuxPasswordStore: "auto",
             mainWindowBounds: null,
+            mainWindowFullscreen: false,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
@@ -320,7 +327,11 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds(
+          { x: -1200, y: 40, width: 1440, height: 960 },
+          true,
+          true,
+        );
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
@@ -328,6 +339,7 @@ describe("DesktopSettings", () => {
         );
         assert.deepEqual(persisted, {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowFullscreen: true,
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
@@ -347,6 +359,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
+          mainWindowFullscreen: false,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
@@ -375,6 +388,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
+          mainWindowFullscreen: false,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
@@ -402,6 +416,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
+          mainWindowFullscreen: false,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,

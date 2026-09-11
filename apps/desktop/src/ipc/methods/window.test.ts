@@ -6,14 +6,22 @@ import { vi } from "vite-plus/test";
 
 import type * as Electron from "electron";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import * as DesktopShutdown from "../../app/DesktopShutdown.ts";
+import * as DesktopState from "../../app/DesktopState.ts";
+import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
   pickProjectFavicon,
+  restartApp,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -150,6 +158,49 @@ describe("getWindowFullscreenState", () => {
         }),
       ),
     );
+  });
+});
+
+describe("restartApp", () => {
+  it.effect("requests a graceful command-palette relaunch", () => {
+    const relaunchReasons: string[] = [];
+    const lifecycleLayer = Layer.succeed(
+      DesktopLifecycle.DesktopLifecycle,
+      DesktopLifecycle.DesktopLifecycle.of({
+        relaunch: (reason) =>
+          Effect.sync(() => {
+            relaunchReasons.push(reason);
+          }),
+        register: Effect.void,
+      }),
+    );
+    const unusedRuntimeLayer = Layer.mergeAll(
+      DesktopShutdown.layer,
+      DesktopState.layer,
+      Layer.succeed(
+        DesktopEnvironment.DesktopEnvironment,
+        DesktopEnvironment.DesktopEnvironment.of(
+          {} as DesktopEnvironment.DesktopEnvironment["Service"],
+        ),
+      ),
+      Layer.succeed(
+        DesktopWindow.DesktopWindow,
+        DesktopWindow.DesktopWindow.of({} as DesktopWindow.DesktopWindow["Service"]),
+      ),
+      Layer.succeed(
+        ElectronApp.ElectronApp,
+        ElectronApp.ElectronApp.of({} as ElectronApp.ElectronApp["Service"]),
+      ),
+      Layer.succeed(
+        ElectronTheme.ElectronTheme,
+        ElectronTheme.ElectronTheme.of({} as ElectronTheme.ElectronTheme["Service"]),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* restartApp.handler(undefined);
+      assert.deepEqual(relaunchReasons, ["command-palette"]);
+    }).pipe(Effect.provide(Layer.merge(lifecycleLayer, unusedRuntimeLayer)));
   });
 });
 

@@ -27,6 +27,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
+  readonly mainWindowFullscreen: boolean;
   readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
@@ -75,6 +76,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
+  mainWindowFullscreen: false,
   mainWindowMaximized: false,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
@@ -96,6 +98,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
+  mainWindowFullscreen: Schema.optionalKey(Schema.Boolean),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
@@ -155,6 +158,7 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+      isFullscreen: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -226,6 +230,7 @@ function normalizeDesktopSettingsDocument(
   return {
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
+    mainWindowFullscreen: mainWindowBounds !== null && parsed.mainWindowFullscreen === true,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
@@ -252,6 +257,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.mainWindowBounds !== null) {
     document.mainWindowBounds = settings.mainWindowBounds;
+  }
+  if (settings.mainWindowFullscreen) {
+    document.mainWindowFullscreen = true;
   }
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
@@ -300,14 +308,17 @@ function setMainWindowBounds(
   settings: DesktopSettings,
   bounds: DesktopWindowBounds,
   isMaximized: boolean,
+  isFullscreen: boolean,
 ): DesktopSettings {
   return settings.mainWindowBounds !== null &&
     desktopWindowBoundsEquivalence(settings.mainWindowBounds, bounds) &&
-    settings.mainWindowMaximized === isMaximized
+    settings.mainWindowMaximized === isMaximized &&
+    settings.mainWindowFullscreen === isFullscreen
     ? settings
     : {
         ...settings,
         mainWindowBounds: bounds,
+        mainWindowFullscreen: isFullscreen,
         mainWindowMaximized: isMaximized,
       };
 }
@@ -507,14 +518,15 @@ export const make = Effect.gen(function* () {
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
-    setMainWindowBounds: (bounds, isMaximized) =>
-      persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
+    setMainWindowBounds: (bounds, isMaximized, isFullscreen) =>
+      persist((settings) => setMainWindowBounds(settings, bounds, isMaximized, isFullscreen)).pipe(
         Effect.withSpan("desktop.settings.setMainWindowBounds", {
           attributes: {
             x: bounds.x,
             y: bounds.y,
             width: bounds.width,
             height: bounds.height,
+            isFullscreen,
             isMaximized,
           },
         }),
@@ -576,8 +588,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
         load: SynchronizedRef.get(settingsRef),
-        setMainWindowBounds: (bounds, isMaximized) =>
-          update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        setMainWindowBounds: (bounds, isMaximized, isFullscreen) =>
+          update((settings) => setMainWindowBounds(settings, bounds, isMaximized, isFullscreen)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

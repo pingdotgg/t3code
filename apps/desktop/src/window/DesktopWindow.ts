@@ -371,6 +371,8 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
+    const restoreFullscreen =
+      persistedSettings.mainWindowFullscreen && environment.platform === "darwin";
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
@@ -379,6 +381,7 @@ export const make = Effect.gen(function* () {
       minWidth: 840,
       minHeight: 620,
       show: false,
+      ...(restoreFullscreen ? { fullscreen: true } : {}),
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
@@ -405,6 +408,7 @@ export const make = Effect.gen(function* () {
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
+    let fullscreenRestorePending = restoreFullscreen;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
       if (window.isDestroyed()) {
@@ -422,9 +426,10 @@ export const make = Effect.gen(function* () {
       });
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
+    const fallbackWindowFullscreen = persistedSettings.mainWindowFullscreen;
     const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
-      if (!boundsPersistenceEnabled) {
+      if (!boundsPersistenceEnabled || fullscreenRestorePending) {
         return pendingBoundsPersistFiber;
       }
       const bounds = readPersistableBounds();
@@ -432,25 +437,37 @@ export const make = Effect.gen(function* () {
         return pendingBoundsPersistFiber;
       }
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
-          Effect.asVoid,
-          Effect.catch((error) =>
-            logWindowWarning("failed to persist main window bounds", {
-              message: error.message,
-            }),
+        desktopSettings
+          .setMainWindowBounds(
+            bounds,
+            window.isMaximized(),
+            environment.platform === "darwin" && window.isFullScreen(),
+          )
+          .pipe(
+            Effect.asVoid,
+            Effect.catch((error) =>
+              logWindowWarning("failed to persist main window bounds", {
+                message: error.message,
+              }),
+            ),
           ),
-        ),
       );
       return pendingBoundsPersistFiber;
     };
     const scheduleBoundsPersist = () => {
+      // Native startup transitions do not replace the saved normal window bounds.
+      if (fullscreenRestorePending) {
+        return;
+      }
       if (!boundsPersistenceEnabled) {
         const currentBounds = readPersistableBounds();
         if (
           currentBounds === null ||
           (fallbackWindowBounds !== null &&
             windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
-            window.isMaximized() === fallbackWindowMaximized)
+            window.isMaximized() === fallbackWindowMaximized &&
+            (environment.platform !== "darwin" ||
+              window.isFullScreen() === fallbackWindowFullscreen))
         ) {
           return;
         }
@@ -657,10 +674,14 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       window.on("enter-full-screen", () => {
+        fullscreenRestorePending = false;
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
+        scheduleBoundsPersist();
       });
       window.on("leave-full-screen", () => {
+        fullscreenRestorePending = false;
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
+        scheduleBoundsPersist();
       });
     }
 
@@ -795,12 +816,15 @@ export const make = Effect.gen(function* () {
       if (!window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
-      // Reveal the real window, then close the connecting splash (if any) so the
-      // two don't overlap and there's no blank gap between them.
-      if (persistedSettings.mainWindowMaximized) {
-        window.maximize();
-      }
-      void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+      void runPromise(
+        Effect.gen(function* () {
+          if (!restoreFullscreen && persistedSettings.mainWindowMaximized) {
+            window.maximize();
+          }
+          yield* electronWindow.reveal(window);
+          yield* dismissConnectingSplash;
+        }),
+      );
     });
 
     loadApplication();
