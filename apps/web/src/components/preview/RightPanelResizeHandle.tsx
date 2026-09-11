@@ -13,6 +13,8 @@ interface Props {
  *   user can grab a few pixels off the edge without aiming.
  * - Visual indicator is a 1px line that lights up on hover/active to mirror
  *   VS Code / Cursor.
+ * - Double-click restores the panel's default width, the same gesture the app
+ *   sidebar's rail uses.
  */
 export function RightPanelResizeHandle({ handlers, className }: Props) {
   return (
