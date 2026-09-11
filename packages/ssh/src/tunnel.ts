@@ -435,7 +435,11 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
     T3_LOCK_WAITED=0
     while ! mkdir "$T3_LOCK" 2>/dev/null; do
-      if [ -n "$(find "$T3_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+      # The holder records its pid; a lock whose owner is gone is stale
+      # regardless of age, and a live owner is never reclaimed no matter how
+      # slow its download is, so two installers can never run at once.
+      T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+      if [ -n "$T3_LOCK_OWNER" ] && ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
         rm -rf "$T3_LOCK"
         continue
       fi
@@ -446,6 +450,7 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
       sleep 1
       T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
     done
+    printf '%s\\n' "$$" > "$T3_LOCK/pid"
     trap 'rm -rf "$T3_LOCK"' EXIT
   fi
   if ! t3_runtime_ready; then
@@ -463,8 +468,8 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
     trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
     t3_fetch() {
-      if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
-      elif command -v wget >/dev/null 2>&1; then wget -q "$1" -O "$2"
+      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time 600 "$1" -o "$2"
+      elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
       else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
       fi
     }
@@ -764,10 +769,28 @@ if [ -f "$LOG_FILE" ]; then
 fi
 `;
 
+export class SshInvalidArchiveVersionError extends Schema.TaggedError<SshInvalidArchiveVersionError>()(
+  "SshInvalidArchiveVersionError",
+  { archiveVersion: Schema.String },
+) {
+  override get message(): string {
+    return `'${this.archiveVersion}' is not an exact t3 version and cannot name a runtime directory.`;
+  }
+}
+
+// The version becomes a directory name the runner removes and recreates, so
+// it must be one exact SemVer segment: no separators, no `..`, no shell
+// metacharacters beyond what SemVer allows.
+const EXACT_ARCHIVE_VERSION =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
   const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   const archiveVersion = input?.archiveVersion?.trim() || "";
+  if (archiveVersion !== "" && !EXACT_ARCHIVE_VERSION.test(archiveVersion)) {
+    throw new SshInvalidArchiveVersionError({ archiveVersion });
+  }
   // Strip the `/v<version>` the helper appends: the script builds URLs itself.
   const releaseBaseUrl = cliReleaseDownloadBaseUrl("", input?.releaseBaseUrl ?? undefined).replace(
     /\/v$/u,

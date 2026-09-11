@@ -20,6 +20,7 @@ import {
   buildRemotePairingScript,
   buildRemoteStopScript,
   buildRemoteT3RunnerScript,
+  SshInvalidArchiveVersionError,
   describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
@@ -150,6 +151,9 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
     assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 180 ]; then');
+    assert.include(script, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid"');
+    assert.include(script, 'kill -0 "$T3_LOCK_OWNER"');
+    assert.notInclude(script, "-mmin");
     assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
     assert.isBelow(
       script.indexOf('"$T3_STAGING/t3" --version'),
@@ -171,6 +175,28 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, '"$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT"');
     assert.include(launch, '"$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"');
     assert.include(buildRemoteLaunchScript(), "T3_ARCHIVE_MODE=0");
+  });
+
+  it("rejects archive versions that are not a single exact version segment", () => {
+    for (const archiveVersion of [
+      "../other",
+      "1.2.3/evil",
+      "1.2.3\\evil",
+      "1.2.3-preview.1 x",
+      "1.2.3-preview.1\nrm -rf /",
+      "v1.2.3",
+    ]) {
+      assert.throws(
+        () => buildRemoteT3RunnerScript({ archiveVersion }),
+        SshInvalidArchiveVersionError,
+        undefined,
+        archiveVersion,
+      );
+    }
+    assert.include(
+      buildRemoteT3RunnerScript({ archiveVersion: "1.2.3-preview.20260911.4" }),
+      "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
+    );
   });
 
   it("does not hard-code a remote node engine range", () => {
