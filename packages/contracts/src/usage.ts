@@ -3,7 +3,8 @@
  *
  * Each environment scans the provider CLIs' own on-disk session transcripts
  * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`,
- * `~/.grok/sessions/**\/updates.jsonl`) rather than relying on T3 Code's own
+ * `~/.grok/sessions/**\/updates.jsonl`, and T3's Devin ACP event logs) rather
+ * than relying on T3 Code's own
  * orchestration projections, so usage stays complete even for turns that were
  * never driven through T3 Code. This mirrors the approach `ccusage` takes.
  *
@@ -12,6 +13,7 @@
  *
  * @module usage
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -21,18 +23,18 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 adds Grok buckets; v6 adds Devin buckets and optional account usage.
+ * v4 Claude/Codex buckets remain valid, so mixed-version environments keep
+ * those totals instead of treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok", "devin"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
@@ -169,6 +171,39 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/**
+ * Optional account-level Devin consumption returned by the official API.
+ * This is intentionally separate from UsageBucket: ACUs are account billing
+ * units, not token counts, and must never be mixed into the local estimate.
+ */
+export const UsageAccountConsumptionStatus = Schema.Literals([
+  "available",
+  "notConfigured",
+  "forbidden",
+  "failed",
+]);
+export type UsageAccountConsumptionStatus = typeof UsageAccountConsumptionStatus.Type;
+
+export const UsageAccountConsumptionDay = Schema.Struct({
+  day: UsageDay,
+  acus: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  byProduct: Schema.Record(Schema.String, Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type UsageAccountConsumptionDay = typeof UsageAccountConsumptionDay.Type;
+
+export const UsageAccountConsumption = Schema.Struct({
+  provider: Schema.Literal("devin"),
+  status: UsageAccountConsumptionStatus,
+  source: TrimmedNonEmptyString,
+  fetchedAt: Schema.NullOr(Schema.String),
+  totalAcus: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  days: Schema.Array(UsageAccountConsumptionDay),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type UsageAccountConsumption = typeof UsageAccountConsumption.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
@@ -197,6 +232,8 @@ export const UsageSummary = Schema.Struct({
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
   pricing: UsagePricing,
+  /** Optional official Devin account consumption; absent when not configured. */
+  accountUsage: Schema.optional(UsageAccountConsumption),
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });

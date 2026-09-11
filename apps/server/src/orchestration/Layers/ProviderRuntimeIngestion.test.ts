@@ -3342,6 +3342,80 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
 
+  it("persists MCP elicitation approvals identically for provider-neutral events", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow Safari" },
+      { decision: "accept", label: "Approve" },
+    ] as const;
+    const payload = {
+      requestType: "mcp_elicitation_approval",
+      detail: "Allow ChatGPT to use Safari?",
+      appName: "Safari",
+      options,
+    };
+
+    await harness.emitAndDrain([
+      {
+        type: "request.opened",
+        eventId: asEventId("evt-codex-mcp-elicitation"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        requestId: ApprovalRequestId.make("req-codex-mcp-elicitation"),
+        payload,
+      },
+      {
+        type: "request.opened",
+        eventId: asEventId("evt-devin-mcp-elicitation"),
+        provider: ProviderDriverKind.make("devin"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        requestId: ApprovalRequestId.make("req-devin-mcp-elicitation"),
+        payload,
+      },
+    ]);
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.activities.filter(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "approval.requested",
+        ).length === 2,
+    );
+    const approvals = thread.activities
+      .filter((activity) => activity.kind === "approval.requested")
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+
+    expect(approvals).toHaveLength(2);
+    expect(approvals[0]).toMatchObject({
+      kind: "approval.requested",
+      summary: "App access approval requested",
+      payload: {
+        requestId: "req-codex-mcp-elicitation",
+        requestKind: "mcp-elicitation",
+        requestType: "mcp_elicitation_approval",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
+      },
+    });
+    expect(approvals[1]).toMatchObject({
+      kind: "approval.requested",
+      summary: "App access approval requested",
+      payload: {
+        requestId: "req-devin-mcp-elicitation",
+        requestKind: "mcp-elicitation",
+        requestType: "mcp_elicitation_approval",
+        detail: "Allow ChatGPT to use Safari?",
+        appName: "Safari",
+        options,
+      },
+    });
+  });
+
   it("maps runtime.error into errored session state", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

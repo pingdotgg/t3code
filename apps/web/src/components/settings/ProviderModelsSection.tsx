@@ -27,6 +27,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
   [ProviderDriverKind.make("cursor")]: "claude-sonnet-4-6",
+  [ProviderDriverKind.make("devin")]: "adaptive",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
 };
 
@@ -62,6 +63,18 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
     )
   ) {
     labels.push("Reasoning");
+  }
+  // Surface input modalities the model explicitly rejects. Absent fields mean
+  // supported, so the settings list only calls out disabled modalities.
+  if (model.capabilities?.inputImages === false) labels.push("No images");
+  if (model.capabilities?.inputAudio === false) labels.push("No audio");
+  if (model.capabilities?.inputFiles === false) labels.push("No files");
+  const contextLabel = formatModelMetadataTokens(model.contextWindowTokens);
+  if (contextLabel) labels.push(`${contextLabel} context`);
+  if (model.pricing) {
+    const inputRate = formatModelRate(model.pricing.inputPerMillion);
+    const outputRate = formatModelRate(model.pricing.outputPerMillion);
+    if (inputRate && outputRate) labels.push(`${inputRate} in · ${outputRate} out / 1M`);
   }
   return labels;
 }
@@ -145,6 +158,20 @@ interface ProviderModelsSectionProps {
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
+}
+
+function formatModelMetadataTokens(value: number | undefined): string | null {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return null;
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  }
+  return `${Math.round(value / 1_000)}K`;
+}
+
+function formatModelRate(value: number | undefined): string | null {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return null;
+  if (value === 0) return "Free";
+  return `$${value < 1 ? value.toFixed(2) : value.toFixed(2).replace(/\.00$/u, "")}`;
 }
 
 /**

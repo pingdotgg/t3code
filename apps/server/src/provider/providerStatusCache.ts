@@ -65,11 +65,29 @@ export const isCachedProviderCorrelated = (input: {
   input.cachedProvider.instanceId === input.fallbackProvider.instanceId &&
   input.cachedProvider.driver === input.fallbackProvider.driver;
 
+/**
+ * A provider may change the shape of its model inventory without changing its
+ * instance identity. When the live fallback advertises a catalog version,
+ * cached snapshots must carry the same version before their models can be
+ * hydrated. Missing versions are intentionally rejected so snapshots written
+ * before versioning was introduced cannot reintroduce stale model entries.
+ */
+export const isCachedProviderCatalogCompatible = (input: {
+  readonly cachedProvider: ServerProvider;
+  readonly fallbackProvider: ServerProvider;
+}): boolean =>
+  input.fallbackProvider.modelCatalogVersion === undefined ||
+  input.cachedProvider.modelCatalogVersion === input.fallbackProvider.modelCatalogVersion;
+
 export const hydrateCachedProvider = (input: {
   readonly cachedProvider: ServerProvider;
   readonly fallbackProvider: ServerProvider;
 }): ServerProvider => {
   if (!isCachedProviderCorrelated(input)) {
+    return input.fallbackProvider;
+  }
+
+  if (!isCachedProviderCatalogCompatible(input)) {
     return input.fallbackProvider;
   }
 

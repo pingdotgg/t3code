@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
@@ -7,6 +7,7 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  getModelInputCapabilities,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -14,6 +15,8 @@ import {
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  normalizeCustomModelSlug,
+  normalizeModelSlug,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -162,6 +165,68 @@ describe("descriptor helpers", () => {
     ).toBeUndefined();
     expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
     expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
+  });
+});
+
+describe("model slug normalization", () => {
+  it("preserves exact custom slugs instead of expanding provider aliases", () => {
+    const cursor = ProviderDriverKind.make("cursor");
+
+    expect(normalizeModelSlug("opus-4.6", cursor)).toBe("claude-opus-4-6");
+    expect(normalizeCustomModelSlug(" opus-4.6 ")).toBe("opus-4.6");
+  });
+});
+
+describe("input capabilities", () => {
+  it("omits capability fields when no modality is disabled", () => {
+    const caps = createModelCapabilities({ optionDescriptors: [] });
+    expect(caps.inputImages).toBeUndefined();
+    expect(caps.inputAudio).toBeUndefined();
+    expect(caps.inputFiles).toBeUndefined();
+  });
+
+  it("only records modalities that are explicitly disabled", () => {
+    const caps = createModelCapabilities({
+      optionDescriptors: [],
+      inputImages: false,
+      inputAudio: false,
+    });
+    expect(caps.inputImages).toBe(false);
+    expect(caps.inputAudio).toBe(false);
+    expect(caps.inputFiles).toBeUndefined();
+  });
+
+  it("ignores explicit true so the wire shape stays minimal", () => {
+    const caps = createModelCapabilities({
+      optionDescriptors: [],
+      inputImages: true,
+      inputFiles: true,
+    });
+    expect(caps.inputImages).toBeUndefined();
+    expect(caps.inputFiles).toBeUndefined();
+  });
+
+  it("resolves absent fields to supported", () => {
+    expect(getModelInputCapabilities(undefined)).toEqual({
+      images: true,
+      audio: true,
+      files: true,
+    });
+    expect(getModelInputCapabilities({ optionDescriptors: [] })).toEqual({
+      images: true,
+      audio: true,
+      files: true,
+    });
+  });
+
+  it("resolves explicitly disabled fields to false", () => {
+    expect(
+      getModelInputCapabilities({
+        optionDescriptors: [],
+        inputImages: false,
+        inputAudio: false,
+      }),
+    ).toEqual({ images: false, audio: false, files: true });
   });
 });
 

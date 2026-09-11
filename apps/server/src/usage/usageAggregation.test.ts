@@ -61,6 +61,44 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
+  it("uses provider catalog rates for both cost and cache savings without affecting other providers", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      providerRates: {
+        devin: new Map([
+          [
+            "claude-fable-5",
+            {
+              inputCostPerToken: 2e-5,
+              outputCostPerToken: 8e-5,
+              cacheReadCostPerToken: 2e-6,
+              cacheCreationCostPerToken: 3e-5,
+            },
+          ],
+        ]),
+      },
+    });
+    aggregator.add(record());
+    aggregator.add(record({ provider: "devin" }));
+    const buckets = aggregator.finish().buckets;
+    expect(buckets.find((bucket) => bucket.provider === "claude")?.costUsd).toBeCloseTo(
+      0.004625,
+      9,
+    );
+    expect(buckets.find((bucket) => bucket.provider === "claude")?.cacheSavingsUsd).toBeCloseTo(
+      0.009,
+      9,
+    );
+    expect(buckets.find((bucket) => bucket.provider === "devin")?.costUsd).toBeCloseTo(0.0083, 9);
+    expect(buckets.find((bucket) => bucket.provider === "devin")?.cacheSavingsUsd).toBeCloseTo(
+      0.018,
+      9,
+    );
+  });
+
   it("requires exact bounds for hourly aggregation", () => {
     expect(
       () =>

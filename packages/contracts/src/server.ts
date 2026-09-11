@@ -22,7 +22,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities } from "./model.ts";
+import { ModelCapabilities, ModelPricing } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
@@ -77,6 +77,12 @@ export const ServerProviderModel = Schema.Struct({
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
+  /** Provider-advertised rate for this model/variant, when known. */
+  pricing: Schema.optional(ModelPricing),
+  /** Rates for the hidden concrete variants represented by a grouped model. */
+  pricingByVariant: Schema.optional(Schema.Record(Schema.String, ModelPricing)),
+  /** Provider-advertised context size for a standalone model. */
+  contextWindowTokens: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
@@ -225,6 +231,11 @@ export const ServerProvider = Schema.Struct({
   // Human-readable reason populated when `availability === "unavailable"`.
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  // Optional provider-owned model catalog version. Providers that change the
+  // shape or identity of their model inventory can bump this value so stale
+  // persisted snapshots are ignored instead of being merged back into the
+  // newly discovered catalog.
+  modelCatalogVersion: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

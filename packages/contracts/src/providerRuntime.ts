@@ -316,19 +316,29 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
+  /** Canonical model/session attribution for providers that report it. */
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  providerSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningOutputTokens: Schema.optional(NonNegativeInt),
   lastUsedTokens: Schema.optional(NonNegativeInt),
   lastInputTokens: Schema.optional(NonNegativeInt),
   lastCachedInputTokens: Schema.optional(NonNegativeInt),
+  lastCacheCreationTokens: Schema.optional(NonNegativeInt),
   lastOutputTokens: Schema.optional(NonNegativeInt),
   lastReasoningOutputTokens: Schema.optional(NonNegativeInt),
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
   autoCompactThreshold: Schema.optional(PositiveInt),
+  /** Provider-reported cost for the latest usage interval, when available. */
+  lastCostUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Provider-reported cumulative cost for the session, when available. */
+  sessionCostUsd: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  costCurrency: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 

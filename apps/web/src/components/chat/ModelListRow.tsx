@@ -3,10 +3,11 @@ import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
+  getModelProviderBrand,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
+import type { ReasoningLevelDescriptor } from "./modelFamilyGrouping";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -39,11 +40,46 @@ export const ModelListRow = memo(function ModelListRow(props: {
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
+  /**
+   * Reasoning-level descriptor for this model. When present and the row is
+   * selected, a compact effort pill renders next to the model name showing
+   * the current level. Clicking cycles through the available options.
+   */
+  reasoningDescriptor?: ReasoningLevelDescriptor | null;
+  /**
+   * Current reasoning level label (e.g. "High") for the selected model.
+   * Shown in the effort pill when `reasoningDescriptor` is present.
+   */
+  reasoningLabel?: string | null;
+  onReasoningLevelChange?: (nextValue: string) => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
-    : props.providerDisplayName;
+  const modelProviderBrand = getModelProviderBrand(props.driverKind, props.model);
+  const ProviderIcon = modelProviderBrand.icon;
+  const providerLabel =
+    props.driverKind === "devin"
+      ? `${props.providerDisplayName} · ${modelProviderBrand.label}`
+      : props.model.subProvider
+        ? `${props.providerDisplayName} · ${props.model.subProvider}`
+        : props.providerDisplayName;
+
+  const showReasoningPill =
+    props.isSelected &&
+    props.reasoningDescriptor !== null &&
+    props.reasoningDescriptor !== undefined &&
+    props.reasoningDescriptor.options.length > 1;
+
+  const cycleReasoningLevel = () => {
+    const descriptor = props.reasoningDescriptor;
+    if (!descriptor || !props.onReasoningLevelChange) return;
+    const currentIndex = descriptor.options.findIndex(
+      (option) => option.id === descriptor.currentValue,
+    );
+    const nextIndex = (currentIndex + 1) % descriptor.options.length;
+    const nextOption = descriptor.options[nextIndex] ?? descriptor.options[0];
+    if (nextOption) {
+      props.onReasoningLevelChange(nextOption.id);
+    }
+  };
 
   const row = (
     <ComboboxItem
@@ -82,10 +118,42 @@ export const ModelListRow = memo(function ModelListRow(props: {
               Unavailable
             </Badge>
           ) : null}
+          {showReasoningPill && props.reasoningLabel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className={cn(
+                      "shrink-0 rounded border border-border/70 bg-muted/60 px-1.5 py-px text-[10px] font-medium leading-none text-muted-foreground transition-colors",
+                      props.onReasoningLevelChange &&
+                        "cursor-pointer hover:border-border hover:bg-muted hover:text-foreground",
+                    )}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      cycleReasoningLevel();
+                    }}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                    disabled={!props.onReasoningLevelChange}
+                    aria-label={`Reasoning: ${props.reasoningLabel}`}
+                  >
+                    {props.reasoningLabel}
+                  </button>
+                }
+              />
+              <TooltipPopup side="top" align="center">
+                {props.onReasoningLevelChange
+                  ? `Reasoning: ${props.reasoningLabel}. Click to change.`
+                  : `Reasoning: ${props.reasoningLabel}`}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">
-            {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
+            <ProviderIcon className="size-3 shrink-0" />
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
               {providerLabel}
             </span>

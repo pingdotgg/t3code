@@ -620,6 +620,43 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect(
+    "transmits additional workspace roots when creating, loading, and resuming sessions",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const acp = yield* AcpClient.make(stdio);
+        const directories = ["/workspace/shared files", "C:\\Projects\\shared"];
+        const payload = { cwd: "/workspace", mcpServers: [], additionalDirectories: directories };
+        const decodeRequest = Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              id: Schema.Number,
+              params: Schema.Struct({ additionalDirectories: Schema.Array(Schema.String) }),
+            }),
+          ),
+        );
+        for (const call of [
+          acp.agent.createSession(payload),
+          acp.agent.loadSession({ ...payload, sessionId: "session-1" }),
+          acp.agent.resumeSession({ ...payload, sessionId: "session-1" }),
+        ]) {
+          const fiber = yield* call.pipe(Effect.forkScoped);
+          const request = yield* decodeRequest(yield* Queue.take(output));
+          assert.deepEqual(request.params.additionalDirectories, directories);
+          yield* Queue.offer(
+            input,
+            yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: { sessionId: "session-1" },
+            }),
+          );
+          yield* Fiber.join(fiber);
+        }
+      }),
+  );
+
   it.effect("uses distinct ids for RPC calls and extension requests", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();

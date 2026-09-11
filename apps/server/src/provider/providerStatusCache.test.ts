@@ -13,6 +13,7 @@ import * as Logger from "effect/Logger";
 
 import {
   hydrateCachedProvider,
+  isCachedProviderCatalogCompatible,
   isCachedProviderCorrelated,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -231,6 +232,78 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         fallbackProvider: disabledFallback,
       }),
       disabledFallback,
+    );
+  });
+
+  it("rejects cached model catalogs from an older provider catalog version", () => {
+    const cachedDevin = makeProvider(ProviderDriverKind.make("devin"), {
+      modelCatalogVersion: "devin-model-catalog-v1",
+      models: [
+        {
+          slug: "claude-opus-5-medium",
+          name: "Medium",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackDevin = makeProvider(ProviderDriverKind.make("devin"), {
+      modelCatalogVersion: "devin-model-catalog-v2",
+      models: [
+        {
+          slug: "claude-opus-5",
+          name: "Claude Opus 5",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+
+    assert.strictEqual(
+      isCachedProviderCatalogCompatible({
+        cachedProvider: cachedDevin,
+        fallbackProvider: fallbackDevin,
+      }),
+      false,
+    );
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedDevin,
+        fallbackProvider: fallbackDevin,
+      }),
+      fallbackDevin,
+    );
+  });
+
+  it("rejects pre-versioned cached model catalogs when the fallback is versioned", () => {
+    const cachedDevin = makeProvider(ProviderDriverKind.make("devin"), {
+      models: [
+        {
+          slug: "legacy-flattened-model",
+          name: "Legacy Flattened Model",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackDevin = makeProvider(ProviderDriverKind.make("devin"), {
+      modelCatalogVersion: "devin-model-catalog-v2",
+      models: [],
+    });
+
+    assert.strictEqual(
+      isCachedProviderCatalogCompatible({
+        cachedProvider: cachedDevin,
+        fallbackProvider: fallbackDevin,
+      }),
+      false,
+    );
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedDevin,
+        fallbackProvider: fallbackDevin,
+      }),
+      fallbackDevin,
     );
   });
 

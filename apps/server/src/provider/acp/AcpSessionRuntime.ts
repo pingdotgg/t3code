@@ -92,7 +92,9 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /** Authentication method to invoke after initialization. Omit when the
+   * agent consumes credentials from its own CLI state (for example Devin). */
+  readonly authMethodId?: string;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
@@ -699,15 +701,17 @@ export const make = (
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      if (options.authMethodId) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -755,6 +759,9 @@ export const make = (
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
           mcpServers: options.mcpServers ?? [],
+          ...(options.additionalDirectories && options.additionalDirectories.length > 0
+            ? { additionalDirectories: options.additionalDirectories }
+            : {}),
         } satisfies EffectAcpSchema.LoadSessionRequest;
         const sessionLoadTimeout = Duration.fromInputUnsafe(
           options.sessionLoadTimeout ?? defaultSessionLoadTimeout,

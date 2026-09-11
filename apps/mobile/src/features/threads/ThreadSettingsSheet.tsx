@@ -124,6 +124,11 @@ function ModelRow(props: {
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
     >
+      <ProviderIcon
+        provider={props.option.providerDriver}
+        model={`${props.option.selection.model} ${props.option.label}`}
+        size={16}
+      />
       <View className="min-w-0 flex-1">
         <View className="flex-row items-center gap-2">
           <Text

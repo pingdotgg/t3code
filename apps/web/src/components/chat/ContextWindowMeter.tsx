@@ -1,5 +1,6 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import { formatUsd } from "@t3tools/shared/usageFormat";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
 import { Minimize2Icon } from "lucide-react";
@@ -30,6 +31,10 @@ export function ContextWindowMeter(props: {
   const dashOffset = circumference * (1 - normalizedPercentage / 100);
   const totalProcessedTokens = usage.totalProcessedTokens ?? null;
   const showTotalProcessed = totalProcessedTokens !== null && totalProcessedTokens > 0;
+  const showLastCost =
+    usage.lastCostUsd !== null && usage.lastCostUsd !== undefined && usage.lastCostUsd > 0;
+  const showSessionCost =
+    usage.sessionCostUsd !== null && usage.sessionCostUsd !== undefined && usage.sessionCostUsd > 0;
   const isOverloaded = normalizedPercentage > 90;
   const usageColor = isOverloaded
     ? "var(--color-error)"
@@ -130,6 +135,26 @@ export function ContextWindowMeter(props: {
               <span className="font-medium tabular-nums text-secondary-label">
                 {formatContextWindowTokens(totalProcessedTokens)}
               </span>
+            </div>
+          ) : null}
+          {showLastCost || showSessionCost ? (
+            <div className="flex flex-col gap-0.5 text-[11px] leading-4">
+              {showLastCost ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-secondary-label">Last turn estimate</span>
+                  <span className="font-medium tabular-nums text-secondary-label">
+                    {formatUsd(usage.lastCostUsd ?? 0)}
+                  </span>
+                </div>
+              ) : null}
+              {showSessionCost ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-secondary-label">Session estimate</span>
+                  <span className="font-medium tabular-nums text-secondary-label">
+                    {formatUsd(usage.sessionCostUsd ?? 0)}
+                  </span>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {usage.compactsAutomatically ? (

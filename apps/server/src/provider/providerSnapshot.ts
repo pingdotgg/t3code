@@ -66,6 +66,13 @@ export interface ServerProviderPresentation {
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
+  readonly supportsConversationRollback?: boolean;
+  /**
+   * Provider-owned model inventory version. When present, the provider
+   * registry treats a snapshot from another version as incompatible and
+   * replaces it instead of retaining its models.
+   */
+  readonly modelCatalogVersion?: string;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -218,6 +225,12 @@ export function buildServerProvider(input: {
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
+      : {}),
+    ...(typeof input.presentation.supportsConversationRollback === "boolean"
+      ? { supportsConversationRollback: input.presentation.supportsConversationRollback }
+      : {}),
+    ...(input.presentation.modelCatalogVersion
+      ? { modelCatalogVersion: input.presentation.modelCatalogVersion }
       : {}),
     enabled: input.enabled,
     installed: input.probe.installed,

@@ -61,6 +61,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  getModelInputCapabilities,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import {
@@ -364,7 +365,11 @@ import {
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
+import {
+  deriveKnownContextWindowSnapshot,
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -449,6 +454,8 @@ import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
+import { findModelCapabilities } from "./chat/modelFamilyGrouping";
+import { preserveCompatibleOptions } from "./ChatView.modelOptions";
 import { assetEnvironment } from "../state/assets";
 import { readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2642,8 +2649,16 @@ export default function ChatView(props: ChatViewProps) {
       : JSON.stringify([activityId, latestCheckpointCompletedAt]);
   }, [latestCheckpointCompletedAt, threadActivities]);
   const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(threadActivities),
-    [threadActivities],
+    () =>
+      deriveLatestContextWindowSnapshot(threadActivities) ??
+      (activeThread
+        ? deriveKnownContextWindowSnapshot({
+            selection: activeThread?.modelSelection,
+            providers: providerStatuses,
+            updatedAt: activeThread.updatedAt,
+          })
+        : null),
+    [activeThread, providerStatuses, threadActivities],
   );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
@@ -6933,6 +6948,29 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
+    // Block the turn when queued attachments use a modality the active model
+    // does not accept. This catches the case where a user queued images or
+    // files and then switched to a model that rejects them; rather than
+    // silently dropping the attachments or failing inside the provider, we
+    // surface a clear error so the user can remove them or switch back.
+    const modelInputCaps = getModelInputCapabilities(
+      getProviderModelCapabilities(
+        ctxSelectedProviderModels,
+        ctxSelectedModel,
+        ctxSelectedProvider,
+      ),
+    );
+    const modelInputBlockReason =
+      composerImagesSnapshot.length > 0 && !modelInputCaps.images
+        ? "The selected model does not accept image attachments. Remove them or switch models."
+        : composerFilesSnapshot.length > 0 && !modelInputCaps.files
+          ? "The selected model does not accept file attachments. Remove them or switch models."
+          : null;
+    if (modelInputBlockReason !== null) {
+      setThreadError(threadIdForSend, modelInputBlockReason);
+      return;
+    }
+
     const readLiveAttachmentCapabilities = () => {
       const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
       const liveSupportsAttachmentUploads =
@@ -7995,9 +8033,18 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
+      // Preserve compatible options across model switches. Carry over any
+      // stored option whose descriptor id also exists on the new model's
+      // capabilities, so a reasoning-effort choice survives switching from one
+      // model to another in the same family. Options the new model does not
+      // expose are dropped rather than sent blindly.
+      const currentOptions = activeThread.modelSelection?.options;
+      const nextCaps = entry ? findModelCapabilities(entry.models, resolvedModel) : null;
+      const preservedOptions = preserveCompatibleOptions(currentOptions, nextCaps);
       const nextModelSelection: ModelSelection = {
         instanceId,
         model: resolvedModel,
+        ...(preservedOptions ? { options: preservedOptions } : {}),
       };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,

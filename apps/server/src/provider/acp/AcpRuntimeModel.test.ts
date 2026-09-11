@@ -878,4 +878,24 @@ describe("AcpRuntimeModel", () => {
       ).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
   });
+
+  it("parses ACP usage_update notifications", () => {
+    const rawPayload = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 12_000,
+        size: 200_000,
+        cost: { amount: 0.12, currency: "USD" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+
+    expect(parseSessionUpdateEvent(rawPayload).events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        usage: rawPayload.update,
+        rawPayload,
+      },
+    ]);
+  });
 });

@@ -686,6 +686,31 @@ export const CursorSettings = makeProviderSettingsSchema(
 );
 export type CursorSettings = typeof CursorSettings.Type;
 
+export const DevinSettings = makeProviderSettingsSchema(
+  {
+    // Devin is opt-in because it requires a separately installed and authenticated CLI.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("devin").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Devin CLI binary.",
+        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath"],
+  },
+);
+export type DevinSettings = typeof DevinSettings.Type;
+
 export const GrokSettings = makeProviderSettingsSchema(
   {
     // Off by default (like Cursor and OpenCode): the binding is not yet
@@ -1064,6 +1089,7 @@ export const ServerSettings = Schema.Struct({
     codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    devin: DevinSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1111,7 +1137,7 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
  * through `DEFAULT_SERVER_SETTINGS`, so the schema's decoding default stays
  * the single source of truth. Unknown (fork) drivers default to enabled.
  */
-const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
+export const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
   const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
     string,
     { readonly enabled?: boolean } | undefined
@@ -1215,6 +1241,12 @@ const CursorSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const DevinSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 const GrokSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
@@ -1298,6 +1330,7 @@ export const ServerSettingsPatch = Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
+      devin: Schema.optionalKey(DevinSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),

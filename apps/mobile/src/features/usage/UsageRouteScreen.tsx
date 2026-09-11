@@ -1,4 +1,5 @@
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import type { UsageAccountConsumption } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import {
   isCompatibleUsageContractVersion,
@@ -77,7 +78,7 @@ export function UsageRouteScreen() {
   const isPast24Hours = windowDays === 1;
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
-  const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
+  const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
   );
@@ -260,8 +261,6 @@ export function UsageRouteScreen() {
             />
           ) : (
             <>
-              {/* Period and metric together: neither applies to Limits, and
-                both change every number below, so they share one bar. */}
               <View className="flex-row items-center gap-3">
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
@@ -278,11 +277,14 @@ export function UsageRouteScreen() {
                   className="w-36"
                 />
               </View>
-              {merged.duplicateSources.length > 0 ? (
-                <Text className="text-sm text-foreground-muted">
-                  Counted once across environments sharing a transcript directory:{" "}
-                  {merged.duplicateSources.join(", ")}
-                </Text>
+              <UsageCoverageNotice
+                environments={environments}
+                merged={merged}
+                isPartial={isPartial}
+              />
+
+              {merged.accountUsage !== null ? (
+                <DevinAccountUsageSection usage={merged.accountUsage} />
               ) : null}
               {isPending ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
@@ -316,6 +318,41 @@ export function UsageRouteScreen() {
         </Animated.View>
       </ScrollView>
     </View>
+  );
+}
+
+function formatAcus(value: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+}
+
+function DevinAccountUsageSection({ usage }: { readonly usage: UsageAccountConsumption }) {
+  const message =
+    usage.status === "notConfigured"
+      ? "Optional account ACU data is not configured on the server."
+      : usage.status === "forbidden"
+        ? "The configured Devin key cannot read organization consumption."
+        : usage.status === "failed"
+          ? (usage.message ?? "Devin account consumption could not be loaded.")
+          : null;
+
+  return (
+    <SettingsSection title="Devin account usage" card>
+      <View className="gap-1 p-4">
+        {usage.status === "available" ? (
+          <Text className="text-2xl font-t3-medium tabular-nums text-foreground">
+            {formatAcus(usage.totalAcus)} ACUs
+          </Text>
+        ) : null}
+        <Text className="text-sm text-foreground-muted">
+          {message ?? "Official organization consumption for this window."}
+        </Text>
+        {usage.status === "available" ? (
+          <Text className="text-xs text-foreground-tertiary">
+            {usage.days.length} billing days returned · Source: {usage.source}
+          </Text>
+        ) : null}
+      </View>
+    </SettingsSection>
   );
 }
 
@@ -645,4 +682,55 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
   if (isUsageLoading(environment))
     return environment.summary ? "Updating usage…" : "Loading usage…";
   return "Usage up to date";
+}
+
+/**
+ * Says plainly when the totals are incomplete: an environment still answering,
+ * one that failed, or one whose transcripts another environment already
+ * reported.
+ */
+function UsageCoverageNotice(props: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly merged: MergedUsage;
+  readonly isPartial: boolean;
+}) {
+  const failed = props.environments.filter((environment) => environment.error !== null);
+  const stale = props.environments.filter((environment) =>
+    props.merged.staleEnvironments.includes(environment.environmentId),
+  );
+  const duplicateSources = props.merged.duplicateSources;
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    !props.isPartial
+  ) {
+    return null;
+  }
+
+  return (
+    <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
+      {props.isPartial ? (
+        <Text className="text-sm text-foreground-muted">
+          Some environments are still reporting. Totals are partial.
+        </Text>
+      ) : null}
+      {failed.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} could not report usage.
+        </Text>
+      ))}
+      {stale.map((environment) => (
+        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
+          {environment.label} runs an older server version and is excluded from totals.
+        </Text>
+      ))}
+      {duplicateSources.length > 0 ? (
+        <Text className="text-sm text-foreground-muted">
+          Counted once across environments sharing a transcript directory:{" "}
+          {duplicateSources.join(", ")}
+        </Text>
+      ) : null}
+    </View>
+  );
 }

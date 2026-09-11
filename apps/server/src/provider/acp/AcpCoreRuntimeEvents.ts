@@ -8,6 +8,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type RuntimeRequestId,
+  type ThreadTokenUsageSnapshot,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -230,5 +231,35 @@ export function makeAcpContentDeltaEvent(input: {
       method: "session/update",
       payload: input.rawPayload,
     },
+  };
+}
+
+/** Normalizes ACP context/token telemetry onto the shared runtime event. */
+export function makeAcpTokenUsageEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly usage: ThreadTokenUsageSnapshot;
+  /** JSON-RPC method that produced the usage payload. */
+  readonly method?: string;
+  readonly rawPayload?: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    payload: { usage: input.usage },
+    ...(input.rawPayload !== undefined
+      ? {
+          raw: {
+            source: "acp.jsonrpc" as const,
+            method: input.method ?? "session/update",
+            payload: input.rawPayload,
+          },
+        }
+      : {}),
   };
 }

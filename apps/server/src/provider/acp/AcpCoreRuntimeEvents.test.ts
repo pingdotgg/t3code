@@ -7,6 +7,7 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpTokenUsageEvent,
   makeAcpToolCallEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
@@ -239,6 +240,42 @@ describe("AcpCoreRuntimeEvents", () => {
       payload: {
         streamKind: "reasoning_text",
         delta: "Inspect the current implementation first.",
+      },
+    });
+  });
+
+  it("maps ACP usage onto the canonical token event without losing attribution", () => {
+    const event = makeAcpTokenUsageEvent({
+      stamp: { eventId: "event-usage" as never, createdAt: "2026-03-27T00:00:00.000Z" },
+      provider: ProviderDriverKind.make("devin"),
+      threadId: "thread-1" as never,
+      turnId: TurnId.make("turn-1"),
+      usage: {
+        usedTokens: 12_000,
+        maxTokens: 200_000,
+        model: "glm-5-2-max",
+        providerSessionId: "acp-session-1",
+        lastInputTokens: 1_000,
+        lastOutputTokens: 120,
+        lastCostUsd: 0.01,
+      },
+      rawPayload: { update: { sessionUpdate: "usage_update" } },
+    });
+
+    expect(event).toMatchObject({
+      type: "thread.token-usage.updated",
+      provider: "devin",
+      payload: {
+        usage: {
+          usedTokens: 12_000,
+          model: "glm-5-2-max",
+          providerSessionId: "acp-session-1",
+          lastCostUsd: 0.01,
+        },
+      },
+      raw: {
+        source: "acp.jsonrpc",
+        method: "session/update",
       },
     });
   });

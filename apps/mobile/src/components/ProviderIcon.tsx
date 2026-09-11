@@ -1,12 +1,15 @@
 import { Image } from "expo-image";
-import { Path, Svg } from "react-native-svg";
-import { View } from "react-native";
+import { Circle, Path, Rect, Svg } from "react-native-svg";
+import { Image as NativeImage, View } from "react-native";
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
 
+const DEVIN_LOGO = require("../../assets/devin-logo.webp") as number;
+
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
+  readonly model?: string | null | undefined;
   readonly size?: number;
 };
 
@@ -15,6 +18,65 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const modelIdentity = props.model?.toLowerCase() ?? "";
+
+  if (props.provider === "devin" && modelIdentity) {
+    if (modelIdentity.includes("claude")) {
+      return <ProviderIcon provider="claudeAgent" size={size} />;
+    }
+    if (modelIdentity.includes("gpt") || modelIdentity.includes("codex")) {
+      return <ProviderIcon provider="codex" size={size} />;
+    }
+    if (modelIdentity.includes("grok")) {
+      return <ProviderIcon provider="grok" size={size} />;
+    }
+    if (modelIdentity.includes("gemini") || modelIdentity.includes("google")) {
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            fill="#4E82EE"
+            d="M12 2c.7 5.3 4.7 9.3 10 10-5.3.7-9.3 4.7-10 10-.7-5.3-4.7-9.3-10-10 5.3-.7 9.3-4.7 10-10Z"
+          />
+        </Svg>
+      );
+    }
+    if (
+      modelIdentity.includes("glm") ||
+      modelIdentity.includes("zhipu") ||
+      modelIdentity.includes("z.ai")
+    ) {
+      return (
+        <Svg width={size} height={size} viewBox="0 0 30 30" fill="none">
+          <Rect x="1.5" y="1.5" width="27" height="27" rx="4" fill="#2D2D2D" />
+          <Path
+            fill="white"
+            d="M15.47 7.1 14.17 8.95c-.2.29-.54.47-.9.47h-7.1V7.09h9.3Zm8.83 0L13.14 22.91H5.7L16.86 7.1h7.44ZM14.53 22.91l1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33h-9.3Z"
+          />
+        </Svg>
+      );
+    }
+    const brand = modelIdentity.includes("kimi")
+      ? { color: "#6D5DFB", path: "M15.8 5.9a7 7 0 1 0 2.3 11.7 6.2 6.2 0 1 1-2.3-11.7Z" }
+      : modelIdentity.includes("deepseek")
+        ? {
+            color: "#4D6BFE",
+            path: "M5.5 13.8c2.2.2 3.5-.4 4.5-1.8 1 1.8 2.8 2.7 5.2 2.4 1.3-.2 2.4-.8 3.3-1.8-.3 3.3-2.9 5.5-6.4 5.5-3.4 0-5.9-1.6-6.6-4.3Z",
+          }
+        : modelIdentity.includes("nemotron")
+          ? {
+              color: "#76B900",
+              path: "M5.2 11.9c2.8-3.5 7.6-4.6 11.8-2.5-2.9-.4-5.6.3-7.3 2 1.4-1.1 3.8-1.4 5.5-.2 1.3.9 1.6 2.5.7 3.6-.8 1-2.4 1.2-3.5.5-1.7-1-1.6-3.5.2-4.3 2.2-1 4.8.7 4.8 3.2 0 1.6-.8 3-2 3.9-3.8 1.4-8.2-.5-9.5-4.3Z",
+            }
+          : null;
+    if (brand) {
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx="12" cy="12" r="10" fill={brand.color} />
+          <Path d={brand.path} fill="white" />
+        </Svg>
+      );
+    }
+  }
 
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (
@@ -61,6 +123,21 @@ export function ProviderIcon(props: ProviderIconProps) {
           d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z"
         />
       </Svg>
+    );
+  }
+
+  if (props.provider === "devin") {
+    return (
+      <NativeImage
+        source={DEVIN_LOGO}
+        resizeMode="contain"
+        style={{
+          width: size,
+          height: size,
+          tintColor: isDarkMode ? "#f5f5f5" : "#171717",
+        }}
+        accessible={false}
+      />
     );
   }
 

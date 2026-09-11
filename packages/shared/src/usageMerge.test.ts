@@ -2,13 +2,16 @@ import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageBucket,
+  type UsageAccountConsumption,
   type UsageDay,
   type UsageProviderKind,
-  type UsageSummary,
+  UsageSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+const decodeUsageSummary = Schema.decodeUnknownSync(UsageSummary);
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -42,6 +45,7 @@ function summary(
     distinctSessions?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
+  accountUsage?: UsageAccountConsumption,
 ): UsageSummary {
   return {
     contractVersion,
@@ -65,6 +69,7 @@ function summary(
       message: null,
     })),
     pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 10 },
+    ...(accountUsage === undefined ? {} : { accountUsage }),
     scanDurationMs: 1,
   };
 }
@@ -74,6 +79,54 @@ function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
 }
 
 describe("mergeUsage", () => {
+  it("prefers available official Devin account usage over an unconfigured environment", () => {
+    const notConfigured: UsageAccountConsumption = {
+      provider: "devin",
+      status: "notConfigured",
+      source: "Devin organization consumption API (ACUs)",
+      fetchedAt: null,
+      totalAcus: 0,
+      days: [],
+      message: "missing credentials",
+    };
+    const available: UsageAccountConsumption = {
+      provider: "devin",
+      status: "available",
+      source: "Devin organization consumption API (ACUs)",
+      fetchedAt: "2026-08-31T00:00:00.000Z",
+      totalAcus: 3.5,
+      days: [],
+      message: null,
+    };
+
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [],
+            [{ provider: "devin", hostId: "a", homePath: "/logs" }],
+            USAGE_CONTRACT_VERSION,
+            notConfigured,
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [],
+            [{ provider: "devin", hostId: "b", homePath: "/logs" }],
+            USAGE_CONTRACT_VERSION,
+            available,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.accountUsage?.status).toBe("available");
+    expect(merged.accountUsage?.totalAcus).toBe(3.5);
+  });
+
   it("sums environments that read different transcript directories", () => {
     const merged = mergeUsage(
       [
@@ -155,11 +208,7 @@ describe("mergeUsage", () => {
         ),
         environment(
           "env-b",
-          summary(
-            [bucket()],
-            [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
-          ),
+          summary([bucket()], [{ provider: "claude", hostId: "linux", homePath: "/b" }], 3),
         ),
       ],
       USAGE_CONTRACT_VERSION,
@@ -169,7 +218,7 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
-  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+  it.each([4, 5])("keeps version %i after additive provider expansions", (contractVersion) => {
     const merged = mergeUsage(
       [
         environment(
@@ -181,10 +230,12 @@ describe("mergeUsage", () => {
         ),
         environment(
           "env-b",
-          summary(
-            [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
-            [{ provider: "codex", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
+          decodeUsageSummary(
+            summary(
+              [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
+              [{ provider: "codex", hostId: "linux", homePath: "/b" }],
+              contractVersion,
+            ),
           ),
         ),
       ],

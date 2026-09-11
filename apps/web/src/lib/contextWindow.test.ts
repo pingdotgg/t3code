@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
+import {
+  EventId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type OrchestrationThreadActivity,
+  TurnId,
+} from "@t3tools/contracts";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import {
+  deriveKnownContextWindowSnapshot,
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+} from "./contextWindow";
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {
@@ -82,5 +92,105 @@ describe("contextWindow", () => {
 
     expect(snapshot?.usedTokens).toBe(81_659);
     expect(snapshot?.totalProcessedTokens).toBe(748_126);
+  });
+
+  it("uses the selected Devin model catalog limit before ACP usage arrives", () => {
+    const instanceId = ProviderInstanceId.make("devin");
+    const snapshot = deriveKnownContextWindowSnapshot({
+      selection: { instanceId, model: "glm-5-2" },
+      providers: [
+        {
+          instanceId,
+          driver: ProviderDriverKind.make("devin"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-03-23T00:00:00.000Z",
+          models: [
+            {
+              slug: "glm-5-2",
+              name: "GLM-5.2",
+              isCustom: false,
+              capabilities: { optionDescriptors: [] },
+              contextWindowTokens: 200_000,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      updatedAt: "2026-03-23T00:00:00.000Z",
+    });
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 0,
+      maxTokens: 200_000,
+      remainingTokens: 200_000,
+      usedPercentage: 0,
+      model: "glm-5-2",
+    });
+  });
+
+  it("uses the selected context-window option instead of the catalog maximum", () => {
+    const instanceId = ProviderInstanceId.make("devin");
+    const snapshot = deriveKnownContextWindowSnapshot({
+      selection: {
+        instanceId,
+        model: "glm-5-2",
+        options: [{ id: "contextWindow", value: "200k" }],
+      },
+      providers: [
+        {
+          instanceId,
+          driver: ProviderDriverKind.make("devin"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-03-23T00:00:00.000Z",
+          models: [
+            {
+              slug: "glm-5-2",
+              name: "GLM-5.2",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "contextWindow",
+                    label: "Context window",
+                    type: "select",
+                    options: [
+                      { id: "200k", label: "200K" },
+                      { id: "1m", label: "1M" },
+                    ],
+                  },
+                ],
+              },
+              contextWindowTokens: 1_000_000,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      updatedAt: "2026-03-23T00:00:00.000Z",
+    });
+
+    expect(snapshot?.maxTokens).toBe(200_000);
+    expect(snapshot?.remainingTokens).toBe(200_000);
+  });
+
+  it("does not invent a context meter when the catalog has no limit", () => {
+    const instanceId = ProviderInstanceId.make("devin");
+    expect(
+      deriveKnownContextWindowSnapshot({
+        selection: { instanceId, model: "custom" },
+        providers: [],
+        updatedAt: "2026-03-23T00:00:00.000Z",
+      }),
+    ).toBeNull();
   });
 });

@@ -130,6 +130,33 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
 
+  it("round-trips Devin ACP event-log records", () => {
+    const original: ScanCache = new Map([
+      [
+        "events.thread-1.log",
+        {
+          size: 128,
+          mtimeMs: 300,
+          provider: "devin",
+          records: [
+            record({
+              provider: "devin",
+              model: "gpt-5-6-luna-medium",
+              sessionId: "acp-session-1",
+              reportedCostUsd: 0.0125,
+              dedupeKey: "event-1",
+            }),
+          ],
+          tailRecords: [],
+          position: position(),
+        },
+      ],
+    ]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+    expect(restored.get("events.thread-1.log")).toEqual(original.get("events.thread-1.log"));
+  });
+
   it("interns repeated model and session strings", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),

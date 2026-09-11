@@ -33,7 +33,12 @@ import {
   type ToolGroupSummaryKind,
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
-import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import {
+  extractToolActivityData,
+  extractToolActivityPresentation,
+  hasToolActivityData,
+  toolActivityDataBody,
+} from "@t3tools/client-runtime/work-log/tool-presentation";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 
 import * as Arr from "effect/Array";
@@ -574,12 +579,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolPresentation.toolSource) {
     entry.toolSource = toolPresentation.toolSource;
   }
-  if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
-    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
-    if (toolData !== undefined) {
-      entry.toolData = toolData;
-    }
+  const toolData = extractToolActivityData(payload);
+  if (toolData !== undefined) {
+    entry.toolData = toolData;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -973,9 +975,7 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
     }
   };
 
-  if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) {
-    appendBlock(`MCP call\n${JSON.stringify(entry.toolData, null, 2)}`);
-  }
+  appendBlock(toolActivityDataBody(entry));
   appendBlock(entry.rawCommand ?? entry.command);
   appendBlock(entry.detail);
   if ((entry.changedFiles?.length ?? 0) > 0) {
@@ -993,7 +993,7 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
 function workEntryCanExpand(entry: WorkLogEntry): boolean {
   if (entry.questionAnswer) return true;
   if (entry.agentSpawn) return agentSpawnMembers(entry.agentSpawn).length > 0;
-  if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) return true;
+  if (hasToolActivityData(entry)) return true;
   if (entry.changedFiles?.some((path) => path.trim().length > 0)) return true;
   return Boolean((entry.rawCommand ?? entry.command)?.trim() || entry.detail?.trim());
 }

@@ -45,6 +45,7 @@ import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.t
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
+  isCachedProviderCatalogCompatible,
   isCachedProviderCorrelated,
   orderProviderSnapshots,
   readProviderStatusCache,
@@ -102,6 +103,14 @@ export function upsertProviderWorkspaceSnapshot(
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
+  if (provider.driver === ProviderDriverKind.make("devin")) {
+    // A ready Devin model probe is authoritative: its family catalog should
+    // replace the previous inventory so removed/flattened variants cannot
+    // remain visible. Keep the last known catalog only while discovery is
+    // partial (warning or an installed CLI error).
+    return provider.status === "warning" || (provider.status === "error" && provider.installed);
+  }
+
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
   if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
@@ -194,11 +203,27 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/**
+ * A catalog version is a replacement boundary, not another piece of model
+ * metadata. Once a provider publishes a new version, never merge models from
+ * a previous-version snapshot into it (the old snapshot may use a completely
+ * different family/variant shape).
+ */
+export const isProviderModelCatalogVersionCompatible = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+): boolean =>
+  nextProvider.modelCatalogVersion === undefined ||
+  previousProvider.modelCatalogVersion === nextProvider.modelCatalogVersion;
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
 ): ServerProvider => {
-  if (!previousProvider) {
+  if (
+    !previousProvider ||
+    !isProviderModelCatalogVersionCompatible(previousProvider, nextProvider)
+  ) {
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
@@ -226,7 +251,7 @@ export const mergeProviderSnapshot = (
   };
 };
 
-const haveProvidersChanged = (
+export const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
 ): boolean => !Equal.equals(previousProviders, nextProviders);
@@ -344,6 +369,37 @@ export const ProviderRegistryLive = Layer.effect(
                   cachedDriver: cachedProvider.driver ?? null,
                 }).pipe(Effect.as(undefined as ServerProvider | undefined));
               }
+
+              if (!isCachedProviderCatalogCompatible(correlation)) {
+                // Replace the on-disk entry immediately so a failed or
+                // interrupted startup probe cannot resurrect the old model
+                // shape on the next launch. The live provider will overwrite
+                // this fallback with its authoritative catalog once probing
+                // completes.
+                return Effect.logWarning(
+                  "provider status cache catalog version mismatch, replacing stale snapshot",
+                  {
+                    path: filePath,
+                    instanceId: source.instanceId,
+                    driver: source.driverKind,
+                    cachedCatalogVersion: cachedProvider.modelCatalogVersion ?? null,
+                    expectedCatalogVersion: fallbackProvider.modelCatalogVersion ?? null,
+                  },
+                ).pipe(
+                  Effect.andThen(
+                    writeProviderStatusCache({
+                      filePath,
+                      provider: fallbackProvider,
+                    }).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                      Effect.ignore,
+                    ),
+                  ),
+                  Effect.as(fallbackProvider),
+                );
+              }
+
               return Effect.succeed(hydrateCachedProvider(correlation));
             }),
           );
@@ -670,7 +726,7 @@ export const ProviderRegistryLive = Layer.effect(
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
-          ).pipe(Effect.forkScoped);
+          ).pipe(Effect.forkScoped({ startImmediately: true }));
         }
         yield* Effect.yieldNow;
 

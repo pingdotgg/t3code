@@ -61,6 +61,37 @@ const nativeQuestion = {
   allowCustomAnswer: false,
 } as const;
 
+describe("pending approvals", () => {
+  it("preserves Devin's advertised options without adding unavailable session actions", () => {
+    const options = [
+      { decision: "accept", label: "Allow once" },
+      { decision: "decline", label: "Reject" },
+      { decision: "cancel", label: "Cancel" },
+    ];
+    const requested = makeActivity({
+      id: EventId.make("devin-permission"),
+      kind: "approval.requested",
+      summary: "Command approval requested",
+      createdAt: "2026-09-08T00:00:00.000Z",
+      tone: "approval",
+      payload: {
+        requestId: "devin-permission",
+        requestType: "command_execution_approval",
+        options,
+      },
+    });
+
+    expect(derivePendingRequests([requested]).approvals).toEqual([
+      {
+        requestId: "devin-permission",
+        requestKind: "command",
+        createdAt: requested.createdAt,
+        options,
+      },
+    ]);
+  });
+});
+
 describe("pending user input answers", () => {
   it("accepts free-text answers to async questions without options", () => {
     const question = {
@@ -276,6 +307,39 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("projects canonical user-input activity into the existing message row", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-user-input-activity"),
+      projectId: ProjectId.make("project-1"),
+      title: "User input activity",
+      activities: [
+        makeActivity({
+          id: EventId.make("user-input-requested"),
+          kind: "user-input.requested",
+          summary: "User input requested",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          payload: {
+            requestId: "req-user-input",
+            questions: [singleSelectQuestion],
+          },
+        }),
+      ],
+    });
+
+    expect(buildThreadFeed(thread)).toMatchObject([
+      {
+        type: "activity-group",
+        activities: [
+          {
+            id: "user-input-requested",
+            icon: "message",
+            workEntry: { sourceActivityKind: "user-input.requested" },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
@@ -1467,6 +1531,57 @@ describe("buildThreadFeed", () => {
         live: true,
       },
     ]);
+  });
+
+  it("shows canonical ACP resource URI and text in expanded generic tool activities", () => {
+    const data = {
+      toolCallId: "devin-resource-tool",
+      kind: "other",
+      resource: {
+        uri: "urn:acp:fixture:resource-link",
+        name: "schema fixture",
+        description: "typed protocol fixture",
+        mimeType: "text/markdown",
+        text: "Embedded resource notes",
+      },
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "ordinary tool output" },
+        },
+      ],
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread-devin-resource"),
+      projectId: ProjectId.make("project-1"),
+      title: "Devin resource",
+      activities: [
+        makeActivity({
+          id: EventId.make("devin-resource-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Resource fixture",
+          createdAt: "2026-09-07T00:00:00.000Z",
+          payload: {
+            itemType: "dynamic_tool_call",
+            status: "completed",
+            title: "Resource fixture",
+            data,
+          },
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group).toMatchObject({
+      type: "activity-group",
+      activities: [{ workEntry: { toolData: data } }],
+    });
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    expect(group.activities[0]?.canExpand).toBe(true);
+    expect(group.activities[0]?.getFullDetail()).toContain("urn:acp:fixture:resource-link");
+    expect(group.activities[0]?.getFullDetail()).toContain("Embedded resource notes");
   });
 
   it.each([

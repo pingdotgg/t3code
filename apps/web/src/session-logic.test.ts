@@ -7,7 +7,12 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  hasToolActivityData,
+  toolActivityDataBody,
+} from "@t3tools/client-runtime/work-log/tool-presentation";
 
 import {
   createMessageAttachmentPreviewProjector,
@@ -60,6 +65,33 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+describe("pending approvals", () => {
+  it("preserves Devin's advertised options without adding unavailable session actions", () => {
+    const options = [
+      { decision: "accept", label: "Allow once" },
+      { decision: "decline", label: "Reject" },
+      { decision: "cancel", label: "Cancel" },
+    ];
+    const requested = makeActivity({
+      kind: "approval.requested",
+      payload: {
+        requestId: "devin-permission",
+        requestType: "command_execution_approval",
+        options,
+      },
+    });
+
+    expect(derivePendingRequests([requested]).approvals).toEqual([
+      {
+        requestId: "devin-permission",
+        requestKind: "command",
+        createdAt: requested.createdAt,
+        options,
+      },
+    ]);
+  });
+});
 
 describe("deriveActivePlanState", () => {
   it("returns the latest plan update for the active turn", () => {
@@ -823,6 +855,46 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.toolLifecycleStatus).toBe("completed");
+  });
+
+  it("presents canonical ACP resource URI and text for generic tool activities", () => {
+    const data = {
+      toolCallId: "devin-resource-tool",
+      kind: "other",
+      resource: {
+        uri: "urn:acp:fixture:resource-link",
+        name: "schema fixture",
+        description: "typed protocol fixture",
+        mimeType: "text/markdown",
+        text: "Embedded resource notes",
+      },
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "ordinary tool output" },
+        },
+      ],
+    };
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "devin-resource-tool",
+        kind: "tool.completed",
+        summary: "Resource fixture",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          title: "Resource fixture",
+          data,
+        },
+      }),
+    ]);
+
+    expect(entry?.toolData).toBe(data);
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(hasToolActivityData(entry)).toBe(true);
+    expect(toolActivityDataBody(entry)).toContain("urn:acp:fixture:resource-link");
+    expect(toolActivityDataBody(entry)).toContain("Embedded resource notes");
   });
 
   it("preserves MCP server, tool, arguments, and results for expanded display", () => {

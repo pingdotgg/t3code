@@ -2,9 +2,16 @@
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, and Grok Build session history from your connected
+**Usage** combines Codex, Claude Code, Grok Build, and Devin ACP session history from your connected
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
+
+Devin ACP records come from canonical T3 provider event logs and cover sessions driven through the
+selected T3 server. Use the provider filter above the breakdown to focus the chart and tables, and
+use the download button to export the current window as CSV. The page can optionally show official
+Devin organization ACUs in a separate section when a `cog_...` service key with
+`ViewOrgConsumption` permission and `DEVIN_ORG_ID` are configured on the server; ACUs are never
+combined with token-cost estimates. The normal CLI login is not an account-usage credential.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.

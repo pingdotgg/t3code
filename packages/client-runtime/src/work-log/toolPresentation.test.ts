@@ -1,8 +1,72 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { extractToolActivityPresentation } from "./toolPresentation.ts";
+import {
+  extractToolActivityData,
+  extractToolActivityPresentation,
+  hasToolActivityData,
+  toolActivityDataBody,
+} from "./toolPresentation.ts";
+
+const devinResourceToolEvent = {
+  type: "item.completed",
+  payload: {
+    itemType: "dynamic_tool_call",
+    status: "completed",
+    title: "Resource fixture",
+    data: {
+      toolCallId: "devin-resource-tool",
+      kind: "other",
+      resource: {
+        uri: "urn:acp:fixture:resource-link",
+        name: "schema fixture",
+        description: "typed protocol fixture",
+        mimeType: "text/markdown",
+      },
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "ordinary tool output" },
+        },
+      ],
+    },
+  },
+} as const;
 
 describe("extractToolActivityPresentation", () => {
+  it("expands generic resource URI and embedded text without serializing collapsed rows", () => {
+    const resource = { uri: "urn:notes", text: "Resource notes" };
+    const entry = { itemType: "dynamic_tool_call", toolData: { resource } };
+    expect(hasToolActivityData(entry)).toBe(true);
+    expect(toolActivityDataBody(entry)).toBe(`Resource\n${JSON.stringify(resource, null, 2)}`);
+    expect(hasToolActivityData({ itemType: "dynamic_tool_call", toolData: {} })).toBe(false);
+    expect(toolActivityDataBody({ itemType: "dynamic_tool_call" })).toBeUndefined();
+  });
+
+  it("retains canonical ACP resource metadata for generic tool activity", () => {
+    expect(extractToolActivityData(devinResourceToolEvent.payload)).toBe(
+      devinResourceToolEvent.payload.data,
+    );
+  });
+
+  it("keeps MCP item extraction precedence when MCP data also has a resource", () => {
+    const item = {
+      type: "mcpToolCall",
+      server: "t3-code",
+      tool: "preview_status",
+      result: { content: [{ type: "text", text: "attached" }] },
+    };
+    const data = {
+      toolName: "mcp__t3_code__preview_status",
+      item,
+      resource: devinResourceToolEvent.payload.data.resource,
+    };
+
+    expect(extractToolActivityData({ itemType: "mcp_tool_call", data })).toBe(item);
+    expect(toolActivityDataBody({ itemType: "mcp_tool_call", toolData: item })).toBe(
+      `MCP call\n${JSON.stringify(item, null, 2)}`,
+    );
+  });
+
   it("reads provider-neutral presentation fields", () => {
     expect(
       extractToolActivityPresentation({

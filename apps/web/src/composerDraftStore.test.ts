@@ -30,9 +30,11 @@ const CODEX_INSTANCE = ProviderInstanceId.make("codex");
 const CODEX_SECONDARY_INSTANCE = ProviderInstanceId.make("codex_secondary");
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
 const CURSOR_INSTANCE = ProviderInstanceId.make("cursor");
+const DEVIN_INSTANCE = ProviderInstanceId.make("devin");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const DEVIN_DRIVER = ProviderDriverKind.make("devin");
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
 type ProviderOptionSelectionsByProvider = Partial<Record<string, ProviderOptionSelectionBag>>;
@@ -978,7 +980,9 @@ describe("composerDraftStore element contexts", () => {
     expect(accepted).toBe(true);
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.elementContexts).toHaveLength(1);
-    const entry = draft?.elementContexts[0]!;
+    const entry = draft?.elementContexts[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
     expect(entry.id.startsWith("el_")).toBe(true);
     expect(entry.threadId).toBe(threadId);
     expect(entry.pickedAt.length).toBeGreaterThan(0);
@@ -2013,6 +2017,19 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("stores Devin options through the provider options compatibility setter", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelOptions(
+      threadRef,
+      providerModelOptions({ devin: { reasoning: "high", fast: true } }),
+    );
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[DEVIN_INSTANCE],
+    ).toEqual(modelSelection(DEVIN_DRIVER, "adaptive", { reasoning: "high", fast: true }));
+  });
+
   it("preserves other provider options when switching the active model selection", () => {
     const store = useComposerDraftStore.getState();
 
@@ -2334,6 +2351,39 @@ describe("composerDraftStore model seed migration", () => {
       }
     },
   );
+
+  it("keeps off-provider Devin options when upgrading legacy storage", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 2,
+        state: {
+          draftsByThreadId: {},
+          draftThreadsByThreadId: {},
+          projectDraftThreadIdByProjectId: {},
+          stickyProvider: "codex",
+          stickyModel: "gpt-5.6-terra",
+          stickyModelOptions: providerModelOptions({
+            devin: { reasoning: "high", fast: true },
+          }),
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(useComposerDraftStore.getState().stickyModelSelectionByProvider).toMatchObject({
+        [DEVIN_INSTANCE]: modelSelection(DEVIN_DRIVER, "adaptive", {
+          reasoning: "high",
+          fast: true,
+        }),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("strips seeded models only from empty draft sessions when upgrading storage", async () => {
     vi.useFakeTimers();

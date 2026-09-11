@@ -1,4 +1,5 @@
 import React, { type SVGProps, useId } from "react";
+import devinLogoUrl from "~/assets/devin-logo.webp";
 import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
@@ -232,6 +233,66 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
     <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
   </svg>
 );
+
+export const DevinIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 500 500"
+    fill="none"
+    className={cn("invert dark:invert-0", className)}
+  >
+    <image
+      href={devinLogoUrl}
+      width="500"
+      height="500"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    />
+  </svg>
+);
+
+export const GLMIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 30 30" className={className} fill="none">
+    {/* Current Z.ai mark (the GLM model family is now branded Z.ai). */}
+    <path
+      d="M24.51 28.51H5.49c-2.21 0-4-1.79-4-4V5.49c0-2.21 1.79-4 4-4h19.03c2.21 0 4 1.79 4 4v19.03c-.01 2.2-1.8 3.99-4.01 3.99Z"
+      fill="#2D2D2D"
+    />
+    <path
+      d="M15.47 7.1 14.17 8.95c-.2.29-.54.47-.9.47h-7.1V7.09h9.3Zm8.83 0L13.14 22.91H5.7L16.86 7.1h7.44ZM14.53 22.91l1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33h-9.3Z"
+      fill="white"
+    />
+  </svg>
+);
+
+export const KimiIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 24 24" className={className} fill="none">
+    <circle cx="12" cy="12" r="10" fill="#6D5DFB" />
+    <path d="M15.8 5.9a7 7 0 1 0 2.3 11.7 6.2 6.2 0 1 1-2.3-11.7Z" fill="white" />
+  </svg>
+);
+
+export const DeepSeekIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 24 24" className={className} fill="none">
+    <circle cx="12" cy="12" r="10" fill="#4D6BFE" />
+    <path
+      d="M5.5 13.8c2.2.2 3.5-.4 4.5-1.8 1 1.8 2.8 2.7 5.2 2.4 1.3-.2 2.4-.8 3.3-1.8-.3 3.3-2.9 5.5-6.4 5.5-3.4 0-5.9-1.6-6.6-4.3Zm9.7-4.5a1.35 1.35 0 1 1 0 2.7 1.35 1.35 0 0 1 0-2.7Z"
+      fill="white"
+    />
+  </svg>
+);
+
+export const NvidiaIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 24 24" className={className} fill="none">
+    <rect x="2" y="2" width="20" height="20" rx="5" fill="#76B900" />
+    <path
+      d="M5.2 11.9c2.8-3.5 7.6-4.6 11.8-2.5-2.9-.4-5.6.3-7.3 2 1.4-1.1 3.8-1.4 5.5-.2 1.3.9 1.6 2.5.7 3.6-.8 1-2.4 1.2-3.5.5-.8-.5-1.1-1.5-.6-2.2.4-.6 1.3-.7 1.9-.3-.8-.9-2.2-.8-3.1 0-1.1 1.1-.7 3 .8 3.9 2.2 1.3 5.1.7 6.5-1.3 1.1-1.5 1.1-3.6.1-5.1 1.2 1.1 1.8 2.5 1.8 4.2-2.1 3.7-7.3 5-11.1 2.4-1.8-1.2-3-3-3.5-5Z"
+      fill="white"
+    />
+  </svg>
+);
+
+export const CognitionIcon: Icon = DevinIcon;
 
 export const GrokIcon: Icon = ({ className, ...props }) => (
   <svg

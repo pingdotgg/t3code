@@ -13,6 +13,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -72,7 +73,6 @@ import {
 import {
   composerFloatingLayerProps,
   isInsideCollapsedComposerControls,
-  isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -1576,6 +1576,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftFile = useComposerDraftStore((store) => store.removeFile);
   const setComposerDraftFileUpload = useComposerDraftStore((store) => store.setFileUpload);
+  const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const setStickyComposerModelSelection = useComposerDraftStore(
+    (store) => store.setStickyModelSelection,
+  );
   const insertComposerDraftTerminalContext = useComposerDraftStore(
     (store) => store.insertTerminalContext,
   );
@@ -1866,6 +1870,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+  const inputCapabilities = composerProviderState.inputCapabilities;
+  // The single attach button handles both images and files. Disable it only
+  // when the active model accepts neither modality; when just one is
+  // unsupported the button stays open and addComposerAttachments filters the
+  // rejected type with a clear reason.
+  const attachButtonDisabled = !inputCapabilities.images && !inputCapabilities.files;
+  const attachButtonTooltip = attachButtonDisabled
+    ? "The selected model does not accept image or file attachments"
+    : !inputCapabilities.images
+      ? "Image attachments are not accepted by the selected model"
+      : !inputCapabilities.files
+        ? "File attachments are not accepted by the selected model"
+        : "Attach files";
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: selectedProviderStatus,
@@ -1903,6 +1920,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedModelForPicker
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
+
+  // Reasoning-effort pill: the picker calls onModelOptionsChange with the
+  // next options array (reasoning descriptor value replaced, other options
+  // preserved). Persist it to the draft + sticky selection so the choice
+  // survives thread switches without changing the model identity.
+  const handleModelOptionsChange = useCallback(
+    (nextOptions: ReadonlyArray<ProviderOptionSelection> | undefined) => {
+      const selection = createModelSelection(selectedInstanceId, selectedModel, nextOptions);
+      setComposerDraftModelSelection(composerDraftTarget, selection, { explicit: true });
+      setStickyComposerModelSelection(selection);
+    },
+    [
+      composerDraftTarget,
+      selectedInstanceId,
+      selectedModel,
+      setComposerDraftModelSelection,
+      setStickyComposerModelSelection,
+    ],
+  );
 
   // ------------------------------------------------------------------
   // Context window
@@ -4165,6 +4201,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         getModelDisabledReason={getModelDisabledReason}
         onInstanceModelChange={onProviderModelSelect}
         onOpenProviderSetup={onOpenProviderSetup}
+        activeModelOptions={composerModelOptions?.[selectedInstanceId]}
+        onModelOptionsChange={handleModelOptionsChange}
       />
 
       {composerControlsCompact ? (
@@ -4386,6 +4424,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
+      // Reject files whose modality the active model does not accept. The
+      // attach button is disabled when neither images nor files are
+      // supported, but a model that accepts only one still lets the picker
+      // open — filter here so the user gets a clear reason instead of a
+      // silent drop or a provider-side failure.
+      if (attachmentKind === "image" && !inputCapabilities.images) {
+        error = `The selected model does not accept image attachments.`;
+        continue;
+      }
+      if (attachmentKind !== "image" && !inputCapabilities.files) {
+        error = `The selected model does not accept file attachments.`;
+        continue;
+      }
       const fileMimeType =
         attachmentKind === "file"
           ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
@@ -5419,6 +5470,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 </TooltipPopup>
                               </Tooltip>
                             )}
+                            {!inputCapabilities.images && (
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <span
+                                      role="img"
+                                      aria-label="Image not accepted by selected model"
+                                      className="absolute right-7 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                    >
+                                      <CircleAlertIcon className="size-3" />
+                                    </span>
+                                  }
+                                />
+                                <TooltipPopup
+                                  side="top"
+                                  className="max-w-64 whitespace-normal leading-tight"
+                                >
+                                  The selected model does not accept image attachments. Remove it or
+                                  switch models to send.
+                                </TooltipPopup>
+                              </Tooltip>
+                            )}
                             {upload?.status === "uploading" && (
                               <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-[10px] text-foreground">
                                 {formatAttachmentUploadProgress(upload.progress)}
@@ -5629,6 +5702,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               </TooltipPopup>
                             </Tooltip>
                           ) : null}
+                          {!inputCapabilities.files ? (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span
+                                    role="img"
+                                    aria-label="File not accepted by selected model"
+                                    className="inline-flex shrink-0 items-center justify-center text-amber-600"
+                                  >
+                                    <CircleAlertIcon className="size-3.5" />
+                                  </span>
+                                }
+                              />
+                              <TooltipPopup
+                                side="top"
+                                className="max-w-64 whitespace-normal leading-tight"
+                              >
+                                The selected model does not accept file attachments. Remove it or
+                                switch models to send.
+                              </TooltipPopup>
+                            </Tooltip>
+                          ) : null}
                           <Button
                             variant="ghost"
                             size="icon-xs"
@@ -5809,15 +5904,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               type="button"
                               variant="ghost"
                               size="icon-sm"
+                              disabled={attachButtonDisabled}
                               onPointerDown={(event) => event.preventDefault()}
-                              onClick={() => attachmentInputRef.current?.click()}
-                              aria-label="Attach files"
+                              onClick={() => {
+                                if (!attachButtonDisabled) attachmentInputRef.current?.click();
+                              }}
+                              aria-label={
+                                attachButtonDisabled ? "Attachments disabled" : "Attach files"
+                              }
                             />
                           }
                         >
                           <PaperclipIcon />
                         </TooltipTrigger>
-                        <TooltipPopup>Attach files</TooltipPopup>
+                        <TooltipPopup>{attachButtonTooltip}</TooltipPopup>
                       </Tooltip>
                     </>
                   ) : null}

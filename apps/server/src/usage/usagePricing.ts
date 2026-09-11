@@ -12,6 +12,8 @@ import type {
   UsageModelPriceOverride,
   UsageTokenTotals,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 /**
  * The subset of a LiteLLM entry we price against. All values are USD per token.
@@ -47,6 +49,55 @@ export function createOverrideRateTable(
       },
     ]),
   );
+}
+
+/** Provider-advertised pricing is USD per one million tokens, never negative. */
+const NonNegativePerMillion = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** One provider-snapshot model entry, narrowed to the pricing fields we read. */
+const ProviderModelPricing = Schema.Struct({
+  inputPerMillion: NonNegativePerMillion,
+  outputPerMillion: NonNegativePerMillion,
+  cachedInputPerMillion: Schema.optional(NonNegativePerMillion),
+  cacheCreationPerMillion: Schema.optional(NonNegativePerMillion),
+});
+
+const ProviderModelPricingEntry = Schema.Struct({
+  slug: Schema.String,
+  pricing: Schema.optional(ProviderModelPricing),
+  pricingByVariant: Schema.optional(Schema.Record(Schema.String, ProviderModelPricing)),
+});
+
+const ProviderSnapshotPricingDocument = Schema.Struct({
+  models: Schema.Array(ProviderModelPricingEntry),
+});
+
+const decodeProviderSnapshotPricing = Schema.decodeUnknownOption(ProviderSnapshotPricingDocument);
+
+/** Convert a provider snapshot's persisted pricing metadata into rates. */
+export function parseProviderModelRateTable(document: unknown): RateTable {
+  const table = new Map<string, ModelRate>();
+  const decoded = decodeProviderSnapshotPricing(document);
+  if (Option.isNone(decoded)) return table;
+
+  const toRate = (pricing: typeof ProviderModelPricing.Type): ModelRate => ({
+    inputCostPerToken: pricing.inputPerMillion / 1_000_000,
+    outputCostPerToken: pricing.outputPerMillion / 1_000_000,
+    cacheReadCostPerToken: (pricing.cachedInputPerMillion ?? pricing.inputPerMillion) / 1_000_000,
+    cacheCreationCostPerToken:
+      (pricing.cacheCreationPerMillion ?? pricing.inputPerMillion) / 1_000_000,
+  });
+
+  for (const entry of decoded.value.models) {
+    if (entry.slug && entry.pricing !== undefined) {
+      table.set(normalizeModelName(entry.slug), toRate(entry.pricing));
+    }
+    if (entry.pricingByVariant === undefined) continue;
+    for (const [variant, pricing] of Object.entries(entry.pricingByVariant)) {
+      table.set(normalizeModelName(variant), toRate(pricing));
+    }
+  }
+  return table;
 }
 
 /** Raw shape of one LiteLLM entry, narrowed to the fields we read. */
@@ -130,6 +181,16 @@ function normalizeRateKey(model: string): string {
 function bareModelName(key: string): string {
   const slash = key.lastIndexOf("/");
   return slash === -1 ? key : key.slice(slash + 1);
+}
+
+/**
+ * Canonicalises a model name for lookup.
+ *
+ * Strips a `provider/` prefix and lowercases, since transcripts are
+ * inconsistent about casing.
+ */
+export function normalizeModelName(model: string): string {
+  return bareModelName(normalizeRateKey(model));
 }
 
 /**

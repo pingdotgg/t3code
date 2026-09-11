@@ -21,9 +21,36 @@ export interface SelectableModelOption {
 
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  inputImages?: boolean;
+  inputAudio?: boolean;
+  inputFiles?: boolean;
 }): ModelCapabilities {
   return {
     optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
+    ...(input.inputImages === false ? { inputImages: false } : {}),
+    ...(input.inputAudio === false ? { inputAudio: false } : {}),
+    ...(input.inputFiles === false ? { inputFiles: false } : {}),
+  };
+}
+
+/**
+ * Resolved input modalities for a model. Absent fields default to `true`
+ * (supported) so providers that never populate them keep working. Text is
+ * always supported and is not represented here.
+ */
+export interface ModelInputCapabilities {
+  images: boolean;
+  audio: boolean;
+  files: boolean;
+}
+
+export function getModelInputCapabilities(
+  caps: ModelCapabilities | null | undefined,
+): ModelInputCapabilities {
+  return {
+    images: caps?.inputImages !== false,
+    audio: caps?.inputAudio !== false,
+    files: caps?.inputFiles !== false,
   };
 }
 

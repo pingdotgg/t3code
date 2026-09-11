@@ -1,10 +1,12 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerProviderGroupKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerProviderGroupKey,
 } from "./modelPickerKeys";
 
 describe("model picker item keys", () => {
@@ -27,5 +29,28 @@ describe("model picker item keys", () => {
     const key = modelPickerModelKey(instanceId, slug);
 
     expect(parseModelPickerModelKey(key)).toEqual({ instanceId, slug });
+  });
+});
+
+describe("provider group keys", () => {
+  it("round-trips a driver kind", () => {
+    const key = modelPickerProviderGroupKey(ProviderDriverKind.make("claudeAgent"));
+    expect(parseModelPickerProviderGroupKey(key)).toBe("claudeAgent");
+  });
+
+  it("is distinct from model and legacy section keys", () => {
+    const groupKey = modelPickerProviderGroupKey(ProviderDriverKind.make("codex"));
+    const modelKey = modelPickerModelKey(ProviderInstanceId.make("codex"), "gpt-5");
+    const legacyKey = modelPickerLegacySectionKey(ProviderInstanceId.make("codex"));
+
+    expect(groupKey).not.toBe(modelKey);
+    expect(groupKey).not.toBe(legacyKey);
+    expect(parseModelPickerModelKey(groupKey)).toBeNull();
+    expect(parseModelPickerLegacySectionKey(groupKey)).toBeNull();
+  });
+
+  it("returns null for non-group keys", () => {
+    expect(parseModelPickerProviderGroupKey("model:5:codexgpt-5")).toBeNull();
+    expect(parseModelPickerProviderGroupKey("legacy-models:codex")).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import {
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
+  type UsageAccountConsumption,
   type UsageProviderKind,
   type UsageSourceFingerprint,
   type UsageSummary,
@@ -94,6 +95,8 @@ export interface MergedUsage {
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
+  /** Optional official Devin ACU data; separate from token/cost totals. */
+  readonly accountUsage: UsageAccountConsumption | null;
 }
 
 /**
@@ -213,6 +216,7 @@ const EMPTY_MERGED: MergedUsage = {
   duplicateSources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
+  accountUsage: null,
 };
 
 /**
@@ -289,8 +293,22 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  let accountUsage: UsageAccountConsumption | null = null;
 
   for (const environment of current) {
+    const candidateAccountUsage = environment.summary.accountUsage;
+    if (candidateAccountUsage !== undefined) {
+      // A connected environment may be configured without account credentials
+      // while another one can report official ACUs. Prefer the usable result,
+      // but retain a single diagnostic state when every environment is missing
+      // credentials or has failed.
+      if (
+        accountUsage === null ||
+        (candidateAccountUsage.status === "available" && accountUsage.status !== "available")
+      ) {
+        accountUsage = candidateAccountUsage;
+      }
+    }
     const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
@@ -444,5 +462,6 @@ export function mergeUsage(
     duplicateSources: duplicates,
     contributingEnvironments,
     staleEnvironments,
+    accountUsage,
   };
 }

@@ -16,6 +16,7 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const emitDevinResourceToolCall = process.env.T3_ACP_EMIT_DEVIN_RESOURCE_TOOL_CALL === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -30,6 +31,7 @@ const emitXAiAskUserQuestionThenHang =
 const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
+const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -40,6 +42,7 @@ const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANC
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const omitLoadSessionCapability = process.env.T3_ACP_OMIT_LOAD_SESSION_CAPABILITY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -406,7 +409,10 @@ const program = Effect.gen(function* () {
       }
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+        agentCapabilities: {
+          ...(omitLoadSessionCapability ? {} : { loadSession: true }),
+          sessionCapabilities: { resume: {} },
+        },
         // Grok advertises model state before any session exists; the provider
         // health check reads it from here without authenticating.
         _meta: { modelState: modelState() },
@@ -835,6 +841,69 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
+      if (emitDevinResourceToolCall) {
+        const content = [
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "urn:acp:fixture:resource-link",
+              name: "schema fixture",
+              description: "typed protocol fixture",
+              mimeType: "text/markdown",
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "resource_link",
+              uri: "",
+              name: "malformed-resource-link",
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "resource",
+              resource: {
+                uri: "urn:acp:fixture:oversized-resource",
+                text: "x".repeat(8_001),
+              },
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "resource",
+              resource: {
+                uri: "urn:acp:fixture:binary-resource",
+                mimeType: "application/octet-stream",
+                blob: "opaque-binary-fixture",
+              },
+            },
+          },
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "ordinary tool output",
+            },
+          },
+        ] satisfies ReadonlyArray<AcpSchema.ToolCallContent>;
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "devin-resource-tool",
+            title: "Resource fixture",
+            kind: "other",
+            status: "completed",
+            content,
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
       if (emitInterleavedAssistantToolCalls) {
         const toolCallId = "tool-call-1";
 
@@ -944,6 +1013,32 @@ const program = Effect.gen(function* () {
                 description: index === 0 ? "Read package metadata" : "Read it again",
               },
               content: [
+                ...(process.env.T3_ACP_PERMISSION_RESOURCE === "1"
+                  ? ([
+                      {
+                        type: "content",
+                        content: {
+                          type: "resource",
+                          resource: { uri: "urn:permission:notes", text: "Review these notes" },
+                          _meta: { secret: "permission-resource-metadata" },
+                        },
+                      },
+                      {
+                        type: "content",
+                        content: {
+                          type: "resource",
+                          resource: { uri: "urn:permission:binary", blob: "permission-binary" },
+                        },
+                      },
+                      {
+                        type: "content",
+                        content: {
+                          type: "resource",
+                          resource: { uri: "urn:permission:oversized", text: "x".repeat(8_001) },
+                        },
+                      },
+                    ] satisfies AcpSchema.ToolCallContent[])
+                  : []),
                 {
                   type: "content",
                   content: {
@@ -1227,11 +1322,41 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      if (emitUsageUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used:
+              process.env.T3_ACP_COMPACT_USAGE === "1" ? (promptCount === 1 ? 600 : 100) : 12_000,
+            size: 200_000,
+            cost: { amount: 0.02, currency: "USD" },
+          },
+        });
+      }
+
+      return {
+        stopReason: "end_turn",
+        ...(emitUsageUpdate
+          ? {
+              usage: {
+                inputTokens: 1_000,
+                cachedReadTokens: 250,
+                cachedWriteTokens: 50,
+                outputTokens: 120,
+                thoughtTokens: 20,
+                totalTokens: 1_140,
+              },
+            }
+          : {}),
+      };
     }),
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_cognition.ai/mcp/connectServer") {
+      return Effect.succeed({ connectionStatus: "connected" });
+    }
     if (method === "_test/environment") {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",

@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -43,6 +44,7 @@ import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
+  haveProvidersChanged,
   mergeProviderSnapshot,
   upsertProviderWorkspaceSnapshot,
   ProviderRegistryLive,
@@ -554,6 +556,124 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     });
 
     describe("ProviderRegistryLive", () => {
+      it("treats equal provider snapshots as unchanged", () => {
+        const providers = [
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-03-25T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+          {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            status: "warning",
+            enabled: true,
+            installed: true,
+            auth: { status: "unknown" },
+            checkedAt: "2026-03-25T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ] as const satisfies ReadonlyArray<ServerProvider>;
+
+        assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
+      });
+
+      it("replaces the previous model inventory when the catalog version changes", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("devin"),
+          driver: ProviderDriverKind.make("devin"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-30T00:00:00.000Z",
+          version: "1.0.0",
+          modelCatalogVersion: "devin-model-catalog-v1",
+          models: [
+            {
+              slug: "claude-opus-5-medium",
+              name: "Medium",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-30T00:01:00.000Z",
+          modelCatalogVersion: "devin-model-catalog-v2",
+          models: [
+            {
+              slug: "claude-opus-5",
+              name: "Claude Opus 5",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [selectDescriptor("reasoning", "Reasoning", [])],
+              }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider),
+          refreshedProvider,
+        );
+      });
+
+      it("treats a ready Devin catalog as authoritative within one version", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("devin"),
+          driver: ProviderDriverKind.make("devin"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-30T00:00:00.000Z",
+          version: "1.0.0",
+          modelCatalogVersion: "devin-model-catalog-v2",
+          models: [
+            {
+              slug: "legacy-flattened-model",
+              name: "Legacy Flattened Model",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-30T00:01:00.000Z",
+          models: [
+            {
+              slug: "claude-opus-5",
+              name: "Claude Opus 5",
+              isCustom: false,
+              capabilities: createModelCapabilities({ optionDescriptors: [] }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          refreshedProvider.models,
+        );
+      });
+
       it("stores workspace skills and commands without changing machine metadata", () => {
         const provider = {
           instanceId: ProviderInstanceId.make("codex"),
@@ -1862,6 +1982,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const persisted = yield* awaitPersistedProvider(registry, refreshedProvider.checkedAt);
             yield* PubSub.publish(changes, refreshedProvider);
             yield* Fiber.join(persisted);
+
             const cachedProvider = yield* readProviderStatusCache(filePath);
 
             assert.deepStrictEqual(cachedProvider, {
@@ -2345,9 +2466,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
           const spawnedCommands: Array<string> = [];
-          const secondProbeStarted = yield* Deferred.make<void>();
-          const releaseSecondProbe = yield* Deferred.make<void>();
           const allowLazySettingsStream = yield* Deferred.make<void>();
+          const secondSpawnObserved = yield* Deferred.make<void>();
           const mutableServerSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
@@ -2395,14 +2515,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 if (command._tag !== "StandardCommand") return spawner.spawn(command);
-                spawnedCommands.push(command.command);
-                const beforeSpawn =
-                  command.command === secondMissing
-                    ? Deferred.succeed(secondProbeStarted, undefined).pipe(
-                        Effect.andThen(Deferred.await(releaseSecondProbe)),
-                      )
-                    : Effect.void;
-                return beforeSpawn.pipe(Effect.andThen(spawner.spawn(command)));
+                const commandName = command.command;
+                spawnedCommands.push(commandName);
+                return (
+                  commandName === secondMissing
+                    ? Deferred.succeed(secondSpawnObserved, undefined)
+                    : Effect.void
+                ).pipe(Effect.andThen(spawner.spawn(command)));
               }),
             ),
             Layer.provideMerge(NodeServices.layer),
@@ -2432,11 +2551,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(initialCodex?.installed, false);
             assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
-            const pendingRebuild = yield* Stream.toPull(
-              codexSnapshots.pipe(
-                Stream.filter((provider) => provider.status === "warning" && !provider.installed),
+            const refreshedProvidersFiber = yield* registry.streamChanges.pipe(
+              Stream.filter(
+                (providers) =>
+                  spawnedCommands.includes(secondMissing) &&
+                  providers.find((provider) => provider.instanceId === "codex")?.status === "error",
               ),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
             );
+
+            // Drive a settings change. The Hydration layer's
+            // `SettingsWatcherLive` consumes this via `subscribeChanges`,
+            // calls `reconcile`, which rebuilds the codex instance (the
+            // envelope changed because `binaryPath` differs → `entryEqual`
+            // is false). The registry's `Stream.runForEach(
+            // instanceRegistry.streamChanges, () => syncLiveSources)`
+            // fires `syncLiveSources`, which subscribes and launches a fresh
+            // background refresh on the rebuilt instance.
             yield* serverSettings.updateSettings({
               providers: {
                 codex: { enabled: true, binaryPath: secondMissing },
@@ -2446,15 +2578,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             // not subscribe before forking has already lost this update.
             yield* Deferred.succeed(allowLazySettingsStream, undefined);
 
-            // Hold the second probe until the aggregator sees the rebuilt
-            // instance. Its next error must come from the new executable.
-            yield* Deferred.await(secondProbeStarted);
-            yield* pendingRebuild;
-            const rebuiltError = yield* Stream.toPull(
-              codexSnapshots.pipe(Stream.filter((provider) => provider.status === "error")),
-            );
-            yield* Deferred.succeed(releaseSecondProbe, undefined);
-            const [reprobedCodex] = yield* rebuiltError;
+            // Wait on the process-boundary and registry-stream receipts. This
+            // gives Node's ENOENT callback a real scheduling turn instead of
+            // polling TestClock, which can starve host I/O on Windows.
+            yield* Deferred.await(secondSpawnObserved);
+            const refreshed = Option.getOrThrow(yield* Fiber.join(refreshedProvidersFiber));
+
+            const reprobedCodex = refreshed.find((provider) => provider.instanceId === "codex");
             assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
             assert.strictEqual(reprobedCodex?.status, "error");
             assert.strictEqual(reprobedCodex?.installed, false);
@@ -2615,6 +2745,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "devin",
                 "grok",
                 "opencode",
               ]);
@@ -2793,7 +2924,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       );
 
       it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
-        const claudeConfigDir = "/tmp/t3code-claude-home";
+        const claudeConfigDir = process.cwd();
         const recorded = recordingMockSpawnerLayer((args) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };

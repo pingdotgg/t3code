@@ -89,6 +89,7 @@ describe("buildPeriodColumns", () => {
       { provider: "codex", value: 10 },
       { provider: "claude", value: 20 },
       { provider: "grok", value: 0 },
+      { provider: "devin", value: 0 },
     ]);
   });
 
