@@ -913,8 +913,8 @@ function MarkdownCodeBlock({
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const [showSource, setShowSource] = useState(false);
-  // A failed diagram silently falls back to its source view. No error text:
-  // mermaid parse errors echo the raw source and read as app breakage.
+  // Failed diagrams fall back to source silently; parse errors echo the
+  // raw source and read as app breakage.
   const [diagramFailed, setDiagramFailed] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -922,11 +922,8 @@ function MarkdownCodeBlock({
   const showDiagram = renderDiagram && !showSource && !diagramFailed;
   const sourceToggleLabel = showSource ? "Show diagram" : "Show source";
 
-  // Reset the toggle when the fence content changes. Gated on renderDiagram so
-  // streaming code blocks (which re-render per token) pay no state updates
-  // here; non-streaming messages are static, so this fires at most once when a
-  // completed fence first becomes a diagram, plus on rare edits afterwards.
-  // Done during render so a completed message never keeps a stale view.
+  // Reset the toggle on fence edits, gated so streaming blocks (re-rendered
+  // per token) pay no state updates here.
   const [lastCode, setLastCode] = useState(code);
   if (renderDiagram && lastCode !== code) {
     setLastCode(code);

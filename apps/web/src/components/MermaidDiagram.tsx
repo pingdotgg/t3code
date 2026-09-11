@@ -31,10 +31,7 @@ function rememberRenderedDiagram(key: string, svg: string) {
   }
 }
 
-/**
- * Stores a rendered diagram so remounts (e.g. scrolling back in chat) reuse
- * it instead of re-running Mermaid. Exported for tests.
- */
+/** Caches a rendered diagram for scroll remounts. Exported for tests. */
 export function cacheRenderedDiagram(theme: MermaidTheme, code: string, svg: string) {
   rememberRenderedDiagram(diagramCacheKey(theme, code), svg);
 }
@@ -86,11 +83,7 @@ function mermaidErrorMessage(cause: unknown): string {
 
 const MERMAID_VIEWBOX_PATTERN = /<svg[^>]*\bviewBox\s*=\s*"([^"]+)"/;
 
-/**
- * Natural pixel size from the SVG viewBox. Mermaid emits `width="100%"`, so
- * without this the expanded overlay can only shrink-to-fit and collapses
- * wide diagrams. Pure string parsing: no DOM needed, SSR-safe.
- */
+/** Natural pixel size from the SVG viewBox. Pure string parsing, SSR-safe. */
 export function mermaidSvgNaturalSize(svg: string): { width: number; height: number } | null {
   const viewBox = MERMAID_VIEWBOX_PATTERN.exec(svg)?.[1];
   const dimensions = viewBox?.trim().split(/\s+/).map(Number);
@@ -149,11 +142,13 @@ export function MermaidDiagramDialog({
     [],
   );
 
-  // The element that opened the preview gets focus back on close. Without
-  // this a close leaves focus on the unmounted dialog.
+  // The element that opened the preview gets focus back on close.
   const openerRef = useRef<Element | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     openerRef.current = document.activeElement;
+    closeButtonRef.current?.focus({ preventScroll: true });
     return () => {
       const opener = openerRef.current;
       if (opener instanceof HTMLElement && opener.isConnected) {
@@ -171,6 +166,23 @@ export function MermaidDiagramDialog({
         event.preventDefault();
         event.stopPropagation();
         onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const controls = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (controls.length === 0) return;
+      const first = controls[0] as HTMLElement;
+      const last = controls[controls.length - 1] as HTMLElement;
+      const active = document.activeElement;
+      if (event.shiftKey ? active === first || !root.contains(active) : active === last) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -178,13 +190,13 @@ export function MermaidDiagramDialog({
   }, [onClose]);
 
   // Definite container width so the SVG's `width="100%"` resolves to its
-  // natural size instead of collapsing in the shrink-to-fit flex layout.
-  // Capped by max-w-[92vw]; larger diagrams scroll inside the overlay.
+  // natural size instead of collapsing. Capped by max-w-[92vw].
   const naturalSize = useMemo(() => mermaidSvgNaturalSize(svg), [svg]);
 
   const dialog = (
     <div
       {...composerFloatingLayerProps}
+      ref={dialogRef}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
       role="dialog"
       aria-modal="true"
@@ -215,6 +227,7 @@ export function MermaidDiagramDialog({
             className="text-white/90 hover:bg-white/10 hover:text-white"
             onClick={onClose}
             aria-label="Close diagram preview"
+            ref={closeButtonRef}
           >
             <XIcon />
           </Button>
@@ -228,8 +241,7 @@ export function MermaidDiagramDialog({
       </div>
     </div>
   );
-  // Portals keep the overlay out of clipped chat-row stacking contexts. Fall
-  // back to inline rendering where `document` is unavailable (SSR/tests).
+  // Portals escape clipped chat rows; inline fallback covers SSR/tests.
   return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);
 }
 
@@ -261,9 +273,8 @@ export function MermaidDiagram({
   );
   const hostRef = useRef<HTMLDivElement | null>(null);
 
-  // Adopt a diagram cached after this mount's initializers ran (a sibling won
-  // the render race). Render-phase adjustment, not an effect, so no extra
-  // commit cycle and no work while streaming lists re-render around us.
+  // Adopt a diagram cached after this mount's initializers ran (sibling won
+  // the race). Render-phase adjustment avoids an extra commit cycle.
   const cachedSvg = renderedDiagrams.get(cacheKey);
   if (cachedSvg !== undefined && cachedSvg !== svg) {
     setSvg(cachedSvg);
@@ -312,8 +323,7 @@ export function MermaidDiagram({
   }, [cacheKey, code, diagramId, inView, onError, svg, theme]);
 
   if (!svg) {
-    // Pre-render (code fallback) doubles as the observation host so the
-    // diagram starts rendering just before it scrolls into view.
+    // Code fallback doubles as the visibility-observation host.
     return <div ref={hostRef}>{fallback}</div>;
   }
 

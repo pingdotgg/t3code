@@ -1898,10 +1898,8 @@ code {
   margin: 0 auto;
 }
 
-/* The expanded overlay is portaled outside `.chat-markdown`, so it needs its
-   own rules. The container gets the diagram's natural width inline (capped by
-   max-w-[92vw]) and scrolls, giving large diagrams a bigger canvas than the
-   chat column. */
+/* Expanded overlay lives outside `.chat-markdown`: natural width inline,
+   capped by max-w-[92vw], container scrolls for larger diagrams. */
 .chat-markdown-mermaid-dialog {
   max-width: 100%;
   overflow: auto;
