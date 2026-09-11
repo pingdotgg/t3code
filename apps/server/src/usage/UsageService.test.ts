@@ -102,6 +102,87 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  const usage = (input: number, output: number) => ({
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+  });
+  const line = (last: unknown, total: unknown) =>
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: last, total_token_usage: total },
+      },
+    }) + "\n";
+  const model =
+    JSON.stringify({
+      type: "turn_context",
+      payload: { model: "gpt-5.4" },
+    }) + "\n";
+
+  it.live("reports inconsistent Codex counters through warm scans, restart, and recovery", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const dir = NodePath.join(home, "codex", "sessions");
+      const path = NodePath.join(dir, "rollout.jsonl");
+      yield* Effect.promise(() => NodeFSP.mkdir(dir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          path,
+          model +
+            line(usage(100, 20), usage(100, 20)) +
+            line(usage(20, 5), usage(100, 20)) +
+            line(usage(10, 2), usage(130, 28)),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        for (let scan = 0; scan < 2; scan++) {
+          const result = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(result), 20);
+          const source = result.sources.find((source) => source.fingerprint.provider === "codex");
+          assert.strictEqual(source?.status, "partial");
+          assert.strictEqual(source?.malformedRecords, 1);
+          assert.include(source?.message ?? "", "Inconsistent usage records: 1");
+        }
+        const restarted = yield* UsageService.make;
+        // A warm cache restores diagnostics without touching the transcript.
+        const open = vi
+          .spyOn(NodeFSP, "open")
+          .mockRejectedValue(new Error("unexpected transcript read"));
+        const restored = yield* restarted
+          .readSummary(WINDOW)
+          .pipe(Effect.ensuring(Effect.sync(() => open.mockRestore())));
+        assert.strictEqual(totalOutputTokens(restored), 20);
+        assert.strictEqual(
+          restored.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          1,
+        );
+        yield* Effect.promise(() => NodeFSP.appendFile(path, line(usage(10, 2), usage(140, 30))));
+        const appended = yield* restarted.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(appended), 22);
+        assert.strictEqual(
+          appended.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          1,
+        );
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(path, model + line(usage(100, 20), usage(100, 20))),
+        );
+        const repaired = yield* restarted.readSummary(WINDOW);
+        const source = repaired.sources.find((source) => source.fingerprint.provider === "codex");
+        assert.strictEqual(totalOutputTokens(repaired), 20);
+        assert.strictEqual(source?.status, "ok");
+        assert.strictEqual(source?.malformedRecords, 0);
+      }).pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-counter-reconciliation", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

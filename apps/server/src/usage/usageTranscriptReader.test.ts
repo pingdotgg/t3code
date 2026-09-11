@@ -66,6 +66,80 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("readTranscriptRecords resume", () => {
+  it("keeps cumulative counters and malformed counts correct across cache and tentative tails", async () => {
+    const { encodeScanCache, decodeScanCache } = await import("./usageScanCache.ts");
+    const path = NodePath.join(dir, "counter-rollout.jsonl");
+    const usage = (input: number, output: number) => ({
+      input_tokens: input,
+      output_tokens: output,
+      total_tokens: input + output,
+    });
+    const line = (last: unknown, total: unknown) =>
+      JSON.stringify({
+        type: "event_msg",
+        timestamp: "2026-08-01T10:00:05Z",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: last, total_token_usage: total },
+        },
+      });
+    const firstLine = line(usage(100, 20), usage(100, 20));
+    const stale = line(usage(20, 5), usage(100, 20));
+    const bad = line(usage(10, 2), usage(130, 28));
+    await NodeFSP.writeFile(
+      path,
+      codexModelLine("gpt-5.4") + firstLine + "\n" + stale + "\n" + bad,
+    );
+    const first = await readTranscriptRecords(path, "codex");
+    assert.isNotNull(first);
+    assert.strictEqual(first.records.length, 1);
+    assert.strictEqual(first.malformedRecords, 1);
+    assert.strictEqual(first.position.codexState?.malformedRecords, 0);
+    const stats = await NodeFSP.stat(path);
+    const cache = decodeScanCache(
+      JSON.parse(
+        JSON.stringify(
+          encodeScanCache(
+            new Map([
+              [
+                path,
+                {
+                  ...first,
+                  provider: "codex",
+                  size: stats.size,
+                  mtimeMs: stats.mtimeMs,
+                },
+              ],
+            ]),
+          ),
+        ),
+      ),
+    );
+    const cached = cache.get(path);
+    assert.isDefined(cached);
+    assert.strictEqual(cached.malformedRecords, 1);
+    const good = line(usage(10, 2), usage(140, 30));
+    await NodeFSP.appendFile(path, "\n" + good);
+    const resumed = await readTranscriptRecords(path, "codex", cached.position);
+    assert.isNotNull(resumed);
+    assert.isTrue(resumed.resumed);
+    assert.strictEqual(resumed.malformedRecords, 1);
+    assert.strictEqual(resumed.position.codexState?.malformedRecords, 1);
+    assert.strictEqual(resumed.tailRecords[0]?.totals.outputTokens, 2);
+    assert.strictEqual(resumed.position.codexState?.lastCumulativeUsage?.output_tokens, 28);
+    await NodeFSP.appendFile(path, "\n");
+    const completed = await readTranscriptRecords(path, "codex", resumed.position);
+    const full = await readTranscriptRecords(path, "codex");
+    assert.isNotNull(completed);
+    assert.isNotNull(full);
+    assert.deepStrictEqual(
+      [...cached.records, ...resumed.records, ...completed.records],
+      full.records,
+    );
+    assert.strictEqual(completed.malformedRecords, full.malformedRecords);
+    assert.strictEqual(completed.malformedRecords, 1);
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));

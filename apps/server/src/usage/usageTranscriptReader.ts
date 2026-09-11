@@ -67,6 +67,8 @@ export interface TranscriptParseResult {
    * segment: the next scan re-reads it once the writer finishes the line.
    */
   readonly tailRecords: readonly UsageRecord[];
+  /** Invalid Codex counter events, including a complete tentative tail. */
+  readonly malformedRecords: number;
   readonly position: TranscriptParsePosition;
   /** Whether the parse continued from `resumeFrom` rather than byte 0. */
   readonly resumed: boolean;
@@ -296,9 +298,10 @@ export async function readTranscriptRecords(
     // consumed: a writer may still be appending to it, and counting a half
     // record now and its full form later would double count.
     const tailRecords: UsageRecord[] = [];
+    const tailState = { ...codexState };
     if (pendingChunks.length > 0) {
       const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
-      if (pending.length > 0) parseLine(toLineString(pending), { ...codexState }, tailRecords);
+      if (pending.length > 0) parseLine(toLineString(pending), tailState, tailRecords);
     }
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
@@ -312,6 +315,7 @@ export async function readTranscriptRecords(
     return {
       records,
       tailRecords,
+      malformedRecords: tailState.malformedRecords,
       position: {
         resumeOffset,
         guardLength,
