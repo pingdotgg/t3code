@@ -39,6 +39,8 @@ export type RemoteOpenMode = RemoteOpenState["mode"];
 export interface RemoteOpenResolution {
   readonly state: RemoteOpenState;
   readonly isResolved: boolean;
+  /** Sidebar name of the environment, for prose that outlives the host string. */
+  readonly environmentLabel: string | null;
 }
 
 const LOCAL_EXEC: RemoteOpenState = { mode: "local-exec" };
@@ -46,6 +48,7 @@ const REMOTE_UNAVAILABLE: RemoteOpenState = { mode: "remote-unavailable" };
 const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   state: LOCAL_EXEC,
   isResolved: false,
+  environmentLabel: null,
 };
 
 function parseHostname(url: string): string | null {
@@ -114,12 +117,42 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
       isResolved: true,
+      environmentLabel: presentation.entry.target.label,
     };
   }, [presentation]);
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
   return useRemoteOpenResolution(environmentId).state;
+}
+
+/**
+ * One sentence for path-copy UIs: the copied path is only unambiguous on the
+ * machine it names. Local-exec means this machine and the caller needs no
+ * qualifier; anything else means the file lives on the environment host, so
+ * the label and clipboard value should say which one.
+ */
+export function remotePathCopyQualifier(resolution: {
+  readonly state: RemoteOpenState;
+  readonly isResolved: boolean;
+  readonly environmentLabel: string | null;
+}): string | null {
+  if (
+    !resolution.isResolved ||
+    resolution.state.mode === "local-exec" ||
+    resolution.environmentLabel === null
+  ) {
+    return null;
+  }
+  return resolution.environmentLabel;
+}
+
+/**
+ * Connectable SSH host for scp/rsync from this machine, or null when no SSH
+ * route is known (local, or tunnel/relay environments without advertised hosts).
+ */
+export function remotePathScpHost(state: RemoteOpenState): string | null {
+  return state.mode === "remote-links" ? state.host.host : null;
 }
 
 /**
