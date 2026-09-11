@@ -1,10 +1,13 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  EnvironmentInternalError,
   EnvironmentHttpApi,
+  EnvironmentRequestInvalidError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
@@ -18,6 +21,12 @@ import {
 } from "../auth/http.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import {
+  isOrchestrationCommandRejection,
+  OrchestrationCommandPreviouslyRejectedError,
+} from "./Errors.ts";
+
+const isPreviouslyRejectedCommand = Schema.is(OrchestrationCommandPreviouslyRejectedError);
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -100,8 +109,22 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             Effect.tapError(() =>
               cleanupFailedUploadedAttachments(args.payload, normalizedCommand),
             ),
-            Effect.catch((cause) =>
-              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            Effect.catch(
+              (
+                cause,
+              ): Effect.Effect<
+                never,
+                EnvironmentInternalError | EnvironmentRequestInvalidError
+              > => {
+                if (
+                  normalizedCommand.type === "thread.session.stop" &&
+                  normalizedCommand.onlyIfIdle === true &&
+                  (isOrchestrationCommandRejection(cause) || isPreviouslyRejectedCommand(cause))
+                ) {
+                  return failEnvironmentInvalidRequest("invalid_command");
+                }
+                return failEnvironmentInternal("orchestration_dispatch_failed", cause);
+              },
             ),
           );
         }),

@@ -50,6 +50,8 @@ import {
 } from "../Services/ProviderCommandReactor.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import { canStopThreadSessionIfIdle } from "../SessionStopPolicy.ts";
+import { threadHasQueuedTurnStart } from "../ThreadSettlementPolicy.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -1757,6 +1759,29 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
+    if (
+      event.payload.onlyIfIdle === true &&
+      !canStopThreadSessionIfIdle({
+        expectedProviderName: event.payload.expectedProviderName,
+        session: thread.session,
+        latestTurnState: thread.latestTurn?.state ?? null,
+        hasQueuedTurnStart: threadHasQueuedTurnStart(
+          thread,
+          DateTime.formatIso(yield* DateTime.now),
+        ),
+        hasPendingRequests: thread.hasPendingApprovals || thread.hasPendingUserInput,
+        backgroundLiveness: thread.backgroundLiveness ?? null,
+      })
+    ) {
+      if (thread.session !== null) {
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: thread.session,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+      }
+      return;
+    }
     const wasCompacting = compactingThreadIds.has(thread.id);
     stoppingThreadIds.add(thread.id);
     const clearStopping = Effect.sync(() => void stoppingThreadIds.delete(thread.id));

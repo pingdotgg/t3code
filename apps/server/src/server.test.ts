@@ -114,6 +114,8 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import {
+  OrchestrationCommandInvariantError,
+  OrchestrationCommandPreviouslyRejectedError,
   OrchestrationListenerCallbackError,
   OrchestrationThreadSettleBlockedError,
 } from "./orchestration/Errors.ts";
@@ -2106,6 +2108,84 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.deepEqual(body, testEnvironmentDescriptor);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports guarded command rejections as invalid requests", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.fail(
+                new OrchestrationCommandInvariantError({
+                  commandType: command.type,
+                  detail: "thread is no longer idle",
+                }),
+              ),
+          },
+        },
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/api/orchestration/dispatch"), {
+        method: "POST",
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({
+          type: "thread.session.stop",
+          commandId: "cmd-guarded-stop-rejected",
+          threadId: "thread-guarded-stop-rejected",
+          createdAt: "2026-09-11T10:01:00.000Z",
+          onlyIfIdle: true,
+          snapshotSequence: 7,
+          expectedProviderName: "codex",
+        }),
+      });
+      const body = yield* responseJsonEffect<{ readonly reason: string }>(response);
+
+      assert.equal(response.status, 400);
+      assert.equal(body.reason, "invalid_command");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports replayed guarded command rejections as invalid requests", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.fail(
+                new OrchestrationCommandPreviouslyRejectedError({
+                  commandId: command.commandId,
+                  detail: "thread was no longer idle",
+                }),
+              ),
+          },
+        },
+      });
+
+      const response = yield* fetchEffect(yield* getHttpServerUrl("/api/orchestration/dispatch"), {
+        method: "POST",
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        body: jsonRequestBody({
+          type: "thread.session.stop",
+          commandId: "cmd-guarded-stop-replayed",
+          threadId: "thread-guarded-stop-replayed",
+          createdAt: "2026-09-11T10:01:00.000Z",
+          onlyIfIdle: true,
+          snapshotSequence: 7,
+          expectedProviderName: "codex",
+        }),
+      });
+      const body = yield* responseJsonEffect<{ readonly reason: string }>(response);
+
+      assert.equal(response.status, 400);
+      assert.equal(body.reason, "invalid_command");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

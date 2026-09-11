@@ -46,6 +46,7 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+import { canStopThreadSessionIfIdle } from "./SessionStopPolicy.ts";
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
@@ -1689,6 +1690,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           );
         }
       }
+      if (command.onlyIfIdle === true) {
+        if (
+          command.snapshotSequence === undefined ||
+          command.snapshotSequence > readModel.snapshotSequence ||
+          !canStopThreadSessionIfIdle({
+            expectedProviderName: command.expectedProviderName,
+            session: thread.session,
+            latestTurnState: thread.latestTurn?.state ?? null,
+            hasQueuedTurnStart: hasQueuedTurnStartForThread(thread, command.createdAt),
+            hasPendingRequests: openRequests(thread).size > 0,
+            backgroundLiveness: null,
+          })
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `thread ${command.threadId} is not idle for a guarded session stop`,
+            }),
+          );
+        }
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1700,6 +1722,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           createdAt: command.createdAt,
+          ...(command.onlyIfIdle === true
+            ? {
+                onlyIfIdle: true,
+                expectedProviderName: command.expectedProviderName,
+              }
+            : {}),
         },
       };
     }

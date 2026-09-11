@@ -22,7 +22,7 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -1298,6 +1298,12 @@ const ThreadSessionStopCommand = Schema.Struct({
   // closes the race a post-settle snapshot read cannot: commands are decided
   // serially against the authoritative read model.
   onlyIfSettled: Schema.optional(Schema.Boolean),
+  // External maintenance callers can request a compare-and-stop operation.
+  // The server accepts it only while the named provider is observably idle
+  // at the supplied snapshot sequence; ordinary client stops stay unchanged.
+  onlyIfIdle: Schema.optional(Schema.Boolean),
+  snapshotSequence: Schema.optional(NonNegativeInt),
+  expectedProviderName: Schema.optional(ProviderDriverKind),
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -1773,6 +1779,8 @@ export const ThreadRevertedPayload = Schema.Struct({
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   createdAt: IsoDateTime,
+  onlyIfIdle: Schema.optional(Schema.Boolean),
+  expectedProviderName: Schema.optional(ProviderDriverKind),
 });
 
 export const ThreadSessionSetPayload = Schema.Struct({
