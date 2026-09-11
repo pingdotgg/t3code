@@ -122,16 +122,7 @@ export function SettingsScopePicker({
             searchLabel: `${group.displayName} all checkouts`,
             detail: `${group.memberProjects.length} ${group.memberProjects.length === 1 ? "checkout" : "checkouts"}`,
             scope: { project: group.projectKey },
-            icon: (
-              <ProjectFavicon
-                environmentId={group.environmentId}
-                cwd={group.workspaceRoot}
-                projectName={group.title}
-                faviconPath={group.faviconPath}
-                projectIcon={group.projectIcon}
-                className="size-3.5"
-              />
-            ),
+            icon: <ProjectFavicon project={group} className="size-3.5" />,
           },
         ];
         // Old links can select several checkouts on one environment. Keep that
