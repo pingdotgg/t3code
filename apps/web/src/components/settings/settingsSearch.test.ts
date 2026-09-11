@@ -324,6 +324,15 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(model.scope, "project")).toBe(true);
   });
 
+  it("reaches source control discovery and git fetch interval from the default scope", () => {
+    for (const id of ["source-control", "git-fetch-interval"]) {
+      const item = getSettingsSearchTargetScope(id)!;
+      expect(isSettingsSearchScopeAvailable(item.scope, "all")).toBe(true);
+      expect(isSettingsSearchScopeAvailable(item.scope, "environment")).toBe(true);
+      expect(isSettingsSearchScopeAvailable(item.scope, "project")).toBe(false);
+    }
+  });
+
   it("keeps environment-wide settings out of project scopes", () => {
     const updates = getSettingsSearchTargetScope("provider-update-checks")!;
     expect(updates.scope).toBe("environment-defaults");

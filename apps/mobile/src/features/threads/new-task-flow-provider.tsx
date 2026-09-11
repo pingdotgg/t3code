@@ -437,13 +437,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       resolveProjectSettings(
         selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
         selectedProject?.id ?? null,
+        selectedProject,
       ),
-    [selectedEnvironmentServerConfig?.settings, selectedProject?.id],
+    [selectedEnvironmentServerConfig?.settings, selectedProject],
   );
   const projectThreadEnvMode =
     projectSettings.sources.defaultThreadEnvMode === "project"
       ? projectSettings.settings.defaultThreadEnvMode
-      : selectedProject?.defaultThreadEnvMode;
+      : undefined;
   const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
     projectSetting: projectThreadEnvMode,
     projectFile: t3ProjectFileDefaultMode,
@@ -477,11 +478,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    projectSettings.sources.defaultModelSelection === "project"
-      ? projectSettings.settings.defaultModelSelection
-      : (selectedProject?.defaultModelSelection ??
-          selectedEnvironmentServerConfig?.settings.defaultModelSelection ??
-          null),
+    projectSettings.settings.defaultModelSelection,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(

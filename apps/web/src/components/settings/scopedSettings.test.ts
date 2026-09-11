@@ -384,3 +384,67 @@ describe("project overrides at environment scope", () => {
     ]);
   });
 });
+
+describe("partial object patches at project scope", () => {
+  it("completes a writing style field patch from the target's effective value", () => {
+    const environmentId = EnvironmentId.make("laptop");
+    const projectId = ProjectId.make("fleet");
+    const member = {
+      id: projectId,
+      environmentId,
+      physicalProjectKey: "laptop:/repo",
+      environmentLabel: "Laptop",
+      title: "fleet",
+      workspaceRoot: "/repo",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: {
+          sourceControlWritingStyle: {
+            mode: "custom" as const,
+            customInstructions: "Keep it short.",
+            followChangeRequestTemplates: false,
+          },
+        },
+      },
+    };
+    const plan = planScopedSettingsPatch(
+      {
+        kind: "project",
+        group: {} as never,
+        environmentId: null,
+        label: "fleet",
+        members: [member as never],
+        environmentIds: [environmentId],
+      },
+      [
+        {
+          environmentId,
+          label: "Laptop",
+          connection: { phase: "connected" },
+          serverConfig: {
+            settings,
+            environment: { capabilities: { projectSettingsOverrides: true } },
+          },
+        },
+      ],
+      { sourceControlWritingStyle: { customInstructions: "Be terse." } },
+    );
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          sourceControlWritingStyle: {
+            mode: "custom",
+            customInstructions: "Be terse.",
+            followChangeRequestTemplates: false,
+          },
+        },
+      },
+    });
+  });
+});

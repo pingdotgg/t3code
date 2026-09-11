@@ -139,17 +139,18 @@ export function useNewThreadHandler() {
           candidate.id === projectRef.projectId &&
           candidate.environmentId === projectRef.environmentId,
       );
-      // Project overrides win over environment defaults; the aggregate's own
-      // legacy fields are still honored until the server folds them in.
-      const projectSettings = resolveProjectSettings(targetServerSettings, project?.id ?? null);
-      const projectDefaultModelSelection =
-        projectSettings.sources.defaultModelSelection === "project"
-          ? projectSettings.settings.defaultModelSelection
-          : (project?.defaultModelSelection ?? targetServerSettings.defaultModelSelection);
+      // The resolver applies project overrides and, until the server has
+      // folded them, the aggregate's own legacy fields.
+      const projectSettings = resolveProjectSettings(
+        targetServerSettings,
+        project?.id ?? null,
+        project,
+      );
+      const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
       const projectThreadEnvMode =
         projectSettings.sources.defaultThreadEnvMode === "project"
           ? projectSettings.settings.defaultThreadEnvMode
-          : project?.defaultThreadEnvMode;
+          : undefined;
       const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
         resolveNewThreadModelSelectionOverride({
           projectDefaultSelection: projectDefaultModelSelection ?? null,

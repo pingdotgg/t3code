@@ -41,6 +41,10 @@ export function isProjectScopedSettingKey(key: string): key is ProjectScopedServ
   return PROJECT_SCOPED_KEYS.has(key);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** The representative supplies display values, never the set of write targets. */
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
@@ -212,10 +216,19 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current) => ({
-              ...current,
-              ...(serverPatch as ProjectSettingsOverrides),
-            }))
+          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
+              // Object-valued keys arrive as partial patches (the writing style
+              // rows send one field); an override entry stores the whole value,
+              // so complete the patch from the target's effective value.
+              const effective = resolveProjectSettings(settings, projectId).settings;
+              const next: Record<string, unknown> = { ...current };
+              for (const [key, value] of Object.entries(serverPatch)) {
+                const base = effective[key as keyof ServerSettings];
+                next[key] =
+                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
+              }
+              return next as ProjectSettingsOverrides;
+            })
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.map((environment) => ({
               environmentId: environment.environmentId,

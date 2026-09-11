@@ -539,7 +539,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
-    scope: "environment",
+    scope: "environment-defaults",
     searchTerms: [
       "version control git github gitlab bitbucket azure devops hosting integrations credentials scan server environment",
     ],
@@ -552,7 +552,7 @@ export const SETTINGS_SEARCH_ITEMS = [
       "automatic remote branch refresh background credentials security keys seconds off",
     ],
     environmentOnly: true,
-    scope: "environment",
+    scope: "environment-defaults",
   },
   {
     id: "source-control-writing-style",
@@ -679,8 +679,10 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/general": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
-  "/settings/keybindings": "environment",
-  "/settings/providers": "environment",
+  // Keybindings fan out to the selection; Providers shows the representative
+  // environment at any selection. Neither needs a particular scope to render.
+  "/settings/keybindings": null,
+  "/settings/providers": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/connections": "connections",
