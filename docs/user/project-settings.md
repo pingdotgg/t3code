@@ -18,6 +18,11 @@ while a project is selected.
 When the selected environments disagree, the control shows **Mixed** in place of a value and the
 layers icon turns amber. Picking a value applies it to every selected environment.
 
+Changing an environment value never touches a project's own override. When projects override the
+setting you are editing, the layers icon counts them and the chain lists each one with its value:
+click a project to jump to it, or **Reset all** to make those projects follow the environment
+again.
+
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
 
@@ -33,9 +38,8 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
-Changing an environment default preserves explicit project overrides. For workspace mode, a
-project's `t3.json` preference applies when the project has no override. Browser access changes
-apply when an agent session next starts.
+For workspace mode, a project's `t3.json` preference applies when the project has no override.
+Browser access changes apply when an agent session next starts.
 
 ## Project icons
 

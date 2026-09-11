@@ -24,11 +24,16 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import {
   isProjectScopedSettingKey,
+  listProjectOverrides,
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
-import { useClearScopedSettings } from "./useScopedSettings";
-import { SettingInheritance, type SettingInheritanceState } from "./SettingInheritance";
+import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
+import {
+  SettingInheritance,
+  type SettingInheritanceState,
+  type SettingOverridingProject,
+} from "./SettingInheritance";
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 
@@ -290,6 +295,7 @@ export function SettingsRow({
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const clearOverrides = useClearScopedSettings();
+  const clearProjectOverrides = useClearProjectOverrides();
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
@@ -320,6 +326,30 @@ export function SettingsRow({
       ),
     [context?.connectedEnvironments],
   );
+  // At environment scope, projects with their own value keep it when the
+  // environment default changes; the chain names them and can reset them.
+  const overridingProjects = useMemo((): SettingOverridingProject[] => {
+    if (context === null || isProjectScope || scopedKeys.length === 0) return [];
+    return listProjectOverrides(context.connectedEnvironments, scopedKeys).flatMap((entry) => {
+      const group = context.groups.find((candidate) =>
+        candidate.memberProjects.some(
+          (member) => member.environmentId === entry.environmentId && member.id === entry.projectId,
+        ),
+      );
+      if (!group) return [];
+      return [
+        {
+          ...entry,
+          label: group.displayName,
+          open: () =>
+            context.selectScope({
+              project: group.projectKey,
+              ...(context.search.machine ? { machine: context.search.machine } : {}),
+            }),
+        },
+      ];
+    });
+  }, [context, isProjectScope, scopedKeys]);
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton
@@ -394,6 +424,8 @@ export function SettingsRow({
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
+        overridingProjects={overridingProjects}
+        onClearOverrides={(entries) => clearProjectOverrides(entries, scopedKeys)}
       />
     ) : null;
   const renderedStatus = status;

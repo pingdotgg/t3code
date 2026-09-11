@@ -14,7 +14,7 @@ import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDeta
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { ScopedSettingsTarget } from "./scopedSettings";
+import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 
 interface InheritanceLayer {
@@ -124,21 +124,36 @@ export type SettingInheritanceState =
  * the setting's value comes from on each selected target. It sits inline so
  * narrowing to a project does not add a caption line to every row.
  */
+export interface SettingOverridingProject extends ProjectOverrideEntry {
+  readonly label: string;
+  /** Jumps the breadcrumb to this project so its override can be edited. */
+  readonly open: () => void;
+}
+
 export function SettingInheritance({
   state,
   summary,
   targets,
   environments,
   keys,
+  overridingProjects = [],
+  onClearOverrides,
 }: {
   state: SettingInheritanceState;
   summary: string;
   targets: readonly ScopedSettingsTarget[];
   environments: readonly Pick<EnvironmentPresentation, "environmentId" | "serverConfig">[];
   keys: readonly (keyof ServerSettings)[];
+  /** At environment scope: projects whose own value hides the environment's. */
+  overridingProjects?: readonly SettingOverridingProject[];
+  onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
   const key = keys[0];
   if (!key || targets.length === 0) return null;
+  const overrideSummary =
+    overridingProjects.length > 0
+      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      : summary;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === target.environmentId,
@@ -147,6 +162,7 @@ export function SettingInheritance({
     return [
       {
         target,
+        environment: { ...environment, serverConfig: environment.serverConfig },
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         layers: settingInheritanceLayers(target, environment.serverConfig.settings, key),
       },
@@ -162,7 +178,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${summary}. Show where this value comes from`}
+                  aria-label={`${overrideSummary}. Show where this value comes from`}
                   className={cn(
                     "[--control-icon-color:currentColor]",
                     state === "overridden"
@@ -180,7 +196,7 @@ export function SettingInheritance({
         >
           <LayersIcon className="size-3" />
         </TooltipTrigger>
-        <TooltipPopup side="top">{summary}</TooltipPopup>
+        <TooltipPopup side="top">{overrideSummary}</TooltipPopup>
       </Tooltip>
       <PopoverPopup
         align="start"
@@ -188,7 +204,7 @@ export function SettingInheritance({
         viewportClassName="p-0 [--viewport-inline-padding:0px]"
       >
         <div className="divide-y divide-border/60">
-          {chains.map(({ target, machine, layers }) => (
+          {chains.map(({ target, environment, machine, layers }) => (
             <section
               key={`${target.environmentId}:${target.projectId ?? ""}`}
               className="px-3 py-2.5"
@@ -234,6 +250,50 @@ export function SettingInheritance({
                   </li>
                 ))}
               </ol>
+              {(() => {
+                const overriding = overridingProjects.filter(
+                  (project) => project.environmentId === target.environmentId,
+                );
+                if (overriding.length === 0) return null;
+                const overrides = environment.serverConfig.settings.projectSettingsOverrides;
+                return (
+                  <div className="mt-2 border-t border-border/60 pt-2">
+                    <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
+                      <span>Overridden by</span>
+                      {onClearOverrides ? (
+                        <button
+                          type="button"
+                          className="cursor-pointer font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => onClearOverrides(overriding)}
+                        >
+                          Reset {overriding.length === 1 ? "it" : "all"}
+                        </button>
+                      ) : null}
+                    </div>
+                    <ul role="list" className="mt-0.5 text-sm">
+                      {overriding.map((project) => (
+                        <li
+                          key={project.projectId}
+                          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-1"
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 cursor-pointer truncate text-left text-foreground underline-offset-2 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={project.open}
+                          >
+                            {project.label}
+                          </button>
+                          <span className="max-w-32 truncate text-muted-foreground tabular-nums">
+                            {isProjectScopedSettingKey(key)
+                              ? formatValue(key, overrides[project.projectId]?.[key])
+                              : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
             </section>
           ))}
         </div>

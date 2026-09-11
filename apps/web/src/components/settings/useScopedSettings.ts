@@ -17,10 +17,12 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
@@ -100,6 +102,19 @@ export function useClearScopedSettings() {
     (keys: readonly ProjectScopedServerSettingKey[]) => {
       if (context === null) return;
       run(planScopedSettingsClear(context.scope, context.environments, keys));
+    },
+    [context, run],
+  );
+}
+
+/** Clear `keys` on specific project entries, from an environment scope's chain popover. */
+export function useClearProjectOverrides() {
+  const context = useOptionalSettingsScope();
+  const run = useRunScopedPlan();
+  return useCallback(
+    (entries: readonly ProjectOverrideEntry[], keys: readonly ProjectScopedServerSettingKey[]) => {
+      if (context === null) return;
+      run(planProjectOverridesClear(context.environments, entries, keys));
     },
     [context, run],
   );

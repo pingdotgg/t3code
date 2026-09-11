@@ -261,6 +261,67 @@ export function planScopedSettingsClear(
   };
 }
 
+export interface ProjectOverrideEntry {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}
+
+/**
+ * The projects on the selected environments that override `keys`. An
+ * environment edit leaves these untouched, so the row can name them and
+ * offer to clear them.
+ */
+export function listProjectOverrides(
+  environments: readonly ScopedSettingsEnvironment[],
+  keys: readonly (keyof ServerSettings)[],
+): readonly ProjectOverrideEntry[] {
+  const scoped = keys.filter(isProjectScopedSettingKey);
+  if (scoped.length === 0) return [];
+  return environments.flatMap((environment) => {
+    const overrides = environment.serverConfig?.settings.projectSettingsOverrides;
+    if (!overrides) return [];
+    return Object.entries(overrides).flatMap(([projectId, entry]) =>
+      scoped.some((key) => Object.hasOwn(entry, key))
+        ? [{ environmentId: environment.environmentId, projectId: projectId as ProjectId }]
+        : [],
+    );
+  });
+}
+
+/** Drop `keys` from the named project entries so they follow the environment again. */
+export function planProjectOverridesClear(
+  environments: readonly ScopedSettingsEnvironment[],
+  entries: readonly ProjectOverrideEntry[],
+  keys: readonly ProjectScopedServerSettingKey[],
+) {
+  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
+  const writes = new Map<EnvironmentId, ScopedServerWrite>();
+  for (const { environmentId, projectId } of entries) {
+    const environment = byId.get(environmentId);
+    if (!environment?.serverConfig || environment.connection.phase !== "connected") continue;
+    const settings = environment.serverConfig.settings;
+    const existing = writes.get(environmentId);
+    writes.set(environmentId, {
+      environmentId,
+      label: environment.label,
+      patch: {
+        projectSettingsOverrides: {
+          ...existing?.patch.projectSettingsOverrides,
+          [projectId]: clearProjectSettingsOverrides(settings, projectId, keys),
+        },
+      },
+    });
+  }
+  const serverWrites = [...writes.values()];
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    unavailableReason:
+      serverWrites.length > 0 ? null : "Connect the environments to reset these overrides.",
+  };
+}
+
 /** Wait for every target so a failed environment does not hide successful or later writes. */
 export async function persistScopedSettingsPatch(
   plan: ReturnType<typeof planScopedSettingsPatch>,

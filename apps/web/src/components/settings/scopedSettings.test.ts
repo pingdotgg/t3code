@@ -8,7 +8,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
+  listProjectOverrides,
   persistScopedSettingsPatch,
+  planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   resolveScopedSettingsTargets,
@@ -319,5 +321,66 @@ describe("scoped settings mixed values", () => {
     const second = environment("Second", { settings: { sourceControlWritingStyle: { ...style } } });
     const targets = resolveScopedSettingsTargets(all, [first, second]);
     expect(scopedSettingsAreMixed(targets, ["sourceControlWritingStyle"])).toBe(false);
+  });
+});
+
+describe("project overrides at environment scope", () => {
+  const laptop = EnvironmentId.make("laptop");
+  const desk = EnvironmentId.make("desk");
+  const fleet = ProjectId.make("fleet");
+  const t3 = ProjectId.make("t3");
+  const environment = (
+    environmentId: EnvironmentId,
+    overrides: ServerSettings["projectSettingsOverrides"],
+  ) => ({
+    environmentId,
+    label: environmentId,
+    connection: { phase: "connected" as const },
+    serverConfig: {
+      settings: { ...DEFAULT_SERVER_SETTINGS, projectSettingsOverrides: overrides },
+      environment: { capabilities: { projectSettingsOverrides: true } },
+    },
+  });
+
+  it("lists only the projects that override the keys", () => {
+    const entries = listProjectOverrides(
+      [
+        environment(laptop, {
+          [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
+          [t3]: { defaultThreadEnvMode: "local" },
+        }),
+        environment(desk, { [fleet]: { defaultAutoPull: false } }),
+      ],
+      ["defaultAutoPull"],
+    );
+    expect(entries).toEqual([
+      { environmentId: laptop, projectId: fleet },
+      { environmentId: desk, projectId: fleet },
+    ]);
+  });
+
+  it("clears only those keys and drops entries that become empty", () => {
+    const plan = planProjectOverridesClear(
+      [
+        environment(laptop, {
+          [fleet]: { defaultAutoPull: true, defaultThreadEnvMode: "local" },
+          [t3]: { defaultAutoPull: true },
+        }),
+      ],
+      [
+        { environmentId: laptop, projectId: fleet },
+        { environmentId: laptop, projectId: t3 },
+      ],
+      ["defaultAutoPull"],
+    );
+    expect(plan.serverWrites).toEqual([
+      {
+        environmentId: laptop,
+        label: laptop,
+        patch: {
+          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [t3]: null },
+        },
+      },
+    ]);
   });
 });

@@ -25,7 +25,7 @@ function useResolvedSettingsScope(search: SettingsScopeSearch) {
       ) ??
       targets[0] ??
       null;
-    return { scope, ...selected, targets, target };
+    return { scope, groups, ...selected, targets, target };
   }, [availableEnvironments, groups, primaryEnvironmentId, search]);
 }
 
