@@ -1,3 +1,4 @@
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -347,6 +348,88 @@ describe("azureDevOpsUnreadableFilePatch", () => {
     expect(patch.section).toBe(
       ["diff --git a/huge.bin b/huge.bin", "--- a/huge.bin", "+++ b/huge.bin", ""].join("\n"),
     );
+  });
+});
+
+describe("a file Azure names something a patch header cannot carry plainly", () => {
+  it("writes each side as git's quoted form, the side letter inside the quotes", () => {
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "notes\treadme.md", oldPath: "notes\treadme.md" }),
+      texts: texts("one\n", "two\n"),
+    });
+
+    expect(patch.section).toBe(
+      [
+        'diff --git "a/notes\\treadme.md" "b/notes\\treadme.md"',
+        '--- "a/notes\\treadme.md"',
+        '+++ "b/notes\\treadme.md"',
+        "@@ -1 +1 @@",
+        "-one",
+        "+two",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a name holding a newline on the one header line it belongs to", () => {
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "line\nfile.txt", oldPath: "line\nfile.txt" }),
+      texts: texts("one\n", "two\n"),
+    });
+
+    // Written as itself the name would start a line of its own, and a reader would take what
+    // followed for a header the patch never had.
+    expect(patch.section.split("\n").slice(0, 3)).toEqual([
+      'diff --git "a/line\\nfile.txt" "b/line\\nfile.txt"',
+      '--- "a/line\\nfile.txt"',
+      '+++ "b/line\\nfile.txt"',
+    ]);
+  });
+
+  it("quotes the names a rename states, which carry no side letter", () => {
+    const patch = azureDevOpsFilePatch({
+      change: change({
+        path: "docs/new\tname.md",
+        oldPath: "docs/old\tname.md",
+        changeKind: "rename-pure",
+      }),
+      texts: texts("same\n", "same\n"),
+    });
+
+    expect(patch.section).toBe(
+      [
+        'diff --git "a/docs/old\\tname.md" "b/docs/new\\tname.md"',
+        'rename from "docs/old\\tname.md"',
+        'rename to "docs/new\\tname.md"',
+        '--- "a/docs/old\\tname.md"',
+        '+++ "b/docs/new\\tname.md"',
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("quotes the sides of the one line a binary file gets", () => {
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "logo\tmark.png", oldPath: "logo\tmark.png" }),
+      texts: texts("PNG\u0000old", "PNG\u0000new"),
+    });
+
+    expect(patch.section).toContain(
+      'Binary files "a/logo\\tmark.png" and "b/logo\\tmark.png" differ',
+    );
+  });
+
+  it("hands a reader of the header back the name Azure gave", () => {
+    const path = 'every\t\n"kind"\\of.md';
+    const patch = azureDevOpsFilePatch({
+      change: change({ path, oldPath: path }),
+      texts: texts("one\n", "two\n"),
+    });
+    const [header, oldLine, newLine] = patch.section.split("\n");
+
+    expect(header).not.toContain("\t");
+    expect(unquoteGitPatchPath(oldLine?.slice(4) ?? "")).toBe(`a/${path}`);
+    expect(unquoteGitPatchPath(newLine?.slice(4) ?? "")).toBe(`b/${path}`);
   });
 });
 

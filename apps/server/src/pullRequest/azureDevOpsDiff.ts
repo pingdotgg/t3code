@@ -1,3 +1,4 @@
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { structuredPatch } from "diff";
 
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
@@ -165,17 +166,31 @@ function hunkRange(start: number, lines: number): string {
 /**
  * The `diff --git` preamble a viewer reads a file's identity and fate from. Azure reports no file
  * mode, so the ordinary one stands in, exactly as it does for the GitHub files API here.
+ *
+ * The names are written the way git writes them, quoted where the name holds anything a header
+ * cannot carry plainly. Azure names a file in JSON, where a tab or a newline is just another
+ * character, and a reader of the header takes the name to stop at the first of either: written as
+ * itself, such a file is read under a shorter name than it has, and the viewed mark a reader puts
+ * on it is put on a path the host has never heard of.
+ *
+ * A side's `a/` or `b/` goes inside the quoting, as git puts it, because the quoting is of the
+ * whole token the reader takes off the line. A rename states its names with no side to them.
  */
 function patchHeader(change: AzureDevOpsChangeEntry): string {
-  const lines = [`diff --git a/${change.oldPath} b/${change.path}`];
+  const oldSide = quoteGitPatchPath(`a/${change.oldPath}`);
+  const newSide = quoteGitPatchPath(`b/${change.path}`);
+  const lines = [`diff --git ${oldSide} ${newSide}`];
   if (change.changeKind === "new") lines.push("new file mode 100644");
   if (change.changeKind === "deleted") lines.push("deleted file mode 100644");
   if (change.changeKind === "rename-pure" || change.changeKind === "rename-changed") {
-    lines.push(`rename from ${change.oldPath}`, `rename to ${change.path}`);
+    lines.push(
+      `rename from ${quoteGitPatchPath(change.oldPath)}`,
+      `rename to ${quoteGitPatchPath(change.path)}`,
+    );
   }
   lines.push(
-    `--- ${change.changeKind === "new" ? "/dev/null" : `a/${change.oldPath}`}`,
-    `+++ ${change.changeKind === "deleted" ? "/dev/null" : `b/${change.path}`}`,
+    `--- ${change.changeKind === "new" ? "/dev/null" : oldSide}`,
+    `+++ ${change.changeKind === "deleted" ? "/dev/null" : newSide}`,
   );
   return lines.join("\n");
 }
@@ -215,7 +230,9 @@ export function azureDevOpsFilePatch(input: {
 
   if (input.texts.binary || isBinary(oldContents) || isBinary(newContents)) {
     // Git's own wording for a file it will not spell out, which every diff viewer already reads.
-    const binary = `Binary files a/${input.change.oldPath} and b/${input.change.path} differ`;
+    const oldSide = quoteGitPatchPath(`a/${input.change.oldPath}`);
+    const newSide = quoteGitPatchPath(`b/${input.change.path}`);
+    const binary = `Binary files ${oldSide} and ${newSide} differ`;
     return { section: `${header}\n${binary}\n`, truncated: true, abandoned: false, edits: 0 };
   }
   if (byteLength(oldContents) > MAX_FILE_BYTES || byteLength(newContents) > MAX_FILE_BYTES) {

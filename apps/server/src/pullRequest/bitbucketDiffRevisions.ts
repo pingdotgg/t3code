@@ -1,20 +1,7 @@
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+
 const ENTRY = "diff --git ";
 const QUOTE = '"';
-
-const NAMED_ESCAPES: Record<string, number> = {
-  '"': 0x22,
-  "\\": 0x5c,
-  a: 0x07,
-  b: 0x08,
-  f: 0x0c,
-  n: 0x0a,
-  r: 0x0d,
-  t: 0x09,
-  v: 0x0b,
-};
-
-const utf8 = new TextEncoder();
-const fromUtf8 = new TextDecoder();
 
 interface Entry {
   oldPath: string | null;
@@ -23,60 +10,6 @@ interface Entry {
   revision: string | null;
   /** Past the first hunk header every line is content, and content can start like a header. */
   inBody: boolean;
-}
-
-/**
- * The name inside git's quoted form, which git reaches for when a name holds a tab, a newline, a
- * quote, a backslash, or, under `core.quotePath`, any byte outside ASCII.
- *
- * The escapes are per byte, so a name in any other alphabet arrives as a run of octal and only
- * reads back as itself once those bytes are rejoined and decoded together.
- */
-function unquotePath(token: string): string {
-  if (token.length < 2 || !token.startsWith(QUOTE) || !token.endsWith(QUOTE)) return token;
-  const body = token.slice(1, -1);
-  const bytes: Array<number> = [];
-  // Anything git left as itself is encoded a run at a time rather than a unit at a time, so a
-  // character outside the basic plane keeps its pair together rather than coming back as halves.
-  let literal = "";
-  const flush = () => {
-    if (literal.length === 0) return;
-    bytes.push(...utf8.encode(literal));
-    literal = "";
-  };
-  let at = 0;
-  while (at < body.length) {
-    const char = body.charAt(at);
-    if (char !== "\\") {
-      literal += char;
-      at += 1;
-      continue;
-    }
-    const escaped = body.charAt(at + 1);
-    if (escaped === "") {
-      flush();
-      bytes.push(0x5c);
-      break;
-    }
-    const named = NAMED_ESCAPES[escaped];
-    if (named !== undefined) {
-      flush();
-      bytes.push(named);
-      at += 2;
-      continue;
-    }
-    const octal = body.slice(at + 1, at + 4);
-    if (/^[0-7]{3}$/.test(octal)) {
-      flush();
-      bytes.push(Number.parseInt(octal, 8));
-      at += 4;
-      continue;
-    }
-    literal += escaped;
-    at += 2;
-  }
-  flush();
-  return fromUtf8.decode(new Uint8Array(bytes));
 }
 
 /** Where a quoted name closes, given git escapes every quote the name itself holds. */
@@ -104,12 +37,12 @@ function sidePath(rest: string, prefix: string): string | null {
   const tab = rest.indexOf("\t");
   const token = tab === -1 ? rest : rest.slice(0, tab);
   if (token === "/dev/null") return null;
-  const path = unquotePath(token);
+  const path = unquoteGitPatchPath(token);
   return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
 function headerSide(token: string, prefix: string): string | null {
-  const path = unquotePath(token);
+  const path = unquoteGitPatchPath(token);
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
@@ -194,9 +127,9 @@ export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, strin
     } else if (line.startsWith("deleted file mode")) {
       entry.deleted = true;
     } else if (line.startsWith("rename from ")) {
-      entry.oldPath = unquotePath(line.slice("rename from ".length));
+      entry.oldPath = unquoteGitPatchPath(line.slice("rename from ".length));
     } else if (line.startsWith("rename to ")) {
-      entry.newPath = unquotePath(line.slice("rename to ".length));
+      entry.newPath = unquoteGitPatchPath(line.slice("rename to ".length));
     } else if (line.startsWith("--- ")) {
       entry.oldPath = sidePath(line.slice(4), "a/");
     } else if (line.startsWith("+++ ")) {

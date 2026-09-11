@@ -286,6 +286,10 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./gitPatchPath": {
+      "types": "./src/gitPatchPath.ts",
+      "import": "./src/gitPatchPath.ts"
     }
   },
   "scripts": {
