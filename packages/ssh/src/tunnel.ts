@@ -6,6 +6,7 @@ import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
 } from "@t3tools/shared/httpReadiness";
+import { CLI_RELEASE_REPOSITORY } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -62,6 +63,12 @@ export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
+  /**
+   * Exact version whose release archive the remote installs and runs. Takes
+   * precedence over `packageSpec`; the remote then needs neither Node nor npm.
+   */
+  readonly archiveVersion?: string | null;
+  readonly releaseBaseUrl?: string | null;
 }
 
 export interface SshEnvironmentManagerOptions {
@@ -108,6 +115,9 @@ function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
 }
 
 function sshRunnerLogFields(runner: RemoteT3RunnerOptions | undefined) {
+  if (runner?.archiveVersion?.trim()) {
+    return { runner: "archive", archiveVersion: runner.archiveVersion.trim() };
+  }
   if (runner?.nodeScriptPath?.trim()) {
     return { runner: "node-script", nodeScriptPath: runner.nodeScriptPath.trim() };
   }
@@ -404,6 +414,53 @@ ensure_remote_node_path() {
 
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
+T3_ARCHIVE_VERSION=@@T3_ARCHIVE_VERSION@@
+if [ -n "$T3_ARCHIVE_VERSION" ]; then
+  # Self-contained release archive: no Node, npm, or compiler on the remote.
+  # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+  T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
+  T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+  if [ ! -x "$T3_RUNTIME_DIR/t3" ] || [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" != "$T3_ARCHIVE_VERSION" ]; then
+    case "$(uname -s)" in
+      Darwin) T3_PLATFORM="darwin" ;;
+      Linux) T3_PLATFORM="linux" ;;
+      *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
+    esac
+    case "$(uname -m)" in
+      arm64 | aarch64) T3_ARCH="arm64" ;;
+      x86_64 | amd64) T3_ARCH="x64" ;;
+      *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
+    esac
+    T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
+    mkdir -p "$HOME/.t3/runtime/versions"
+    T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+    trap 'rm -rf "$T3_STAGING"' EXIT
+    t3_fetch() {
+      if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
+      elif command -v wget >/dev/null 2>&1; then wget -q "$1" -O "$2"
+      else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+      fi
+    }
+    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS"
+    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE"
+    T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
+    if command -v sha256sum >/dev/null 2>&1; then
+      T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+    else
+      T3_ACTUAL="$(shasum -a 256 "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+    fi
+    if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
+      printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+    fi
+    tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+    rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
+    printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
+    rm -rf "$T3_RUNTIME_DIR"
+    mv "$T3_STAGING" "$T3_RUNTIME_DIR"
+    trap - EXIT
+  fi
+  exec "$T3_RUNTIME_DIR/t3" "$@"
+fi
 @@T3_NODE_ENV_SCRIPT@@
 ensure_remote_node_path || true
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
@@ -473,16 +530,30 @@ if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
-if ! ensure_remote_node_path; then
+T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
+if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+  # The archive ships the helpers below inside the executable; the remote
+  # needs no Node at all. Resolving the runner once here also downloads the
+  # archive before the port and readiness probes rely on it.
+  "$RUNNER_FILE" --version >/dev/null
+elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1
 fi
 pick_port() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@"
+    return
+  fi
   node - "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
 @@T3_PICK_PORT_SCRIPT@@
 NODE
 }
 wait_ready() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT" "$1" "@@T3_READY_PROBE_TIMEOUT_MS@@"
+    return
+  fi
   node - "$REMOTE_PORT" "$1" "@@T3_READY_PROBE_TIMEOUT_MS@@" <<'NODE'
 @@T3_WAIT_READY_SCRIPT@@
 NODE
@@ -496,6 +567,10 @@ wait_for_pid_exit() {
   done
 }
 resolve_default_runtime_port() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
+    return
+  fi
   node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
 const fs = require("node:fs");
 const runtimePath = process.argv[2] ?? "";
@@ -653,10 +728,16 @@ fi
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
   const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
+  const archiveVersion = input?.archiveVersion?.trim() || "";
+  const releaseBaseUrl =
+    input?.releaseBaseUrl?.trim().replace(/\/+$/u, "") ||
+    `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
+      T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
@@ -673,6 +754,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_ARCHIVE_MODE: input?.archiveVersion?.trim() ? "1" : "0",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),

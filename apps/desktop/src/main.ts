@@ -17,6 +17,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { isArchiveDistributedVersion } from "@t3tools/shared/cliRelease";
 import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
@@ -96,6 +97,11 @@ const resolveDesktopSshCliRunner = (
       nodeScriptPath: devRemoteEntryPath,
       nodeEngineRange: serverPackageJson.engines.node,
     };
+  }
+  // Preview builds ship as self-contained archives, so the remote runs the
+  // same version this app is on without Node or npm.
+  if (!environment.isDevelopment && isArchiveDistributedVersion(environment.appVersion)) {
+    return { archiveVersion: environment.appVersion };
   }
   return {
     packageSpec: resolveRemoteT3CliPackageSpec({

@@ -130,6 +130,36 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, "ensure $NVM_DIR/nvm.sh is available");
   });
 
+  it("installs and runs the release archive when an archive version is set", () => {
+    const script = buildRemoteT3RunnerScript({ archiveVersion: "1.2.3-preview.20260911.4" });
+
+    assert.include(script, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
+    assert.include(
+      script,
+      "T3_RELEASE_BASE_URL='https://github.com/pingdotgg/t3code/releases/download'",
+    );
+    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
+    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
+    assert.include(script, "SHA256SUMS");
+    assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
+    // The archive branch execs before any of the Node discovery runs.
+    assert.isBelow(
+      script.indexOf('exec "$T3_RUNTIME_DIR/t3"'),
+      script.indexOf("prepend_path_if_dir()"),
+    );
+
+    const launch = buildRemoteLaunchScript({
+      archiveVersion: "1.2.3-preview.20260911.4",
+      releaseBaseUrl: "https://mirror.example/t3/",
+    });
+    assert.include(launch, "T3_ARCHIVE_MODE=1");
+    assert.include(launch, "T3_RELEASE_BASE_URL='https://mirror.example/t3'");
+    assert.include(launch, '"$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE"');
+    assert.include(launch, '"$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT"');
+    assert.include(launch, '"$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"');
+    assert.include(buildRemoteLaunchScript(), "T3_ARCHIVE_MODE=0");
+  });
+
   it("does not hard-code a remote node engine range", () => {
     const script = buildRemoteT3RunnerScript();
 
