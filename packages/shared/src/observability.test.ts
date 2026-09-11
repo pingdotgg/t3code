@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -22,6 +22,7 @@ import {
   type TraceRecord,
   type TraceSinkFlushStats,
   truncateTraceAttributes,
+  otlpHeadersTransportIssue,
 } from "./observability.ts";
 
 describe("errorTag", () => {
@@ -457,5 +458,39 @@ describe("observability", () => {
         }),
       ),
     );
+  });
+});
+
+describe("otlpHeadersTransportIssue", () => {
+  const headers = { authorization: "Bearer my-token" };
+
+  it("allows https endpoints", () => {
+    expect(
+      otlpHeadersTransportIssue(headers, ["https://api.example.com/v1/traces", undefined]),
+    ).toBeUndefined();
+  });
+
+  it("allows loopback http endpoints", () => {
+    expect(
+      otlpHeadersTransportIssue(headers, [
+        "http://localhost:4318/v1/traces",
+        "http://[::1]:4318/v1/metrics",
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("refuses a plaintext non-loopback endpoint even when another is https", () => {
+    expect(
+      otlpHeadersTransportIssue(headers, [
+        "https://api.example.com/v1/traces",
+        "http://collector.internal:4318/v1/metrics",
+      ]),
+    ).toContain("http://collector.internal:4318");
+  });
+
+  it("ignores endpoints when no headers are configured", () => {
+    expect(
+      otlpHeadersTransportIssue(undefined, ["http://collector.internal:4318/v1/traces"]),
+    ).toBeUndefined();
   });
 });

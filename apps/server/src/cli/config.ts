@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { otlpHeadersTransportIssue } from "@t3tools/shared/observability";
 
 const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -390,6 +391,14 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
     };
+
+    const transportIssue = otlpHeadersTransportIssue(config.otlpHeaders, [
+      config.otlpTracesUrl,
+      config.otlpMetricsUrl,
+    ]);
+    if (transportIssue) {
+      return yield* Effect.die(new Error(transportIssue));
+    }
 
     return config;
   });

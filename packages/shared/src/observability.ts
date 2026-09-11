@@ -683,3 +683,34 @@ function parseBigInt(input: string): bigint {
     return 0n;
   }
 }
+
+const isLoopbackHost = (hostname: string) => {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+};
+
+export const otlpHeadersTransportIssue = (
+  headers: Readonly<Record<string, string>> | undefined,
+  urls: ReadonlyArray<string | undefined>,
+): string | undefined => {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const rawUrl of urls) {
+    if (!rawUrl) {
+      continue;
+    }
+
+    const url = new URL(rawUrl);
+    if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      return `T3CODE_OTLP_HEADERS would be sent in plaintext to ${url.origin}. Use an https:// or a loopback http:// endpoint.`;
+    }
+  }
+
+  return undefined;
+};

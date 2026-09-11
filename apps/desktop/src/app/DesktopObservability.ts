@@ -1,5 +1,9 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
-import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import {
+  makeLocalFileTracer,
+  makeTraceSink,
+  otlpHeadersTransportIssue,
+} from "@t3tools/shared/observability";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -572,6 +576,15 @@ const tracerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const otlpTracesUrl = yield* resolveOtlpTracesUrl;
+
+    const transportIssue = otlpHeadersTransportIssue(
+      Option.getOrUndefined(environment.otlpHeaders),
+      [Option.getOrUndefined(otlpTracesUrl)],
+    );
+    if (transportIssue) {
+      return yield* Effect.die(new Error(transportIssue));
+    }
+
     const tracePath = environment.path.join(environment.logDir, "desktop.trace.ndjson");
     const sink = yield* makeTraceSink({
       filePath: tracePath,
