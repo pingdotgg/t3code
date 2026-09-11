@@ -499,9 +499,11 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const { scope, environment } = useSettingsScope();
+  // Discovery scans one machine's tools, so it needs a single environment;
+  // the settings rows above it fan out like everywhere else.
   const environmentId =
-    scope.kind === "environment" && environment?.connection.phase === "connected"
-      ? scope.environmentId
+    scope.environmentIds.length === 1 && environment?.connection.phase === "connected"
+      ? environment.environmentId
       : null;
   const discovery = useEnvironmentQuery(
     environmentId === null
@@ -543,9 +545,9 @@ export function SourceControlSettingsPanel() {
       {environmentId === null ? (
         <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            {scope.kind === "environment"
+            {scope.environmentIds.length === 1
               ? "Connect this environment to inspect its version control tools and hosting integrations."
-              : "Select an environment to inspect its version control tools and hosting integrations."}
+              : "Tools and hosting integrations are detected per environment. Choose one to inspect."}
           </p>
         </SettingsSection>
       ) : isInitialScanPending ? (

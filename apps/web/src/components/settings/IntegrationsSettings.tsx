@@ -110,6 +110,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
 
@@ -564,43 +565,23 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+/**
+ * Device support installs helper processes and hosts on one machine, so it
+ * follows the header's environment select. An aggregate selection shows the
+ * representative environment and says so.
+ */
 function DeviceIntegrationSettings() {
-  const primaryEnvironment = usePrimaryEnvironment();
-  const { environments } = useEnvironments();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected =
-    environments.find((environment) => environment.environmentId === selectedId) ??
-    environments.find(
-      (environment) => environment.environmentId === primaryEnvironment?.environmentId,
-    ) ??
-    environments[0];
+  const { scope, environment: selected, connectedEnvironments } = useSettingsScope();
   const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
   const environmentId = connected ? selected.environmentId : null;
+  const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
 
   return (
     <SettingsSection id="devices" title="Devices">
-      {environments.length > 1 ? (
+      {aggregate && selected ? (
         <SettingsRow
           title="Environment"
-          description="Device support and hosts are shared by all projects in this environment."
-          control={
-            <Select
-              value={selected?.environmentId ?? ""}
-              onValueChange={(value) => setSelectedId(value)}
-            >
-              <SelectTrigger size="sm" aria-label="Device environment">
-                <SelectValue>{selected?.label ?? "Select environment"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {environments.map((environment) => (
-                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
-                    {environment.label}
-                    {environment.connection.phase === "connected" ? "" : " · Offline"}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
+          description={`Device support and hosts are configured per environment. Showing ${selected.label}; choose one environment above to manage another.`}
         />
       ) : null}
       <DeviceIntegrationControls

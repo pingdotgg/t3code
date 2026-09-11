@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
@@ -21,27 +20,16 @@ import {
   type ServerSettings,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
-  type T3ProjectFileScript,
 } from "@t3tools/contracts";
-import {
-  projectScriptsInheritDefaults,
-  resolveProjectScripts,
-} from "@t3tools/shared/projectScripts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { clearProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
-import {
-  useClientSettings,
-  useEnvironmentSettings,
-  useUpdateClientSettings,
-} from "../../hooks/useSettings";
-import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
-import { ProjectActionsList } from "./ProjectActionsList";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { isElectron } from "../../env";
 import {
   decodeProjectScriptKeybindingRule,
@@ -65,25 +53,9 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
-import {
-  EMPTY_PROJECT_SCRIPT_INPUT,
-  editorRequestForScript,
-  ProjectScriptEditorDialog,
-  ScriptIcon,
-  type NewProjectScriptInput,
-  type ProjectScriptEditorRequest,
-} from "../projectScriptEditor";
+import type { NewProjectScriptInput } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -380,7 +352,6 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = useLocation({ select: (location) => location.pathname });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = useMemo(
@@ -524,80 +495,7 @@ function ProjectDetail({
     [updateAllMembers],
   );
 
-  // ----- checkout selection and scripts -----
   const hasMultipleCheckouts = group.memberProjects.length > 1;
-  const selectedCheckout = representative;
-  const selectedServerConfig = useAtomValue(
-    serverEnvironment.configValueAtom(selectedCheckout.environmentId),
-  );
-  const keybindings = selectedServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
-  const scriptSettings = useEnvironmentSettings(selectedCheckout.environmentId);
-  const scripts = resolveProjectScripts(scriptSettings, selectedCheckout);
-  const scriptsInherited = projectScriptsInheritDefaults(scriptSettings, selectedCheckout);
-  const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
-  const {
-    saving: isSavingScripts,
-    persist: persistScripts,
-    submit: submitScript,
-  } = useProjectScriptSettings(
-    hasMultipleCheckouts
-      ? []
-      : [
-          {
-            environmentId: selectedCheckout.environmentId,
-            settings: scriptSettings,
-            keybindings,
-            project: selectedCheckout,
-          },
-        ],
-  );
-  const t3File = useT3ProjectFileState(
-    selectedCheckout.environmentId,
-    !hasMultipleCheckouts ? selectedCheckout.workspaceRoot : null,
-  );
-  const importableScripts = useMemo(
-    () =>
-      t3File.scripts.filter(
-        (fileScript) =>
-          !scripts.some(
-            (script) =>
-              script.command === fileScript.command ||
-              script.name.toLowerCase() === fileScript.name.toLowerCase(),
-          ),
-      ),
-    [scripts, t3File.scripts],
-  );
-
-  const deleteScript = (scriptId: string) =>
-    void persistScripts(
-      (current) => current.filter((script) => script.id !== scriptId),
-      scriptId,
-      null,
-    );
-
-  const importFileScript = useCallback(
-    async (fileScript: T3ProjectFileScript) => {
-      const payload: NewProjectScriptInput = {
-        name: fileScript.name,
-        command: fileScript.command,
-        icon: fileScript.icon ?? "play",
-        runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
-        keybinding: null,
-        previewUrl: fileScript.previewUrl ?? null,
-        autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
-      };
-      const result = await submitScript(null, payload);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setEditorRequest({
-          scriptId: null,
-          initial: payload,
-          error: error instanceof Error ? error.message : "Failed to import action.",
-        });
-      }
-    },
-    [submitScript, setEditorRequest],
-  );
 
   // ----- checkouts -----
   const updateGroupingPreference = useCallback(
@@ -717,27 +615,6 @@ function ProjectDetail({
   );
   const selectedCheckoutGrouping = checkoutGroupingValues[0]!;
   const mixedGrouping = checkoutGroupingValues.some((value) => value !== selectedCheckoutGrouping);
-  const checkoutLabel = (member: SidebarProjectGroupMember) => {
-    const label = member.environmentLabel ?? "This machine";
-    return group.memberProjects.some(
-      (other) =>
-        other.physicalProjectKey !== member.physicalProjectKey &&
-        (other.environmentLabel ?? "This machine") === label,
-    )
-      ? `${label} · ${member.workspaceRoot}`
-      : label;
-  };
-  const selectedCheckoutLabel = checkoutLabel(selectedCheckout);
-  const chooseCheckout = (member: SidebarProjectGroupMember) => {
-    void navigate({
-      to: pathname,
-      search: () => ({
-        project: group.projectKey,
-        machine: member.environmentId,
-        checkout: member.physicalProjectKey,
-      }),
-    });
-  };
   const checkoutChoices = (
     <SettingsSection title="Checkouts">
       {group.memberProjects.map((member) => (
@@ -746,8 +623,13 @@ function ProjectDetail({
           title={member.environmentLabel ?? "Environment"}
           description={member.workspaceRoot}
           control={
-            <Button size="sm" variant="outline" onClick={() => chooseCheckout(member)}>
-              Select checkout
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void removeMembers([member])}
+              aria-label={`Remove checkout ${member.workspaceRoot}`}
+            >
+              Remove
             </Button>
           }
         />
@@ -924,99 +806,6 @@ function ProjectDetail({
           />
         </SettingsSection>
         {hasMultipleCheckouts ? checkoutChoices : null}
-        {!hasMultipleCheckouts ? (
-          <SettingsSection id="project-actions" title="Actions" hideTitle>
-            <div className="flex min-h-8 flex-col items-start gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4">
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold text-foreground">Actions</h3>
-                <p className="text-pretty text-sm text-muted-foreground">
-                  {scriptsInherited
-                    ? `Inherited from ${selectedCheckout.environmentLabel ?? "environment"} defaults.`
-                    : `Overridden for ${selectedCheckoutLabel}.`}
-                </p>
-              </div>
-              <div className="flex w-full flex-wrap gap-1.5 sm:w-auto sm:shrink-0 sm:justify-end">
-                {!scriptsInherited ? (
-                  <SettingResetButton
-                    label="project actions"
-                    tooltip="Reset to inherited actions"
-                    disabled={isSavingScripts}
-                    onClick={() => void persistScripts(() => null)}
-                  />
-                ) : null}
-                {importableScripts.length > 0 ? (
-                  <Menu>
-                    <MenuTrigger
-                      render={
-                        <Button
-                          id="import-scripts"
-                          size="xs"
-                          variant="ghost"
-                          disabled={isSavingScripts}
-                          type="button"
-                        />
-                      }
-                    >
-                      Import scripts
-                      <ChevronDownIcon className="size-3.5" />
-                    </MenuTrigger>
-                    <MenuPopup align="end" className="w-72">
-                      <MenuGroup>
-                        <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
-                        <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
-                          Add actions declared by this checkout without editing them first.
-                        </p>
-                      </MenuGroup>
-                      <MenuSeparator />
-                      {importableScripts.map((fileScript) => (
-                        <MenuItem
-                          key={`${fileScript.name} ${fileScript.command}`}
-                          onClick={() => void importFileScript(fileScript)}
-                        >
-                          <ScriptIcon
-                            icon={fileScript.icon ?? "play"}
-                            className="size-4 shrink-0"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate font-medium">{fileScript.name}</div>
-                            <div className="truncate font-mono text-muted-foreground">
-                              {fileScript.command}
-                            </div>
-                          </div>
-                        </MenuItem>
-                      ))}
-                    </MenuPopup>
-                  </Menu>
-                ) : null}
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={isSavingScripts}
-                  onClick={() =>
-                    setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
-                  }
-                >
-                  <PlusIcon className="size-3.5" />
-                  Add action
-                </Button>
-              </div>
-            </div>
-            <ProjectActionsList
-              scripts={scripts}
-              keybindings={keybindings}
-              disabled={isSavingScripts}
-              onEdit={(script) => setEditorRequest(editorRequestForScript(script, keybindings))}
-            />
-            {t3File.status === "invalid" ? (
-              <SettingsRow
-                title="t3.json is invalid"
-                description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
-                className="text-warning"
-              />
-            ) : null}
-          </SettingsSection>
-        ) : null}
-
         <SettingsSection title="Danger">
           <SettingsRow
             title={
@@ -1051,15 +840,6 @@ function ProjectDetail({
         </SettingsSection>
       </SettingsPageContainer>
 
-      {!hasMultipleCheckouts ? (
-        <ProjectScriptEditorDialog
-          request={editorRequest}
-          scripts={scripts}
-          onSubmit={submitScript}
-          onDelete={deleteScript}
-          onClose={() => setEditorRequest(null)}
-        />
-      ) : null}
       <ProjectFaviconPickerDialog
         key={`${representative.environmentId}:${representative.workspaceRoot}:${faviconPickerOpen}`}
         cwd={representative.workspaceRoot}

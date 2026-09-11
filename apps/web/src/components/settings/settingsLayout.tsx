@@ -27,6 +27,7 @@ import {
   scopedSettingsSource,
 } from "./scopedSettings";
 import { useClearScopedSettings } from "./useScopedSettings";
+import { SettingInheritance } from "./SettingInheritance";
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 
@@ -300,11 +301,22 @@ export function SettingsRow({
     serverScoped &&
     !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
   const inheritedFrom =
-    source === "environment" && context?.scope.kind === "checkout"
+    source === "environment" && context?.scope.environmentIds.length === 1
       ? (context.environments.find(
           (environment) => environment.environmentId === context.scope.environmentIds[0],
         )?.label ?? "environment")
       : "environment";
+  const environmentSettingsById = useMemo(
+    () =>
+      new Map(
+        (context?.connectedEnvironments ?? []).flatMap((environment) =>
+          environment.serverConfig
+            ? [[environment.environmentId, environment.serverConfig.settings] as const]
+            : [],
+        ),
+      ),
+    [context?.connectedEnvironments],
+  );
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton
@@ -352,15 +364,28 @@ export function SettingsRow({
     ) : (
       control
     );
-  const renderedStatus = mixed
+  // Server rows get a caption that opens the resolution chain per target;
+  // client rows and rows without settings keys keep their plain status.
+  const summary = mixed
     ? isProjectScope
-      ? "Mixed across selected checkouts"
+      ? "Mixed across selected environments"
       : "Mixed across selected environments"
     : source === "project"
       ? "Overridden for this project"
       : source === "environment" && scopedKeys.length > 0
         ? `Inherited from ${inheritedFrom}`
-        : status;
+        : null;
+  const renderedStatus =
+    summary !== null && context && serverScoped && settingKeys.length > 0 ? (
+      <SettingInheritance
+        summary={summary}
+        targets={context.targets}
+        environmentSettingsById={environmentSettingsById}
+        keys={settingKeys}
+      />
+    ) : (
+      (summary ?? status)
+    );
 
   return (
     <div

@@ -10,6 +10,7 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   applyProviderInstanceSettings,
@@ -25,6 +26,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
+import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -55,8 +57,11 @@ export function SourceControlWritingSettingsSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment } = useSettingsScope();
-  const environmentId = scope.kind === "environment" ? scope.environmentId : null;
+  const { environment, connectedEnvironments } = useSettingsScope();
+  // The representative supplies the provider list; a model choice is checked
+  // against every target before it fans out.
+  const environmentId = environment?.environmentId ?? null;
+  const hasServerTargets = connectedEnvironments.length > 0;
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const writingStyleMixed = useScopedSettingsMixed(["sourceControlWritingStyle"]);
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
@@ -97,6 +102,7 @@ export function SourceControlWritingSettingsSection() {
     activeSelection.instanceId,
     activeSelection.model,
   );
+  const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
 
   return (
     <SettingsSection id="source-control-text-generation" title="Text generation">
@@ -253,9 +259,9 @@ export function SourceControlWritingSettingsSection() {
         {...searchableSetting("source-control-writer-model")}
         description="Model for source control text and branch or bookmark names. Off uses the environment's text generation model."
         control={
-          environmentId === null ? (
+          !hasServerTargets ? (
             <span className="text-sm text-muted-foreground">
-              Select an environment to choose its source control writer model.
+              Connect an environment to choose its source control writer model.
             </span>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-2">
@@ -284,7 +290,17 @@ export function SourceControlWritingSettingsSection() {
                         },
                       }
                     : {})}
+                  getModelDisabledReason={writerModelDisabledReason}
                   onInstanceModelChange={(instanceId, model) => {
+                    const reason = writerModelDisabledReason(instanceId, model);
+                    if (reason) {
+                      toastManager.add({
+                        type: "error",
+                        title: "Source control writer model not saved",
+                        description: reason,
+                      });
+                      return;
+                    }
                     updateSettings({
                       sourceControlWriterModelSelection: createModelSelection(instanceId, model),
                     });

@@ -10,27 +10,31 @@ edit its settings, or leave **All environments** to edit every connected environ
 Offline environments keep their current values; this is a bulk edit, not a synced global default.
 Providers, keybindings and diagnostics need a single environment.
 
-Choose a project to override settings for it. Where a repository is registered more than once on
-the selected environments, the project can be narrowed to one checkout. Each row shows whether the
-value is inherited from the environment or overridden for the project, and an override can be
-reset to inherit again. Settings that cannot be overridden by a project are shown read-only while
-a project is selected. Mixed values mean the selected environments or checkouts disagree.
+Choose a project to override settings for it on the selected environments. Each row shows whether
+the value is inherited from the environment or overridden for the project; open that caption to see
+the full chain, from the built-in default through the environment to the project, on every selected
+environment. An override can be reset to inherit again. Settings that cannot be overridden by a
+project are shown read-only while a project is selected. Mixed values mean the selected
+environments disagree.
+
+Providers and diagnostics are per machine and ask for a single environment. Keybindings and every
+other environment setting fan out to the selection like the rest.
 
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
 access, Source Control contains automatic pull and text generation, and Actions manages commands.
 The same rows edit environment defaults or project overrides depending on the project selector.
-The Overview category, shown while a project is selected, holds the project's name, icon,
+The Project category, shown while a project is selected, holds the project's name, icon,
 checkouts and default merge method.
 
 Changing an environment default preserves explicit project overrides. For workspace mode, a
 project's `t3.json` preference applies when the project has no override. Browser access changes
 apply when an agent session next starts.
 
-Environment actions are available to inheriting checkouts. Editing a project's actions creates an
-independent list; reset that list to inherit again. Select a single checkout to import actions
-from its `t3.json`. Project grouping has a device-wide default with individual checkout overrides.
+Environment actions are available to inheriting projects. Editing a project's actions creates an
+independent list; reset that list to inherit again. A project's `t3.json` actions can be imported
+from the Actions page. Project grouping has a device-wide default with individual checkout overrides.
 
 ## Project icons
 

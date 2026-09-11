@@ -31,8 +31,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
-import { useEnvironmentSettings, useUpdateClientSettings } from "../../hooks/useSettings";
-import { useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useEnvironmentSettings,
+  useUpdateClientSettings,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
@@ -568,7 +571,9 @@ export function EnvironmentProviderSettings({
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
-  const updateSettings = useUpdateScopedSettings();
+  // Provider instances hold per-machine credentials and binaries, so this
+  // page always edits exactly the environment it displays.
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;

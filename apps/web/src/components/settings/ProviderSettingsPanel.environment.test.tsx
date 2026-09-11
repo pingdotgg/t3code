@@ -87,10 +87,7 @@ vi.mock("../../hooks/useSettings", () => ({
     settingsState.readEnvironmentIds.push(environmentId);
     return settingsState.value;
   },
-}));
-
-vi.mock("./useScopedSettings", () => ({
-  useUpdateScopedSettings: () => settingsState.updateSettings,
+  useUpdateEnvironmentSettings: () => settingsState.updateSettings,
 }));
 
 vi.mock("../../environments/primary", () => ({

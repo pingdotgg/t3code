@@ -1330,7 +1330,10 @@ function BrowserKeybindingNotice() {
 }
 
 export function KeybindingsSettingsPanel() {
-  const { environment: primaryEnvironment } = useSettingsScope();
+  // The representative environment supplies the displayed bindings; edits
+  // fan out to every connected environment in the selection, so one
+  // shortcut change reaches each machine the user runs T3 Code on.
+  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
   const keybindings = primaryEnvironment?.serverConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
@@ -1406,17 +1409,19 @@ export function KeybindingsSettingsPanel() {
         ...(input.replace ? { replace: input.replace } : {}),
       };
       void (async () => {
-        const result = await upsertKeybinding({
-          environmentId: primaryEnvironment.environmentId,
-          input: payload,
-        });
+        const results = await Promise.all(
+          connectedEnvironments.map((target) =>
+            upsertKeybinding({ environmentId: target.environmentId, input: payload }),
+          ),
+        );
         setSavingCommand(null);
-        if (result._tag === "Success") {
+        const failed = results.find((result) => result._tag === "Failure");
+        if (!failed) {
           setIsAddingBinding(false);
           return;
         }
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
+        if (!isAtomCommandInterrupted(failed)) {
+          const error = squashAtomCommandFailure(failed);
           toastManager.add({
             title: "Unable to save keybinding",
             description: error instanceof Error ? error.message : "The keybinding was not saved.",
@@ -1425,7 +1430,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [primaryEnvironment, upsertKeybinding],
+    [connectedEnvironments, primaryEnvironment, upsertKeybinding],
   );
 
   const removeKeybinding = useCallback(
@@ -1433,12 +1438,17 @@ export function KeybindingsSettingsPanel() {
       if (!primaryEnvironment) return;
       setSavingCommand(row.command);
       void (async () => {
-        const result = await removeKeybindingMutation({
-          environmentId: primaryEnvironment.environmentId,
-          input: rowKeybindingTarget(row),
-        });
+        const results = await Promise.all(
+          connectedEnvironments.map((target) =>
+            removeKeybindingMutation({
+              environmentId: target.environmentId,
+              input: rowKeybindingTarget(row),
+            }),
+          ),
+        );
         setSavingCommand(null);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
+        if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add({
             title: "Unable to remove keybinding",
@@ -1448,7 +1458,7 @@ export function KeybindingsSettingsPanel() {
         }
       })();
     },
-    [primaryEnvironment, removeKeybindingMutation],
+    [connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
   );
 
   const resetKeybinding = useCallback(

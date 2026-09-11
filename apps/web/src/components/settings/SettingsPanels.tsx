@@ -70,6 +70,7 @@ import {
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
@@ -2033,12 +2034,12 @@ export function GeneralSettingsPanel() {
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
-  // A single environment, or one checkout on it, has a concrete provider
-  // list to pick models from. Aggregates do not, so those rows explain why.
-  const singleEnvironmentId =
-    scope.kind === "environment" || scope.kind === "checkout" ? scope.environmentId : null;
-  const isEnvironmentScope = singleEnvironmentId !== null;
-  const environmentId = singleEnvironmentId;
+  // The representative environment supplies the provider list for pickers;
+  // a fanned-out model choice is validated against every target before it
+  // is written. Per-machine tuning (background activity overrides) still
+  // needs exactly one environment.
+  const environmentId = environment?.environmentId ?? null;
+  const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
@@ -2086,6 +2087,10 @@ export function GeneralSettingsPanel() {
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const textGenerationModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    textGenerationModelInstanceEntries,
   );
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
@@ -2528,7 +2533,9 @@ export function GeneralSettingsPanel() {
                     {BACKGROUND_ACTIVITY_PROFILE_LABELS["battery-saver"]}
                   </SelectItem>
                   <SelectItem hideIndicator value="advanced" disabled={!isEnvironmentScope}>
-                    {BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced}
+                    {isEnvironmentScope
+                      ? BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced
+                      : `${BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS.advanced} (one environment)`}
                   </SelectItem>
                 </SelectPopup>
               </Select>
@@ -2749,7 +2756,7 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("text-generation-model")}
           description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it."
           resetAction={
-            scope.kind === "environment" && isTextGenerationModelDirty ? (
+            hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
@@ -2762,11 +2769,9 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            !isEnvironmentScope ? (
+            !hasServerTargets ? (
               <span className="text-sm text-muted-foreground">
-                {hasServerTargets
-                  ? "Select one environment or checkout to choose its text generation model."
-                  : "Connect an environment to choose its text generation model."}
+                Connect an environment to choose its text generation model.
               </span>
             ) : !hasTextGenerationProvider ? (
               <span className="text-sm text-muted-foreground">
@@ -2782,6 +2787,7 @@ export function GeneralSettingsPanel() {
                   modelOptionsByInstance={textGenerationModelOptionsByInstance}
                   triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  getModelDisabledReason={textGenerationModelDisabledReason}
                   {...(environmentId
                     ? {
                         onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
@@ -2793,6 +2799,15 @@ export function GeneralSettingsPanel() {
                       }
                     : {})}
                   onInstanceModelChange={(instanceId, model) => {
+                    const reason = textGenerationModelDisabledReason(instanceId, model);
+                    if (reason) {
+                      toastManager.add({
+                        type: "error",
+                        title: "Text generation model not saved",
+                        description: reason,
+                      });
+                      return;
+                    }
                     updateSettings({
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {

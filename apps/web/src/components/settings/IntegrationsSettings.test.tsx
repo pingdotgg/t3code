@@ -41,6 +41,15 @@ vi.mock("./settingsLayout", async (importOriginal) => ({
 // The scoped agent-access rows need the settings layout's scope provider;
 // this test covers the device-local browser sections only.
 vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
+vi.mock("./SettingsScopeContext", () => ({
+  useSettingsScope: () => ({
+    scope: { kind: "all", environmentIds: [] },
+    environment: null,
+    connectedEnvironments: [],
+    targets: [],
+  }),
+  useOptionalSettingsScope: () => null,
+}));
 
 import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
 import { platformSetupStatus } from "../device/DeviceSetup";
