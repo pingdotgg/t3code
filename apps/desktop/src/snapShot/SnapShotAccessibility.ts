@@ -20,7 +20,7 @@ export type AccessibleWindowIdentity = {
   readonly title: string;
   readonly bounds: Electron.Rectangle;
   readonly clientBounds?: Electron.Rectangle;
-  readonly owner: { readonly processId: number };
+  readonly owner: { readonly processId: number; readonly bundleId?: string };
   readonly accessibilityBoundsReliable?: boolean;
 };
 
@@ -112,7 +112,14 @@ async function readCapturedWindowAccessibility(
   const matchMode = isWaylandSession(platform, process.env) ? "wayland" : "screen-bounds";
   const window = findAccessibleWindow(
     windows,
-    { title: active.title, sourceTitle, bounds: active.bounds, clientBounds: active.clientBounds },
+    {
+      title: active.title,
+      sourceTitle,
+      bounds: active.bounds,
+      clientBounds: active.clientBounds,
+      platform,
+      bundleId: active.owner.bundleId,
+    },
     matchMode,
   );
   if (!window) {
