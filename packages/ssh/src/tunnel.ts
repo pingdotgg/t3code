@@ -329,12 +329,13 @@ NODE
 }
 
 ensure_remote_node_path() {
+  prepend_path_if_dir "$HOME/.local/bin"
+  prepend_path_if_dir "$HOME/bin"
+
   if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
     return 0
   fi
 
-  prepend_path_if_dir "$HOME/.local/bin"
-  prepend_path_if_dir "$HOME/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"

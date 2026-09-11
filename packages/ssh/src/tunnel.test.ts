@@ -113,6 +113,10 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, "require_installed_t3_cli npm exec --yes --package 't3@latest'");
     assert.include(script, "npm produced no t3 executable");
     assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
+    assert.isBelow(
+      script.indexOf('prepend_path_if_dir "$HOME/.local/bin"'),
+      script.indexOf("if command -v node >/dev/null 2>&1"),
+    );
     assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
     assert.include(script, "remote_node_satisfies_engine()");
     assert.include(script, "function satisfiesSemverRange");
