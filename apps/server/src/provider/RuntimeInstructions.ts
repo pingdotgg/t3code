@@ -19,3 +19,13 @@ export function buildRuntimeInstructions(runtime: {
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
 }
+
+/** Keep the saved agent role separate from harness-owned operating instructions. */
+export function withAgentInstructions(
+  runtimeInstructions: string,
+  agentInstructions?: string,
+): string {
+  return agentInstructions?.trim()
+    ? `${runtimeInstructions}\n\n# Assigned agent instructions\n\n${agentInstructions.trim()}`
+    : runtimeInstructions;
+}

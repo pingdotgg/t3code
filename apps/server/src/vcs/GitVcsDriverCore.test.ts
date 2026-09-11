@@ -1382,6 +1382,30 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("applies a bounded patch through git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.applyPatch({
+          cwd,
+          patch: [
+            "diff --git a/README.md b/README.md",
+            "index 8c1384d..3be9c81 100644",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1,2 @@",
+            " # test",
+            "+patched",
+            "",
+          ].join("\n"),
+        });
+
+        assert.match(yield* git(cwd, ["diff", "--", "README.md"]), /\+patched/u);
+      }),
+    );
+
     it.effect("creates, checks out, renames, and lists refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

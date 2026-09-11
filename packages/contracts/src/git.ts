@@ -116,6 +116,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
+  draft: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
@@ -166,6 +167,12 @@ export const VcsRemoveWorktreeInput = Schema.Struct({
   force: Schema.optional(Schema.Boolean),
 });
 export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
+
+export const VcsApplyPatchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  patch: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_048_576)),
+});
+export type VcsApplyPatchInput = typeof VcsApplyPatchInput.Type;
 
 export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,

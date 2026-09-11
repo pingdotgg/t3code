@@ -1,4 +1,4 @@
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withAgentInstructions } from "../RuntimeInstructions.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -386,6 +386,7 @@ describe("ClaudeAdapterLive", () => {
         threadId: THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
+        agentInstructions: "Act as the planning agent.",
       });
 
       const createInput = harness.getLastCreateQueryInput();
@@ -393,7 +394,10 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.systemPrompt, {
         type: "preset",
         preset: "claude_code",
-        append: buildRuntimeInstructions({ harness: "Claude Code" }),
+        append: withAgentInstructions(
+          buildRuntimeInstructions({ harness: "Claude Code" }),
+          "Act as the planning agent.",
+        ),
       });
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);

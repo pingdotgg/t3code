@@ -17,7 +17,7 @@ import {
 const primaryId = EnvironmentId.make("env-primary");
 const laptopId = EnvironmentId.make("env-laptop");
 const boxId = EnvironmentId.make("env-box");
-const restartCapabilities = { threadRestartContinuation: true };
+const restartCapabilities = { threadRestartContinuation: true, agentLibrarySync: true };
 
 describe("supportsSharedSettingsSync", () => {
   it("accepts only connected servers that advertise the shared-settings capability", () => {
@@ -112,6 +112,8 @@ describe("pickSharedServerSettings", () => {
       Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS, restartCapabilities)).sort(),
     ).toEqual([
       "continueThreadsAfterServerUpdate",
+      "mcpGatewayProfileDeletedAt",
+      "mcpGatewayProfiles",
       "newWorktreesStartFromOrigin",
       "sidebarAutoSettleAfterDays",
       "sidebarAutoSettleOnMerge",
@@ -387,4 +389,56 @@ describe("findSharedSettingsMismatches", () => {
     });
     expect(mismatches).toEqual([]);
   });
+});
+
+it("shares the complete profile list, detects revisions drifting, and propagates deletions", () => {
+  const profiles = [
+    {
+      profileId: "write",
+      name: "Write",
+      revision: 2,
+      providerLabel: "Codex",
+      modelLabel: "GPT",
+      runtimeMode: "approval-required" as const,
+      interactionMode: "default" as const,
+      createdAt: "2026-09-06T00:00:00.000Z",
+      updatedAt: "2026-09-06T01:00:00.000Z",
+    },
+  ];
+  expect(splitSharedServerPatch({ mcpGatewayProfiles: profiles })).toEqual({
+    sharedPatch: { mcpGatewayProfiles: profiles },
+    localPatch: {},
+  });
+  expect(splitSharedServerPatch({ mcpGatewayProfiles: [] }).sharedPatch).toEqual({
+    mcpGatewayProfiles: [],
+  });
+  expect(
+    findSharedSettingsMismatches({
+      primaryEnvironmentId: primaryId,
+      primaryCapabilities: { agentLibrarySync: true },
+      primarySettings: { ...DEFAULT_SERVER_SETTINGS, mcpGatewayProfiles: profiles },
+      environments: [
+        {
+          environmentId: laptopId,
+          label: "Laptop",
+          syncEligible: true,
+          capabilities: { agentLibrarySync: true },
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            mcpGatewayProfiles: [{ ...profiles[0]!, revision: 1 }],
+          },
+        },
+      ],
+    }),
+  ).toEqual([{ environmentId: laptopId, label: "Laptop" }]);
+});
+
+it("filters agent replication fields from older servers without dropping supported preferences", () => {
+  const patch = {
+    sidebarAutoSettleAfterDays: 7,
+    mcpGatewayProfiles: [],
+    mcpGatewayProfileDeletedAt: { deleted: "2026-09-08T00:00:00Z" },
+  };
+  expect(filterSharedServerPatch(patch, {})).toEqual({ sidebarAutoSettleAfterDays: 7 });
+  expect(filterSharedServerPatch(patch, { agentLibrarySync: true })).toEqual(patch);
 });

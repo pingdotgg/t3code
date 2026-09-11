@@ -50,6 +50,8 @@ export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
+export type ControlThreadLifecycleInput = CommandInput<"thread.lifecycle.control">;
+export type RespondToThreadApprovalsInput = CommandInput<"thread.approval.batch-respond">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
@@ -318,6 +320,28 @@ export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEf
     createdAt: metadata.createdAt,
   });
 });
+
+export const controlThreadLifecycle: (input: ControlThreadLifecycleInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.controlThreadLifecycle")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.lifecycle.control",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const respondToThreadApprovals: (input: RespondToThreadApprovalsInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.respondToThreadApprovals")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.approval.batch-respond",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
 
 export const respondToThreadApproval: (input: RespondToThreadApprovalInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.respondToThreadApproval")(function* (input) {

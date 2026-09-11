@@ -30,3 +30,13 @@ export function isInsideRestingComposerControlScope(target: EventTarget | null):
       isInsideComposerFloatingLayer(target))
   );
 }
+
+/** Window-level shortcuts and paste belong to only one visible composer. */
+export function isComposerEventForSurface(
+  target: EventTarget | null,
+  embeddedSurface: Element | null,
+): boolean {
+  const targetSurface =
+    target instanceof Element ? target.closest("[data-embedded-chat-composer]") : null;
+  return targetSurface === embeddedSurface;
+}

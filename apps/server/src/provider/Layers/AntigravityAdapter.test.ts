@@ -448,9 +448,15 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         runtimeMode: "approval-required",
       });
       const sending = yield* h.adapter
-        .sendTurn({ threadId, input: "Read the file" })
+        .sendTurn({ threadId, input: "Read the file", agentInstructions: "Act as the code agent." })
         .pipe(Effect.forkChild);
       const prompt = yield* h.nextPrompt;
+      expect(
+        prompt.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n"),
+      ).toContain("Act as the code agent.");
       yield* h.emitNative({ _tag: "ThoughtDelta", text: "I will read it.", rawPayload: {} });
       yield* h.emitNative({
         _tag: "ToolCallUpdated",

@@ -1814,6 +1814,17 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  actionItems.push({
+    kind: "action",
+    value: "action:agents",
+    searchTerms: ["Open agents", "board", "profiles", "specialists"],
+    title: "Open agents",
+    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/agents" });
+    },
+  });
+
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).
   const contextualProjectGroup =
@@ -1961,6 +1972,11 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
+        if (pathname === "/agents" || pathname.startsWith("/agents/")) {
+          await navigate({ to: "/agents" });
+          setOpen(false);
+          return;
+        }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -2018,6 +2034,17 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      if (pathname === "/agents" || pathname.startsWith("/agents/")) {
+        await navigate({ to: "/agents" });
+        setOpen(false);
+        toastManager.add({
+          type: "success",
+          title: "Project added",
+          description: "Select it when starting your next agent chat.",
+        });
+        return;
+      }
+
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
@@ -2035,6 +2062,7 @@ function OpenCommandPaletteDialog(props: {
       setOpen(false);
     },
     [
+      pathname,
       handleNewThread,
       createProject,
       environments,

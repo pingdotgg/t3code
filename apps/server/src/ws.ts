@@ -92,6 +92,7 @@ import { makeLiveStreamBudget, type RetainedLiveItem } from "./orchestration/Liv
 import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
+  resolveThreadCreateProfile,
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -1115,11 +1116,14 @@ const makeWsRpcLayer = (
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
-              const created = yield* dispatchFromClient({
+              const createCommand: Extract<OrchestrationCommand, { type: "thread.create" }> = {
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
                 projectId: bootstrap.createThread.projectId,
+                ...(bootstrap.createThread.profileSelection === undefined
+                  ? {}
+                  : { profileSelection: bootstrap.createThread.profileSelection }),
                 title: bootstrap.createThread.title,
                 modelSelection: bootstrap.createThread.modelSelection,
                 runtimeMode: bootstrap.createThread.runtimeMode,
@@ -1127,7 +1131,32 @@ const makeWsRpcLayer = (
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
                 createdAt: bootstrap.createThread.createdAt,
-              });
+              };
+              // Bootstrap sub-commands go straight to the engine, so resolve the
+              // agent here just as the standalone thread.create RPC does.
+              const resolvedCreateCommand = createCommand.profileSelection
+                ? yield* Effect.all([
+                    serverSettings.getSettings,
+                    providerRegistry.getProviders,
+                  ]).pipe(
+                    Effect.flatMap(([settings, providers]) =>
+                      Effect.try({
+                        try: () =>
+                          resolveThreadCreateProfile(
+                            createCommand,
+                            settings.mcpGatewayProfiles,
+                            providers,
+                          ) as OrchestrationCommand,
+                        catch: (cause) =>
+                          toDispatchCommandError(
+                            cause,
+                            "Could not resolve the agent for this chat",
+                          ),
+                      }),
+                    ),
+                  )
+                : createCommand;
+              const created = yield* dispatchFromClient(resolvedCreateCommand);
               // The successful create is a fence in the engine command queue:
               // every delete for the prior incarnation committed before it.
               // Drain through that event before setup or turn start can own
@@ -1398,6 +1427,23 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getCommandReceipts]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getCommandReceipts,
+            Effect.gen(function* () {
+              const receipts = yield* orchestrationEngine.getCommandReceipts(input.commandIds);
+              return { receipts };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to read orchestration command receipts.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.getWorkflowScript]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getWorkflowScript,
@@ -1444,6 +1490,62 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.subscribeEvents]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_WS_METHODS.subscribeEvents,
+            Effect.gen(function* () {
+              // Attach the live queue before reading the durable head so no event
+              // can fall into a replay/live handoff gap.
+              const liveBudget = yield* makeLiveStreamBudget();
+              const liveBuffer = yield* Queue.unbounded<
+                RetainedLiveItem<OrchestrationEvent>,
+                OrchestrationGetSnapshotError
+              >();
+              let closed = false;
+              const closeBuffer = (error?: OrchestrationGetSnapshotError) =>
+                Effect.gen(function* () {
+                  if (closed) return;
+                  closed = true;
+                  liveBudget.release(yield* Queue.clear(liveBuffer).pipe(Effect.orDie));
+                  if (error) yield* Queue.fail(liveBuffer, error);
+                  yield* Queue.shutdown(liveBuffer);
+                });
+              yield* Effect.addFinalizer(() => closeBuffer());
+              yield* liveBudget.failed.pipe(
+                Effect.catchTags({ OrchestrationGetSnapshotError: closeBuffer }),
+                Effect.forkScoped,
+              );
+              yield* Effect.forkScoped(
+                orchestrationEngine.streamDomainEvents.pipe(
+                  Stream.runForEach((event) =>
+                    liveBudget.retain(event).pipe(
+                      Effect.flatMap((item) => Queue.offer(liveBuffer, item)),
+                      Effect.uninterruptible,
+                    ),
+                  ),
+                  Effect.raceFirst(liveBudget.failed),
+                  Effect.catchTags({ OrchestrationGetSnapshotError: () => Effect.void }),
+                ),
+                { startImmediately: true },
+              );
+              const headSequence = yield* orchestrationEngine.latestSequence;
+              const replayGap = Math.max(0, headSequence - input.afterSequence);
+              const replay = orchestrationEngine.readEvents(input.afterSequence, replayGap).pipe(
+                Stream.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: "Failed to replay orchestration events",
+                      cause,
+                    }),
+                ),
+              );
+              const live = liveBudget
+                .deliver(Stream.fromQueue(liveBuffer))
+                .pipe(Stream.filter((event) => event.sequence > headSequence));
+              return Stream.concat(replay, live);
+            }),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input) =>
@@ -2011,11 +2113,11 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch, replicateProfiles }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
             serverSettings
-              .updateSettings(patch)
+              .updateSettings(patch, replicateProfiles)
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
@@ -2627,6 +2729,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
             gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsApplyPatch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsApplyPatch,
+            gitWorkflow.applyPatch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

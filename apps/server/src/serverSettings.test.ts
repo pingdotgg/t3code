@@ -181,6 +181,96 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("owns gateway profile revisions and timestamps on the server", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const requested = {
+        profileId: "profile-andy",
+        name: "Andy",
+        revision: 99,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: "2000-01-01T00:00:00.000Z",
+        updatedAt: "2000-01-01T00:00:00.000Z",
+      };
+
+      const created = yield* serverSettings.updateSettings({ mcpGatewayProfiles: [requested] });
+      assert.equal(created.mcpGatewayProfiles[0]?.revision, 1);
+      assert.notEqual(created.mcpGatewayProfiles[0]?.createdAt, requested.createdAt);
+
+      const updated = yield* serverSettings.updateSettings({
+        mcpGatewayProfiles: [{ ...requested, name: "Andy 2", revision: 1 }],
+      });
+      assert.equal(updated.mcpGatewayProfiles[0]?.revision, 2);
+      assert.equal(
+        updated.mcpGatewayProfiles[0]?.createdAt,
+        created.mcpGatewayProfiles[0]?.createdAt,
+      );
+      assert.notEqual(updated.mcpGatewayProfiles[0]?.updatedAt, requested.updatedAt);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("replicates stamped profile revisions and resumes local revision ownership", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const profile = {
+        profileId: "shared-write",
+        name: "Write",
+        revision: 7,
+        providerLabel: "Codex",
+        modelLabel: "GPT",
+        runtimeMode: "approval-required" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-06T00:00:00.000Z",
+      };
+      const replicated = yield* settings.updateSettings({ mcpGatewayProfiles: [profile] }, true);
+      assert.deepEqual(replicated.mcpGatewayProfiles, [profile]);
+      const edited = yield* settings.updateSettings({
+        mcpGatewayProfiles: [{ ...profile, name: "Review" }],
+      });
+      assert.equal(edited.mcpGatewayProfiles[0]?.revision, 8);
+      const repeated = yield* settings.updateSettings(
+        { mcpGatewayProfiles: edited.mcpGatewayProfiles },
+        true,
+      );
+      assert.deepEqual(repeated.mcpGatewayProfiles, edited.mcpGatewayProfiles);
+      const deleted = yield* settings.updateSettings({ mcpGatewayProfiles: [] });
+      assert.deepEqual(deleted.mcpGatewayProfiles, []);
+      const stale = yield* settings.updateSettings({ mcpGatewayProfiles: [profile] }, true);
+      assert.deepEqual(stale.mcpGatewayProfiles, []);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("rejects duplicate gateway profile names at the server boundary", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const base = {
+        name: "Andy",
+        revision: 0,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: "2000-01-01T00:00:00.000Z",
+        updatedAt: "2000-01-01T00:00:00.000Z",
+      };
+
+      const error = yield* serverSettings
+        .updateSettings({
+          mcpGatewayProfiles: [
+            { ...base, profileId: "profile-andy-1" },
+            { ...base, profileId: "profile-andy-2" },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "normalize");
+      assert.match(String(error.cause), /Duplicate MCP gateway profile name: Andy/);
+      assert.deepEqual((yield* serverSettings.getSettings).mcpGatewayProfiles, []);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

@@ -135,6 +135,31 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ServerSettings MCP gateway profiles", () => {
+  it("stores revisioned server-owned profiles including read-only profiles", () => {
+    const profile = {
+      profileId: "profile-andy",
+      name: "Andy",
+      revision: 3,
+      modelSelection: { instanceId: "codex", model: "gpt-5.6" },
+      reasoningEffort: "high",
+      runtimeMode: "read-only" as const,
+      interactionMode: "default" as const,
+      environmentIds: ["local"],
+      createdAt: "2026-09-04T00:00:00.000Z",
+      updatedAt: "2026-09-04T01:00:00.000Z",
+    };
+
+    expect(decodeServerSettings({ mcpGatewayProfiles: [profile] }).mcpGatewayProfiles).toEqual([
+      profile,
+    ]);
+    expect(decodeServerSettingsPatch({ mcpGatewayProfiles: [profile] }).mcpGatewayProfiles).toEqual(
+      [profile],
+    );
+    expect(DEFAULT_SERVER_SETTINGS.mcpGatewayProfiles).toEqual([]);
+  });
+});
+
 describe("ClientSettings diff colors", () => {
   it("keeps red and green for existing settings without a saved palette", () => {
     expect(decodeClientSettings({}).diffColorScheme).toBe("red-green");

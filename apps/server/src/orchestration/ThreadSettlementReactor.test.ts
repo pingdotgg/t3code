@@ -605,6 +605,157 @@ describe("ThreadSettlementReactor", () => {
     ),
   );
 
+  it.effect("automatically settles an agent chat when its branch PR merges", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const pullRequest = yield* Ref.make<"open" | "merged">("open");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("open-pr", {
+              branch: "saved-feature",
+              profileSnapshot: {
+                profileId: "cody",
+                profileName: "Cody",
+                revision: 1,
+                effectiveSource: {
+                  modelSelection: "profile",
+                  runtimeMode: "profile",
+                  interactionMode: "profile",
+                  reasoningEffort: "profile",
+                },
+              },
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+            }),
+          ]),
+          branchPullRequest: () =>
+            Ref.get(pullRequest).pipe(Effect.map((state) => makeBranchPullRequest(state))),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* Ref.set(pullRequest, "merged");
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands))
+              .map((command) => command.threadId)
+              .sort((left, right) => left.localeCompare(right)),
+            [ThreadId.make("open-pr")],
+          );
+          assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect(
+    "settles every agent chat linked to a merged PR, including branch-discovered links",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const merged = yield* Ref.make(false);
+          const reference = {
+            projectId: PROJECT_ID,
+            repository: "owner/repository",
+            number: 42,
+            url: "https://example.test/owner/repository/pull/42",
+          };
+          const threads = ["cody", "alex", "peter"].map((profileId, index) =>
+            makeThread(profileId, {
+              latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+              profileSnapshot: {
+                profileId,
+                profileName: profileId,
+                revision: 1,
+                effectiveSource: {
+                  modelSelection: "profile",
+                  runtimeMode: "profile",
+                  interactionMode: "profile",
+                  reasoningEffort: "profile",
+                },
+              },
+              ...(index === 0
+                ? {
+                    pullRequests: [
+                      {
+                        host: "example.test",
+                        repository: reference.repository,
+                        number: 42,
+                        url: reference.url,
+                        source: "agent" as const,
+                        linkedAt: "2026-08-27T00:00:00.000Z",
+                        snapshot: null,
+                        stack: null,
+                      },
+                    ],
+                  }
+                : {}),
+              ...(index === 2
+                ? { branchPullRequest: reference }
+                : { linkedPullRequest: reference }),
+            }),
+          );
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              ...threads,
+              makeThread("unrelated", {
+                latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+                linkedPullRequest: { ...reference, number: 99 },
+              }),
+            ]),
+            pullRequestSummary: (input) =>
+              Ref.get(merged).pipe(
+                Effect.map((done) =>
+                  makePullRequestSummary({
+                    ...input,
+                    state: done && input.number === 42 ? "merged" : "open",
+                  }),
+                ),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+            yield* Ref.set(merged, true);
+            yield* Ref.update(fixture.snapshots, (snapshot) => ({
+              ...snapshot,
+              threads: snapshot.threads.map((thread) => ({
+                ...thread,
+                pullRequests: thread.pullRequests.map((link) => ({
+                  ...link,
+                  snapshot: {
+                    state: "merged" as const,
+                    title: "Agent work",
+                    headBranch: "feature",
+                    baseBranch: "main",
+                    isDraft: false,
+                    updatedAt: NOW,
+                    mergedAt: NOW,
+                    syncedAt: NOW,
+                  },
+                })),
+              })),
+            }));
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map((command) => command.threadId).sort(),
+              ["alex", "cody", "peter"],
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("reevaluates immediately after a pull request merge", () =>
     Effect.scoped(
       Effect.gen(function* () {

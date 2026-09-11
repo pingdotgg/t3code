@@ -7,6 +7,7 @@ import {
   GitCommandError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
+  type VcsApplyPatchInput,
   type VcsCreateRefInput,
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
@@ -95,6 +96,7 @@ export class GitWorkflowService extends Context.Service<
     readonly createRef: (
       input: VcsCreateRefInput,
     ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
+    readonly applyPatch: (input: VcsApplyPatchInput) => Effect.Effect<void, GitCommandError>;
     readonly switchRef: (
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
@@ -339,6 +341,11 @@ export const make = Effect.gen(function* () {
     createRef: (input) =>
       ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(
         Effect.andThen(git.createRef(input)),
+      ),
+    applyPatch: (input) =>
+      ensureGitCommand("GitWorkflowService.applyPatch", input.cwd).pipe(
+        Effect.andThen(git.applyPatch(input)),
+        Effect.tap(() => gitManager.invalidateStatus(input.cwd)),
       ),
     switchRef: (input) =>
       ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(

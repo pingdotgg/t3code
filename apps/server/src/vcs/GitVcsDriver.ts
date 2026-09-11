@@ -14,6 +14,7 @@ import {
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
+  type VcsApplyPatchInput,
   type VcsCreateRefInput,
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
@@ -331,6 +332,7 @@ export class GitVcsDriver extends Context.Service<
     readonly createRef: (
       input: VcsCreateRefInput,
     ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
+    readonly applyPatch: (input: VcsApplyPatchInput) => Effect.Effect<void, GitCommandError>;
     readonly switchRef: (
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;

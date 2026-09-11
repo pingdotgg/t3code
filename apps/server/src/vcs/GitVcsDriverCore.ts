@@ -3271,6 +3271,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const applyPatch: GitVcsDriver.GitVcsDriver["Service"]["applyPatch"] = Effect.fn("applyPatch")(
+    function* (input) {
+      yield* executeGit(
+        "GitVcsDriver.applyPatch",
+        input.cwd,
+        ["apply", "--whitespace=nowarn", "-"],
+        {
+          stdin: input.patch,
+          timeoutMs: 30_000,
+          fallbackErrorDetail: "git apply failed",
+        },
+      );
+    },
+  );
+
   const createRef: GitVcsDriver.GitVcsDriver["Service"]["createRef"] = Effect.fn("createRef")(
     function* (input) {
       yield* executeGit("GitVcsDriver.createRef", input.cwd, ["branch", input.refName], {
@@ -3377,6 +3392,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
+    applyPatch: (input) => withListRefsInvalidation(input.cwd, applyPatch(input)),
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),
     initRepo: initRepoWithListRefsInvalidation,
     listLocalBranchNames,

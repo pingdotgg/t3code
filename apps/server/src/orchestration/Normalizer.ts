@@ -2,12 +2,17 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import {
   type ClientOrchestrationCommand,
   type UserInputAttachments,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type IsoDateTime,
+  type McpGatewayProfile,
   type OrchestrationCommand,
+  type OrchestrationProject,
+  type ProviderInstanceId,
+  type ServerProvider,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
@@ -20,8 +25,165 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+
+export function resolveThreadCreateProfile<
+  T extends {
+    readonly modelSelection?: McpGatewayProfile["modelSelection"] | undefined;
+    readonly runtimeMode?: McpGatewayProfile["runtimeMode"] | undefined;
+    readonly interactionMode?: McpGatewayProfile["interactionMode"] | undefined;
+    readonly profileSelection?:
+      | {
+          readonly profileId: string;
+          readonly revision: number;
+          readonly overrideFields: ReadonlyArray<
+            "modelSelection" | "runtimeMode" | "interactionMode" | "reasoningEffort"
+          >;
+        }
+      | undefined;
+  },
+>(
+  command: T,
+  profiles: ReadonlyArray<McpGatewayProfile>,
+  providers: ReadonlyArray<ServerProvider> = [],
+): T & { readonly profileSnapshot?: unknown } {
+  const selection = command.profileSelection;
+  if (selection === undefined) return command;
+  const profile = profiles.find((candidate) => candidate.profileId === selection.profileId);
+  if (profile === undefined || profile.revision !== selection.revision) {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' revision ${selection.revision} is stale or missing.`,
+    });
+  }
+  if (profile.runtimeMode === "read-only") {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' is read-only and cannot create a thread.`,
+    });
+  }
+  const overrides = new Set(selection.overrideFields);
+  if (overrides.has("modelSelection") && command.modelSelection === undefined) {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' requested a model override without a model selection.`,
+    });
+  }
+  const reasoningEffort = profile.reasoningEffort;
+  const readableMatches: ReadonlyArray<NonNullable<McpGatewayProfile["modelSelection"]>> =
+    profile.providerLabel === undefined || profile.modelLabel === undefined
+      ? []
+      : providers.flatMap((provider) => {
+          const providerLabel = provider.displayName?.trim() || provider.driver;
+          if (
+            provider.enabled !== true ||
+            provider.availability === "unavailable" ||
+            providerLabel !== profile.providerLabel
+          ) {
+            return [];
+          }
+          return provider.models
+            .filter(
+              (model) => model.slug === profile.modelLabel || model.name === profile.modelLabel,
+            )
+            .map((model) => ({ instanceId: provider.instanceId, model: model.slug }));
+        });
+  if (readableMatches.length > 1) {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' has an ambiguous provider/model selection (${profile.providerLabel} / ${profile.modelLabel}).`,
+    });
+  }
+  const profileModelSelection =
+    profile.modelSelection ?? readableMatches[0] ?? command.modelSelection;
+  if (profileModelSelection === undefined) {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' provider/model is no longer available (${profile.providerLabel ?? "unselected"} / ${profile.modelLabel ?? "unselected"}).`,
+    });
+  }
+  const baseModelSelection =
+    overrides.has("modelSelection") && command.modelSelection !== undefined
+      ? command.modelSelection
+      : profileModelSelection;
+  const inheritedOptions = baseModelSelection.options ?? [];
+  const modelSelection =
+    reasoningEffort === undefined || overrides.has("reasoningEffort")
+      ? baseModelSelection
+      : {
+          ...baseModelSelection,
+          options: [
+            ...inheritedOptions.filter((option) => option.id !== "reasoningEffort"),
+            { id: "reasoningEffort", value: reasoningEffort },
+          ],
+        };
+  const runtimeMode = overrides.has("runtimeMode") ? command.runtimeMode : profile.runtimeMode;
+  const interactionMode = overrides.has("interactionMode")
+    ? command.interactionMode
+    : profile.interactionMode;
+  if (runtimeMode === undefined || interactionMode === undefined) {
+    throw new OrchestrationDispatchCommandError({
+      message: `Gateway profile '${selection.profileId}' declared an override without an explicit value.`,
+    });
+  }
+  const source = (
+    field: "modelSelection" | "runtimeMode" | "interactionMode" | "reasoningEffort",
+  ) => (overrides.has(field) ? ("thread-override" as const) : ("profile" as const));
+  return {
+    ...command,
+    modelSelection,
+    runtimeMode,
+    interactionMode,
+    profileSnapshot: {
+      profileId: profile.profileId,
+      profileName: profile.name,
+      ...(profile.systemPrompt === undefined ? {} : { systemPrompt: profile.systemPrompt }),
+      revision: profile.revision,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      effectiveSource: {
+        modelSelection: source("modelSelection"),
+        runtimeMode: source("runtimeMode"),
+        interactionMode: source("interactionMode"),
+        reasoningEffort: source("reasoningEffort"),
+      },
+    },
+  };
+}
+
+export function resolveThreadCreateDefaults<
+  T extends { readonly projectId: string; readonly modelSelection?: unknown },
+>(
+  command: T,
+  projects: ReadonlyArray<Pick<OrchestrationProject, "id" | "defaultModelSelection">>,
+  providers: ReadonlyArray<ServerProvider>,
+): T & {
+  readonly modelSelection: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model: string;
+  };
+} {
+  const projectDefault = projects.find(
+    (project) => project.id === command.projectId,
+  )?.defaultModelSelection;
+  if (projectDefault !== undefined && projectDefault !== null) {
+    return { ...command, modelSelection: projectDefault };
+  }
+  const defaultProvider = providers.find(
+    (provider) => provider.status === "ready" && provider.models.some((model) => model.isDefault),
+  );
+  const defaultModel = defaultProvider?.models.find((model) => model.isDefault);
+  if (defaultProvider === undefined || defaultModel === undefined) {
+    throw new OrchestrationDispatchCommandError({
+      message: "No authoritative project or provider default model is available.",
+    });
+  }
+  return {
+    ...command,
+    modelSelection: {
+      instanceId: defaultProvider.instanceId,
+      model: defaultModel.slug,
+    },
+  };
+}
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -129,6 +291,80 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...canonicalCommand,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
       } satisfies OrchestrationCommand;
+    }
+
+    if (canonicalCommand.type === "thread.create") {
+      if (canonicalCommand.profileSelection === undefined) {
+        if (
+          canonicalCommand.modelSelection !== undefined &&
+          canonicalCommand.useServerDefaults !== true
+        ) {
+          return { ...canonicalCommand, profileSnapshot: undefined } as OrchestrationCommand;
+        }
+        const projection = yield* Effect.serviceOption(ProjectionSnapshotQuery);
+        const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
+        if (Option.isNone(projection) || Option.isNone(providerRegistry)) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: "Server defaults are unavailable for gateway thread configuration.",
+          });
+        }
+        const [snapshot, providers] = yield* Effect.all([
+          projection.value.getCommandReadModel(),
+          providerRegistry.value.getProviders,
+        ]);
+        return yield* Effect.try({
+          try: () =>
+            resolveThreadCreateDefaults(
+              canonicalCommand,
+              snapshot.projects,
+              providers,
+            ) as OrchestrationCommand,
+          catch: (cause) =>
+            new OrchestrationDispatchCommandError({
+              message:
+                typeof cause === "object" &&
+                cause !== null &&
+                "message" in cause &&
+                typeof cause.message === "string"
+                  ? cause.message
+                  : String(cause),
+            }),
+        });
+      }
+      const settingsService = yield* Effect.serviceOption(ServerSettingsService);
+      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
+      if (Option.isNone(settingsService) || Option.isNone(providerRegistry)) {
+        return yield* new OrchestrationDispatchCommandError({
+          message:
+            "Server settings or provider catalog is unavailable for gateway profile resolution.",
+        });
+      }
+      const [settings, providers] = yield* Effect.all([
+        settingsService.value.getSettings,
+        providerRegistry.value.getProviders,
+      ]);
+      return yield* Effect.try({
+        try: () =>
+          resolveThreadCreateProfile(
+            {
+              ...canonicalCommand,
+              modelSelection: canonicalCommand.modelSelection,
+              profileSelection: canonicalCommand.profileSelection,
+            },
+            settings.mcpGatewayProfiles,
+            providers,
+          ) as OrchestrationCommand,
+        catch: (cause) =>
+          new OrchestrationDispatchCommandError({
+            message:
+              typeof cause === "object" &&
+              cause !== null &&
+              "message" in cause &&
+              typeof cause.message === "string"
+                ? cause.message
+                : String(cause),
+          }),
+      });
     }
 
     if (

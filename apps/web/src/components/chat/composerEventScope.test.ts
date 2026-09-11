@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   isInsideCollapsedComposerControls,
+  isComposerEventForSurface,
   isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
@@ -76,5 +77,22 @@ describe("composer event scopes", () => {
       false,
     );
     expect(isInsideCollapsedComposerControls(null)).toBe(false);
+  });
+});
+
+describe("multiple composer shortcut ownership", () => {
+  it("routes a hover composer's shortcuts to that composer and leaves the page composer alone", () => {
+    vi.stubGlobal("Element", FakeElement);
+    const preview = new FakeElement("[data-embedded-chat-composer]") as unknown as Element;
+    const otherPreview = new FakeElement("[data-embedded-chat-composer]") as unknown as Element;
+    expect(isComposerEventForSurface(preview, preview)).toBe(true);
+    expect(isComposerEventForSurface(preview, null)).toBe(false);
+    expect(isComposerEventForSurface(preview, otherPreview)).toBe(false);
+    expect(
+      isComposerEventForSurface(new FakeElement(null) as unknown as EventTarget, preview),
+    ).toBe(false);
+    expect(isComposerEventForSurface(new FakeElement(null) as unknown as EventTarget, null)).toBe(
+      true,
+    );
   });
 });

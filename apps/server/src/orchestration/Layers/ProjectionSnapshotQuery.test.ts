@@ -8,6 +8,7 @@ import {
   ThreadId,
   type ThreadPullRequestLink,
   ThreadLinkedPullRequest,
+  ThreadProfileSnapshot,
   TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -29,6 +30,8 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+
+const encodeProfileSnapshot = Schema.encodeEffect(Schema.fromJsonString(ThreadProfileSnapshot));
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -474,6 +477,17 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
+          artifacts: [
+            {
+              artifactId: "workspace-turn-1-0",
+              kind: "workspace-file",
+              sourceId: asTurnId("turn-1"),
+              name: "README.md",
+              path: "README.md",
+              createdAt: "2026-02-24T00:00:08.000Z",
+              availability: "available",
+            },
+          ],
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -578,10 +592,36 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
 
+      const profileSnapshot = {
+        profileId: "write",
+        profileName: "Write",
+        revision: 2,
+        effectiveSource: {
+          modelSelection: "profile",
+          runtimeMode: "profile",
+          interactionMode: "profile",
+          reasoningEffort: "profile",
+        },
+      } as const;
+      const profileJson = yield* encodeProfileSnapshot(profileSnapshot);
+      yield* sql`UPDATE projection_threads SET profile_snapshot_json = ${profileJson} WHERE thread_id = 'thread-1'`;
+      const agentShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      const agentDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+      assert.deepEqual(Option.getOrThrow(agentShell).profileSnapshot, profileSnapshot);
+      assert.deepEqual(Option.getOrThrow(agentDetail).profileSnapshot, profileSnapshot);
+      assert.deepEqual(
+        (yield* snapshotQuery.getShellSnapshot()).threads[0]?.profileSnapshot,
+        profileSnapshot,
+      );
+      assert.deepEqual(
+        (yield* snapshotQuery.getSnapshot()).threads[0]?.profileSnapshot,
+        profileSnapshot,
+      );
+
       const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
       assert.equal(threadShell._tag, "Some");
       if (threadShell._tag === "Some") {
-        assert.deepEqual(threadShell.value, shellSnapshot.threads[0]);
+        assert.deepEqual(threadShell.value, { ...shellSnapshot.threads[0]!, profileSnapshot });
       }
 
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();

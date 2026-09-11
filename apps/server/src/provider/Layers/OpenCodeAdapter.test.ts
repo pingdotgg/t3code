@@ -34,7 +34,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withAgentInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
@@ -6200,6 +6200,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.sendTurn({
         threadId: asThreadId("thread-custom-instance"),
         input: "Fix it",
+        agentInstructions: "Act as the code agent.",
         modelSelection: createModelSelection(
           ProviderInstanceId.make("opencode_zen"),
           "anthropic/claude-sonnet-4-5",
@@ -6223,10 +6224,13 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
         agent: "github-copilot",
         variant: "high",
-        system: buildRuntimeInstructions({
-          harness: "OpenCode",
-          model: "anthropic/claude-sonnet-4-5",
-        }),
+        system: withAgentInstructions(
+          buildRuntimeInstructions({
+            harness: "OpenCode",
+            model: "anthropic/claude-sonnet-4-5",
+          }),
+          "Act as the code agent.",
+        ),
         parts: [{ type: "text", text: "Fix it" }],
       });
       const started = yield* Fiber.join(startedFiber);

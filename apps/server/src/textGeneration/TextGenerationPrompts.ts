@@ -227,7 +227,9 @@ Before answering, silently reduce the request to:
 Title the subject and outcome. Discard incidental instructions.
 
 Editorial rules:
-- 3-8 words, fewer than 40 characters.
+- Prefer 3-5 plain words, fewer than 40 characters.
+- Make it readable at a glance: keep the specific subject and remove conversational phrasing such as "please", "help me", and "audit this platform for".
+- Example: "Audit this platform for any performance or security issues" becomes "Performance and security audit".
 - Use a compact noun phrase or clear action phrase.
 - Capture the umbrella goal when the request lists several symptoms or steps.
 - Name the product change, not the mock, plan, report, branch, or PR used to produce it.
@@ -254,7 +256,9 @@ Determine the title in this order:
 4. Title the durable subject and desired outcome, not the current workflow state.
 
 Editorial rules:
-- 3-8 words, fewer than 40 characters.
+- Prefer 3-5 plain words, fewer than 40 characters.
+- Make it readable at a glance: keep the specific subject and remove conversational phrasing such as "please", "help me", and "audit this platform for".
+- Example: "Audit this platform for any performance or security issues" becomes "Performance and security audit".
 - Use a compact noun phrase or clear action phrase.
 - Preserve the umbrella subject when later messages focus on one finding, provider, platform, or implementation detail.
 - A thread progressing through research, planning, implementation, review, CI, merge, and monitoring has usually not changed subjects.

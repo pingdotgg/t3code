@@ -237,7 +237,12 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   const openLink = useOpenLink(threadRef);
   return useCallback(
-    (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
+    (
+      event: MouseEvent<HTMLElement>,
+      prUrl: string,
+      targetThreadRef?: ScopedThreadRef,
+      targetEnvironmentId?: EnvironmentId,
+    ) => {
       event.stopPropagation();
       const openInBrowser = shouldOpenPullRequestExternally(event);
       const isAnchor =
@@ -248,7 +253,8 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       if (openInBrowser && isAnchor) return false;
 
       event.preventDefault();
-      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
+      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef, targetEnvironmentId))
+        return true;
 
       // No project to show it in, so it is an ordinary link and follows the
       // "Open links in" setting; the modifier still forces the system browser.

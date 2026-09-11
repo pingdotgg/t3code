@@ -88,6 +88,7 @@ export interface AcpSessionRuntimeOptions {
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
+  readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
   readonly clientInfo: {
     readonly name: string;
     readonly version: string;
@@ -689,6 +690,7 @@ export const make = (
       protocolVersion: 1,
       clientCapabilities: initializeClientCapabilities,
       clientInfo: options.clientInfo,
+      ...(options.initializeMeta !== undefined ? { _meta: options.initializeMeta } : {}),
     } satisfies EffectAcpSchema.InitializeRequest;
     const sendInitialize = runLoggedRequest(
       "initialize",

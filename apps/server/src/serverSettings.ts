@@ -11,11 +11,13 @@
  * @module ServerSettings
  */
 import {
+  mergeAgentLibraries,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type McpGatewayProfile,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
@@ -30,6 +32,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -200,6 +203,7 @@ export class ServerSettingsService extends Context.Service<
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
+      replicateProfiles?: boolean,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     /** Stream of settings change events. */
@@ -237,13 +241,20 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
-      updateSettings: (patch) =>
-        Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
-          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-          Effect.map(resolveTextGenerationProvider),
-        ),
+      updateSettings: (patch, replicateProfiles = false) =>
+        Effect.gen(function* () {
+          const currentSettings = yield* Ref.get(currentSettingsRef);
+          yield* validateMcpGatewayProfileNames(patch, "<memory>");
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const nextSettings = yield* normalizeServerSettings(
+            applyServerSettingsPatch(
+              currentSettings,
+              withServerOwnedMcpGatewayProfiles(currentSettings, patch, now, replicateProfiles),
+            ),
+          );
+          yield* Ref.set(currentSettingsRef, nextSettings);
+          return resolveTextGenerationProvider(nextSettings);
+        }),
       streamChanges: Stream.empty,
       subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
@@ -313,6 +324,88 @@ function restoreUsedProviders(
     },
     providerInstances,
   };
+}
+
+function validateMcpGatewayProfileNames(
+  patch: ServerSettingsPatch,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  if (patch.mcpGatewayProfiles === undefined) return Effect.void;
+  const names = new Set<string>();
+  for (const profile of patch.mcpGatewayProfiles) {
+    if (names.has(profile.name)) {
+      return Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "normalize",
+          cause: new Error(`Duplicate MCP gateway profile name: ${profile.name}`),
+        }),
+      );
+    }
+    names.add(profile.name);
+  }
+  return Effect.void;
+}
+
+function withServerOwnedMcpGatewayProfiles(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+  now: string,
+  replicateProfiles = false,
+): ServerSettingsPatch {
+  if (patch.mcpGatewayProfiles === undefined) return patch;
+  if (replicateProfiles)
+    return {
+      ...patch,
+      ...mergeAgentLibraries([
+        current,
+        {
+          mcpGatewayProfiles: patch.mcpGatewayProfiles,
+          mcpGatewayProfileDeletedAt: patch.mcpGatewayProfileDeletedAt ?? {},
+        },
+      ]),
+    };
+  const mutationTime = DateTime.formatIso(
+    DateTime.makeUnsafe(
+      Math.max(
+        Date.parse(now),
+        ...current.mcpGatewayProfiles.map((profile) => (Date.parse(profile.updatedAt) || 0) + 1),
+        ...Object.values(current.mcpGatewayProfileDeletedAt).map((at) => (Date.parse(at) || 0) + 1),
+      ),
+    ),
+  );
+  const deleted = { ...current.mcpGatewayProfileDeletedAt };
+  for (const profile of current.mcpGatewayProfiles) {
+    if (!patch.mcpGatewayProfiles.some((candidate) => candidate.profileId === profile.profileId))
+      deleted[profile.profileId] = mutationTime;
+  }
+  const profiles = patch.mcpGatewayProfiles.map((candidate): McpGatewayProfile => {
+    const existing = current.mcpGatewayProfiles.find(
+      (profile) => profile.profileId === candidate.profileId,
+    );
+    const {
+      revision: _candidateRevision,
+      createdAt: _candidateCreatedAt,
+      updatedAt: _candidateUpdatedAt,
+      ...candidateContent
+    } = candidate;
+    if (existing !== undefined) {
+      const {
+        revision: _existingRevision,
+        createdAt: _existingCreatedAt,
+        updatedAt: _existingUpdatedAt,
+        ...existingContent
+      } = existing;
+      if (Equal.equals(candidateContent, existingContent)) return existing;
+    }
+    return {
+      ...candidateContent,
+      revision: (existing?.revision ?? 0) + 1,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: mutationTime,
+    };
+  });
+  return { ...patch, mcpGatewayProfiles: profiles, mcpGatewayProfileDeletedAt: deleted };
 }
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
@@ -837,13 +930,18 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
+    updateSettings: (patch, replicateProfiles = false) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
+          yield* validateMcpGatewayProfileNames(patch, settingsPath);
+          const now = DateTime.formatIso(yield* DateTime.now);
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
-            applyServerSettingsPatch(current, patch),
+            applyServerSettingsPatch(
+              current,
+              withServerOwnedMcpGatewayProfiles(current, patch, now, replicateProfiles),
+            ),
           );
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);

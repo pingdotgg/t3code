@@ -287,6 +287,29 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("reports a real config decoder failure as incompatible, not a transport outage", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(Effect.exit(session.ready));
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        providers: "private-invalid-catalog",
+      });
+      const exit = yield* Fiber.join(readyFiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = exit.cause.reasons.find(Cause.isFailReason);
+        expect(failure?.error).toMatchObject({
+          _tag: "ConnectionBlockedError",
+          reason: "unsupported",
+        });
+        expect(String(failure?.error)).not.toContain("private-invalid-catalog");
+      }
+    }).pipe(Effect.scoped),
+  );
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

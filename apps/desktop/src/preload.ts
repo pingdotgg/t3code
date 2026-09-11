@@ -56,6 +56,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getMcpGatewayLaunchConfig: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_MCP_GATEWAY_LAUNCH_CONFIG_CHANNEL);
+    if (typeof result !== "object" || result === null) return null;
+    return result as ReturnType<NonNullable<DesktopBridge["getMcpGatewayLaunchConfig"]>>;
+  },
+  getMcpGatewayBridgeToken: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_MCP_GATEWAY_BRIDGE_TOKEN_CHANNEL);
+    return typeof result === "string" ? result : null;
+  },
   getClientPlatform: () => clientPlatform,
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
@@ -198,6 +207,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
+  revealWindow: () => ipcRenderer.invoke(IpcChannels.REVEAL_WINDOW_CHANNEL),
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {

@@ -10,11 +10,13 @@ function PreviewCardTrigger(props: PreviewCardPrimitive.Trigger.Props) {
 
 function PreviewCardPopup({
   className,
+  positionerClassName,
   align = "start",
   side = "top",
   sideOffset = 6,
   ...props
 }: PreviewCardPrimitive.Popup.Props & {
+  positionerClassName?: string;
   align?: PreviewCardPrimitive.Positioner.Props["align"];
   side?: PreviewCardPrimitive.Positioner.Props["side"];
   sideOffset?: PreviewCardPrimitive.Positioner.Props["sideOffset"];
@@ -23,7 +25,7 @@ function PreviewCardPopup({
     <PreviewCardPrimitive.Portal>
       <PreviewCardPrimitive.Positioner
         align={align}
-        className="z-[140] max-w-(--available-width)"
+        className={cn("z-[140] max-w-(--available-width)", positionerClassName)}
         data-slot="preview-card-positioner"
         side={side}
         sideOffset={sideOffset}

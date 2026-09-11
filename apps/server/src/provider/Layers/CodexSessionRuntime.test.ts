@@ -949,3 +949,21 @@ describe("openCodexThread", () => {
     }),
   );
 });
+
+it.effect(
+  "passes the frozen agent prompt as Codex developer instructions even without an explicit mode",
+  () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "thread",
+        runtimeMode: "approval-required",
+        prompt: "Start",
+        agentInstructions: "Plan first. Do not implement.",
+      });
+      NodeAssert.match(
+        params.collaborationMode!.settings.developer_instructions!,
+        /Plan first\. Do not implement\./,
+      );
+      NodeAssert.equal(params.input[0]?.type, "text");
+    }),
+);

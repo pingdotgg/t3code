@@ -116,6 +116,9 @@ export function applyThreadDetailEvent(
         thread: {
           id: event.payload.threadId,
           projectId: event.payload.projectId,
+          ...(event.payload.profileSnapshot
+            ? { profileSnapshot: event.payload.profileSnapshot }
+            : {}),
           title: event.payload.title,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,

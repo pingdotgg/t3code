@@ -218,6 +218,19 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
+/** Record the checkout used by a local send even when the thread has no saved branch. */
+export function resolveThreadBranchForSend(input: {
+  effectiveEnvMode: EnvMode;
+  activeWorktreePath: string | null;
+  activeThreadBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (input.effectiveEnvMode === "local" && input.activeWorktreePath === null) {
+    return input.currentGitBranch ?? input.activeThreadBranch;
+  }
+  return input.activeThreadBranch;
+}
+
 export function resolveLocalCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;

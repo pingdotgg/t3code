@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -416,6 +417,15 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+const decodeClaudeAuthStatus = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      loggedIn: Schema.Boolean,
+      authMethod: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -555,10 +565,47 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  // SDK initialization includes cached account metadata even after logout.
+  // Bedrock uses AWS credentials instead of the first-party CLI login store.
+  let authMethod = capabilities.tokenSource;
+  if (capabilities.apiProvider !== "bedrock") {
+    const authProbe = yield* runClaudeCommand(
+      claudeSettings,
+      ["auth", "status", "--json"],
+      resolvedEnvironment,
+    ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+    const authResult =
+      Result.isSuccess(authProbe) && Option.isSome(authProbe.success)
+        ? authProbe.success.value
+        : undefined;
+    const authStatus = authResult ? decodeClaudeAuthStatus(authResult.stdout) : Option.none();
+    const loggedOut = Option.isSome(authStatus) && !authStatus.value.loggedIn;
+    if (loggedOut || Option.isNone(authStatus) || authResult?.code !== 0) {
+      return buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: claudeSettings.enabled,
+        checkedAt,
+        models,
+        slashCommands: dedupedSlashCommands,
+        skills,
+        probe: {
+          installed: true,
+          version: parsedVersion,
+          status: "warning",
+          auth: { status: loggedOut ? "unauthenticated" : "unknown" },
+          message: loggedOut
+            ? "Claude is not authenticated. Run `claude auth login` to sign in."
+            : "Could not verify Claude authentication status from the CLI.",
+        },
+      });
+    }
+    authMethod = authStatus.value.authMethod ?? authMethod;
+  }
+
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
+      authMethod,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })

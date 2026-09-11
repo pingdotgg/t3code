@@ -117,6 +117,9 @@ export class ElectronWindow extends Context.Service<
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
+    readonly fromWebContents: (
+      sender: Pick<Electron.WebContents, "id">,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
@@ -252,6 +255,14 @@ export const make = Effect.gen(function* () {
         }
         return Option.none();
       }),
+    fromWebContents: (sender) =>
+      Effect.sync(() =>
+        Option.fromNullishOr(
+          Electron.BrowserWindow.getAllWindows().find(
+            (window) => window.webContents.id === sender.id,
+          ),
+        ),
+      ),
     prepareReveal: (window) =>
       Effect.promise(async () => {
         if (platform !== "win32" || window.isDestroyed()) {

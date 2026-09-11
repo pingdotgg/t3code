@@ -2,7 +2,7 @@ import type { ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
-import type { SupervisorConnectionState } from "./model.ts";
+import type { ConnectionAttemptError, SupervisorConnectionState } from "./model.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -16,6 +16,7 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  readonly failureReason?: ConnectionAttemptError["reason"];
 }
 
 export interface EnvironmentPresentation {
@@ -37,6 +38,7 @@ export function presentConnectionState(
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
       };
     case "connected":
       return { phase: "connected", error: null, traceId: null };
@@ -45,12 +47,14 @@ export function presentConnectionState(
         phase: "reconnecting",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
       };
     case "blocked":
       return {
         phase: "error",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
+        ...(state.lastFailure ? { failureReason: state.lastFailure.reason } : {}),
       };
   }
 }

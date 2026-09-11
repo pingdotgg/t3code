@@ -1912,6 +1912,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
+    draft?: boolean,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = getChangeRequestTerminologyForKind(provider.kind);
@@ -2002,6 +2003,7 @@ export const make = Effect.gen(function* () {
         headSelector: headContext.preferredHeadSelector,
         title: generated.title,
         bodyFile,
+        ...(draft === undefined ? {} : { draft }),
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
@@ -2699,7 +2701,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                    input.draft,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };

@@ -26,7 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { buildRuntimeInstructions, withAgentInstructions } from "../RuntimeInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
@@ -311,6 +311,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* adapter.sendTurn({
         threadId,
         input: "please $review this",
+        agentInstructions: "Act as the review agent.",
         attachments: [],
       });
       const snapshot = yield* adapter.readThread(threadId);
@@ -336,7 +337,13 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         [
           [
             { type: "text", text: "please /review this" },
-            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
+            {
+              type: "text",
+              text: withAgentInstructions(
+                buildRuntimeInstructions({ harness: "Cursor" }),
+                "Act as the review agent.",
+              ),
+            },
           ],
         ],
       );

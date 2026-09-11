@@ -1002,6 +1002,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             runtimeMode: input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
+            ...(input.agentInstructions?.trim()
+              ? { initializeMeta: { rules: input.agentInstructions } }
+              : {}),
             ...(mcpSession
               ? {
                   mcpServers: [

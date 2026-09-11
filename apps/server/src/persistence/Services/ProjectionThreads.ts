@@ -16,6 +16,7 @@ import {
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
+  ThreadProfileSnapshot,
   TurnId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -32,6 +33,7 @@ export const ProjectionThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  profileSnapshot: Schema.NullOr(ThreadProfileSnapshot),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),

@@ -21,7 +21,7 @@
     "icons:export:android": "node scripts/export-android-icons.ts",
     "build": "vp run --filter './apps/*' build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
-    "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
+    "build:desktop": "vp run --filter @t3tools/desktop --filter @t3tools/mcp-gateway --filter t3 build",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
@@ -51,6 +51,7 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
+    "happy-dom": "^20.13.2",
     "knip": "6.34.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"

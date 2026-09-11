@@ -11,10 +11,36 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
+  revealWindow,
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
   pickProjectFavicon,
+  resolveMcpGatewayLaunchConfig,
 } from "./window.ts";
+
+describe("resolveMcpGatewayLaunchConfig", () => {
+  it("returns an Electron-as-Node command only for packaged desktop builds", () => {
+    assert.isNull(
+      resolveMcpGatewayLaunchConfig({
+        isPackaged: false,
+        executablePath: "/app/T3 Code",
+        resourcesPath: "/app/resources",
+      }),
+    );
+    assert.deepEqual(
+      resolveMcpGatewayLaunchConfig({
+        isPackaged: true,
+        executablePath: "/app/T3 Code",
+        resourcesPath: "/app/resources",
+      }),
+      {
+        command: "/app/T3 Code",
+        args: ["/app/resources/t3-mcp-gateway.mjs"],
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+      },
+    );
+  });
+});
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -185,5 +211,34 @@ describe("pickProjectFavicon", () => {
         ],
       ]);
     }),
+  );
+});
+
+describe("revealWindow", () => {
+  it.effect("reveals the requesting renderer's window rather than the focused window", () => {
+    const window = { isDestroyed: () => false } as Electron.BrowserWindow;
+    const sender = {} as Electron.WebContents;
+    const reveal = vi.fn(() => Effect.void);
+    const fromWebContents = vi.fn(() => Effect.succeed(Option.some(window)));
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender });
+      assert.deepEqual(fromWebContents.mock.calls, [[sender]]);
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(Effect.provide(Layer.mock(ElectronWindow.ElectronWindow)({ fromWebContents, reveal })));
+  });
+
+  it.effect("fails when the sender has no window", () =>
+    Effect.gen(function* () {
+      const result = yield* revealWindow
+        .handler(undefined, { sender: {} as Electron.WebContents })
+        .pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "succeeded" }));
+      assert.equal(result, "DesktopWindowUnavailable");
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          fromWebContents: () => Effect.succeed(Option.none()),
+        }),
+      ),
+    ),
   );
 });

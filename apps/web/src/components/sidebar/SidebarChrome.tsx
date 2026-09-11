@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  BotIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
@@ -197,6 +198,18 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton
+              onClick={() => {
+                closeMobileSidebar();
+                void navigate({ to: "/agents" });
+              }}
+              aria-label="Open agents"
+            >
+              <BotIcon />
+              <span>Agents</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

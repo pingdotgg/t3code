@@ -22,10 +22,12 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  */
 export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_WS_METHODS.getCommandReceipts]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_WS_METHODS.subscribeEvents]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
@@ -118,6 +120,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsCreateWorktree]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthOrchestrationOperateScope,
+  [WS_METHODS.vcsApplyPatch]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsCreateRef]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsSwitchRef]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsInit]: AuthOrchestrationOperateScope,

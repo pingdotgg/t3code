@@ -124,10 +124,12 @@ function serverConfigReplayEvents(
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
 
 function mapSessionRpcError(
-  error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
+  error: InitialConfigError | ProbeError | ServerConfigSubscriptionError | ConnectionBlockedError,
   networkHint: string,
 ): ConnectionAttemptError {
   switch (error._tag) {
+    case "ConnectionBlockedError":
+      return error;
     case "EnvironmentAuthorizationError":
       return new ConnectionBlockedError({
         reason: "permission",
@@ -211,7 +213,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
-    const serverConfigExit = yield* Deferred.make<void, ServerConfigSubscriptionError>();
+    const serverConfigExit = yield* Deferred.make<
+      void,
+      ServerConfigSubscriptionError | ConnectionBlockedError
+    >();
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
     const serverConfigState = yield* Ref.make(Option.none<ServerConfigReplayState>());
     const serverConfigUpdates = yield* PubSub.sliding<BufferedServerConfigEvent>(64);
@@ -265,6 +270,19 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             yield* Deferred.succeed(initialConfigDeferred, event.config);
           }
         }),
+      ),
+      // RPC decoding failures are defects in Effect, not declared RPC errors. Classify only
+      // SchemaError here; unrelated defects still follow the existing supervisor lifecycle.
+      Effect.catchDefect((defect) =>
+        Schema.isSchemaError(defect)
+          ? Effect.fail(
+              new ConnectionBlockedError({
+                reason: "unsupported",
+                detail:
+                  "The server configuration does not match this client's schema. Check client and server compatibility in Settings → Connections.",
+              }),
+            )
+          : Effect.die(defect),
       ),
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) {
@@ -322,7 +340,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ).pipe(
       Stream.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
-          return Stream.failCause(cause);
+          return Stream.fromEffect(Effect.interrupt);
         }
         // The supervisor keeps the original cause. Shared durable consumers
         // need a transport-shaped failure so they wait for its replacement.

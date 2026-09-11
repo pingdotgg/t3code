@@ -201,6 +201,41 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT
 }
 
 describe("environment entity projections", () => {
+  it("keeps PR associations authoritative when detail data lags or a PR is unlinked", () => {
+    const pr = {
+      projectId: PROJECT_ID,
+      repository: "owner/repo",
+      number: 42,
+      url: "https://github.com/owner/repo/pull/42",
+    };
+    const detail = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      linkedPullRequest: null,
+      branchPullRequest: null,
+    };
+    const shell = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      linkedPullRequest: pr,
+      branchPullRequest: pr,
+    };
+    const linked = mergeEnvironmentThread(detail, shell);
+    expect(linked?.linkedPullRequest).toEqual(pr);
+    expect(linked?.branchPullRequest).toEqual(pr);
+    const unlinked = mergeEnvironmentThread(
+      { ...detail, linkedPullRequest: pr, branchPullRequest: pr },
+      { ...shell, linkedPullRequest: null, branchPullRequest: null },
+    );
+    expect(unlinked?.linkedPullRequest).toBeNull();
+    expect(unlinked?.branchPullRequest).toBeNull();
+  });
+
   it("composes detail collections with authoritative shell workspace metadata", () => {
     const messages: OrchestrationThread["messages"] = [];
     const detail = {
@@ -221,6 +256,17 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      profileSnapshot: {
+        profileId: "agent",
+        profileName: "Agent",
+        revision: 2,
+        effectiveSource: {
+          modelSelection: "profile" as const,
+          runtimeMode: "profile" as const,
+          interactionMode: "profile" as const,
+          reasoningEffort: "profile" as const,
+        },
+      },
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
@@ -237,6 +283,7 @@ describe("environment entity projections", () => {
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
+    expect(merged?.profileSnapshot).toBe(shell.profileSnapshot);
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {

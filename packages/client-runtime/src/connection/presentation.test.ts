@@ -6,6 +6,7 @@ import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
+  ConnectionBlockedError,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
@@ -50,6 +51,32 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 }
 
 describe("connection presentation", () => {
+  it("preserves typed auth, transport, and unsupported failures without parsing error text", () => {
+    for (const reason of ["authentication", "unsupported"] as const) {
+      expect(
+        presentConnectionState(
+          supervisorState({
+            phase: "blocked",
+            lastFailure: new ConnectionBlockedError({ reason, detail: "Private diagnostic" }),
+          }),
+        ),
+      ).toMatchObject({ phase: "error", failureReason: reason });
+    }
+    expect(
+      presentConnectionState(
+        supervisorState({
+          phase: "backoff",
+          lastFailure: new ConnectionTransientError({
+            reason: "transport",
+            detail: "Socket closed",
+          }),
+        }),
+      ),
+    ).toMatchObject({ phase: "reconnecting", failureReason: "transport" });
+    expect(presentConnectionState(supervisorState({ phase: "connected" }))).not.toHaveProperty(
+      "failureReason",
+    );
+  });
   it("preserves profile display information without exposing credentials", () => {
     expect(connectionCatalogDisplayUrl(ENTRY)).toBe("https://environment.example.test");
   });
@@ -75,6 +102,7 @@ describe("connection presentation", () => {
     ).toEqual({
       phase: "reconnecting",
       error: "Socket closed.",
+      failureReason: "transport",
       traceId: "trace-previous",
     });
     expect(
@@ -93,6 +121,7 @@ describe("connection presentation", () => {
     ).toEqual({
       phase: "reconnecting",
       error: "Disconnected.",
+      failureReason: "transport",
       traceId: "trace-1",
     });
   });
@@ -114,6 +143,7 @@ describe("connection presentation", () => {
     ).toEqual({
       phase: "reconnecting",
       error: "Relay connection timed out.",
+      failureReason: "transport",
       traceId: "trace-retry",
     });
   });
