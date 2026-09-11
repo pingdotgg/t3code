@@ -33,9 +33,8 @@ export const isRoomMessageEvent = (event: any): event is RoomMessageEvent =>
  * `ivschat.amazonaws.com`; at runtime it dispatches review invocations
  * (matched on `RoomArn`) to the registered handler and returns the verdict
  * to IVS Chat.
- * @binding
- * @section Reviewing room messages
- * @example Deny messages containing a banned word
+ * ### Reviewing room messages
+ * **Example:** Deny messages containing a banned word
  * ```typescript
  * yield* IVSChat.onReviewMessage(room, (event) =>
  *   Effect.succeed(
@@ -45,6 +44,8 @@ export const isRoomMessageEvent = (event: any): event is RoomMessageEvent =>
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export const RoomMessageReviewEventSource = Layer.effect(
   IVSChatRoomMessageReviewEventSource,

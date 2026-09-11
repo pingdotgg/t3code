@@ -93,11 +93,19 @@ export function MediaVideoPlayer({
     const video = videoRef.current;
     if (!video) return;
     const pauseWhenHidden = () => {
-      if (document.hidden) video.pause();
+      // Native fullscreen can hide the inline page while this video is still visible.
+      const fullscreen =
+        document.fullscreenElement?.contains(video) ||
+        ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
+      if (document.hidden && !fullscreen) video.pause();
     };
     document.addEventListener("visibilitychange", pauseWhenHidden);
+    document.addEventListener("fullscreenchange", pauseWhenHidden);
+    video.addEventListener("webkitendfullscreen", pauseWhenHidden);
     return () => {
       document.removeEventListener("visibilitychange", pauseWhenHidden);
+      document.removeEventListener("fullscreenchange", pauseWhenHidden);
+      video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
     };
   }, [src, failed, loadAttempt]);
@@ -127,7 +135,9 @@ export function MediaVideoPlayer({
         <span
           role="alert"
           className={cn(
-            "flex min-h-28 flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            // Same 16:9 slot as the loading and playing states, so a failed or
+            // retried video does not move the rows below it.
+            "flex aspect-video max-h-full min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
             stateClassName,
           )}
         >

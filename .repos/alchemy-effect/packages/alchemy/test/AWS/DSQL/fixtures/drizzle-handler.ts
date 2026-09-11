@@ -1,6 +1,6 @@
 import * as DSQL from "@/AWS/DSQL";
 import * as Lambda from "@/AWS/Lambda";
-import * as Drizzle from "@/Drizzle/index.ts";
+import * as Drizzle from "@/Drizzle/Postgres.ts";
 import { eq, sql } from "drizzle-orm";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -25,7 +25,7 @@ export class DsqlDrizzleFunction extends Lambda.Function<Lambda.Function>()(
 export default DsqlDrizzleFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
     // `pg` is CommonJS and Rolldown's bundled interop turns its Client export
     // into a namespace object under Node. Install it intact in the Lambda

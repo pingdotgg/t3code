@@ -46,16 +46,15 @@ export interface Profile extends Resource<
  *
  * Attach DNS resources to the Profile with `ProfileResourceAssociation` and
  * apply the whole bundle to a VPC with `ProfileAssociation`.
- * @resource
- * @section Creating Profiles
- * @example Basic Profile
+ * ### Creating Profiles
+ * **Example:** Basic Profile
  * ```typescript
  * import * as Route53Profiles from "alchemy/AWS/Route53Profiles";
  *
  * const profile = yield* Route53Profiles.Profile("DnsProfile");
  * ```
  *
- * @example Profile with Tags
+ * **Example:** Profile with Tags
  * ```typescript
  * const profile = yield* Route53Profiles.Profile("DnsProfile", {
  *   name: "shared-dns-config",
@@ -63,8 +62,8 @@ export interface Profile extends Resource<
  * });
  * ```
  *
- * @section Applying a Profile to VPCs
- * @example Associate the Profile with a VPC
+ * ### Applying a Profile to VPCs
+ * **Example:** Associate the Profile with a VPC
  * ```typescript
  * const vpc = yield* EC2.Vpc("AppVpc", { cidrBlock: "10.0.0.0/16" });
  *
@@ -73,6 +72,8 @@ export interface Profile extends Resource<
  *   resourceId: vpc.vpcId,
  * });
  * ```
+ *
+ * @resource
  */
 export const Profile = Resource<Profile>("AWS.Route53Profiles.Profile");
 

@@ -529,11 +529,14 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands, timeouts } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
       const plan = yield* service.install();
 
-      expect(plan.unitPath.endsWith("Library/LaunchAgents/com.t3tools.t3code.service.plist")).toBe(
-        true,
-      );
+      expect(
+        plan.unitPath.endsWith(
+          path.join("Library", "LaunchAgents", "com.t3tools.t3code.service.plist"),
+        ),
+      ).toBe(true);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `    <key>PATH</key>\n    <string>${macInstallerPath}:/usr/local/bin:/usr/sbin:/sbin</string>`,
       );

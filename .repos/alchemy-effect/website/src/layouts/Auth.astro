@@ -2,6 +2,7 @@
 import "../styles/tokens.css";
 import ThemeProvider from "../components/ThemeProvider.astro";
 import Logo from "../components/marketing/Logo.astro";
+import BrandIcons from "../brand/Icons.astro";
 
 export interface Props {
   title: string;
@@ -27,7 +28,7 @@ const {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <ThemeProvider />
     <title>{title} — Alchemy</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <BrandIcons />
   </head>
   <body class="alc-auth-body">
     <main class="alc-auth">
@@ -40,6 +41,8 @@ const {
       </h1>
 
       <p class="alc-auth__message" set:html={message} />
+
+      <slot />
 
       {(primaryAction || secondaryAction) && (
         <div class="alc-auth__actions">

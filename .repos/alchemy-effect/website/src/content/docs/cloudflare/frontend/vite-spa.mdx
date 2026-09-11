@@ -6,6 +6,12 @@ sidebar:
   order: 4
 ---
 
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `react react-dom`;
+export const devDeps = `@types/react @types/react-dom @vitejs/plugin-react`;
+export const typesDep = `@cloudflare/workers-types`;
+
 This is the walkthrough for a plain React single-page app on
 [`Cloudflare.Website.Vite`](/cloudflare/frontend/vite): build the
 client assets, ship them to Cloudflare, and serve them through a
@@ -43,10 +49,20 @@ A minimal React SPA looks like:
 
 ### Install React
 
-```sh
-bun add react react-dom
-bun add -d @types/react @types/react-dom @vitejs/plugin-react
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 ### Create vite.config.ts
 
@@ -153,13 +169,18 @@ router handles the path on the client:
 // alchemy.run.ts
 -const web = yield* Cloudflare.Website.Vite("Website");
 +const web = yield* Cloudflare.Website.Vite("Website", {
-+  assets: { notFoundHandling: "single-page-application" },
++  assets: {
++    notFoundHandling: "single-page-application",
++  },
 +});
 ```
 
 `assets` accepts the standard Cloudflare Worker static-assets
-config — the same options you'd set on a plain Worker's `assets`
-block.
+config; `single-page-application` not-found handling serves
+`index.html` for unmatched paths so the client router takes over.
+A site that ships a real error page uses
+`notFoundHandling: "404-page"` instead (Cloudflare serves the
+built `404.html`).
 
 ### Inject the Worker URL at build time
 
@@ -195,15 +216,39 @@ unwrapping, what happens to non-prefixed keys, redeploys on
 env-only changes — see the
 [Vite resource's environment section](/cloudflare/frontend/vite#environment).
 
+To inject the site's *own* URL — for canonical links, OG tags, or
+OAuth redirect URIs — use `Cloudflare.Worker.URL`. A site can't
+reference its own `url` Output, so Alchemy resolves the URL before
+the build and inlines it the same way:
+
+```diff lang="typescript"
+const web = yield* Cloudflare.Website.Vite("Website", {
+  env: {
+    VITE_API_URL: worker.url.as<string>(),
++    VITE_PUBLIC_URL: Cloudflare.Worker.URL,
+  },
+});
+```
+
 ## Use the create-vite template
 
 If you'd rather start from a real framework scaffold (React + TS
 with HMR, ESLint, etc.), use Vite's official template:
 
-```sh
-bun create vite@latest web -- --template react-ts
-cd web && bun install && cd ..
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun create vite@latest web -- --template react-ts\ncd web && bun install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm create vite@latest web -- --template react-ts\ncd web && npm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm create vite web --template react-ts\ncd web && pnpm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn create vite web --template react-ts\ncd web && yarn install && cd ..`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 That drops a complete project into `./web/` with its own
 `package.json`, `tsconfig.json`, and `vite.config.ts`.
@@ -433,9 +478,20 @@ the resource. `env.BUCKET` is now typed as `Bucket` end to end.
 `@cloudflare/workers-types`. Add it to your `tsconfig.json` so the
 TypeScript checker can find them:
 
-```sh
-bun add -d @cloudflare/workers-types
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${typesDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${typesDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${typesDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${typesDep}`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 ```diff lang="json"
 // tsconfig.json

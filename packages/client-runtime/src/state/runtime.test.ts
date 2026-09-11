@@ -51,7 +51,7 @@ const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
 
 const QUERY_RPC_SESSION = {} as RpcSession.RpcSession;
 
-class TestQueryError extends Schema.TaggedErrorClass<TestQueryError>()("TestQueryError", {
+class TestQueryError extends Schema.TaggedError<TestQueryError>()("TestQueryError", {
   message: Schema.String,
 }) {}
 
@@ -681,6 +681,24 @@ describe("executeAtomQuery", () => {
       expect(second.value).toBe("second");
     }
 
+    registry.dispose();
+  });
+
+  it("settles when its caller aborts a waiting query", async () => {
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+    const resultPromise = executeAtomQuery(registry, Atom.make(Effect.never), {
+      reportDefect: false,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
+    }
     registry.dispose();
   });
 });

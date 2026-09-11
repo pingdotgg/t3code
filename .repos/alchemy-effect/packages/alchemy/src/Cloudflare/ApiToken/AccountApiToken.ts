@@ -47,12 +47,12 @@ export type AccountApiToken = Resource<
  *
  * Creating account-owned tokens requires the caller to have the
  * `API Tokens > Write` account permission.
- * @resource
- * @product API Tokens
- * @category Account & Identity
- * @section Creating a Token
- * @example A token for managing Workers and KV from CI
+ * ### Creating a Token
+ * **Example:** A token for managing Workers and KV from CI
  * ```typescript
+ * // the account ID resolves from the profile you're deploying with
+ * const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
+ *
  * const token = yield* Cloudflare.ApiToken.AccountApiToken("ci-token", {
  *   name: "my-ci-token",
  *   accountId,
@@ -76,8 +76,8 @@ export type AccountApiToken = Resource<
  * });
  * ```
  *
- * @section Attaching Policies via Bindings
- * @example Let a downstream capability contribute its own policies
+ * ### Attaching Policies via Bindings
+ * **Example:** Let a downstream capability contribute its own policies
  * A token can be created with no `policies` of its own; the policies are
  * supplied through its binding contract (see {@link ApiTokenBinding}). This is
  * how capabilities like {@link CreateTunnel} provision a least-privilege token.
@@ -95,8 +95,8 @@ export type AccountApiToken = Resource<
  * });
  * ```
  *
- * @section Exposing a Token to a Worker
- * @example Read the token value at runtime
+ * ### Exposing a Token to a Worker
+ * **Example:** Read the token value at runtime
  * Bind the token's outputs in the Worker's Init phase to get runtime
  * accessors. Binding `token.value` injects it as a `secret_text` Worker
  * binding; the returned accessor reads it back (as `Redacted`) at runtime.
@@ -113,6 +113,10 @@ export type AccountApiToken = Resource<
  *   }),
  * };
  * ```
+ *
+ * @resource
+ * @product API Tokens
+ * @category Account & Identity
  */
 export const AccountApiToken = Resource<AccountApiToken>(
   "Cloudflare.ApiToken.AccountApiToken",

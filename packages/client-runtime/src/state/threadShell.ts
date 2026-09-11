@@ -35,6 +35,26 @@ export function createEnvironmentThreadShellAtoms(input: {
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationShellSnapshot | null>;
 }) {
+  // Point reads and aggregate lists share values without keeping an atom alive
+  // for every listed thread. Replaced source objects can be collected.
+  const scopedThreads = new WeakMap<
+    OrchestrationThreadShell,
+    Map<EnvironmentId, EnvironmentThreadShell>
+  >();
+  const scopedThread = (environmentId: EnvironmentId, thread: OrchestrationThreadShell) => {
+    let byEnvironment = scopedThreads.get(thread);
+    if (byEnvironment === undefined) {
+      byEnvironment = new Map();
+      scopedThreads.set(thread, byEnvironment);
+    }
+    let value = byEnvironment.get(environmentId);
+    if (value === undefined) {
+      value = scopeThreadShell(environmentId, thread);
+      byEnvironment.set(environmentId, value);
+    }
+    return value;
+  };
+
   const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
       (get): ReadonlyArray<OrchestrationThreadShell> =>
@@ -95,6 +115,16 @@ export function createEnvironmentThreadShellAtoms(input: {
           previousRefs !== undefined && threadRefsEqual(previousRefs, refs) ? previousRefs : refs,
         );
       }
+      const previousProjectIds = [...previous.keys()];
+      if (
+        next.size === previous.size &&
+        [...next].every(
+          ([projectId, refs], index) =>
+            previousProjectIds[index] === projectId && previous.get(projectId) === refs,
+        )
+      ) {
+        return previous;
+      }
       previous = next;
       return previous;
     }).pipe(Atom.withLabel(`environment-thread-refs-by-project:${environmentId}`));
@@ -102,16 +132,9 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   const threadShellAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
-    let previousSource: OrchestrationThreadShell | null = null;
-    let previousValue: EnvironmentThreadShell | null = null;
     return Atom.make((get) => {
       const source = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ?? null;
-      if (source === previousSource) {
-        return previousValue;
-      }
-      previousSource = source;
-      previousValue = source === null ? null : scopeThreadShell(ref.environmentId, source);
-      return previousValue;
+      return source === null ? null : scopedThread(ref.environmentId, source);
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });
 
@@ -126,15 +149,17 @@ export function createEnvironmentThreadShellAtoms(input: {
           get(environmentThreadRefsByProjectAtom(projectRef.environmentId)).get(
             projectRef.projectId,
           ) ?? EMPTY_SCOPED_THREAD_REFS;
+        if (refs.length === 0) continue;
+        const threads = get(environmentThreadIndexAtom(projectRef.environmentId));
         for (const ref of refs) {
           const key = threadKey(ref);
           if (seen.has(key)) {
             continue;
           }
           seen.add(key);
-          const thread = get(threadShellAtomFamily(key));
-          if (thread !== null) {
-            next.push(thread);
+          const thread = threads.get(ref.threadId);
+          if (thread !== undefined) {
+            next.push(scopedThread(ref.environmentId, thread));
           }
         }
       }
@@ -161,10 +186,12 @@ export function createEnvironmentThreadShellAtoms(input: {
 
   let previousThreadShells: ReadonlyArray<EnvironmentThreadShell> = [];
   const threadShellsAtom = Atom.make((get) => {
-    const next = get(threadRefsAtom).flatMap((ref) => {
-      const thread = get(threadShellAtomFamily(threadKey(ref)));
-      return thread === null ? [] : [thread];
-    });
+    const next: EnvironmentThreadShell[] = [];
+    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+      for (const thread of get(environmentThreadsAtom(environmentId))) {
+        next.push(scopedThread(environmentId, thread));
+      }
+    }
     if (arrayElementsEqual(previousThreadShells, next)) {
       return previousThreadShells;
     }

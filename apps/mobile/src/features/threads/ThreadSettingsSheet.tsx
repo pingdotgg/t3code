@@ -5,9 +5,7 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
-  ServerProvider,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -52,13 +50,9 @@ import {
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { serverEnvironment } from "../../state/server";
-import { ProviderSetupLink } from "../settings/ProviderSetupLink";
-import {
-  SettingsProviderSetupRouteScreen,
-  type ProviderSetupRouteParams,
-} from "../settings/SettingsProviderSetupRouteScreen";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   createProviderCatalogRefreshRunner,
   providerCatalogRefreshError,
@@ -73,7 +67,6 @@ import {
   canCommitPendingModel,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
-  providerSetupCandidates,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 
@@ -112,6 +105,8 @@ function ModelRow(props: {
   readonly isFirst: boolean;
   readonly isLast: boolean;
 }) {
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
+  const selectedMaterialRow = materialYouStyleLayoutActive && props.selected;
   return (
     <Pressable
       accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
@@ -124,6 +119,7 @@ function ModelRow(props: {
       onPress={props.onPress}
       className={cn(
         "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
+        selectedMaterialRow && "bg-thread-selected",
         props.isFirst && "rounded-t-2xl",
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
@@ -446,7 +442,10 @@ function ThreadSettingsSessionProvider(
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
-        Alert.alert("Model unavailable", "Complete provider setup or select another model.");
+        Alert.alert(
+          "Model unavailable",
+          "Set up this provider on web or desktop, or select another model.",
+        );
         return false;
       }
       void Haptics.selectionAsync();
@@ -580,11 +579,6 @@ type ThreadSettingsCatalogItem =
       readonly option: ModelOption;
       readonly isFirst: boolean;
       readonly isLast: boolean;
-    }
-  | {
-      readonly kind: "setup";
-      readonly key: string;
-      readonly provider: ServerProvider;
     }
   | {
       readonly kind: "empty";
@@ -795,37 +789,20 @@ function ThreadSettingsOptionsItem(props: {
 /** One native scroll owner for the model catalog and its related settings. */
 function ThreadSettingsMainContent(props: {
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
-  readonly onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
 }) {
   const session = useThreadSettingsSession();
-  const config = useAtomValue(serverEnvironment.configValueAtom(session.environmentId));
   const catalogItems = useThreadSettingsCatalogItems(session);
   const [animationsReady, setAnimationsReady] = useState(false);
   const nativeHeaderHeight = use(HeaderHeightContext) ?? 0;
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const usesTransparentNativeHeader = Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED;
-  const setupProviders = useMemo(
-    () =>
-      providerSetupCandidates({
-        providers: config?.providers ?? [],
-        instanceId: session.providerInstanceId,
-        providerFilter: session.providerFilter,
-        query: session.searchQuery,
-      }),
-    [config?.providers, session.providerInstanceId, session.providerFilter, session.searchQuery],
-  );
   const listItems = useMemo<ReadonlyArray<ThreadSettingsCatalogItem>>(
     () => [
       ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
-      ...setupProviders.map((provider) => ({
-        kind: "setup" as const,
-        key: `setup:${provider.instanceId}`,
-        provider,
-      })),
       { kind: "options", key: "options" },
     ],
-    [catalogItems, setupProviders],
+    [catalogItems],
   );
   const renderCatalogItem = useCallback(
     (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
@@ -840,13 +817,6 @@ function ThreadSettingsMainContent(props: {
             isFirst={item.isFirst}
             isLast={item.isLast}
             option={item.option}
-          />
-        );
-      } else if (item.kind === "setup") {
-        content = (
-          <ProviderSetupLink
-            provider={item.provider}
-            onPress={() => props.onOpenProviderSetup(item.provider.instanceId)}
           />
         );
       } else if (item.kind === "empty") {
@@ -876,7 +846,7 @@ function ThreadSettingsMainContent(props: {
         </Animated.View>
       );
     },
-    [animationsReady, hasActiveCatalogFilter, props.onOpenProviderSetup, props.onOpenSubmenu],
+    [animationsReady, hasActiveCatalogFilter, props.onOpenSubmenu],
   );
 
   return (
@@ -1002,7 +972,6 @@ function ThreadSettingsChoiceContent(props: {
 type ThreadSettingsPickerStackParams = {
   ThreadSettingsModels: undefined;
   ThreadSettingsChoice: ThreadSettingsSubmenuPage & { readonly title: string };
-  ThreadSettingsProviderSetup: ProviderSetupRouteParams;
 };
 
 type ThreadSettingsPickerPresentation = {
@@ -1146,13 +1115,6 @@ function ThreadSettingsModelsScreen() {
         }}
       />
       <ThreadSettingsMainContent
-        onOpenProviderSetup={(instanceId) => {
-          if (!session.environmentId) return;
-          navigation.navigate("ThreadSettingsProviderSetup", {
-            environmentId: session.environmentId,
-            instanceId,
-          });
-        }}
         onOpenSubmenu={(submenu) => {
           const title =
             submenu.kind === "runtime"
@@ -1286,11 +1248,6 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
           name="ThreadSettingsChoice"
           component={ThreadSettingsChoiceScreen}
           options={({ route }) => ({ title: route.params.title })}
-        />
-        <ThreadSettingsPickerStack.Screen
-          name="ThreadSettingsProviderSetup"
-          component={SettingsProviderSetupRouteScreen}
-          options={{ title: "Antigravity" }}
         />
       </ThreadSettingsPickerStack.Navigator>
     </ThreadSettingsPickerPresentationContext.Provider>

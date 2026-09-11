@@ -80,11 +80,8 @@ export type HostnameAssociation = Resource<
  * still reference it. Pass the certificate id through
  * `cert.mtlsCertificateId` so the engine destroys the association before the
  * certificate.
- * @resource
- * @product Certificate Authorities
- * @category SSL/TLS & Certificates
- * @section Cloudflare Managed CA
- * @example Enforce mTLS on a hostname with the Managed CA
+ * ### Cloudflare Managed CA
+ * **Example:** Enforce mTLS on a hostname with the Managed CA
  * ```typescript
  * yield* Cloudflare.CertificateAuthorities.HostnameAssociation("MtlsHosts", {
  *   zoneId: zone.zoneId,
@@ -92,8 +89,8 @@ export type HostnameAssociation = Resource<
  * });
  * ```
  *
- * @section Uploaded CA certificate
- * @example Associate hostnames with an uploaded CA
+ * ### Uploaded CA certificate
+ * **Example:** Associate hostnames with an uploaded CA
  * ```typescript
  * const ca = yield* Cloudflare.MtlsCertificate.MtlsCertificate("ClientCa", {
  *   ca: true,
@@ -108,6 +105,10 @@ export type HostnameAssociation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api/resources/certificate_authorities/subresources/hostname_associations/
+ *
+ * @resource
+ * @product Certificate Authorities
+ * @category SSL/TLS & Certificates
  */
 export const HostnameAssociation = Resource<HostnameAssociation>(TypeId);
 

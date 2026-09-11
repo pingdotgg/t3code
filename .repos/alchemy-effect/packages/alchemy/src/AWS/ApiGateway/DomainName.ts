@@ -73,8 +73,8 @@ export interface DomainName extends Resource<
 /**
  * Custom domain name for an Amazon API Gateway REST API.
  *
- * @section Custom domain
- * @example Regional custom domain
+ * ### Custom domain
+ * **Example:** Regional custom domain
  * ```typescript
  * const domain = yield* ApiGateway.DomainName("ApiDomain", {
  *   domainName: "api.example.com",

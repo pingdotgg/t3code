@@ -20,9 +20,8 @@ export interface GetKnowledgeBaseDocumentsRequest extends Omit<
  * The binding grants the function `bedrock:GetKnowledgeBaseDocuments`
  * scoped to the data source's parent knowledge base.
  *
- * @binding
- * @section Direct Document Ingestion
- * @example Check a Document's Ingestion Status
+ * ### Direct Document Ingestion
+ * **Example:** Check a Document's Ingestion Status
  * ```typescript
  * // init
  * const getDocuments = yield* Bedrock.GetKnowledgeBaseDocuments(dataSource);
@@ -35,6 +34,8 @@ export interface GetKnowledgeBaseDocumentsRequest extends Omit<
  * });
  * const status = documentDetails?.[0]?.status; // e.g. "INDEXED"
  * ```
+ *
+ * @binding
  */
 export interface GetKnowledgeBaseDocuments extends Binding.Service<
   GetKnowledgeBaseDocuments,

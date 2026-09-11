@@ -53,7 +53,8 @@ export function resolveAndroidSdkRoot(
   const configured = environment.ANDROID_HOME ?? environment.ANDROID_SDK_ROOT;
   if (configured) return configured;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
-  return NodePath.join(home, platform === "darwin" ? "Library/Android/sdk" : "Android/Sdk");
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  return path.join(home, platform === "darwin" ? "Library/Android/sdk" : "Android/Sdk");
 }
 
 const ANDROID_SDK_ROOT = resolveAndroidSdkRoot(NodeProcess.env);

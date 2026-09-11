@@ -13,6 +13,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type OrchestrationCommand,
   type OrchestrationEvent,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -26,7 +27,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -59,7 +60,10 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-function makeOrchestrationLayer(databasePath?: string) {
+function makeOrchestrationLayer(
+  databasePath?: string,
+  repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+) {
   const persistence = databasePath
     ? makeSqlitePersistenceLive(databasePath)
     : SqlitePersistenceMemory;
@@ -77,15 +81,27 @@ function makeOrchestrationLayer(databasePath?: string) {
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provide(
+      repositoryIdentityResolver
+        ? Layer.succeed(
+            RepositoryIdentityResolver.RepositoryIdentityResolver,
+            repositoryIdentityResolver,
+          )
+        : RepositoryIdentityResolver.layer,
+    ),
     Layer.provide(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
 }
 
-async function createOrchestrationSystem(databasePath?: string) {
-  const runtime = ManagedRuntime.make(makeOrchestrationLayer(databasePath));
+async function createOrchestrationSystem(
+  databasePath?: string,
+  repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+) {
+  const runtime = ManagedRuntime.make(
+    makeOrchestrationLayer(databasePath, repositoryIdentityResolver),
+  );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
@@ -238,6 +254,17 @@ describe("OrchestrationEngine", () => {
           threadId,
           requestId,
           answers: { "0": "pnpm", "1": "Example" },
+          attachmentsByQuestionId: {
+            "1": [
+              {
+                type: "file" as const,
+                id: "thread-1-00000000-0000-4000-8000-0000000000aa-txt",
+                name: "spec.txt",
+                mimeType: "text/plain",
+                sizeBytes: 4,
+              },
+            ],
+          },
           createdAt: "2026-01-01T00:00:02.000Z",
         };
         await expect(
@@ -255,8 +282,9 @@ describe("OrchestrationEngine", () => {
           (message) => message.role === "user",
         );
         expect(userMessages).toHaveLength(1);
+        expect(userMessages?.[0]?.attachments).toEqual(response.attachmentsByQuestionId["1"]);
         expect(userMessages?.[0]?.text).toBe(
-          "Which package manager?\npnpm\n\nWhat should it be named?\nExample",
+          "Which package manager?\npnpm\n\nWhat should it be named?\nExample\nAttached file: spec.txt (thread-1-00000000-0000-4000-8000-0000000000aa-txt)",
         );
         expect(
           after.threads[0]?.activities.find((activity) => activity.kind === "user-input.resolved")
@@ -325,6 +353,8 @@ describe("OrchestrationEngine", () => {
           }),
         ),
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const projectionSnapshot = {
@@ -358,6 +388,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,
+          pullRequests: [],
           latestTurn: null,
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
@@ -416,8 +447,11 @@ describe("OrchestrationEngine", () => {
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getImportedAgentSessionSources: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadRuntimeContext: () => Effect.die("unused"),
+          getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -988,6 +1022,236 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it.each(["unlink", "relink", "branch", "worktree", "project", "delete"] as const)(
+    "rejects PR discovery completed after a newer %s command",
+    async (change) => {
+      const system = await createOrchestrationSystem(undefined, {
+        resolve: (workspaceRoot) =>
+          Effect.succeed({
+            canonicalKey: "example.test/owner/repository",
+            provider: "github",
+            displayName: "owner/repository",
+            rootPath: workspaceRoot,
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://example.test/owner/repository.git",
+            },
+          }),
+      });
+      // Same-tick links must replace the old PR, not rely on timestamp ordering.
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(now()));
+      try {
+        const projectId = ProjectId.make("pr-race-project");
+        const threadId = ThreadId.make("pr-race-thread");
+        const previous = {
+          projectId,
+          repository: "owner/repository",
+          number: 1,
+          url: "https://example.test/owner/repository/pull/1",
+        };
+        const replacement = {
+          ...previous,
+          number: 2,
+          url: "https://example.test/owner/repository/pull/2",
+        };
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("pr-race-project-create"),
+            projectId,
+            title: "PR race project",
+            workspaceRoot: "/tmp/pr-race-project",
+            defaultModelSelection: null,
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("pr-race-thread-create"),
+            threadId,
+            projectId,
+            title: "PR race thread",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature",
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        const observed = await system.run(
+          system.engine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make("pr-race-link"),
+            threadId,
+            linkedPullRequest: previous,
+          }),
+        );
+        expect((await system.readModel()).threads[0]?.linkedPullRequest).toEqual(previous);
+        const metadataChanges = {
+          unlink: { linkedPullRequest: null },
+          relink: {
+            linkedPullRequest: {
+              ...previous,
+              number: 3,
+              url: "https://example.test/owner/repository/pull/3",
+            },
+          },
+          branch: { branch: "another-feature" },
+          worktree: { worktreePath: "/tmp/another-worktree" },
+          project: {},
+        };
+        await system.run(
+          system.engine.dispatch(
+            change === "project"
+              ? {
+                  type: "project.meta.update",
+                  commandId: CommandId.make("pr-race-project-move"),
+                  projectId,
+                  workspaceRoot: "/tmp/another-project-root",
+                }
+              : change === "delete"
+                ? { type: "thread.delete", commandId: CommandId.make("pr-race-delete"), threadId }
+                : {
+                    type: "thread.meta.update",
+                    commandId: CommandId.make(`pr-race-${change}`),
+                    threadId,
+                    ...metadataChanges[change],
+                  },
+          ),
+        );
+        const command = {
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("pr-race-stale-sync"),
+          threadId,
+          projectId,
+          snapshotSequence: observed.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-race-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: previous,
+            branchPullRequest: null,
+          },
+          branchPullRequest: replacement,
+          linkedPullRequest: replacement,
+        } satisfies OrchestrationCommand;
+        const error = await system.run(system.engine.dispatch(command).pipe(Effect.flip));
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        if (change === "delete") return;
+        const current = (await system.readModel()).threads[0];
+        expect(current?.branchPullRequest ?? null).toBeNull();
+        expect(current?.pullRequests.map((link) => link.number)).toEqual(
+          change === "unlink" ? [] : change === "relink" ? [3] : [1],
+        );
+        expect(current?.linkedPullRequest ?? null).toEqual(
+          change === "unlink"
+            ? null
+            : change === "relink"
+              ? metadataChanges.relink.linkedPullRequest
+              : previous,
+        );
+      } finally {
+        clock.mockRestore();
+        await system.dispose();
+      }
+    },
+  );
+
+  it("saves PR associations through streaming and unrelated metadata edits", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      const projectId = ProjectId.make("pr-sync-project");
+      const threadId = ThreadId.make("pr-sync-thread");
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("pr-sync-project-create"),
+          projectId,
+          title: "PR sync project",
+          workspaceRoot: "/tmp/pr-sync-project",
+          defaultModelSelection: null,
+          createdAt: now(),
+        }),
+      );
+      const created = await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("pr-sync-thread-create"),
+          threadId,
+          projectId,
+          title: "PR sync thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature",
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      const reference = {
+        projectId,
+        repository: "owner/repository",
+        number: 42,
+        url: "https://example.test/owner/repository/pull/42",
+      };
+      const activityAt = "2026-01-01T01:00:00.000Z";
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("pr-sync-streaming-message"),
+          threadId,
+          messageId: MessageId.make("pr-sync-message"),
+          delta: "The PR is ready.",
+          createdAt: activityAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("pr-sync-title-and-model"),
+          threadId,
+          title: "Renamed thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make("pr-sync-project-title"),
+          projectId,
+          title: "Renamed project",
+        }),
+      );
+      const beforeSync = (await system.readModel()).threads[0];
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("pr-sync-discovery"),
+          projectId,
+          threadId,
+          snapshotSequence: created.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-sync-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: reference,
+        }),
+      );
+      const current = (await system.readModel()).threads[0];
+      expect(current?.branchPullRequest).toEqual(reference);
+      expect(current?.linkedPullRequest ?? null).toBeNull();
+      expect(current?.updatedAt).toBe(beforeSync?.updatedAt);
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -1234,6 +1498,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1472,6 +1738,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     let shouldFailProjection = true;

@@ -114,9 +114,8 @@ export interface TelemetryRule extends Resource<
  * The account must be onboarded to CloudWatch telemetry config (see
  * `ObservabilityAdmin.TelemetryConfig`) before rules can be created.
  *
- * @resource
- * @section Creating a Telemetry Rule
- * @example Enable VPC flow logs for the account's VPCs
+ * ### Creating a Telemetry Rule
+ * **Example:** Enable VPC flow logs for the account's VPCs
  * ```typescript
  * import * as ObservabilityAdmin from "alchemy/AWS/ObservabilityAdmin";
  *
@@ -134,7 +133,7 @@ export interface TelemetryRule extends Resource<
  * });
  * ```
  *
- * @example Custom flow-log parameters
+ * **Example:** Custom flow-log parameters
  * ```typescript
  * const rule = yield* ObservabilityAdmin.TelemetryRule("FlowLogs", {
  *   resourceType: "AWS::EC2::VPC",
@@ -150,6 +149,8 @@ export interface TelemetryRule extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const TelemetryRule = Resource<TelemetryRule>(
   "AWS.ObservabilityAdmin.TelemetryRule",
