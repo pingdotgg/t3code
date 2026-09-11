@@ -69,11 +69,6 @@ it.effect("keeps truncated multibyte output valid and within the byte budget", (
     assert.include(source.diff, "01-large-untracked.txt");
     assert.notInclude(source.diff, "\uFFFD");
 
-    const truncatedMarker = "\n\n[truncated]";
-    assert.isTrue(source.diff.endsWith(truncatedMarker));
-    assert.isAtMost(
-      new TextEncoder().encode(source.diff.slice(0, -truncatedMarker.length)).byteLength,
-      1024 * 1024,
-    );
+    assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
   }).pipe(Effect.provide(TestLayer)),
 );

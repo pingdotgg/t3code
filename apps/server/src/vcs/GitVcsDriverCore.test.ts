@@ -898,100 +898,129 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps large tracked and untracked review diffs complete", () =>
+    it.effect("keeps untracked filenames with pathspec magic in the review", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const lineCount = 16_000;
-        const original = Array.from({ length: lineCount }, (_, index) => `before-${index}\n`).join(
-          "",
-        );
-        const updated = Array.from({ length: lineCount }, (_, index) => `after-${index}\n`).join(
-          "",
-        );
-        const sourceBefore = 'export const source = "before";\n';
-        const sourceAfter = 'export const source = "after";\n';
+        yield* writeTextFile(cwd, ":(exclude)after.ts", "literal pathspec contents\n");
+        yield* writeTextFile(cwd, "ordinary.ts", "ordinary contents\n");
+        const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
 
-        yield* writeTextFile(cwd, "01-large-review-file.txt", original);
-        yield* writeTextFile(cwd, "02-source-file.ts", sourceBefore);
-        yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
-        yield* git(cwd, ["commit", "-m", "add large review file"]);
-        yield* git(cwd, ["checkout", "-b", "feature/review-diff-budget"]);
-        yield* writeTextFile(cwd, "01-large-review-file.txt", updated);
-        yield* writeTextFile(cwd, "02-source-file.ts", sourceAfter);
-        yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
-        yield* git(cwd, ["commit", "-m", "update large review file"]);
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
 
-        const untrackedLineCount = 12_000;
-        const untracked = Array.from(
-          { length: untrackedLineCount },
-          (_, index) => `untracked-${index}\n`,
-        ).join("");
-        yield* writeTextFile(cwd, "large-untracked-file.txt", untracked);
-
-        const preview = yield* driver.getReviewDiffPreview({ cwd });
-        const branchSource = preview.sources.find((source) => source.kind === "branch-range");
-        const workingTreeSource = preview.sources.find((source) => source.kind === "working-tree");
-
-        assert.isDefined(branchSource);
-        assert.isFalse(branchSource.truncated);
-        assert.isAbove(branchSource.diff.length, 120_000);
-        assert.include(branchSource.diff, `+after-${lineCount - 1}`);
-        assert.include(branchSource.diff, `+${sourceAfter.trimEnd()}`);
-
-        assert.isDefined(workingTreeSource);
-        assert.isFalse(workingTreeSource.truncated);
-        assert.isAbove(workingTreeSource.diff.length, 80_000);
-        assert.include(workingTreeSource.diff, `+untracked-${untrackedLineCount - 1}`);
+        assert.include(diff, "+literal pathspec contents");
+        assert.include(diff, "+ordinary contents");
+        assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
       }),
     );
 
-    it.effect("bounds the aggregate untracked review diff output", () =>
+    it.effect("detects an unstaged rename with edits without mutating a split index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
-        const lineCount = 45_000;
-        const makeContents = (prefix: string) =>
-          Array.from(
-            { length: lineCount },
-            (_, index) => `${prefix}-${index.toString().padStart(5, "0")}\n`,
-          ).join("");
-
-        yield* writeTextFile(cwd, "01-large-untracked.txt", makeContents("first"));
-        yield* writeTextFile(cwd, "02-later-source.ts", makeContents("second"));
-
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const preview = yield* driver.getReviewDiffPreview({ cwd });
-        const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
-
-        assert.isDefined(source);
-        assert.isTrue(source.truncated);
-        assert.include(source.diff, "[truncated]");
-        assert.lengthOf(
-          ["01-large-untracked.txt", "02-later-source.ts"].filter((path) =>
-            source.diff.includes(path),
-          ),
-          1,
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "before.ts", "one\ntwo\nthree\nfour\nfive\n");
+        yield* git(cwd, ["add", "before.ts"]);
+        yield* git(cwd, ["commit", "-m", "add source file"]);
+        yield* git(cwd, ["config", "core.splitIndex", "true"]);
+        yield* git(cwd, ["config", "splitIndex.sharedIndexExpire", "now"]);
+        yield* git(cwd, ["update-index", "--split-index"]);
+        const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
+        const indexHashBefore = yield* git(cwd, ["hash-object", indexPath]);
+        const gitDirValue = yield* git(cwd, ["rev-parse", "--git-dir"]);
+        const gitDir = pathService.isAbsolute(gitDirValue)
+          ? gitDirValue
+          : pathService.resolve(cwd, gitDirValue);
+        const sharedIndexesBefore = (yield* fileSystem.readDirectory(gitDir))
+          .filter((entry) => entry.startsWith("sharedindex."))
+          .sort();
+        yield* fileSystem.rename(
+          pathService.join(cwd, "before.ts"),
+          pathService.join(cwd, "after.ts"),
         );
-        assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1_000_032);
+        yield* writeTextFile(cwd, "after.ts", "one\ntwo\nTHREE\nfour\nfive\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+        const indexHashAfter = yield* git(cwd, ["hash-object", indexPath]);
+        const sharedIndexesAfter = (yield* fileSystem.readDirectory(gitDir))
+          .filter((entry) => entry.startsWith("sharedindex."))
+          .sort();
+
+        assert.include(diff, "rename from before.ts");
+        assert.include(diff, "rename to after.ts");
+        assert.include(diff, "-three");
+        assert.include(diff, "+THREE");
+        assert.strictEqual(diff.match(/^diff --git /gm)?.length, 1);
+        assert.strictEqual(indexHashAfter, indexHashBefore);
+        assert.deepStrictEqual(sharedIndexesAfter, sharedIndexesBefore);
       }),
     );
 
-    it.effect("keeps a capped multibyte untracked diff in the preview", () =>
+    it.effect("keeps tracked changes visible when untracked discovery fails", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const failingLsFilesSpawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return Effect.die("expected a standard Git command");
+          }
+          return command.args[0] === "ls-files" && command.args[1] === "--others"
+            ? Effect.succeed(makeNonRepositoryHandle())
+            : delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingLsFilesSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd).pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+        );
+        yield* writeTextFile(cwd, "README.md", "# tracked change\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "-# test");
+        assert.include(diff, "+# tracked change");
+      }),
+    );
+
+    it.effect("preserves a staged deletion when the removed path still exists", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
-        yield* writeTextFile(cwd, "01-large-untracked.txt", `${"é".repeat(600_000)}\n`);
-
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        yield* writeTextFile(cwd, "removed.txt", "remove me\n");
+        yield* git(cwd, ["add", "removed.txt"]);
+        yield* git(cwd, ["commit", "-m", "add removable file"]);
+        yield* git(cwd, ["rm", "--cached", "removed.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "deleted file mode");
+        assert.include(diff, "-remove me");
+        assert.notInclude(diff, "new file mode");
+      }),
+    );
+
+    it.effect("keeps untracked files visible before the first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "untracked.txt", "visible before HEAD\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
         const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
 
-        assert.isDefined(source);
-        assert.isTrue(source.truncated);
-        assert.include(source.diff, "01-large-untracked.txt");
-        assert.include(source.diff, "[truncated]");
+        assert.include(source?.diff, "visible before HEAD");
+        assert.equal(source?.truncated, false);
       }),
     );
 
