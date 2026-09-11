@@ -100,6 +100,7 @@ function isDefiniteUiFile(file) {
   const patch = changedPatch(file);
   return (
     /(?:<[A-Za-z][^>]*\/>|\bclassName\s*=|\bstyle\s*=|\baria-[a-z-]+\s*=|\brole\s*=)/.test(patch) ||
+    /<([A-Za-z][\w.]*)(?:\s[^>]*)?>[^]*?<\/\1\s*>/.test(patch) ||
     MOTION_PATTERN.test(patch)
   );
 }

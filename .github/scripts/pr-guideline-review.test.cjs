@@ -194,6 +194,24 @@ test("detects a self-closing JSX element as a visible change", () => {
   assert.equal(result.findings.at(-1).code, "missing-ui-images");
 });
 
+test("detects a paired JSX element as a visible change", () => {
+  const result = evaluate({
+    files: [
+      {
+        filename: "apps/web/src/components/SaveButton.tsx",
+        additions: 1,
+        deletions: 0,
+        patch: "+return <button>Save</button>;",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    result.findings.map((entry) => entry.code),
+    ["missing-ui-images"],
+  );
+});
+
 test("accepts the exact no-UI phrase documented by the template", () => {
   const result = evaluate({
     pull: { body: `${completeBody}\n## UI Changes\nNo visual or interaction changes.` },
