@@ -1042,7 +1042,7 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
-  it("keeps a tool group after the terminal response visible when the turn is folded", () => {
+  it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");
     const timelineEntries = [
       {
@@ -1064,14 +1064,14 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-final" as never,
           role: "assistant" as const,
-          text: "I could not finish the task.",
+          text: "CI is re-running. Waiting.",
           runId,
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
           streaming: false,
         },
       },
-      ...Array.from({ length: 3 }, (_, index) => ({
+      ...Array.from({ length: count }, (_, index) => ({
         id: `work-entry-after-text-${index}`,
         kind: "work" as const,
         createdAt: `2026-01-01T00:00:0${index + 7}Z`,
@@ -1090,7 +1090,7 @@ describe("deriveMessagesTimelineRows", () => {
     const input = {
       latestRun: {
         runId,
-        status: "failed" as const,
+        status: "completed" as const,
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:10Z",
       },
@@ -1101,32 +1101,46 @@ describe("deriveMessagesTimelineRows", () => {
     };
     const rows = deriveMessagesTimelineRows({ ...input, timelineEntries });
 
-    expect(rows.map((row) => row.id)).toEqual([
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-      "work-toggle:work-entry-after-text-0",
-      "assistant-meta:assistant-final",
-    ]);
-    expect(rows.at(-2)).toMatchObject({
-      kind: "work-toggle",
-      hiddenCount: 3,
-      summary: "Ran 3 commands",
-    });
-    expect(rows.at(-1)).toMatchObject({
-      kind: "assistant-meta",
-      message: { id: "assistant-final" },
-      showAssistantCopyButton: true,
-    });
-    expect(rows.at(-3)).toMatchObject({
-      kind: "message",
-      showAssistantMeta: false,
-      showAssistantCopyButton: false,
+    expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries,
+      expandedRunIds: new Set([runId]),
     });
     expect(
-      deriveMessagesTimelineRows({ ...input, timelineEntries: timelineEntries.slice(0, 3) }).map(
-        (row) => row.id,
+      expanded.some(
+        (row) =>
+          row.id === "work-entry-after-text-0" ||
+          (row.kind === "work-toggle" &&
+            row.id === "work-toggle:work-entry-after-text-0" &&
+            row.hiddenCount === count),
       ),
-    ).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+    ).toBe(true);
+
+    // A late failure must remain visible even though successful work is folded.
+    const failedEntries = timelineEntries.map((entry) =>
+      entry.kind === "work" && entry.id === "work-entry-after-text-0"
+        ? { ...entry, entry: { ...entry.entry, toolLifecycleStatus: "failed" as const } }
+        : entry,
+    );
+    const failedRows = deriveMessagesTimelineRows({ ...input, timelineEntries: failedEntries });
+    expect(failedRows.some((row) => row.id === "work-entry-after-text-0")).toBe(true);
+
+    const pendingEntries = timelineEntries.map((entry) =>
+      entry.kind === "work" && entry.id === "work-entry-after-text-0"
+        ? { ...entry, entry: { ...entry.entry, toolLifecycleStatus: "inProgress" as const } }
+        : entry,
+    );
+    const pendingRows = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: pendingEntries,
+      latestRun: { ...input.latestRun, status: "running", completedAt: null },
+      isWorking: true,
+      activeTurnStartedAt: input.latestRun.startedAt,
+    });
+    expect(
+      pendingRows.some((row) => row.kind === "work-live" && row.entry.id === "work-after-text-0"),
+    ).toBe(true);
   });
 
   it("folds all assistant messages before the terminal message", () => {
