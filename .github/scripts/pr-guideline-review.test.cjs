@@ -45,7 +45,6 @@ function evaluate(overrides = {}) {
     files,
     repository: "pingdotgg/t3code",
     vouchedUsers: overrides.vouchedUsers,
-    vouchedStandardAvailable: overrides.vouchedStandardAvailable,
   });
 }
 
@@ -80,46 +79,16 @@ test("reports missing template content with direct fixes", () => {
   );
 });
 
-test("applies the richer handoff to collaborators and vouched contributors", () => {
-  const collaborator = evaluate({
-    pull: {
-      body: completeBody,
-      author_association: "COLLABORATOR",
-    },
-    vouchedStandardAvailable: true,
-  });
-
-  assert.equal(collaborator.status, "needs_work");
-  assert.deepEqual(
-    collaborator.findings.map((entry) => entry.code),
-    [
-      "missing-scope-and-non-goals",
-      "missing-affected-areas",
-      "missing-validation",
-      "missing-risks-and-untested",
-    ],
-  );
-
+test("treats collaborators and vouched contributors as trusted", () => {
+  const collaborator = evaluate({ pull: { author_association: "COLLABORATOR" } });
   const vouched = evaluate({
-    pull: {
-      user: { login: "VouchedPerson", type: "User" },
-      body: `${completeBody}
-## Scope and Non-Goals
-Only receipt retry state changes; UI behavior is unchanged.
-## Affected Areas
-Server receipts only. No client, provider, contract, or remote-path change.
-## Validation
-\`node --test receipts.test.ts\`: passed.
-## Risks and Untested Paths
-None known.`,
-    },
+    pull: { user: { login: "VouchedPerson", type: "User" } },
     vouchedUsers: new Set(["vouchedperson"]),
-    vouchedStandardAvailable: true,
   });
 
-  assert.equal(vouched.status, "pass");
-  assert.deepEqual(vouched.findings, []);
+  assert.equal(collaborator.metrics.trustedPull, true);
   assert.equal(vouched.metrics.trustedPull, true);
+  assert.equal(evaluate().metrics.trustedPull, false);
 });
 
 test("parses only active GitHub entries from the vouch file", () => {
@@ -127,25 +96,6 @@ test("parses only active GitHub entries from the vouch file", () => {
     [...parseVouchedUsers("# comment\ngithub:Alice\n-github:Blocked reason\ngithub:bob\n")],
     ["alice", "bob"],
   );
-});
-
-test("accepts equivalent vouched-guide headings and surface evidence", () => {
-  const result = evaluate({
-    pull: {
-      author_association: "MEMBER",
-      body: `${completeBody}
-## Scope and Non-Goals
-Documentation only. No client, provider, platform, contract, or connection behavior changes.
-## Validation
-\`vp fmt guide.md --check\`: passed.
-## Risks and Limitations
-The guide will need updates when policy changes. No runtime path was exercised.`,
-    },
-    vouchedStandardAvailable: true,
-  });
-
-  assert.equal(result.status, "pass");
-  assert.deepEqual(result.findings, []);
 });
 
 test("requires images and video for a visible motion change", () => {
@@ -555,20 +505,6 @@ test("renders an advisory comment without claiming approval", () => {
   assert.match(comment, /size:\*.*ignores whitespace-only changes/);
 });
 
-test("links the pinned vouched standard when it is active", () => {
-  const result = evaluate({
-    pull: { author_association: "COLLABORATOR" },
-    vouchedStandardAvailable: true,
-  });
-  const comment = renderComment(result, {
-    repository: "pingdotgg/t3code",
-    policyRevision: "base-sha",
-    vouchedStandardAvailable: true,
-  });
-
-  assert.match(comment, /blob\/base-sha\/CONTRIBUTING_VOUCHED\.md/);
-});
-
 test("does not publish stale results", async () => {
   let listedFiles = false;
   const result = await reviewPull({
@@ -804,4 +740,28 @@ test("updates one existing bot comment in place", async () => {
     ["update"],
   );
   assert.equal(calls[0][1].comment_id, 99);
+});
+
+test("creates a bot comment when none exists", async () => {
+  const calls = [];
+  const publication = await upsertComment(
+    {
+      paginate: async () => [{ id: 5, user: { login: "someone" }, body: COMMENT_MARKER }],
+      rest: {
+        issues: {
+          listComments: () => {},
+          createComment: async (input) => calls.push(["create", input]),
+          updateComment: async (input) => calls.push(["update", input]),
+        },
+      },
+    },
+    { repo: { owner: "pingdotgg", repo: "t3code" } },
+    7,
+    "body",
+  );
+
+  assert.equal(publication, "created");
+  assert.deepEqual(calls, [
+    ["create", { owner: "pingdotgg", repo: "t3code", issue_number: 7, body: "body" }],
+  ]);
 });

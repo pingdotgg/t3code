@@ -75,10 +75,6 @@ function section(markdown, heading) {
   return stripComments(content.join("\n"));
 }
 
-function sectionAny(markdown, headings) {
-  return headings.map((heading) => section(markdown, heading)).find(Boolean) ?? "";
-}
-
 function isTestFile(filename) {
   return TEST_FILE_PATTERNS.some((pattern) => pattern.test(filename));
 }
@@ -232,25 +228,10 @@ function finding(code, severity, message) {
   return { code, severity, message };
 }
 
-function evaluatePull({
-  pull,
-  files,
-  repository,
-  vouchedUsers = new Set(),
-  vouchedStandardAvailable = false,
-}) {
+function evaluatePull({ pull, files, repository, vouchedUsers = new Set() }) {
   const body = pull.body ?? "";
   const whatChanged = section(body, "What Changed");
   const why = section(body, "Why");
-  const scopeAndNonGoals = section(body, "Scope and Non-Goals");
-  const affectedAreas = section(body, "Affected Areas");
-  const validation = section(body, "Validation");
-  const risksAndUntested = sectionAny(body, [
-    "Risks and Untested Paths",
-    "Risks and Limitations",
-    "Risks",
-    "Limitations",
-  ]);
   const lines = effectiveChangedLines(files);
   const lineKind = lines.nonTest === 0 && lines.test > 0 ? "test" : "non-test";
   const areas = changedAreas(files);
@@ -285,50 +266,6 @@ function evaluatePull({
     );
   }
 
-  if (trustedPull && vouchedStandardAvailable && !scopeAndNonGoals) {
-    findings.push(
-      finding(
-        "missing-scope-and-non-goals",
-        "blocking",
-        "The vouched-contributor handoff requires explicit scope. Fill in `## Scope and Non-Goals` with what this PR intentionally leaves unchanged or defers.",
-      ),
-    );
-  }
-  const surfaceEvidence = `${scopeAndNonGoals}\n${risksAndUntested}`;
-  if (
-    trustedPull &&
-    vouchedStandardAvailable &&
-    !affectedAreas &&
-    !/\b(?:clients?|providers?|platforms?|contracts?|connection modes?|surfaces?)\b/i.test(
-      surfaceEvidence,
-    )
-  ) {
-    findings.push(
-      finding(
-        "missing-affected-areas",
-        "blocking",
-        "Name the applicable clients, providers, platforms, contracts, and connection modes in `## Affected Areas` or the scope/risk sections; include unsupported paths.",
-      ),
-    );
-  }
-  if (trustedPull && vouchedStandardAvailable && !validation) {
-    findings.push(
-      finding(
-        "missing-validation",
-        "blocking",
-        "Fill in `## Validation` with the exact focused commands or direct checks and their results.",
-      ),
-    );
-  }
-  if (trustedPull && vouchedStandardAvailable && !risksAndUntested) {
-    findings.push(
-      finding(
-        "missing-risks-and-untested",
-        "blocking",
-        "Fill in `## Risks and Untested Paths`; say `None known` only when that is the honest result.",
-      ),
-    );
-  }
   if (uiFiles.length > 0 && imageCount(uiEvidence) < 2 && !explainsNoVisualChange(body)) {
     findings.push(
       finding(
@@ -453,9 +390,8 @@ function evaluatePull({
   };
 }
 
-function renderComment(result, { repository, policyRevision, vouchedStandardAvailable = false }) {
+function renderComment(result, { repository, policyRevision }) {
   const policyUrl = `https://github.com/${repository}/blob/${policyRevision}/CONTRIBUTING.md`;
-  const vouchedPolicyUrl = `https://github.com/${repository}/blob/${policyRevision}/CONTRIBUTING_VOUCHED.md`;
   const title = {
     needs_work: "Needs work before maintainer review",
     manual_review: "Human judgment needed",
@@ -467,11 +403,6 @@ function renderComment(result, { repository, policyRevision, vouchedStandardAvai
       ? ["- ✅ The objective checks found no missing explanation, context, size, or evidence item."]
       : result.findings.map((entry) => `- ${icon[entry.severity]} ${entry.message}`);
   const areas = result.metrics.areas.length > 0 ? result.metrics.areas.join(", ") : "uncategorized";
-  const policies =
-    result.metrics.trustedPull && vouchedStandardAvailable
-      ? `[CONTRIBUTING.md](${policyUrl}) and [CONTRIBUTING_VOUCHED.md](${vouchedPolicyUrl})`
-      : `[CONTRIBUTING.md](${policyUrl})`;
-
   return [
     COMMENT_MARKER,
     "## Contribution sniff test",
@@ -482,7 +413,7 @@ function renderComment(result, { repository, policyRevision, vouchedStandardAvai
     "",
     `Observed by this advisory check: ${result.metrics.effectiveChangedLines.toLocaleString("en-US")} ${result.metrics.lineKind} changed lines, ${areas}. The repository's \`size:*\` workflow may report fewer lines because it also ignores whitespace-only changes.`,
     "",
-    `This advisory check applies ${policies}. It does not approve, reject, or replace maintainer review. It deliberately leaves product direction, whether the PR mixes concerns, and whether the implementation is correct to a person.`,
+    `This advisory check applies [CONTRIBUTING.md](${policyUrl}). It does not approve, reject, or replace maintainer review. It deliberately leaves product direction, whether the PR mixes concerns, and whether the implementation is correct to a person.`,
   ].join("\n");
 }
 
@@ -540,7 +471,6 @@ async function reviewPull({
   core,
   policyRevision = context.sha,
   vouchedUsers = new Set(),
-  vouchedStandardAvailable = false,
 }) {
   const eventPull = context.payload.pull_request;
   const expectedHeadSha = eventPull.head.sha;
@@ -579,12 +509,10 @@ async function reviewPull({
     files,
     repository: `${owner}/${repo}`,
     vouchedUsers,
-    vouchedStandardAvailable,
   });
   const body = renderComment(result, {
     repository: `${owner}/${repo}`,
     policyRevision: policyRevision ?? pull.base.sha,
-    vouchedStandardAvailable,
   });
 
   const { data: currentPull } = await github.rest.pulls.get({
@@ -615,6 +543,5 @@ module.exports = {
   removeComment,
   reviewPull,
   section,
-  sectionAny,
   upsertComment,
 };
