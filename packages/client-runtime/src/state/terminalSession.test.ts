@@ -13,6 +13,7 @@ import {
   readTerminalOutputUpdate,
   selectRunningSubprocessTerminalIds,
   terminalOutputText,
+  terminalOutputRetentionBytes,
 } from "./terminalSession.ts";
 
 const TARGET = {
@@ -490,5 +491,219 @@ describe("terminal session reducers", () => {
       type: "append",
       data: writes.slice(100).join(""),
     });
+  });
+  it("retains adjacent maximum-size events after the smaller initial replay", () => {
+    const retentionBytes = terminalOutputRetentionBytes(64 * 1024);
+    expect(retentionBytes).toBe(512 * 1024);
+    expect(terminalOutputRetentionBytes(4 * 1024 * 1024)).toBe(4 * 1024 * 1024);
+
+    const snapshot = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      { type: "snapshot", snapshot: { ...BASE_SNAPSHOT, history: "" } },
+      retentionBytes,
+    );
+    const cursor = {
+      generation: snapshot.output.generation,
+      resetVersion: snapshot.output.resetVersion,
+      offset: snapshot.output.nextOffset,
+    };
+    const first = applyTerminalAttachStreamEvent(
+      snapshot,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "a".repeat(64 * 1024),
+      },
+      retentionBytes,
+    );
+    const second = applyTerminalAttachStreamEvent(
+      first,
+      {
+        type: "output",
+        threadId: TARGET.threadId,
+        terminalId: TARGET.terminalId,
+        data: "b".repeat(64 * 1024),
+      },
+      retentionBytes,
+    );
+
+    const update = readTerminalOutputUpdate(second.output, cursor);
+    if (update.type !== "append") throw new Error(`Expected append, received ${update.type}`);
+    expect(update.segments.map((segment) => segment.data).join("")).toHaveLength(128 * 1024);
+  });
+
+  it("advances repeated snapshots so renderers apply overflow resyncs", () => {
+    const first = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const second = applyTerminalAttachStreamEvent(first, {
+      type: "snapshot",
+      snapshot: { ...BASE_SNAPSHOT, history: "resynced" },
+    });
+    const cleared = applyTerminalAttachStreamEvent(second, {
+      type: "cleared",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      sequence: 1,
+    });
+
+    expect(second.version).toBe(2);
+    expect(second.replayStartVersion).toBe(0);
+    expect(cleared.replayStartVersion).toBe(0);
+    expect(terminalOutputText(second.output)).toBe("resynced");
+  });
+
+  it("tracks replay boundaries independently from snapshots and output", () => {
+    const started = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      sequence: 1,
+    });
+    const snapshot = applyTerminalAttachStreamEvent(started, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const completed = applyTerminalAttachStreamEvent(snapshot, {
+      type: "replay-complete",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      sequence: 1,
+    });
+    const reconnected = applyTerminalAttachStreamEvent(completed, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      sequence: 2,
+    });
+
+    expect(completed).toMatchObject({ replayStartVersion: 1, replayCompleteVersion: 1 });
+    expect(reconnected).toMatchObject({ replayStartVersion: 2, replayCompleteVersion: 1 });
+  });
+
+  it("does not make replay-start override metadata before its snapshot arrives", () => {
+    const summary = applyTerminalMetadataStreamEvent([], {
+      type: "snapshot",
+      terminals: [
+        {
+          threadId: BASE_SNAPSHOT.threadId,
+          terminalId: BASE_SNAPSHOT.terminalId,
+          cwd: BASE_SNAPSHOT.cwd,
+          worktreePath: BASE_SNAPSHOT.worktreePath,
+          status: "running",
+          pid: BASE_SNAPSHOT.pid,
+          exitCode: BASE_SNAPSHOT.exitCode,
+          exitSignal: BASE_SNAPSHOT.exitSignal,
+          updatedAt: BASE_SNAPSHOT.updatedAt,
+          hasRunningSubprocess: false,
+          label: BASE_SNAPSHOT.label,
+        },
+      ],
+    })[0]!;
+    const started = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      sequence: 1,
+    });
+
+    expect(started.version).toBe(0);
+    expect(started.replayStartVersion).toBe(1);
+    expect(combineTerminalSessionState(summary, started).status).toBe("running");
+  });
+
+  it("keeps replay and live appends distinct when both reduce before a renderer reads", () => {
+    const snapshot = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const cursor = {
+      generation: snapshot.output.generation,
+      resetVersion: snapshot.output.resetVersion,
+      offset: snapshot.output.nextOffset,
+    };
+    const replayStarted = applyTerminalAttachStreamEvent(snapshot, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    const replayOutput = applyTerminalAttachStreamEvent(replayStarted, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: " replay",
+    });
+    const replayCompleted = applyTerminalAttachStreamEvent(replayOutput, {
+      type: "replay-complete",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    const liveOutput = applyTerminalAttachStreamEvent(replayCompleted, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: " live",
+    });
+
+    expect(readTerminalOutputUpdate(liveOutput.output, cursor)).toMatchObject({
+      type: "append",
+      segments: [
+        { data: " replay", delivery: "replay" },
+        { data: " live", delivery: "live" },
+      ],
+    });
+    expect(
+      readTerminalOutputUpdate(liveOutput.output, INITIAL_TERMINAL_OUTPUT_CURSOR),
+    ).toMatchObject({
+      type: "reset",
+      segments: [
+        { data: "hello replay", delivery: "replay" },
+        { data: " live", delivery: "live" },
+      ],
+    });
+    const consumed = readTerminalOutputUpdate(liveOutput.output, cursor).cursor;
+    const next = applyTerminalAttachStreamEvent(liveOutput, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: " unread",
+    });
+    expect(readTerminalOutputUpdate(next.output, consumed, true)).toMatchObject({
+      type: "reset",
+      segments: [
+        { data: "hello replay live", delivery: "replay" },
+        { data: " unread", delivery: "live" },
+      ],
+    });
+  });
+
+  it("closes every open replay when a completion marker arrives after a lost one", () => {
+    let state = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    // The transport re-ran the attach without the first replay completing.
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "replay-start",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    state = applyTerminalAttachStreamEvent(state, {
+      type: "replay-complete",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+    });
+    expect(state.replayCompleteVersion).toBe(state.replayStartVersion);
+
+    const liveOutput = applyTerminalAttachStreamEvent(state, {
+      type: "output",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      data: "after",
+    });
+    expect(liveOutput.output.chunks.at(-1)?.delivery).toBe("live");
   });
 });

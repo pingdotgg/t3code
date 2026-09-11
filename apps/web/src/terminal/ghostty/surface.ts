@@ -37,6 +37,19 @@ const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
+// A missing synchronized-output reset must not leave the visible terminal
+// frozen forever. A short fallback is no worse than rendering unsynchronized.
+const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
+// Hidden and occluded documents can suspend animation frames indefinitely.
+// The timeout drains the accumulated queue without a per-frame budget when
+// there is no paint cadence to protect.
+const TERMINAL_WRITE_DRAIN_TIMEOUT_MS = 100;
+const TERMINAL_WRITE_CHUNK_CODE_UNITS = 64 * 1024;
+const TERMINAL_IMMEDIATE_WRITE_CODE_UNITS = 16 * 1024;
+// Normal visible writes yield between chunks to protect paints. If a producer
+// outruns the display for long enough, finish the bounded backlog in one pass
+// instead of letting it grow without limit behind one 64 KB animation frame.
+const TERMINAL_WRITE_QUEUE_MAX_CODE_UNITS = 1024 * 1024;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
 const TERMINAL_FONT_LOAD_VARIANTS = [
   "normal 400",
@@ -395,6 +408,17 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
+export function resolveTerminalAsyncPasteClaim(
+  pendingToken: number,
+  currentToken: number,
+  shortcutActive: boolean,
+): { readonly nextToken: number; readonly deliveredToken: number | null } | null {
+  if (pendingToken !== currentToken) return null;
+  return shortcutActive
+    ? { nextToken: currentToken, deliveredToken: pendingToken }
+    : { nextToken: currentToken + 1, deliveredToken: null };
+}
+
 /**
  * Middle-click paste is an X11/Wayland convention. macOS and Windows have no
  * primary selection and use the button for autoscroll, so only desktops that
@@ -545,6 +569,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
+  readonly onScrollbackTop?: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   /**
@@ -578,6 +603,15 @@ export class GhosttyTerminalSurface {
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
   private frame = 0;
+  private synchronizedRenderTimer: number | null = null;
+  private writeFrame = 0;
+  private writeDrainTimer: number | null = null;
+  private writeQueue: Array<{ data: string; offset: number; replay: boolean }> = [];
+  private writeQueueIndex = 0;
+  private writeQueueCodeUnits = 0;
+  private replayActive = false;
+  private replayStreamOpen = false;
+  private scrollToTopWhenWritesDrain = false;
   private cursorTimer: number | null = null;
   private compositionInputToSuppress: string | null = null;
   private compositionSuppressionTimer: number | null = null;
@@ -616,15 +650,24 @@ export class GhosttyTerminalSurface {
   } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
+  /** Cursor shown when no link is hovered: "default" while an app owns the mouse. */
+  private hoverBaseCursor = "";
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
   private focused = false;
   private resizeNotified = false;
   private canvasConfigured = false;
+  private canvasDevicePixelRatio = 0;
+  private pendingCanvasConfiguration: {
+    readonly width: number;
+    readonly height: number;
+    readonly ratio: number;
+  } | null = null;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  private pasteShortcutDeliveredToken: number | null = null;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -762,9 +805,27 @@ export class GhosttyTerminalSurface {
   }
 
   write(data: string): void {
-    if (this.disposed) return;
-    this.core.write(data);
+    if (this.disposed || data.length === 0) return;
+    if (
+      !this.replayActive &&
+      this.writeQueueIndex >= this.writeQueue.length &&
+      data.length <= TERMINAL_IMMEDIATE_WRITE_CODE_UNITS
+    ) {
+      this.core.write(data);
+      this.didWriteOutput();
+      return;
+    }
+
+    // Output from the PTY only follows the server's replay-complete marker.
+    // Anything written while a streamed replay is open is renderer-local
+    // status text, so keep it ordered inside the replay instead of ending the
+    // stream before later history chunks arrive.
+    this.enqueueWrite(data, this.replayStreamOpen);
+  }
+
+  private didWriteOutput(): void {
     this.synchronizeMouseTrackingState();
+    this.refreshHoverBaseCursor();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -774,8 +835,15 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.cancelPendingWrites();
     this.lastMouseMotionData = "";
-    this.core.resetAndWrite(data);
+    this.core.beginReplay();
+    this.replayActive = true;
+    if (data.length > 0) {
+      this.enqueueWrite(data, true);
+    } else {
+      this.finishReplay();
+    }
     this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
@@ -785,10 +853,177 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
+  /** Reset once, then accept ordered replay chunks until the caller marks the stream complete. */
+  beginStreamingReplay(data: string): void {
+    if (this.disposed) return;
+    this.cancelPendingWrites();
+    this.lastMouseMotionData = "";
+    this.core.beginReplay();
+    this.replayActive = true;
+    this.replayStreamOpen = true;
+    if (data.length > 0) {
+      this.enqueueWrite(data, true);
+    }
+    this.synchronizeMouseTrackingState();
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  appendStreamingReplay(data: string): void {
+    if (this.disposed || data.length === 0) return;
+    if (!this.replayStreamOpen) {
+      this.beginStreamingReplay(data);
+      return;
+    }
+    this.enqueueWrite(data, true);
+  }
+
+  completeStreamingReplay(): void {
+    if (this.disposed || !this.replayStreamOpen) return;
+    this.replayStreamOpen = false;
+    if (this.writeQueueIndex < this.writeQueue.length) return;
+    this.finishReplay();
+    if (this.scrollToTopWhenWritesDrain) {
+      this.scrollToTopWhenWritesDrain = false;
+      this.scrollToTop();
+    }
+  }
+
+  scrollToTopAfterWrites(): void {
+    if (this.disposed) return;
+    if (this.writeQueueIndex < this.writeQueue.length || this.replayActive) {
+      this.scrollToTopWhenWritesDrain = true;
+      return;
+    }
+    this.scrollToTop();
+  }
+
+  private enqueueWrite(data: string, replay: boolean): void {
+    this.writeQueue.push({ data, offset: 0, replay });
+    this.writeQueueCodeUnits += data.length;
+    if (this.writeQueueCodeUnits < TERMINAL_WRITE_QUEUE_MAX_CODE_UNITS) {
+      this.requestWriteDrain();
+      return;
+    }
+
+    if (this.writeFrame !== 0) {
+      window.cancelAnimationFrame(this.writeFrame);
+      this.writeFrame = 0;
+    }
+    if (this.writeDrainTimer !== null) {
+      window.clearTimeout(this.writeDrainTimer);
+      this.writeDrainTimer = null;
+    }
+    this.drainWrites(Number.POSITIVE_INFINITY);
+  }
+
+  private requestWriteDrain(): void {
+    if (this.disposed || this.writeFrame !== 0 || this.writeDrainTimer !== null) return;
+    this.writeFrame = window.requestAnimationFrame(this.drainWritesOnFrame);
+    this.writeDrainTimer = window.setTimeout(
+      this.drainWritesAfterFrameTimeout,
+      TERMINAL_WRITE_DRAIN_TIMEOUT_MS,
+    );
+  }
+
+  private readonly drainWritesOnFrame = () => {
+    this.writeFrame = 0;
+    if (this.writeDrainTimer !== null) {
+      window.clearTimeout(this.writeDrainTimer);
+      this.writeDrainTimer = null;
+    }
+    this.drainWrites(TERMINAL_WRITE_CHUNK_CODE_UNITS);
+  };
+
+  private readonly drainWritesAfterFrameTimeout = () => {
+    this.writeDrainTimer = null;
+    if (this.writeFrame !== 0) {
+      window.cancelAnimationFrame(this.writeFrame);
+      this.writeFrame = 0;
+    }
+    this.drainWrites(Number.POSITIVE_INFINITY);
+  };
+
+  private drainWrites(budget: number): void {
+    if (this.disposed) return;
+
+    while (budget > 0) {
+      const pending = this.writeQueue[this.writeQueueIndex];
+      if (!pending) break;
+      if (this.replayActive && !pending.replay) this.finishReplay();
+      let end = Math.min(pending.data.length, pending.offset + budget);
+      const lastCodeUnit = pending.data.charCodeAt(end - 1);
+      const nextCodeUnit = pending.data.charCodeAt(end);
+      if (
+        end < pending.data.length &&
+        lastCodeUnit >= 0xd800 &&
+        lastCodeUnit <= 0xdbff &&
+        nextCodeUnit >= 0xdc00 &&
+        nextCodeUnit <= 0xdfff
+      ) {
+        end -= 1;
+      }
+      const chunk = pending.data.slice(pending.offset, end);
+      // A one-code-unit remainder can land before a surrogate pair. Leave it
+      // for the next frame, whose full budget can consume the pair together.
+      if (chunk.length === 0) break;
+      if (pending.replay && this.replayActive) this.core.writeReplay(chunk);
+      else this.core.write(chunk);
+      budget -= chunk.length;
+      this.writeQueueCodeUnits -= chunk.length;
+      pending.offset = end;
+      if (pending.offset >= pending.data.length) this.writeQueueIndex += 1;
+    }
+
+    if (this.writeQueueIndex >= this.writeQueue.length) {
+      this.writeQueue = [];
+      this.writeQueueIndex = 0;
+      this.writeQueueCodeUnits = 0;
+      if (!this.replayStreamOpen) {
+        this.finishReplay();
+        if (this.scrollToTopWhenWritesDrain) {
+          this.scrollToTopWhenWritesDrain = false;
+          this.scrollToTop();
+        }
+      }
+    } else {
+      this.requestWriteDrain();
+    }
+    this.didWriteOutput();
+  }
+
+  private finishReplay(): void {
+    if (!this.replayActive) return;
+    this.core.endReplay();
+    this.replayActive = false;
+    this.replayStreamOpen = false;
+  }
+
+  private cancelPendingWrites(): void {
+    this.cancelSynchronizedRenderTimer();
+    if (this.writeFrame !== 0) {
+      window.cancelAnimationFrame(this.writeFrame);
+      this.writeFrame = 0;
+    }
+    if (this.writeDrainTimer !== null) {
+      window.clearTimeout(this.writeDrainTimer);
+      this.writeDrainTimer = null;
+    }
+    this.writeQueue = [];
+    this.writeQueueIndex = 0;
+    this.writeQueueCodeUnits = 0;
+    this.replayStreamOpen = false;
+    this.scrollToTopWhenWritesDrain = false;
+    this.finishReplay();
+  }
+
   setTheme(theme: GhosttyTheme): void {
     if (this.disposed) return;
     this.theme = theme;
     this.core.setTheme(theme);
+    this.mount.style.backgroundColor = `rgb(${theme.background.r} ${theme.background.g} ${theme.background.b})`;
     this.forceFullRender = true;
     this.requestRender();
   }
@@ -876,15 +1111,24 @@ export class GhosttyTerminalSurface {
     if (
       this.canvas.width !== pixelWidth ||
       this.canvas.height !== pixelHeight ||
-      !this.canvasConfigured
+      !this.canvasConfigured ||
+      this.canvasDevicePixelRatio !== ratio
     ) {
-      this.canvas.width = pixelWidth;
-      this.canvas.height = pixelHeight;
-      this.context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      this.canvasConfigured = true;
+      // Changing a canvas backing size clears it immediately. Keep the last
+      // complete frame visible until the gated paint can resize and redraw in
+      // one callback, especially while a full-screen app owns mode 2026.
+      this.pendingCanvasConfiguration = {
+        width: pixelWidth,
+        height: pixelHeight,
+        ratio,
+      };
       this.forceFullRender = true;
       this.scrollbarDirty = true;
       shouldRender = true;
+    } else {
+      // A rapid drag can return to the currently painted size before its queued
+      // frame runs. Do not apply the stale intermediate backing dimensions.
+      this.pendingCanvasConfiguration = null;
     }
     const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
     this.mountHeight = height;
@@ -899,10 +1143,14 @@ export class GhosttyTerminalSurface {
       this.scrollbarDirty = true;
       shouldRender = true;
     }
-    // Rendering synchronously keeps the repaint inside the same frame as the
-    // layout change: ResizeObserver fires before paint, so the browser never
-    // composites the old backing store stretched into the new element box.
-    if (shouldRender || this.forceFullRender) this.renderFrame();
+    // ResizeObserver runs after animation frame callbacks. Outside a gated TUI
+    // update, repaint now so this frame never stretches the old backing store.
+    // Mode 2026 keeps its atomicity and applies the pending size with its next
+    // complete synchronized frame.
+    if (shouldRender || this.forceFullRender) {
+      if (this.core.isSynchronizedOutput()) this.requestRender();
+      else this.renderFrame();
+    }
     return true;
   }
 
@@ -1015,6 +1263,13 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
+  scrollToTop(): void {
+    this.core.scrollToTop();
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
   isAtBottom(): boolean {
     return this.core.isViewportActive();
   }
@@ -1036,6 +1291,10 @@ export class GhosttyTerminalSurface {
       this.options.onResize(this.cols, this.rows);
     }
     this.cancelRender();
+    this.cancelSynchronizedRenderTimer();
+    if (this.writeFrame !== 0) window.cancelAnimationFrame(this.writeFrame);
+    if (this.writeDrainTimer !== null) window.clearTimeout(this.writeDrainTimer);
+    if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
@@ -1120,17 +1379,25 @@ export class GhosttyTerminalSurface {
       this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Race the async clipboard read against the browser's own paste event:
-        // the native event (dispatched synchronously with the default action)
-        // always claims the token first when it fires, and the read covers
-        // browsers whose paste shortcut produces no paste event. Not preventing
-        // the default keeps the native path alive when the read is denied.
+        // Race the async clipboard read against the browser's own paste event.
+        // Either may arrive first, so the winning path records the gesture and
+        // the other path becomes a no-op. The read covers browsers whose paste
+        // shortcut produces no paste event; leaving the default intact keeps
+        // the native path alive when clipboard permission is denied.
         const token = ++this.pasteShortcutToken;
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length === 0) return;
+            const claim = resolveTerminalAsyncPasteClaim(
+              token,
+              this.pasteShortcutToken,
+              this.suppressedKeyCodes.has(event.code),
+            );
+            if (claim === null) return;
+            this.pasteShortcutDeliveredToken = claim.deliveredToken;
+            this.pasteShortcutToken = claim.nextToken;
+            this.options.onData(this.core.encodePaste(text));
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1155,7 +1422,15 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    if (this.suppressedKeyCodes.delete(event.code)) return;
+    if (this.suppressedKeyCodes.delete(event.code)) {
+      // A native paste belongs to the same shortcut gesture and arrives before
+      // its keyup. Do not let an async-only shortcut suppress a later context-
+      // menu paste just because the browser never dispatched the native event.
+      if (event.code === "KeyV" || event.code === "Insert") {
+        this.pasteShortcutDeliveredToken = null;
+      }
+      return;
+    }
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
@@ -1235,8 +1510,14 @@ export class GhosttyTerminalSurface {
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
     if (data.length === 0) return;
-    // The native paste won the race with actual text; a pending clipboard read
-    // must not double. An empty native paste leaves the read as the only path.
+    const token = this.pasteShortcutToken;
+    if (this.pasteShortcutDeliveredToken === token) {
+      this.pasteShortcutDeliveredToken = null;
+      this.pasteShortcutToken += 1;
+      return;
+    }
+    // The native paste won the race with actual text; invalidate a pending
+    // clipboard read. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
     this.options.onData(this.core.encodePaste(data));
   };
@@ -1399,8 +1680,15 @@ export class GhosttyTerminalSurface {
       // A drag whose press was already sent to the terminal application cannot
       // turn into link activation midway through, so link feedback would lie.
       this.setHoveredLink(null);
+      this.hoverBaseCursor = "default";
       this.canvas.style.cursor = "default";
-      this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
+      // The application may stop tracking mid-drag (it may have just exited).
+      // The press was its, so the rest of the gesture stays captured and
+      // silent until pointerup rather than typing reports into whatever now
+      // owns the shell or turning into a text selection.
+      if (this.core.isMouseTracking()) {
+        this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
+      }
       return;
     }
     this.lastMouseMotionData = "";
@@ -1470,6 +1758,11 @@ export class GhosttyTerminalSurface {
 
   private updateHoverCursor(event: PointerEvent): void {
     this.hoverPointer = { x: event.clientX, y: event.clientY };
+    // While an application owns the mouse, a click goes to it rather than
+    // starting a text selection, so the I-beam would lie about the gesture.
+    this.hoverBaseCursor = shouldReportTerminalMouse(this.core.isMouseTracking(), event)
+      ? "default"
+      : "";
     this.refreshHoveredLink();
   }
 
@@ -1480,6 +1773,7 @@ export class GhosttyTerminalSurface {
 
   private clearHoveredLink(cursor = ""): void {
     this.hoverPointer = null;
+    this.hoverBaseCursor = cursor;
     this.setHoveredLink(null);
     this.canvas.style.cursor = cursor;
   }
@@ -1490,6 +1784,19 @@ export class GhosttyTerminalSurface {
     this.setHoveredLink(link);
   }
 
+  /**
+   * Re-derive the no-link hover cursor after output may have toggled mouse
+   * tracking under a stationary pointer. The next pointer event restores
+   * the cursor for any held modifiers.
+   */
+  private refreshHoverBaseCursor(): void {
+    if (this.hoverPointer === null) return;
+    const next = this.core.isMouseTracking() ? "default" : "";
+    if (next === this.hoverBaseCursor) return;
+    this.hoverBaseCursor = next;
+    if (!this.hoveredLink) this.canvas.style.cursor = next;
+  }
+
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
     const previous = this.hoveredLink;
     const unchanged =
@@ -1498,7 +1805,7 @@ export class GhosttyTerminalSurface {
       previous?.range.start.y === link?.range.start.y &&
       previous?.range.end.x === link?.range.end.x &&
       previous?.range.end.y === link?.range.end.y;
-    this.canvas.style.cursor = link ? "pointer" : "";
+    this.canvas.style.cursor = link ? "pointer" : this.hoverBaseCursor;
     if (unchanged) return;
     this.hoveredLink = link;
     this.forceFullRender = true;
@@ -1527,7 +1834,11 @@ export class GhosttyTerminalSurface {
     if (this.mouseReportingPointerId === event.pointerId) {
       event.preventDefault();
       event.stopPropagation();
-      this.sendMouse("release", this.mouseReportingButton, event);
+      // Skip the release report when the application already stopped tracking
+      // (a quit-button click ends tracking before the button comes back up).
+      if (this.core.isMouseTracking()) {
+        this.sendMouse("release", this.mouseReportingButton, event);
+      }
       this.mouseReportingPointerId = null;
       this.mouseReportingButton = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
@@ -1537,6 +1848,11 @@ export class GhosttyTerminalSurface {
         this.clearHoveredLink();
       } else {
         this.hoverPointer = { x: event.clientX, y: event.clientY };
+        // The click may have ended tracking (a quit button): the base cursor
+        // set at press time must not keep showing an arrow over the shell.
+        this.hoverBaseCursor = shouldReportTerminalMouse(this.core.isMouseTracking(), event)
+          ? "default"
+          : "";
         this.refreshHoveredLink();
       }
       return;
@@ -1659,12 +1975,27 @@ export class GhosttyTerminalSurface {
       case "PageDown":
         delta = Math.max(1, state.len);
         break;
-      case "Home":
-        delta = -state.offset;
-        break;
-      case "End":
-        delta = state.total - state.len - state.offset;
-        break;
+      case "Home": {
+        event.preventDefault();
+        event.stopPropagation();
+        this.core.scrollToTop();
+        this.scrollbarState = { ...state, offset: 0 };
+        this.options.onScrollbackTop?.();
+        this.forceFullRender = true;
+        this.scrollbarDirty = true;
+        this.requestRender();
+        return;
+      }
+      case "End": {
+        event.preventDefault();
+        event.stopPropagation();
+        this.core.scrollToBottom();
+        this.scrollbarState = { ...state, offset: Math.max(0, state.total - state.len) };
+        this.forceFullRender = true;
+        this.scrollbarDirty = true;
+        this.requestRender();
+        return;
+      }
       default:
         return;
     }
@@ -1733,6 +2064,7 @@ export class GhosttyTerminalSurface {
       const offset = Math.max(0, Math.min(state.offset + delta, maxOffset));
       delta = offset - state.offset;
       this.scrollbarState = { ...state, offset };
+      if (deltaRows < 0 && offset === 0) this.options.onScrollbackTop?.();
     }
     if (delta === 0) return;
     this.core.scroll(delta);
@@ -1781,11 +2113,34 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
+    if (this.disposed || !this.visible || !this.hasSize) return;
+    if (this.core.isSynchronizedOutput()) {
+      // A render requested before the opening marker may still be queued. Once
+      // Ghostty has accepted partial frame data, that paint is no longer safe.
+      if (this.frame !== 0) {
+        window.cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
+      if (this.synchronizedRenderTimer === null) {
+        this.synchronizedRenderTimer = window.setTimeout(() => {
+          this.synchronizedRenderTimer = null;
+          this.renderFrame();
+        }, SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS);
+      }
+      return;
+    }
+    this.cancelSynchronizedRenderTimer();
+    if (this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();
     });
+  }
+
+  private cancelSynchronizedRenderTimer(): void {
+    if (this.synchronizedRenderTimer === null) return;
+    window.clearTimeout(this.synchronizedRenderTimer);
+    this.synchronizedRenderTimer = null;
   }
 
   private cancelRender(): void {
@@ -1797,6 +2152,7 @@ export class GhosttyTerminalSurface {
       window.clearTimeout(this.cursorTimer);
       this.cursorTimer = null;
     }
+    this.cancelSynchronizedRenderTimer();
   }
 
   private renderFrame(): void {
@@ -1813,6 +2169,15 @@ export class GhosttyTerminalSurface {
       this.forceFullRender = true;
       this.cancelRender();
       return;
+    }
+    const canvasConfiguration = this.pendingCanvasConfiguration;
+    if (canvasConfiguration !== null) {
+      this.pendingCanvasConfiguration = null;
+      this.canvas.width = canvasConfiguration.width;
+      this.canvas.height = canvasConfiguration.height;
+      this.context.setTransform(canvasConfiguration.ratio, 0, 0, canvasConfiguration.ratio, 0, 0);
+      this.canvasConfigured = true;
+      this.canvasDevicePixelRatio = canvasConfiguration.ratio;
     }
     this.snapshot = this.core.snapshot();
     // A cursor that is not blinking right now must be drawn, never caught in an

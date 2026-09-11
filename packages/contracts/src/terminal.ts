@@ -9,6 +9,15 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  */
 export const DEFAULT_TERMINAL_ID = "term-1";
 
+/** Maximum terminal output replayed when a client attaches or resynchronizes. */
+export const DEFAULT_TERMINAL_REPLAY_BYTES = 64 * 1024;
+
+/** Deeper attach replay requested by clients that can consume output incrementally. */
+export const EXTENDED_TERMINAL_REPLAY_BYTES = 4 * 1024 * 1024;
+
+/** Upper bound accepted from a client for one terminal attach replay. */
+export const MAX_TERMINAL_REPLAY_BYTES = 8 * 1024 * 1024;
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
@@ -57,6 +66,11 @@ export const TerminalAttachInput = Schema.Struct({
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   restartIfNotRunning: Schema.optional(Schema.Boolean),
+  replayBytes: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(DEFAULT_TERMINAL_REPLAY_BYTES)).check(
+      Schema.isLessThanOrEqualTo(MAX_TERMINAL_REPLAY_BYTES),
+    ),
+  ),
 });
 export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 
@@ -224,8 +238,20 @@ const TerminalAttachSnapshotEvent = Schema.Struct({
   snapshot: TerminalSessionSnapshot,
 });
 
+const TerminalReplayStartEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("replay-start"),
+});
+
+const TerminalReplayCompleteEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("replay-complete"),
+});
+
 export const TerminalAttachStreamEvent = Schema.Union([
+  TerminalReplayStartEvent,
   TerminalAttachSnapshotEvent,
+  TerminalReplayCompleteEvent,
   TerminalOutputEvent,
   TerminalExitedEvent,
   TerminalClosedEvent,
@@ -368,7 +394,20 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export class TerminalAttachTimeoutError extends Schema.TaggedError<TerminalAttachTimeoutError>()(
+  "TerminalAttachTimeoutError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+  },
+) {
+  override get message() {
+    return "Terminal output subscription stalled. Reattach to resume.";
+  }
+}
+
 export const TerminalError = Schema.Union([
+  TerminalAttachTimeoutError,
   TerminalCwdError,
   TerminalHistoryError,
   TerminalSessionLookupError,

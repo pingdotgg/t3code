@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  terminalOutputText,
+  type TerminalOutputCursor,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -14,7 +21,10 @@ import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getNativeTerminalHardwareKeyRevision,
+  getNativeTerminalStreamingRevision,
+  NATIVE_TERMINAL_STREAMING_REVISION,
   resolveNativeTerminalSurfaceView,
+  type NativeTerminalSurfaceHandle,
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
@@ -22,6 +32,7 @@ import {
   type TerminalTheme,
 } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
+import { nativeTerminalOutputCommands } from "./terminalBufferReplay";
 
 interface TerminalInputEvent {
   readonly data: string;
@@ -32,9 +43,27 @@ interface TerminalResizeEvent {
   readonly rows: number;
 }
 
+const NATIVE_COMMAND_RETRY_FRAMES = 8;
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function isPendingNativeViewRegistration(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Unable to find the 'T3Terminal' view") ||
+      (error.message.includes("Unable to find the class") &&
+        error.message.includes("T3TerminalView view with tag")))
+  );
+}
+
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
-  readonly buffer: string;
+  readonly output: TerminalOutputState;
+  readonly replayPaused?: boolean;
+  /** True while the server has opened a replay it has not completed yet. */
+  readonly replayPending?: boolean;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly autoFocus?: boolean;
@@ -65,6 +94,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
+  const buffer = props.replayPaused ? "" : terminalOutputText(props.output);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -117,7 +147,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
               lineHeight: Math.round(fontSize * 1.35),
             }}
           >
-            {props.buffer || "$ "}
+            {buffer || "$ "}
           </Text>
         </ScrollView>
       </View>
@@ -178,6 +208,26 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const streamingRevision = getNativeTerminalStreamingRevision();
+  const supportsStreaming =
+    streamingRevision !== null && streamingRevision >= NATIVE_TERMINAL_STREAMING_REVISION;
+  const themeConfig = buildGhosttyThemeConfig(theme);
+  const nativeRef = useRef<NativeTerminalSurfaceHandle>(null);
+  const nativeCommandQueueRef = useRef(Promise.resolve());
+  const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  // A replacement can cancel queued commands. Only acknowledged bytes may be
+  // treated as consumed when rebuilding the native surface.
+  const appliedOutputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  const streamIdentityRef = useRef("");
+  const deferredEmptyResetRef = useRef(false);
+  const surfaceIdentity = `${props.terminalKey}:${fontSize}:${themeAppearance}:${themeConfig}`;
+  // A failed native command rebuilds the surface once from the retained
+  // snapshot; without that, an idle terminal would stay stale until new output.
+  const [nativeRecoveryVersion, setNativeRecoveryVersion] = useState(0);
+  const recoveredSurfaceIdentityRef = useRef<string | null>(null);
+  const resetIdentity = `${surfaceIdentity}:${nativeRecoveryVersion}`;
+  const legacyBuffer =
+    supportsStreaming || props.replayPaused ? "" : terminalOutputText(props.output);
 
   useEffect(() => {
     terminalDebugLog("native:surface", {
@@ -185,10 +235,125 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
       native: hasNativeSurface,
       // null = installed binary predates native hardware-key handling (rebuild needed).
       hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
+      retainedBytes: props.output.retainedBytes,
       isRunning: props.isRunning,
+      streamingRevision,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
+  }, [
+    hasNativeSurface,
+    props.isRunning,
+    props.output.retainedBytes,
+    props.terminalKey,
+    streamingRevision,
+  ]);
+  useEffect(
+    () => () => {
+      streamIdentityRef.current = "";
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!supportsStreaming) return;
+    const streamIdentity = props.replayPaused ? `${resetIdentity}:paused` : resetIdentity;
+    const forceReset = streamIdentityRef.current !== streamIdentity;
+    const update = props.replayPaused
+      ? {
+          type: "reset" as const,
+          data: "",
+          segments: [],
+          cursor: {
+            resetVersion: props.output.resetVersion,
+            generation: props.output.generation,
+            offset: props.output.nextOffset,
+          },
+        }
+      : readTerminalOutputUpdate(
+          props.output,
+          forceReset ? appliedOutputCursorRef.current : outputCursorRef.current,
+          forceReset,
+        );
+    streamIdentityRef.current = streamIdentity;
+    if (!props.replayPaused) outputCursorRef.current = update.cursor;
+    if (!forceReset && props.replayPaused) return;
+    let commands = nativeTerminalOutputCommands(update);
+    if (
+      !forceReset &&
+      props.replayPending === true &&
+      update.type === "reset" &&
+      update.data.length === 0
+    ) {
+      // A replay in flight opens with an empty snapshot. Keep the last frame
+      // on screen and fold the reset into the first replay chunk instead of
+      // blanking the terminal while history streams in.
+      deferredEmptyResetRef.current = true;
+      commands = [];
+    } else if (deferredEmptyResetRef.current) {
+      const first = commands[0];
+      if (first !== undefined) {
+        deferredEmptyResetRef.current = false;
+        if (first.type === "writeReplay") {
+          commands = [{ type: "reset" as const, data: first.data }, ...commands.slice(1)];
+        } else if (first.type === "write") {
+          commands = [{ type: "reset" as const, data: "" }, ...commands];
+        }
+        // A reset command already supersedes the deferred one.
+      } else if (props.replayPending !== true) {
+        // The replay finished without producing content: the terminal really
+        // is empty now, so apply the reset that was held back.
+        deferredEmptyResetRef.current = false;
+        commands = [{ type: "reset" as const, data: terminalOutputText(props.output) }];
+      }
+    }
+    if (commands.length === 0) return;
+    nativeCommandQueueRef.current = nativeCommandQueueRef.current
+      .then(async () => {
+        for (const pending of commands) {
+          for (let attempt = 0; attempt <= NATIVE_COMMAND_RETRY_FRAMES; attempt += 1) {
+            if (streamIdentityRef.current !== streamIdentity) return;
+            const handle = nativeRef.current;
+            const command = handle?.[pending.type];
+            if (!command) {
+              if (attempt < NATIVE_COMMAND_RETRY_FRAMES) {
+                await nextAnimationFrame();
+                continue;
+              }
+              throw new Error(`Native terminal does not support ${pending.type}`);
+            }
+
+            try {
+              await command.call(handle, pending.data);
+              break;
+            } catch (error) {
+              if (attempt < NATIVE_COMMAND_RETRY_FRAMES && isPendingNativeViewRegistration(error)) {
+                await nextAnimationFrame();
+                continue;
+              }
+              throw error;
+            }
+          }
+        }
+        if (!props.replayPaused && streamIdentityRef.current === streamIdentity) {
+          appliedOutputCursorRef.current = update.cursor;
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to update native terminal output", error);
+        if (streamIdentityRef.current !== streamIdentity) return;
+        // The next output update rebuilds the native surface from the retained
+        // snapshot instead of continuing after a missing command.
+        streamIdentityRef.current = "";
+        if (recoveredSurfaceIdentityRef.current === surfaceIdentity) return;
+        recoveredSurfaceIdentityRef.current = surfaceIdentity;
+        setNativeRecoveryVersion((version) => version + 1);
+      });
+  }, [
+    props.output,
+    props.replayPaused,
+    props.replayPending,
+    resetIdentity,
+    supportsStreaming,
+    surfaceIdentity,
+  ]);
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
       if (!props.isRunning) {
@@ -215,6 +380,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
     return (
       <View style={props.style}>
         <NativeTerminalSurfaceView
+          ref={nativeRef}
           appearanceScheme={themeAppearance}
           autoFocus={props.autoFocus ?? true}
           backgroundColor={theme.background}
@@ -222,10 +388,10 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
           foregroundColor={theme.foreground}
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
-          initialBuffer={props.buffer}
+          initialBuffer={legacyBuffer}
           fontSize={fontSize}
           style={{ flex: 1 }}
-          themeConfig={buildGhosttyThemeConfig(theme)}
+          themeConfig={themeConfig}
           onInput={handleNativeInput}
           onResize={handleNativeResize}
         />

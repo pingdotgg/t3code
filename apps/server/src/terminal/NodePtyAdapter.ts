@@ -93,6 +93,14 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     this.process.kill(this.platform === "win32" ? undefined : signal);
   }
 
+  pauseOutput(): void {
+    this.process.pause();
+  }
+
+  resumeOutput(): void {
+    this.process.resume();
+  }
+
   onData(callback: (data: string) => void): () => void {
     const disposable = this.process.onData(callback);
     return () => {

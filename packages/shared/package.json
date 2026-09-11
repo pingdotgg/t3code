@@ -99,6 +99,10 @@
       "types": "./src/String.ts",
       "import": "./src/String.ts"
     },
+    "./utf8": {
+      "types": "./src/utf8.ts",
+      "import": "./src/utf8.ts"
+    },
     "./projectScripts": {
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
