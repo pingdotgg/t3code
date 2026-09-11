@@ -71,7 +71,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
+  // The offset accumulates without bound, so wrap it into range in both directions:
+  // JavaScript `%` keeps the sign of the dividend, and a negative index blanks the dialog.
+  const imageCount = preview.images.length;
+  const index =
+    imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
   const item = preview.images[index];
   const source: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
@@ -181,8 +185,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           <Button
             type="button"
             size="icon"
-            variant="ghost"
-            className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
+            variant="media-navigation"
+            className="left-2 sm:left-6"
             aria-label="Previous media"
             onClick={() => navigateImage(-1)}
           >
@@ -195,8 +199,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               type="button"
               ref={closeButtonRef}
               size="icon-xs"
-              variant="ghost"
-              className="absolute right-2 top-2 z-20 bg-black/65 text-white shadow-sm ring-1 ring-white/20 hover:bg-black/80 hover:text-white focus-visible:ring-white"
+              variant="media-close"
+              className="absolute right-2 top-2 z-20"
               onClick={onClose}
               aria-label={`Close ${mediaLabel} preview`}
             >
@@ -268,8 +272,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           <Button
             type="button"
             size="icon"
-            variant="ghost"
-            className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
+            variant="media-navigation"
+            className="right-2 sm:right-6"
             aria-label="Next media"
             onClick={() => navigateImage(1)}
           >

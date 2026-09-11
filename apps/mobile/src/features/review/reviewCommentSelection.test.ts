@@ -53,6 +53,15 @@ describe("review comment serialization", () => {
     ]);
   });
 
+  it("keeps a closing tag inside a chip label out of the inline comment body", () => {
+    const body = "Before [</review_comment>](t3-context://v1/mention/context-1) after";
+    const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0">${body}</review_comment>`;
+
+    expect(parseReviewInlineComments(serialized)).toEqual([
+      expect.objectContaining({ text: body }),
+    ]);
+  });
+
   it("treats legacy markup inside a context label as opaque text", () => {
     const text =
       '[<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0">Review this</review_comment>](t3-context://v1/mention/context-1)';

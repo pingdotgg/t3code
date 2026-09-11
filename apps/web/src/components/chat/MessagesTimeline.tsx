@@ -1,3 +1,5 @@
+import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -77,7 +79,6 @@ import {
   type ChatMessage,
   type ChatFileAttachment,
   type ChatImageAttachment,
-  isBrowserPreviewAttachment,
   isFileAttachment,
   isImageAttachment,
   isVideoAttachment,
@@ -196,6 +197,7 @@ import {
   pullRequestContextKindLabel,
   resolveUserMessageContext,
   reviewCommentContextLabel,
+  selectedMessageContextFragment,
 } from "~/lib/composerContextRecords";
 import {
   collectComposerContextReferences,
@@ -203,8 +205,10 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
   encodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
+import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
@@ -1482,21 +1486,26 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         copiedMarkdown.push(element.getAttribute("data-markdown-copy") ?? "");
       }
     }
-    const selectedIds = new Set(
-      collectComposerContextReferences(copiedMarkdown.join("\n")).map((o) => o.contextId),
-    );
-    const records = resolvedContext.records.filter((record) => selectedIds.has(record.contextId));
-    if (records.length === 0) return;
-    const fragment = encodeComposerContextFragment({
-      version: 1,
-      source: {
-        environmentId: ctx.activeThreadEnvironmentId,
-        ...(ctx.threadRef ? { threadId: ctx.threadRef.threadId } : {}),
-        messageId: row.message.id,
-      },
-      records,
+    const fragment = selectedMessageContextFragment({
+      markdown: copiedMarkdown.join("\n"),
+      records: resolvedContext.records,
+      environmentId: ctx.activeThreadEnvironmentId,
+      ...(ctx.threadRef ? { threadId: ctx.threadRef.threadId } : {}),
+      messageId: row.message.id,
     });
-    if (fragment) event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+    if (!fragment) return;
+    // Claim the copy: without preventDefault the browser default overwrites the
+    // custom MIME type. The default content must then be written back explicitly.
+    const payload = chatMarkdownClipboardPayload(selection);
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", payload?.text ?? selection.toString());
+    if (payload) {
+      event.clipboardData.setData(
+        "text/html",
+        encodeComposerContextClipboardHtml(payload.text, fragment, payload.html),
+      );
+    }
+    event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
   };
   const renderContextReference = useCallback(
     (reference: ChatMarkdownContextReference) => {
@@ -1599,14 +1608,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
           <div className="mb-2 flex flex-col gap-1">
             {unchippedFiles.map((file) => {
-              const opensInPreview = isBrowserPreviewAttachment(file);
               const fileIdentity = (
                 <>
                   <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
                   <span className="min-w-0 flex-1 truncate">{file.name}</span>
                 </>
               );
-              if (opensInPreview && file.downloadable !== false) {
+              if (file.downloadable !== false) {
                 return (
                   <div key={file.id} className="flex min-w-0 items-center gap-1">
                     <button
@@ -1637,37 +1645,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 );
               }
 
-              const content = (
-                <>
-                  {fileIdentity}
-                  {file.downloadable === false ? null : (
-                    <DownloadIcon className="size-4 shrink-0" />
-                  )}
-                </>
-              );
-              return file.previewUrl && !opensInPreview ? (
-                <a
-                  key={file.id}
-                  href={file.previewUrl}
-                  download={file.name}
-                  className="flex min-w-0 items-center gap-2 rounded-md py-1 text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-                >
-                  {content}
-                </a>
-              ) : file.downloadable === false ? (
+              return (
                 <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  {content}
+                  {fileIdentity}
                 </div>
-              ) : (
-                <button
-                  key={file.id}
-                  type="button"
-                  aria-label={`${opensInPreview ? "Preview" : "Download"} ${file.name}`}
-                  onClick={() => ctx.onFileOpen(file)}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-                >
-                  {content}
-                </button>
               );
             })}
             {unknownAttachments.map((attachment) => (
@@ -2520,6 +2501,44 @@ function AssistantChangedFilesSectionInner({
 // Leaf components
 // ---------------------------------------------------------------------------
 
+function UserMessageMentionChip(props: {
+  record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
+  copyMarkdown: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Preview ${props.record.path}`}
+            className={cn(
+              CHAT_INLINE_CHIP_CLASS_NAME,
+              CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.mention,
+              "cursor-pointer focus-visible:outline-2",
+            )}
+            data-markdown-copy={props.copyMarkdown}
+            onClick={() => {
+              if (ctx.threadRef)
+                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+            }}
+          >
+            <PierreEntryIcon
+              pathValue={props.record.path}
+              kind={inferEntryKindFromPath(props.record.path)}
+              theme={ctx.resolvedTheme}
+              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+            />
+            <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>{props.record.label}</span>
+          </button>
+        }
+      />
+      <TooltipPopup>{props.record.path}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function UserMessageContextChip(props: {
   icon: ReactNode;
   label: string;
@@ -2571,7 +2590,7 @@ function UserMessagePreviewAnnotationDetails(props: {
   image: ChatImageAttachment | null;
 }) {
   const ctx = use(TimelineRowCtx);
-  const visibleElements = props.record.elements?.slice(0, 3) ?? [];
+  const visibleElements = props.record.elements ?? [];
   return (
     <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {props.image?.previewUrl ? (
@@ -2683,14 +2702,14 @@ function UserMessageElementDetails({
           ) : null}
         </div>
         {record.htmlPreview?.trim() ? (
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-[10px] leading-relaxed">
-            {record.htmlPreview.trim()}
-          </pre>
+          <div className="flex h-40 flex-col overflow-hidden rounded border border-border">
+            <ReadOnlySourcePreview name="element.html" text={record.htmlPreview} />
+          </div>
         ) : null}
         {record.styles?.trim() ? (
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap border-border/60 border-t pt-2 text-secondary-label text-[10px] leading-relaxed">
-            {record.styles.trim()}
-          </pre>
+          <div className="flex h-32 flex-col overflow-hidden rounded border border-border">
+            <ReadOnlySourcePreview name="styles.css" text={record.styles} />
+          </div>
         ) : null}
       </div>
     </div>
@@ -2733,21 +2752,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       canRender: (record) => record.kind === "mention",
       render: (record, context) =>
         record.kind === "mention" ? (
-          <UserMessageContextChip
-            icon={
-              <PierreEntryIcon
-                pathValue={record.path}
-                kind={inferEntryKindFromPath(record.path)}
-                theme={context.resolvedTheme}
-                className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-              />
-            }
-            label={record.label}
-            kindLabel="File mention"
-            tooltip={record.path}
-            copyMarkdown={context.copyMarkdown}
-            toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.mention}
-          />
+          <UserMessageMentionChip record={record} copyMarkdown={context.copyMarkdown} />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
@@ -2805,15 +2810,15 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
     },
     {
       kind: "file",
+      // A file chip names its attachment by id, so it renders whatever came back under that id.
+      // `isFileAttachment` excludes pictures, which a legacy `file` attachment may still be.
       canRender: (record, context) =>
-        record.kind === "file" &&
-        context.attachment !== null &&
-        isFileAttachment(context.attachment),
+        record.kind === "file" && context.attachment !== null && context.attachment.type === "file",
       render: (record, context) => {
         if (
           record.kind !== "file" ||
           context.attachment === null ||
-          !isFileAttachment(context.attachment)
+          context.attachment.type !== "file"
         ) {
           return <UnavailableUserMessageContextChip {...context} />;
         }

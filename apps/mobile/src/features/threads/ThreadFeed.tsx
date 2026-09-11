@@ -175,6 +175,8 @@ import {
 } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import {
   basename,
@@ -286,6 +288,8 @@ function MessageAttachmentImage(props: {
     [props.attachmentId, props.name, props.mimeType],
   );
   const uri = useAssetUrl(props.environmentId, resource);
+  const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
+  const retriedImage = useRef(false);
 
   if (uri === null) {
     return (
@@ -317,7 +321,19 @@ function MessageAttachmentImage(props: {
           })
         }
       >
-        <Image source={{ uri }} className={props.className} resizeMode="cover" />
+        <Image
+          source={{ uri }}
+          className={props.className}
+          resizeMode="cover"
+          onLoad={() => {
+            retriedImage.current = false;
+          }}
+          onError={() => {
+            if (retriedImage.current) return;
+            retriedImage.current = true;
+            void refreshAssetUrl();
+          }}
+        />
       </Pressable>
     </PresentationSource>
   );
@@ -343,6 +359,8 @@ function MessageAttachmentFile(props: {
   readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
 }) {
   const sourceIdentifier = useId();
+  const navigation = useNavigation();
+  const { selectedThread } = useThreadSelection();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     refresh: true,
     reportFailure: false,
@@ -450,58 +468,68 @@ function MessageAttachmentFile(props: {
   }
 
   return (
-    <PresentationSource
-      identifier={sourceIdentifier}
-      className="my-1"
-      style={{ width: 280, maxWidth: "100%" }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${attachment.name}`}
-        accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
-        accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
-        disabled={opening || httpBaseUrl === null}
-        className="min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
-        onPress={() =>
-          isPdf
-            ? props.onPressPreview({
-                kind: "pdf",
-                name: attachment.name,
-                environmentId: props.environmentId,
-                resource: {
-                  _tag: "attachment",
-                  attachmentId: attachment.id,
-                  fileName: attachment.name,
-                  mimeType: "application/pdf",
-                },
-                sourceIdentifier,
-              })
-            : shareFile(sourceIdentifier)
-        }
+    <>
+      <PresentationSource
+        identifier={sourceIdentifier}
+        className="my-1"
+        style={{ width: 280, maxWidth: "100%" }}
       >
-        <View className="h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-subtle">
-          {opening ? (
-            <ActivityIndicator size="small" />
-          ) : (
-            <PierreEntryIcon path={attachment.name} kind="file" size={26} />
-          )}
-        </View>
-        <View className="min-w-0 flex-1 gap-1">
-          <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
-            {attachment.name}
-          </Text>
-          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {fileTypeLabel} · {sizeLabel}
-          </Text>
-        </View>
-        <SymbolView
-          name="chevron.right"
-          size={12}
-          tintColorClassName="accent-foreground-muted"
-          type="monochrome"
-        />
-      </Pressable>
-    </PresentationSource>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${attachment.name}`}
+          accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
+          accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
+          disabled={opening || httpBaseUrl === null}
+          className="min-w-0 flex-row items-center gap-3 rounded-xl border border-border bg-card p-3 active:bg-subtle"
+          onLongPress={() => shareFile(sourceIdentifier)}
+          onPress={() =>
+            isPdf
+              ? props.onPressPreview({
+                  kind: "pdf",
+                  name: attachment.name,
+                  environmentId: props.environmentId,
+                  resource: {
+                    _tag: "attachment",
+                    attachmentId: attachment.id,
+                    fileName: attachment.name,
+                    mimeType: "application/pdf",
+                  },
+                  sourceIdentifier,
+                })
+              : navigation.navigate("ThreadAttachment", {
+                  environmentId: String(props.environmentId),
+                  ...(selectedThread ? { threadId: String(selectedThread.id) } : {}),
+                  attachmentId: attachment.id,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  sizeBytes: String(attachment.sizeBytes),
+                })
+          }
+        >
+          <View className="h-12 w-10 shrink-0 items-center justify-center rounded-lg bg-subtle">
+            {opening ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <PierreEntryIcon path={attachment.name} kind="file" size={26} />
+            )}
+          </View>
+          <View className="min-w-0 flex-1 gap-1">
+            <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
+              {attachment.name}
+            </Text>
+            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+              {fileTypeLabel} · {sizeLabel}
+            </Text>
+          </View>
+          <SymbolView
+            name="chevron.right"
+            size={12}
+            tintColorClassName="accent-foreground-muted"
+            type="monochrome"
+          />
+        </Pressable>
+      </PresentationSource>
+    </>
   );
 }
 
@@ -1706,6 +1734,8 @@ type UserMessageContentProps = {
 
 function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
+  const navigation = useNavigation();
+  const { selectedThread } = useThreadSelection();
   const text = replaceComposerContextReferences(props.text, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
@@ -1718,6 +1748,19 @@ function UserMessageContent(props: UserMessageContentProps) {
     );
     if (record?.kind === "mention" && "path" in record) {
       props.linkHandlers.onLinkPress?.(record.path);
+      return;
+    }
+    // Documents open in the file screen; pictures, video and PDF keep their native viewers.
+    const document = composerDocumentAttachmentRecord(record);
+    if (document) {
+      navigation.navigate("ThreadAttachment", {
+        environmentId: String(props.environmentId),
+        ...(selectedThread ? { threadId: String(selectedThread.id) } : {}),
+        attachmentId: document.attachmentId,
+        name: document.name,
+        mimeType: document.mimeType,
+        sizeBytes: String(document.sizeBytes),
+      });
       return;
     }
     setSelected({ contextId: reference.contextId, label: record?.label ?? "Context unavailable" });
@@ -1746,20 +1789,21 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
   const text = props.text;
   const segments = parseReviewCommentMessageSegments(text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
+  // A message can hold both a review comment and context chips. The fragment travels with every
+  // text run, so copying from the segmented branch carries the same context as the plain one.
+  const contextClipboardFragment = props.context
+    ? (encodeComposerContextFragment({
+        version: 1,
+        source: { environmentId: props.environmentId },
+        records: props.context.records,
+      }) ?? undefined)
+    : undefined;
   if (!hasReviewComment) {
     if (hasNativeSelectableMarkdownText()) {
       return (
         <SelectableMarkdownText
           markdown={text}
-          contextClipboardFragment={
-            props.context
-              ? (encodeComposerContextFragment({
-                  version: 1,
-                  source: { environmentId: props.environmentId },
-                  records: props.context.records,
-                }) ?? undefined)
-              : undefined
-          }
+          contextClipboardFragment={contextClipboardFragment}
           skills={props.skills}
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
@@ -1802,6 +1846,7 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
           <SelectableMarkdownText
             key={segment.id}
             markdown={text}
+            contextClipboardFragment={contextClipboardFragment}
             skills={props.skills}
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks

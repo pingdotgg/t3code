@@ -65,20 +65,13 @@ export function isImageAttachment(attachment: ChatAttachment): attachment is Cha
 }
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  return attachment.type === "file";
+  // Disjoint from `isImageAttachment` on purpose: a legacy `file` carrying an image reads as a
+  // picture, and callers filter both sets independently, so overlap renders it twice.
+  return attachment.type === "file" && !isImageAttachment(attachment);
 }
 
 export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
-}
-
-export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
-  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
-  return (
-    /\.(?:html?|pdf)$/i.test(attachment.name) ||
-    mimeType === "application/pdf" ||
-    mimeType === "text/html"
-  );
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {

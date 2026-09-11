@@ -1,3 +1,4 @@
+import { ComposerContextId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -21,18 +22,25 @@ import {
 } from "../lib/composerContextClipboard";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./AppText";
-import { composerMentionPath } from "../lib/composerContext";
+import {
+  composerDocumentAttachment,
+  composerMentionPath,
+  type ComposerDocumentAttachment,
+} from "../lib/composerContext";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
   readonly environmentId?: EnvironmentId;
   readonly onOpenMention?: (path: string) => void;
+  /** Documents open in the file screen; pictures, video and PDF keep their native viewers. */
+  readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
 };
 
 export function ComposerEditor({
   draftKey,
   environmentId,
   onOpenMention,
+  onOpenAttachment,
   ...props
 }: ComposerEditorProps) {
   const draft = useComposerDraft(draftKey ?? null);
@@ -136,6 +144,9 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
+  const selectedSkill = selected?.source.startsWith("$")
+    ? props.skills?.find((skill) => skill.name === selected.source.slice(1))
+    : undefined;
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
   );
@@ -155,6 +166,11 @@ export function ComposerEditor({
             onOpenMention(path);
             return;
           }
+          const document = composerDocumentAttachment(selection.source, draft.context);
+          if (document && onOpenAttachment) {
+            onOpenAttachment(document);
+            return;
+          }
           setSelected(selection);
         }}
         onSelectionChange={(selection) => {
@@ -165,10 +181,32 @@ export function ComposerEditor({
       {importing ? (
         <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
       ) : null}
-      {selected && selectedReference ? (
+      {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
-          label={selectedReference.label}
-          record={record}
+          label={
+            selectedReference?.label ?? selectedSkill?.displayName ?? selectedSkill?.name ?? "Skill"
+          }
+          record={
+            record ??
+            (selectedSkill
+              ? {
+                  version: 1,
+                  kind: "skill",
+                  contextId: ComposerContextId.make("skill-preview"),
+                  label: selectedSkill.name,
+                  name: selectedSkill.name,
+                }
+              : undefined)
+          }
+          {...(selectedSkill?.description ? { skillDescription: selectedSkill.description } : {})}
+          {...(selectedSkill?.path && onOpenMention
+            ? {
+                onOpenSkill: () => {
+                  setSelected(null);
+                  onOpenMention(selectedSkill.path!);
+                },
+              }
+            : {})}
           environmentId={environmentId}
           records={draft.context?.records}
           attachments={draft.attachments}

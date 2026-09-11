@@ -42,6 +42,9 @@ export function serializeLegacyContextMessage(input: {
     ...input.records
       .filter((record) => record.kind === "preview-annotation")
       .map((record) => `<preview_annotation>\n${renderPreviewBody(record)}\n</preview_annotation>`),
+    ...input.records
+      .filter((record) => record.kind === "review-comment" && !used.has(record.contextId))
+      .map(renderReviewComment),
   ].filter((block) => block.length > 0);
 
   // Review comments already inlined their payload above; anything else unreferenced still ships
@@ -81,6 +84,8 @@ function renderTerminalEntry(record: ComposerContextRecord): string {
       : `lines ${record.lineStart}-${record.lineEnd}`;
   const body = record.text
     .split("\n")
+    // A trailing newline would otherwise number a line past the range the label declares.
+    .slice(0, record.lineEnd - record.lineStart + 1)
     .map((line, index) => `${record.lineStart + index} | ${line}`)
     .join("\n");
   return `- ${record.terminalLabel} ${range}:\n${indent(body)}`;

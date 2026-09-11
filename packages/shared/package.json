@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./delimitedPreview": {
+      "types": "./src/delimitedPreview.ts",
+      "import": "./src/delimitedPreview.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"

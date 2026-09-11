@@ -112,6 +112,32 @@ describe("ChatMarkdown context references", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("reads formatted context labels through nested markup instead of the context id", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const seen: Array<string> = [];
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text="See [**Bold** `code`](t3-context://v1/terminal/term-1)."
+            renderContextReference={({ kind, label }) => {
+              seen.push(`${kind}: ${label}`);
+              return <button>{label}</button>;
+            }}
+          />,
+        );
+      });
+      expect(seen).toEqual(["terminal: Bold code"]);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("ChatMarkdown favicon privacy", () => {

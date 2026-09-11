@@ -76,6 +76,35 @@ describe("composerContextClipboard", () => {
     ).toBeNull();
     expect(decodeComposerContextClipboardHtml("<p>Ordinary clipboard</p>")).toBeNull();
   });
+  it("accepts a large non-ASCII fragment through the HTML attribute", () => {
+    // `encodeURIComponent` expands each CJK code unit to nine characters, so a fragment well
+    // inside the character limit still produces a much longer attribute.
+    const raw = JSON.stringify({
+      version: 1,
+      source: { environmentId: "env-1" },
+      records: [
+        {
+          version: 1,
+          kind: "terminal",
+          contextId: "terminal",
+          label: "ビルド",
+          terminalId: "main",
+          terminalLabel: "Main",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "日本語".repeat(21_000),
+        },
+      ],
+    });
+
+    const html = encodeComposerContextClipboardHtml("output", raw);
+    // The attribute runs to nearly nine characters per code unit. A bound derived from the
+    // fragment limit has to allow that, or a fragment that encoded cleanly is rejected on the
+    // way back in. This ratio is what the decoder's own bound is sized against.
+    expect(html.length).toBeGreaterThan(raw.length * 8);
+    expect(decodeComposerContextClipboardHtml(html)).toEqual(JSON.parse(raw));
+  });
+
   it("round-trips a fragment and drops records it cannot decode", () => {
     const encoded = encodeComposerContextFragment({
       version: 1,

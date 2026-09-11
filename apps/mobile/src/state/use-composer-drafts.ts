@@ -1205,14 +1205,27 @@ export function replaceComposerDraftAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
 ): void {
   const previousAttachments = getComposerDraftSnapshot(draftKey).attachments;
+  const retainedIds = new Set(attachments.map((attachment) => attachment.id));
   updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    // An attachment that is no longer here must take its chip and context record with it, or
+    // the draft keeps a reference pointing at a file it no longer holds.
+    const droppedContextIds = new Set(
+      existing.context?.records
+        .filter((record) => "attachmentId" in record && !retainedIds.has(record.attachmentId))
+        .map((record) => record.contextId),
+    );
+    const text = replaceComposerContextReferences(existing.text, (ref) =>
+      droppedContextIds.has(ref.contextId) ? "" : ref.source,
+    );
     const draft = {
-      ...normalizeDraft(current[draftKey]),
+      ...existing,
+      text,
+      context: referencedComposerContext(text, existing.context),
       attachments,
     };
     return withComposerDraft(current, draftKey, draft);
   });
-  const retainedIds = new Set(attachments.map((attachment) => attachment.id));
   scheduleUnusedComposerAttachmentCleanup(
     previousAttachments.filter((attachment) => !retainedIds.has(attachment.id)),
   );

@@ -465,12 +465,18 @@ function appendNode(
     case "link": {
       const reference = parseComposerContextHref(node.href ?? "");
       if (reference) {
-        return appendChildren(runs, node, {
+        // Build the link in isolation: adjacent links with the same href and
+        // style would otherwise merge into one run, collapsing two chips and
+        // their copy ranges into a single reference with a combined label.
+        const referenceRuns: NativeMarkdownTextRun[] = [];
+        appendChildren(referenceRuns, node, {
           ...context,
           href: node.href,
           fileIcon:
             reference.kind === "image" ? "image" : reference.kind === "terminal" ? "bash" : "text",
         });
+        runs.push(...referenceRuns);
+        return runs;
       }
       const presentation = resolveMarkdownLinkPresentation(node.href ?? "");
       if (presentation.kind === "file") {

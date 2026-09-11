@@ -909,11 +909,16 @@ function pullRequestContextComment(
   };
 }
 
-/** A neutral pull request reference inserted directly from the message composer. */
+/**
+ * A neutral pull request reference inserted directly from the message composer. It is the
+ * reader's own chip, so it sits outside the `pull-request-` namespace a hand-off owns and
+ * sweeps: a later hand-off must not delete a reference the reader put there themselves.
+ */
 export function buildPullRequestReferenceContext(
   input: PullRequestContextMetadata,
 ): ReviewCommentContext {
-  return pullRequestContextComment(input, []);
+  const comment = pullRequestContextComment(input, []);
+  return { ...comment, id: `pr-reference:${input.number}` };
 }
 
 /** What the agent is asked to do with a question, as opposed to a task. */

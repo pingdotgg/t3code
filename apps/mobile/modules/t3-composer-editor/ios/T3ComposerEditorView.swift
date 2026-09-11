@@ -426,7 +426,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       var elements: [Any] = [textView]
       let layout = textView.layoutManager
       textView.textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textView.textStorage.length)) { value, range, _ in
-        guard let attachment = value as? ComposerTextAttachment, !attachment.source.hasPrefix("$") else { return }
+        guard let attachment = value as? ComposerTextAttachment else { return }
         let glyphRange = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         let rect = layout.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer)
           .offsetBy(dx: textView.textContainerInset.left, dy: textView.textContainerInset.top)
@@ -466,8 +466,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let layout = textView.layoutManager
     let index = layout.characterIndex(for: containerPoint, in: textView.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
     guard index < textView.textStorage.length,
-          let attachment = textView.textStorage.attribute(.attachment, at: index, effectiveRange: nil) as? ComposerTextAttachment,
-          !attachment.source.hasPrefix("$") else { return nil }
+          let attachment = textView.textStorage.attribute(.attachment, at: index, effectiveRange: nil) as? ComposerTextAttachment else { return nil }
     let glyphRange = layout.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
     guard layout.boundingRect(forGlyphRange: glyphRange, in: textView.textContainer).contains(containerPoint) else { return nil }
     return (index, attachment)
@@ -854,11 +853,25 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         )
       )
     }
-    let textSize = attributedLabel.size()
     let iconWidth: CGFloat = icon == nil ? 0 : chipFontSize * 1.17
     let iconGap: CGFloat = icon == nil ? 0 : chipFontSize * 0.33
     let padding = chipFontSize * 0.5
     let height = ceil(chipFontSize * 1.41)
+    // A long path would otherwise draw a chip wider than the composer and clip. Cap the label
+    // to the text the editor can actually show and truncate inside it, as Android's
+    // `maximumWidth` does, so the chip always fits the line it sits on.
+    let availableWidth = textView.textContainer.size.width > 0
+      ? textView.textContainer.size.width - textView.textContainer.lineFragmentPadding * 2
+      : UIScreen.main.bounds.width
+    let maximumLabelWidth = max(chipFontSize * 3, availableWidth - padding * 2 - iconWidth - iconGap)
+    paragraph.lineBreakMode = .byTruncatingMiddle
+    attributedLabel.addAttribute(
+      .paragraphStyle,
+      value: paragraph,
+      range: NSRange(location: 0, length: attributedLabel.length)
+    )
+    let measured = attributedLabel.size()
+    let textSize = CGSize(width: min(measured.width, maximumLabelWidth), height: measured.height)
     let width = ceil(padding * 2 + iconWidth + iconGap + textSize.width)
     let format = UIGraphicsImageRendererFormat.preferred()
     format.opaque = false
@@ -882,8 +895,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         )
         x += iconWidth + iconGap
       }
+      // Exactly the measured width: a spare pixel here would let a capped label draw past
+      // the cap instead of truncating inside it.
       attributedLabel.draw(
-        in: CGRect(x: x, y: (height - textSize.height) / 2, width: textSize.width + 1, height: textSize.height)
+        in: CGRect(x: x, y: (height - textSize.height) / 2, width: textSize.width, height: textSize.height)
       )
       context.cgContext.setAllowsAntialiasing(true)
     }

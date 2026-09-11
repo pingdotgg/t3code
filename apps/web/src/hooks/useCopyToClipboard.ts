@@ -116,7 +116,12 @@ export async function writeTextToClipboard(
   if (contextFragment)
     extraFlavors = {
       ...extraFlavors,
-      "text/html": encodeComposerContextClipboardHtml(value, contextFragment),
+      // A caller that already built rich HTML keeps it; the escaped `<pre>` is only a fallback.
+      "text/html": encodeComposerContextClipboardHtml(
+        value,
+        contextFragment,
+        extraFlavors?.["text/html"],
+      ),
     };
 
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {

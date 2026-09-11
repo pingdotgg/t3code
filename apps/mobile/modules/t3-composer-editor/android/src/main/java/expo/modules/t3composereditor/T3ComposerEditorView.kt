@@ -96,7 +96,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
             val offset = editor.getOffsetForPosition(event.x, event.y)
             val token =
               tokens.firstOrNull {
-                (it.type == "context" || it.type == "mention") && offset >= it.start &&
+                (it.type == "context" || it.type == "mention" || it.type == "skill") &&
+                  offset >= it.start &&
                   offset < it.end
               }
                 ?: return false

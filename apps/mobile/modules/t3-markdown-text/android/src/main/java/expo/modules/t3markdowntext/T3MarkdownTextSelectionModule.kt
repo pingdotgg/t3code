@@ -194,8 +194,11 @@ class T3MarkdownTextSelectionModule : Module() {
           label = payload.optString("label").take(4096),
           symbol = payload.optString("symbol", "doc")
         ),
+        // The line box around the chip is measured with `fontScale` below, so the chip has to
+        // carry it too, or it shrinks against the words beside it at a larger text size.
         fontSize =
-          payload.optDouble("fontSize", 12.0).toFloat().coerceIn(10f, 40f) * metrics.density,
+          payload.optDouble("fontSize", 12.0).toFloat().coerceIn(10f, 40f) *
+            metrics.density * fontScale,
         colors = T3ContextChip.Colors(
           accent = T3ContextChip.color(payload.optString("accent"), Color.GRAY),
           foreground = T3ContextChip.color(payload.optString("foreground"), Color.BLACK),

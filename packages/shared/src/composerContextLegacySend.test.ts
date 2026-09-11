@@ -125,4 +125,30 @@ describe("serializeLegacyContextMessage", () => {
   it("keeps prose without context untouched", () => {
     expect(serializeLegacyContextMessage({ text: "just prose", records: [] })).toBe("just prose");
   });
+
+  it("appends review comments the text never referenced", () => {
+    const legacy = serializeLegacyContextMessage({ text: "just prose", records: [review] });
+
+    expect(legacy).toContain("Why this branch?");
+    const upgraded = upgradeLegacyContextMessage(legacy);
+    expect(upgraded.records).toHaveLength(1);
+    expect(upgraded.records[0]).toMatchObject({
+      kind: "review-comment",
+      filePath: "a/b.ts",
+      text: "Why this branch?",
+    });
+  });
+
+  it("numbers terminal output within the declared line range", () => {
+    const ranged = {
+      ...terminal,
+      lineStart: 3,
+      lineEnd: 4,
+      text: "boom\nagain\n",
+    };
+    const legacy = serializeLegacyContextMessage({ text: "look", records: [ranged] });
+
+    expect(legacy).toContain("3 | boom\n  4 | again");
+    expect(legacy).not.toContain("5 |");
+  });
 });

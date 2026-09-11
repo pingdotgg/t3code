@@ -1,3 +1,5 @@
+import { SourceFileSurface } from "../features/files/SourceFileSurface";
+import { filePreviewKind } from "@t3tools/shared/filePreview";
 import type {
   ComposerContextRecord,
   ElementContextSource,
@@ -38,13 +40,25 @@ function ContextField(props: { label: string; value: string | null | undefined; 
   return (
     <View className="gap-1">
       <Text className="text-xs text-foreground-muted">{props.label}</Text>
-      <Text
-        selectable
-        className={props.code ? "text-sm text-foreground" : "text-base text-foreground"}
-        style={props.code ? { fontFamily: REVIEW_MONO_FONT_FAMILY } : undefined}
-      >
-        {props.value}
-      </Text>
+      {props.code && (props.label === "HTML" || props.label === "Styles") ? (
+        <View
+          className="overflow-hidden rounded-xl border border-border"
+          style={{ height: Math.min(260, Math.max(100, props.value.split("\n").length * 22 + 36)) }}
+        >
+          <SourceFileSurface
+            contents={props.value}
+            path={props.label === "HTML" ? "element.html" : "styles.css"}
+          />
+        </View>
+      ) : (
+        <Text
+          selectable
+          className={props.code ? "text-sm text-foreground" : "text-base text-foreground"}
+          style={props.code ? { fontFamily: REVIEW_MONO_FONT_FAMILY } : undefined}
+        >
+          {props.value}
+        </Text>
+      )}
     </View>
   );
 }
@@ -72,6 +86,8 @@ export function ComposerContextSheet(props: {
   readonly onRemove?: () => void;
   readonly onOpenAttachment?: () => void;
   readonly onOpenPullRequest?: () => void;
+  readonly skillDescription?: string;
+  readonly onOpenSkill?: () => void;
   readonly environmentId?: EnvironmentId;
   readonly records?: ReadonlyArray<ComposerContextRecord>;
   readonly attachments?: ReadonlyArray<DraftComposerAttachment>;
@@ -95,6 +111,7 @@ export function ComposerContextSheet(props: {
       : undefined;
   if (record && !("payload" in record) && (record.kind === "image" || record.kind === "file")) {
     const mimeType = videoMimeType(record) ?? record.mimeType;
+    const previewKind = filePreviewKind(record);
     const resource = {
       _tag: "attachment" as const,
       attachmentId: record.attachmentId,
@@ -127,7 +144,7 @@ export function ComposerContextSheet(props: {
           />
         );
       }
-    } else if (record.kind === "image" || mimeType === "application/pdf") {
+    } else if (record.kind === "image" || previewKind === "image" || previewKind === "pdf") {
       const inlineUri = composerAttachmentInlineUri(localAttachment);
       const source = localFile
         ? { attachment: localFile }
@@ -138,7 +155,7 @@ export function ComposerContextSheet(props: {
         return (
           <FilePreviewModal
             source={{
-              kind: record.kind === "image" ? "image" : "pdf",
+              kind: record.kind === "image" || previewKind === "image" ? "image" : "pdf",
               name: record.name,
               ...source,
               actionsSource: { name: record.name, mimeType, ...source },
@@ -165,7 +182,7 @@ export function ComposerContextSheet(props: {
   return (
     <Modal
       animationType="slide"
-      presentationStyle="pageSheet"
+      presentationStyle={Platform.OS === "android" ? "overFullScreen" : "pageSheet"}
       transparent={Platform.OS === "android"}
       onRequestClose={props.onClose}
     >
@@ -324,7 +341,7 @@ export function ComposerContextSheet(props: {
                     <ContextField label="Styles" value={record.styles} code />
                   </>
                 ) : null}
-                {record.kind === "image" || record.kind === "file" ? (
+                {record.kind === "image" ? (
                   <ContextField
                     label="File"
                     value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
@@ -334,7 +351,24 @@ export function ComposerContextSheet(props: {
                   <ContextField label="Path" value={record.path} code />
                 ) : null}
                 {record.kind === "skill" ? (
-                  <ContextField label="Skill" value={record.name} />
+                  <View className="gap-3">
+                    <ContextField label="Skill" value={record.name} />
+                    <ContextField
+                      label="Description"
+                      value={
+                        props.skillDescription ?? "No description is available for this skill."
+                      }
+                    />
+                    {props.onOpenSkill ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={props.onOpenSkill}
+                        className="rounded-xl bg-subtle p-4"
+                      >
+                        <Text className="text-foreground">View instructions</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 ) : null}
               </>
             )}

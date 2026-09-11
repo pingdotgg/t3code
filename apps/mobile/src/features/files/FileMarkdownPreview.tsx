@@ -191,6 +191,7 @@ function useMarkdownPreviewStyles(renderImage?: MarkdownImageRenderer): Markdown
 
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
+  readonly captured?: boolean;
   readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly relativePath: string;
@@ -224,7 +225,12 @@ export function FileMarkdownPreview(props: {
       if (media?.access === "direct") {
         return null;
       }
-      if (media === null || media.kind !== "image" || media.access === "unavailable") {
+      if (
+        props.captured ||
+        media === null ||
+        media.kind !== "image" ||
+        media.access === "unavailable"
+      ) {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       }
       return (
@@ -237,7 +243,7 @@ export function FileMarkdownPreview(props: {
         />
       );
     },
-    [markdownDirectory, props.environmentId, props.threadId],
+    [markdownDirectory, props.environmentId, props.threadId, props.captured],
   );
   const styles = useMarkdownPreviewStyles(renderImage);
   const onLinkPress = useCallback((href: string) => {

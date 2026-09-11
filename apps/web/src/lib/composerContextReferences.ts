@@ -19,13 +19,21 @@ export interface ComposerContextReference {
 
 const CONTEXT_ID_PATTERN = /^[a-z0-9_-]{1,128}$/i;
 
-function fnv1a32(value: string): string {
-  let hash = 0x811c9dc5;
+/**
+ * Two independent FNV-1a passes, one forward and one with a different offset basis over the
+ * reversed input. 64 bits of digest, because the slug in front of it is truncated: two long
+ * producer ids that agree on their first 48 characters are told apart by this alone.
+ */
+function fnv1a64(value: string): string {
+  let forward = 0x811c9dc5;
+  let reverse = 0x9dc5811c;
   for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+    forward ^= value.charCodeAt(index);
+    forward = Math.imul(forward, 0x01000193) >>> 0;
+    reverse ^= value.charCodeAt(value.length - 1 - index);
+    reverse = Math.imul(reverse, 0x01000193) >>> 0;
   }
-  return hash.toString(16).padStart(8, "0");
+  return `${forward.toString(16).padStart(8, "0")}${reverse.toString(16).padStart(8, "0")}`;
 }
 
 /**
@@ -40,7 +48,7 @@ export function toComposerContextId(producerId: string): ComposerContextId {
     .replace(/[^a-z0-9_-]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
-  return `${slug || "ctx"}-${fnv1a32(producerId)}` as ComposerContextId;
+  return `${slug || "ctx"}-${fnv1a64(producerId)}` as ComposerContextId;
 }
 
 /** Raw producer IDs are always scoped, even when they already start with the kind name. */

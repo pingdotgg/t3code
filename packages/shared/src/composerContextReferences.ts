@@ -74,6 +74,9 @@ export function collectComposerContextReferences(
   text: string,
 ): ComposerContextReferenceOccurrence[] {
   const occurrences: ComposerContextReferenceOccurrence[] = [];
+  // No link can match without the protocol prefix; skip the scan entirely on
+  // plain prose so long messages never pay for a regex walk per `[`.
+  if (!text.includes("](t3-context:")) return occurrences;
   for (const match of text.matchAll(CONTEXT_LINK)) {
     const parsed = parseComposerContextHref(match[3]!);
     if (!parsed) continue;

@@ -1,3 +1,6 @@
+import { useRightPanelStore } from "~/rightPanelStore";
+import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { importPastedComposerText } from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
@@ -1564,14 +1567,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
+  // A question answer has no chips: its files live in the question draft and show in the
+  // strip. Only the thread prompt's references decide which files leave the strip.
   const inlineFileIdSet = useMemo(() => {
+    if (questionAttachmentTarget) return new Set<string>();
     const contextIds = new Set(collectInlineContextIds(prompt));
     return new Set(
       composerFiles
         .filter((file) => contextIds.has(toKindScopedComposerContextId("file", file.id)))
         .map((file) => file.id),
     );
-  }, [composerFiles, prompt]);
+  }, [composerFiles, prompt, questionAttachmentTarget]);
   const composerVideos = composerFiles.filter((file) =>
     isPreviewableComposerVideo(file, environmentId),
   );
@@ -1605,12 +1611,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
+  const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = useMemo(
     () => ({
       expandImage: (imageId: string) => {
         const preview = buildExpandedImagePreview(composerImages, imageId);
         if (preview) onExpandImage(preview);
       },
+      openFile: setPreviewFileId,
+      openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
@@ -1635,7 +1645,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         openPrLink(event, url);
       },
     }),
-    [composerFiles, composerImages, environmentId, onExpandImage, openPrLink],
+    [composerFiles, composerImages, environmentId, onExpandImage, openPrLink, routeThreadRef],
   );
   const composerContextRecords = useMemo(
     () =>
@@ -2601,8 +2611,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const addComposerFilesToDraft = useCallback(
-    (files: ComposerFileAttachment[]) => addComposerDraftFiles(attachmentDraftTarget, files),
-    [addComposerDraftFiles, attachmentDraftTarget],
+    (files: ComposerFileAttachment[]) =>
+      addComposerDraftFiles(attachmentDraftTarget, files, {
+        appendReference: questionAttachmentTarget === null,
+      }),
+    [addComposerDraftFiles, attachmentDraftTarget, questionAttachmentTarget],
   );
 
   const removeComposerImageFromDraft = useCallback(
@@ -5169,8 +5182,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
       const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
       if (storedFiles.length > 0) {
-        insertAttachmentReferences(storedFiles.map(fileContextReference));
-        insertedAny = true;
+        insertedAny = insertAttachmentReferences(storedFiles.map(fileContextReference));
       }
     }
     if (acceptedImages.length === 0) return insertedAny;
@@ -5226,8 +5238,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
       if (storedImages.length > 0) {
-        insertAttachmentReferences(storedImages.map(imageContextReference));
-        insertedAny = true;
+        insertedAny =
+          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
       }
       // Only failures are reported here. Success must not pass `null`: by
       // now other work (a failed send, an overlapping paste) may have set a
@@ -5254,13 +5266,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * Chips for freshly attached files land at the caret; when the editor cannot take
    * input (approval, pending questions) they are appended so the file is never invisible.
    */
-  const insertAttachmentReferences = (references: ReadonlyArray<ComposerContextReference>) => {
-    if (references.length === 0) return;
+  const insertAttachmentReferences = (
+    references: ReadonlyArray<ComposerContextReference>,
+  ): boolean => {
+    if (references.length === 0) return false;
+    // Question answers carry attachments beside the answer, never as chips. Falling back to
+    // the thread prompt here would hide the file behind a reference the question never shows.
+    if (questionAttachmentTarget) return false;
     const text = references.map(formatInlineContextReference).join(" ");
     const inserted = insertComposerText(`${text} `, "cursor", { ensureLeadingBoundary: true });
     if (!inserted) {
       setPrompt(ensureInlineContextReferences(promptRef.current, references));
     }
+    return true;
   };
 
   const removeComposerImage = (imageId: string) => {
@@ -6312,7 +6330,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             kind="file"
                             theme={resolvedTheme}
                           />
-                          <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                          <button
+                            type="button"
+                            disabled={needsReattach}
+                            className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+                            onClick={() => setPreviewFileId(file.id)}
+                          >
+                            {file.name}
+                          </button>
                           <span className="shrink-0 text-xs text-secondary-label">
                             {needsReattach
                               ? canReattachFile
@@ -6377,6 +6402,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "pr-12"),
                 )}
               >
+                {previewFile ? (
+                  <Dialog
+                    open
+                    onOpenChange={(open) => {
+                      if (!open) setPreviewFileId(null);
+                    }}
+                  >
+                    <DialogPopup
+                      {...composerFloatingLayerProps}
+                      className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
+                      showCloseButton={false}
+                    >
+                      <DialogTitle className="sr-only">{previewFile.name}</DialogTitle>
+                      <AttachmentFilePreview
+                        key={previewFile.id}
+                        name={previewFile.name}
+                        mimeType={previewFile.mimeType}
+                        sizeBytes={previewFile.sizeBytes}
+                        file={previewFile.file}
+                        origin="Draft"
+                        {...(previewFile.uploadedAttachmentId && previewFile.uploadEnvironmentId
+                          ? {
+                              asset: {
+                                environmentId: previewFile.uploadEnvironmentId,
+                                attachmentId: previewFile.uploadedAttachmentId,
+                              },
+                            }
+                          : {})}
+                        onRemove={() => {
+                          removeComposerFileFromDraft(previewFile.id);
+                          setPreviewFileId(null);
+                        }}
+                        onClose={() => setPreviewFileId(null)}
+                      />
+                    </DialogPopup>
+                  </Dialog>
+                ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
                     editorRef={composerEditorRef}

@@ -1,3 +1,5 @@
+import { ContextChipPopover } from "./contextChipParts";
+import { Button } from "./ui/button";
 import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -55,6 +57,8 @@ import {
   type Spread,
 } from "lexical";
 import {
+  createContext,
+  use,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -92,6 +96,7 @@ import {
   ComposerContextReferenceNode,
 } from "./ComposerContextReferenceNode";
 import {
+  ComposerContextActionsContext,
   ComposerContextRecordsContext,
   type ComposerDraftContextRecords,
 } from "./composerContextPresentation";
@@ -147,16 +152,20 @@ type SerializedComposerSkillNode = Spread<
 >;
 
 function ComposerMentionDecorator(props: { path: string }) {
+  const actions = use(ComposerContextActionsContext);
   const theme = resolvedThemeFromDocument();
   const chip = (
-    <span
-      className={FILE_TAG_CHIP_CLASS_NAME}
+    <button
+      type="button"
+      onClick={() => actions.openMention(props.path)}
+      aria-label={`Preview ${props.path}`}
+      className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
     >
       <FileTagChipContent path={props.path} label={basenameOfPath(props.path)} theme={theme} />
-    </span>
+    </button>
   );
 
   return (
@@ -260,34 +269,44 @@ function skillMetadataByName(
   );
 }
 
-function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: string | null }) {
-  const chip = (
-    <span
-      className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
-      contentEditable={false}
-      spellCheck={false}
-      data-composer-skill-chip="true"
-    >
-      <span
-        aria-hidden="true"
-        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-      />
-      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
-    </span>
-  );
+const ComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
 
-  if (!props.skillDescription) {
-    return chip;
-  }
-
+function ComposerSkillDecorator(props: {
+  skillName: string;
+  skillLabel: string;
+  skillDescription: string | null;
+}) {
+  const actions = use(ComposerContextActionsContext);
+  const skill = use(ComposerSkillsContext).find((candidate) => candidate.name === props.skillName);
   return (
-    <Tooltip>
-      <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" className="max-w-120 whitespace-normal leading-tight">
-        {props.skillDescription}
-      </TooltipPopup>
-    </Tooltip>
+    <ContextChipPopover
+      accessibleLabel={`Skill ${props.skillLabel}`}
+      triggerClassName={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
+      chip={
+        <>
+          <span
+            aria-hidden="true"
+            className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+            dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+          />
+          <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
+        </>
+      }
+    >
+      <div className="space-y-3 p-2 text-sm">
+        <p className="font-medium">{props.skillLabel}</p>
+        <p>
+          {skill?.description ??
+            props.skillDescription ??
+            "No description is available for this skill."}
+        </p>
+        {skill?.path ? (
+          <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
+            View instructions
+          </Button>
+        ) : null}
+      </div>
+    </ContextChipPopover>
   );
 }
 
@@ -362,6 +381,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   override decorate(): React.ReactElement {
     return (
       <ComposerSkillDecorator
+        skillName={this.__skillName}
         skillLabel={this.__skillLabel}
         skillDescription={this.__skillDescription}
       />
@@ -2082,29 +2102,31 @@ export function ComposerPromptEditor({
   );
 
   return (
-    <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
-      <ComposerPromptEditorInner
-        value={value}
-        cursor={cursor}
-        contextRecords={contextRecords}
-        buildContextClipboardFragment={buildContextClipboardFragment}
-        importContextFragment={importContextFragment}
-        skills={skills}
-        disabled={disabled}
-        placeholder={placeholder}
-        {...(containerClassName ? { containerClassName } : {})}
-        onChange={onChange}
-        {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
-        onPaste={onPaste}
-        {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
-        editorRef={editorRef}
-        {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
-        {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
-        {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
-        {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
-        {...(className ? { className } : {})}
-        {...(placeholderClassName ? { placeholderClassName } : {})}
-      />
-    </LexicalComposer>
+    <ComposerSkillsContext value={skills}>
+      <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
+        <ComposerPromptEditorInner
+          value={value}
+          cursor={cursor}
+          contextRecords={contextRecords}
+          buildContextClipboardFragment={buildContextClipboardFragment}
+          importContextFragment={importContextFragment}
+          skills={skills}
+          disabled={disabled}
+          placeholder={placeholder}
+          {...(containerClassName ? { containerClassName } : {})}
+          onChange={onChange}
+          {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
+          onPaste={onPaste}
+          {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
+          editorRef={editorRef}
+          {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+          {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
+          {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
+          {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
+          {...(className ? { className } : {})}
+          {...(placeholderClassName ? { placeholderClassName } : {})}
+        />
+      </LexicalComposer>
+    </ComposerSkillsContext>
   );
 }

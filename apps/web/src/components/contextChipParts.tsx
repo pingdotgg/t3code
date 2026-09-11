@@ -113,35 +113,29 @@ export function PullRequestChip(props: {
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="chip"
-            className={cn(
-              props.className,
-              CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-              "cursor-pointer",
-            )}
-            aria-label={`${props.kindLabel} ${props.label}: ${props.metadata.title}. Open in pull request panel.`}
-            data-markdown-copy={props.copyMarkdown}
-            onClick={(event) => props.onOpen(event, props.metadata.url)}
-          >
-            <GitPullRequestIcon
-              className={cn(
-                COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-                CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["pull-request"],
-                "size-3.5",
-              )}
-            />
-            <span className={props.labelClassName}>{props.label}</span>
-          </Button>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-96 leading-tight">
+    <ContextChipPopover
+      accessibleLabel={`${props.kindLabel} ${props.label}: ${props.metadata.title}`}
+      {...(props.copyMarkdown ? { copyMarkdown: props.copyMarkdown } : {})}
+      triggerClassName={props.className}
+      chip={
+        <>
+          <GitPullRequestIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
+          <span className={props.labelClassName}>{props.label}</span>
+        </>
+      }
+    >
+      <div className="space-y-3 p-2">
         <PullRequestContextDetails metadata={props.metadata} />
-      </TooltipPopup>
-    </Tooltip>
+        <p className="text-xs text-muted-foreground">Captured pull request context</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={(event) => props.onOpen(event, props.metadata.url)}
+        >
+          Open pull request
+        </Button>
+      </div>
+    </ContextChipPopover>
   );
 }
 

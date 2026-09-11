@@ -18,8 +18,10 @@ export const ComposerContextClipboardFragment = Schema.Struct({
     threadId: Schema.optional(ThreadId),
     messageId: Schema.optional(MessageId),
   }),
-  records: ForwardCompatibleArray(ComposerContextRecord).check(
-    Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),
-  ),
+  // The bound applies to the raw input, as in `OrchestrationMessageContext`: forward-compatible
+  // decoding drops unknown records first, so a checked output length never sees the flood.
+  records: Schema.Array(Schema.Unknown)
+    .check(Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS))
+    .pipe(Schema.decodeTo(ForwardCompatibleArray(ComposerContextRecord))),
 });
 export type ComposerContextClipboardFragment = typeof ComposerContextClipboardFragment.Type;

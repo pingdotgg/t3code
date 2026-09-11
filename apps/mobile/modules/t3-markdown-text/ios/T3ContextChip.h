@@ -8,7 +8,11 @@ static NSDictionary *T3ContextChipPayload(NSString *uri)
   if (![uri hasPrefix:@"chip:"]) return nil;
   NSData *data = [[uri substringFromIndex:5] dataUsingEncoding:NSUTF8StringEncoding];
   id payload = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-  return [payload isKindOfClass:NSDictionary.class] ? payload : nil;
+  if (![payload isKindOfClass:NSDictionary.class]) return nil;
+  // Every consumer draws or substitutes `label`; a missing or non-string one would raise inside
+  // `replaceCharactersInRange:withString:` while a message is rendering.
+  if (![payload[@"label"] isKindOfClass:NSString.class]) return nil;
+  return payload;
 }
 
 static UIColor *T3ContextChipColor(NSString *hex)

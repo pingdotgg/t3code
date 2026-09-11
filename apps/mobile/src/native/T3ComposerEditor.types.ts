@@ -24,7 +24,8 @@ export interface ComposerEditorProps {
     readonly html: string;
   }) => void;
   readonly skills?: ReadonlyArray<
-    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description">
+    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
+      Partial<Pick<ServerProviderSkill, "path">>
   >;
   readonly selection?: ComposerEditorSelection;
   readonly placeholder?: string;

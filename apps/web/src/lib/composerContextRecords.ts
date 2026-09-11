@@ -5,9 +5,11 @@ import {
 import type {
   ComposerContextId,
   ComposerContextRecord,
+  EnvironmentId,
   FileContextRecord,
   ImageContextRecord,
   KnownComposerContextRecord,
+  MessageId,
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
@@ -16,7 +18,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { sanitizeComposerContextLabel } from "@t3tools/shared/composerContextReferences";
+import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
+import {
+  collectComposerContextReferences,
+  sanitizeComposerContextLabel,
+} from "@t3tools/shared/composerContextReferences";
 
 import {
   type ComposerContextReference,
@@ -340,6 +346,35 @@ export interface ResolvedUserMessageContext {
   recordsById: ReadonlyMap<string, ComposerContextRecord>;
 }
 
+/**
+ * The clipboard fragment behind a timeline message selection: only records for
+ * chips actually inside the selection travel, so copying prose next to an
+ * image never starts importing that image somewhere else. Returns null when no
+ * selected chip has backing records.
+ */
+export function selectedMessageContextFragment(input: {
+  readonly markdown: string;
+  readonly records: ReadonlyArray<ComposerContextRecord>;
+  readonly environmentId: EnvironmentId;
+  readonly threadId?: ThreadId;
+  readonly messageId: MessageId;
+}): string | null {
+  const selectedIds = new Set(
+    collectComposerContextReferences(input.markdown).map((occurrence) => occurrence.contextId),
+  );
+  const records = input.records.filter((record) => selectedIds.has(record.contextId));
+  if (records.length === 0) return null;
+  return encodeComposerContextFragment({
+    version: 1,
+    source: {
+      environmentId: input.environmentId,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      messageId: input.messageId,
+    },
+    records,
+  });
+}
+
 /** A message's canonical text plus records; old messages are upgraded in memory on read. */
 export function resolveUserMessageContext(message: {
   text: string;
@@ -451,7 +486,10 @@ export function isSameComposerContextPayload(
 ): boolean {
   if (left.kind !== right.kind) return false;
   const stableKey = (record: ComposerContextRecord) => {
-    const { label: _label, ...rest } = record;
+    // Labels are display text and context ids are folded producer ids: neither
+    // distinguishes excerpts, so an imported legacy id must still match the
+    // canonical id reconstructed for the same payload instead of duplicating it.
+    const { label: _label, contextId: _contextId, ...rest } = record;
     const sortDeep = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(sortDeep);
       if (value === null || typeof value !== "object") return value;

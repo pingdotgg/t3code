@@ -1,4 +1,6 @@
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import { filePreviewKind } from "@t3tools/shared/filePreview";
+import { videoMimeType } from "@t3tools/shared/video";
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   ComposerContextId,
@@ -43,6 +45,38 @@ export function composerMentionPath(source: string, context?: OrchestrationMessa
   }
   const token = collectComposerInlineTokens(`${source} `)[0];
   return token?.type === "mention" && token.source === source ? token.value : null;
+}
+
+export interface ComposerDocumentAttachment {
+  readonly attachmentId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+}
+
+/**
+ * The attachment behind a chip when it is a document rather than a picture, video or PDF.
+ * Those three open in native viewers; documents open in the file screen.
+ */
+export function composerDocumentAttachment(
+  source: string,
+  context?: OrchestrationMessageContext,
+): ComposerDocumentAttachment | null {
+  const reference = collectComposerContextReferences(source)[0];
+  const record = reference
+    ? context?.records.find((entry) => entry.contextId === reference.contextId)
+    : undefined;
+  return composerDocumentAttachmentRecord(record);
+}
+
+export function composerDocumentAttachmentRecord(
+  record: ComposerContextRecord | undefined,
+): ComposerDocumentAttachment | null {
+  if (!record || "payload" in record || record.kind !== "file") return null;
+  if (videoMimeType(record) !== null) return null;
+  const kind = filePreviewKind(record);
+  if (kind === "image" || kind === "pdf" || kind === "video") return null;
+  return record;
 }
 
 /** Retain a bounded native undo history without persisting removed payloads in the draft. */

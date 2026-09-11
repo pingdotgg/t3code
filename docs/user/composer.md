@@ -126,8 +126,8 @@ comment, picked element, or preview annotation to open its full details. Chips r
 excerpt, Terminal 1 lines 3-4" and similar to screen readers.
 
 A pull request appears as its icon and number. Its color reflects whether it was open, draft,
-merged, or closed when it was attached. Hover it to see the title and branches, or select it to
-open that pull request beside the current thread. On web and desktop, type `#` to browse the newest
+merged, or closed when it was attached. Select it to inspect the captured title and branches,
+then choose **Open pull request** to visit the pull request. On web and desktop, type `#` to browse the newest
 pull requests in the current project's repository. Continue typing digits to filter the recent list
 by any part of its pull request numbers. A complete number is also resolved directly, even when that
 pull request is older than the recent list. Type a single word after `#` to search pull requests in
@@ -149,7 +149,21 @@ Markdown with a link in place of each chip. Older messages that were sent before
 show their context. Stashing a prompt keeps its chips and what they point to; restoring brings
 them back.
 
-On mobile, chips in sent messages read as their labels.
+On mobile, tap a chip to inspect its content. File references open the current file; attached
+files show the copy that was attached to the message.
+
+## Attached files
+
+Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
+highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
+playback controls. Large text files show a limited preview; save the file to read it in full.
+
+On web and desktop, files open beside the conversation with the same controls as a workspace
+file: a header row with the view toggle, **Copy contents** and **Save file**. On mobile, documents
+open in the same file screen as workspace files; its menu holds **Copy contents**, **Save or
+share** and **Open in file viewer**. Pictures, videos and PDFs keep their native viewers, and
+other document formats such as Word or Pages open in the device's own viewer when it has one.
+If nothing on the device can show a format, save or share it to open it elsewhere.
 
 ## Images and videos in messages
 
@@ -177,4 +191,4 @@ file to source view to read its markup; a link to a specific line opens source
 automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
-Android opens the system chooser.
+Android opens a compatible installed file viewer.

@@ -1,5 +1,7 @@
 import {
+  type ComposerContextId,
   EnvironmentId,
+  MessageId,
   OrchestrationMessageContext,
   ThreadId,
   type PreviewAnnotationPayload,
@@ -26,6 +28,7 @@ import {
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
   resolveUserMessageContext,
+  selectedMessageContextFragment,
   reviewCommentContextLabel,
   reviewCommentContextRecord,
   reviewCommentFromRecord,
@@ -483,6 +486,26 @@ describe("composerContextRecords", () => {
     expect(isSameComposerContextPayload(first, second)).toBe(false);
   });
 
+  it("treats an imported legacy id and its canonical reconstruction as the same excerpt", () => {
+    const draft = {
+      id: "term-1",
+      threadId: ThreadId.make("t"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2,
+      text: "A",
+    };
+    const canonical = terminalContextRecord(draft);
+    // An import carries the id it was sent with; the draft rebuilds the folded
+    // canonical form. Same payload either way, so no duplicate entry may form.
+    const imported = { ...canonical, contextId: "legacy_terminal_1" as ComposerContextId };
+
+    expect(isSameComposerContextPayload(canonical, imported)).toBe(true);
+    expect(isSameComposerContextPayload(canonical, { ...canonical, text: "B" })).toBe(false);
+  });
+
   it("compares nested annotation element and source payloads", () => {
     const base = previewAnnotationContextRecord(annotation);
     expect(isSameComposerContextPayload(base, { ...base, label: "Different display label" })).toBe(
@@ -673,12 +696,63 @@ describe("producer ids that do not fit the grammar", () => {
       text: "",
       diff: "",
     });
-    expect(record.contextId).toMatch(/^review-comment_pull-request-finding-42-[0-9a-f]{8}$/);
+    expect(record.contextId).toMatch(/^review-comment_pull-request-finding-42-[0-9a-f]{16}$/);
     expect(
       resolveUserMessageContext({
         text: `[b.ts L1](t3-context://v1/review-comment/${record.contextId})`,
         context: { version: 1, records: [record] },
       }).recordsById.has(record.contextId),
     ).toBe(true);
+  });
+});
+
+describe("selectedMessageContextFragment", () => {
+  const terminal = terminalContextRecord({
+    id: "term-1",
+    threadId: ThreadId.make("t"),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    terminalId: "default",
+    terminalLabel: "Terminal 1",
+    lineStart: 1,
+    lineEnd: 1,
+    text: "A",
+  });
+  const review = reviewCommentContextRecord({
+    id: "rc-1",
+    sectionId: "s",
+    sectionTitle: "t",
+    filePath: "a/b.ts",
+    startIndex: 3,
+    endIndex: 3,
+    rangeLabel: "L4",
+    text: "",
+    diff: "",
+  });
+  const input = {
+    records: [terminal, review],
+    environmentId: EnvironmentId.make("env"),
+    threadId: ThreadId.make("t"),
+    messageId: MessageId.make("msg-1"),
+  };
+
+  it("carries only records for chips inside the selection", () => {
+    const fragment = selectedMessageContextFragment({
+      ...input,
+      markdown: `see [b.ts L4](t3-context://v1/review-comment/${review.contextId})`,
+    });
+
+    expect(fragment).toContain(review.contextId);
+    expect(fragment).not.toContain(terminal.contextId);
+  });
+
+  it("returns null when no selected chip has backing records", () => {
+    expect(selectedMessageContextFragment({ ...input, markdown: "just prose" })).toBeNull();
+    expect(
+      selectedMessageContextFragment({
+        ...input,
+        records: [],
+        markdown: `[b.ts L4](t3-context://v1/review-comment/${review.contextId})`,
+      }),
+    ).toBeNull();
   });
 });

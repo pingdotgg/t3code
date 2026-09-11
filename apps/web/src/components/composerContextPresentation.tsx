@@ -1,3 +1,5 @@
+import ChatMarkdown from "./ChatMarkdown";
+import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -65,12 +67,16 @@ export type ComposerDraftContextRecord =
 export interface ComposerContextActions {
   expandImage: (imageId: string) => void;
   expandVideo: (fileId: string) => void;
+  openFile: (fileId: string) => void;
+  openMention: (path: string) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
 export const ComposerContextActionsContext = createContext<ComposerContextActions>({
   expandImage: () => {},
   expandVideo: () => {},
+  openFile: () => {},
+  openMention: () => {},
   openPullRequest: () => {},
 });
 
@@ -218,7 +224,12 @@ function FileContextChip(props: {
       unresolved={needsReattach}
       suffix={suffix}
       accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
-      onOpen={isVideo && !needsReattach ? () => actions.expandVideo(props.record.id) : undefined}
+      onOpen={
+        !needsReattach
+          ? () =>
+              isVideo ? actions.expandVideo(props.record.id) : actions.openFile(props.record.id)
+          : undefined
+      }
       tooltip={
         needsReattach
           ? `${props.record.name} was not saved with this draft. Attach it again to send it.`
@@ -268,15 +279,11 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
           {comment.sectionTitle} · {comment.rangeLabel}
         </div>
       </div>
-      {comment.text.trim() ? (
-        <div className="whitespace-pre-wrap wrap-break-word text-sm text-foreground">
-          {comment.text.trim()}
-        </div>
-      ) : null}
+      {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}
       {comment.diff.trim() ? (
-        <pre className="max-h-64 overflow-auto whitespace-pre rounded-md bg-muted/50 p-2 font-mono text-[11px] text-foreground leading-relaxed">
-          {comment.diff.trim()}
-        </pre>
+        <div className="flex h-64 min-h-0 flex-col overflow-hidden rounded-md border border-border">
+          <ReadOnlySourcePreview name="review.diff" text={comment.diff} />
+        </div>
       ) : null}
     </div>
   );

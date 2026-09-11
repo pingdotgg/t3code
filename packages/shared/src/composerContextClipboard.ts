@@ -18,6 +18,9 @@ export function encodeComposerContextFragment(
 }
 
 /** HTML is the portable flavor shared by browsers and native system clipboards. */
+/** Room for the wrapper element, its attribute name, and the copied HTML itself. */
+const HTML_WRAPPER_SLACK_CHARS = 4096;
+
 export function encodeComposerContextClipboardHtml(
   text: string,
   fragment: string,
@@ -32,7 +35,9 @@ export function encodeComposerContextClipboardHtml(
 export function decodeComposerContextClipboardHtml(
   html: string | null | undefined,
 ): ComposerContextClipboardFragment | null {
-  if (!html || html.length > MAX_FRAGMENT_CHARS * 4) return null;
+  // `encodeURIComponent` expands one non-ASCII code unit to up to nine characters, so a
+  // fragment just under the limit must still survive the round trip through the attribute.
+  if (!html || html.length > MAX_FRAGMENT_CHARS * 9 + HTML_WRAPPER_SLACK_CHARS) return null;
   const encoded = /data-t3-context-fragment=["']([^"']+)["']/.exec(html)?.[1];
   if (!encoded) return null;
   try {
