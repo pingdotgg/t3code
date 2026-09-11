@@ -408,13 +408,99 @@ describe("DesktopConnectionCatalogStore", () => {
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
 
-      yield* Ref.set(failDecrypt, true);
+      // The renderer retains the empty read even if decryption recovers. A
+      // backend credential refresh can then save that cached catalog at startup.
       assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":["replacement"]}'));
-      yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(
         yield* store.get,
         Option.some('{"schemaVersion":1,"targets":["replacement"]}'),
       );
+      const backupDirectories = (yield* fileSystem.readDirectory(path.dirname(catalogPath))).filter(
+        (name) => name.startsWith("connection-catalog.json.unreadable-"),
+      );
+      assert.lengthOf(backupDirectories, 1);
+      const backupPath = path.join(
+        path.dirname(catalogPath),
+        backupDirectories[0]!,
+        "connection-catalog.json",
+      );
+      assert.equal(yield* fileSystem.readFileString(backupPath), originalDocument);
+      assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":["second"]}'));
+      assert.equal(yield* fileSystem.readFileString(backupPath), originalDocument);
+      assert.lengthOf(
+        (yield* fileSystem.readDirectory(path.dirname(catalogPath))).filter((name) =>
+          name.startsWith("connection-catalog.json.unreadable-"),
+        ),
+        1,
+      );
+
+      // A later unreadable document gets its own backup, including on clear.
+      const secondDocument = yield* fileSystem.readFileString(catalogPath);
+      yield* Ref.set(failDecrypt, true);
+      assert.deepStrictEqual(yield* store.get, Option.none());
+      yield* store.clear;
+      const allBackups = (yield* fileSystem.readDirectory(path.dirname(catalogPath))).filter(
+        (name) => name.startsWith("connection-catalog.json.unreadable-"),
+      );
+      assert.lengthOf(allBackups, 2);
+      const contents = yield* Effect.forEach(allBackups, (name) =>
+        fileSystem.readFileString(
+          path.join(path.dirname(catalogPath), name, "connection-catalog.json"),
+        ),
+      );
+      assert.sameMembers(contents, [originalDocument, secondDocument]);
+      assert.isFalse(yield* fileSystem.exists(catalogPath));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect("refuses automatic replacement when the encrypted backup cannot be written", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-catalog-backup-test-",
+      });
+      const failDecrypt = yield* Ref.make(false);
+      const failBackup = yield* Ref.make(true);
+      const backupError = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "copyFile",
+      });
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(
+          makeLayer(
+            baseDir,
+            true,
+            failDecrypt,
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fileSystem,
+              copyFile: (from, to) =>
+                Effect.gen(function* () {
+                  if (yield* Ref.get(failBackup)) return yield* Effect.fail(backupError);
+                  yield* fileSystem.copyFile(from, to);
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* store.set("original");
+      const catalogPath = path.join(baseDir, "userdata", "connection-catalog.json");
+      const original = yield* fileSystem.readFileString(catalogPath);
+      yield* Ref.set(failDecrypt, true);
+      assert.deepStrictEqual(yield* store.get, Option.none());
+      const error = yield* store.set("automatic replacement").pipe(Effect.flip);
+      assert.instanceOf(
+        error,
+        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
+      );
+      assert.equal(error.operation, "preserve-unreadable-catalog");
+      assert.equal(yield* fileSystem.readFileString(catalogPath), original);
+      yield* store.clear;
+      assert.equal(yield* fileSystem.readFileString(catalogPath), original);
+      yield* Ref.set(failBackup, false);
+      assert.isTrue(yield* store.set("automatic replacement"));
+      yield* Ref.set(failDecrypt, false);
+      assert.deepStrictEqual(yield* store.get, Option.some("automatic replacement"));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
