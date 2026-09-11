@@ -7,8 +7,6 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 
-import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
@@ -89,7 +87,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
  * Nested selectors (`pkg>dep`) and removal overrides (`-`) are publish-time
  * monorepo policy and are rejected by npm when copied into this staging root.
  */
-export function selectEffectOverrides(overrides: Record<string, unknown>): Record<string, string> {
+function selectEffectOverrides(overrides: Record<string, unknown>): Record<string, string> {
   const selected: Record<string, string> = {};
   for (const [key, value] of Object.entries(overrides)) {
     if (typeof value !== "string" || value === "-" || value.length === 0) continue;
@@ -100,28 +98,12 @@ export function selectEffectOverrides(overrides: Record<string, unknown>): Recor
   return selected;
 }
 
-export function truncateProcessOutputTail(text: string): string | undefined {
-  if (text.length === 0) return undefined;
-  if (text.length <= PINNED_RUNTIME_OUTPUT_TAIL_CHARS) return text;
-  return text.slice(text.length - PINNED_RUNTIME_OUTPUT_TAIL_CHARS);
+function stderrOutputTail(stderr: string): string | undefined {
+  const trimmed = stderr.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length <= PINNED_RUNTIME_OUTPUT_TAIL_CHARS) return trimmed;
+  return trimmed.slice(trimmed.length - PINNED_RUNTIME_OUTPUT_TAIL_CHARS);
 }
-
-/** Prefer stderr at the end so a bounded tail keeps the npm failure reason. */
-export function installOutputTail(result: {
-  readonly stdout: string;
-  readonly stderr: string;
-}): string | undefined {
-  const combined = [result.stdout.trim(), result.stderr.trim()].filter((part) => part.length > 0);
-  return truncateProcessOutputTail(combined.join("\n"));
-}
-
-const StagingManifestJson = fromJsonStringPretty(
-  Schema.Struct({
-    dependencies: Schema.Struct({ t3: Schema.String }),
-    overrides: Schema.Record(Schema.String, Schema.String),
-  }),
-);
-const encodeStagingManifest = Schema.encodeEffect(StagingManifestJson);
 
 /**
  * Installs `t3@<version>` into the pinned runtime directory unless a complete
@@ -178,7 +160,7 @@ const resolveTargetEffectOverrides = Effect.fn("cloud.pinned_runtime.resolve_eff
             exitCode: Number(output.code),
             stdoutLength: output.stdout.length,
             stderrLength: output.stderr.length,
-            outputTail: installOutputTail(output),
+            outputTail: stderrOutputTail(output.stderr),
           }),
       ),
     );
@@ -193,7 +175,7 @@ const resolveTargetEffectOverrides = Effect.fn("cloud.pinned_runtime.resolve_eff
         cause,
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
-        outputTail: installOutputTail(result),
+        outputTail: stderrOutputTail(result.stderr),
       });
     }
 
@@ -203,10 +185,20 @@ const resolveTargetEffectOverrides = Effect.fn("cloud.pinned_runtime.resolve_eff
         step: "decoding Effect overrides for the pinned t3 runtime",
         stdoutLength: result.stdout.length,
         stderrLength: result.stderr.length,
-        outputTail: installOutputTail(result),
+        outputTail: stderrOutputTail(result.stderr),
       });
     }
-    return selectEffectOverrides(parsed as Record<string, unknown>);
+    const record = parsed as Record<string, unknown>;
+    // `npm view <pkg> overrides --json` usually returns the map itself; some
+    // npm versions wrap it as `{ overrides: { … } }`.
+    const overrides =
+      record.overrides !== undefined &&
+      typeof record.overrides === "object" &&
+      record.overrides !== null &&
+      !Array.isArray(record.overrides)
+        ? (record.overrides as Record<string, unknown>)
+        : record;
+    return selectEffectOverrides(overrides);
   },
 );
 
@@ -277,19 +269,15 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       version: input.version,
       runner,
     });
-    const stagingManifest = yield* encodeStagingManifest({
-      dependencies: { t3: input.version },
-      overrides,
-    }).pipe(
-      Effect.map((json) => `${json}\n`),
-      Effect.mapError(
-        (cause) =>
-          new PinnedRuntimeInstallError({
-            step: "encoding the pinned runtime install manifest",
-            cause,
-          }),
-      ),
-    );
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed npm install manifest.
+    const stagingManifest = `${JSON.stringify(
+      {
+        dependencies: { t3: input.version },
+        overrides,
+      },
+      null,
+      2,
+    )}\n`;
     yield* fs.writeFileString(input.path.join(stagingDir, "package.json"), stagingManifest).pipe(
       Effect.mapError(
         (cause) =>
@@ -312,7 +300,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
             exitCode: Number(result.code),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
-            outputTail: installOutputTail(result),
+            outputTail: stderrOutputTail(result.stderr),
           }),
       ),
     );

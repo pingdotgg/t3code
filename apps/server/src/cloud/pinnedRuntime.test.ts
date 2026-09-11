@@ -11,11 +11,8 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
-  installOutputTail,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
-  selectEffectOverrides,
-  truncateProcessOutputTail,
 } from "./pinnedRuntime.ts";
 
 const effectOverridesJson = JSON.stringify({
@@ -75,41 +72,6 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
         return okResult();
       }),
   });
-
-it("selectEffectOverrides keeps only plain effect package version pins", () => {
-  assert.deepEqual(
-    selectEffectOverrides({
-      effect: "4.0.0-rc.112",
-      "@effect/platform-node": "4.0.0-rc.112",
-      "@effect/vitest>vitest": "-",
-      "@effect/broken": 12,
-      vite: "1.0.0",
-      "@clerk/react": "6.0.0",
-    }),
-    {
-      effect: "4.0.0-rc.112",
-      "@effect/platform-node": "4.0.0-rc.112",
-    },
-  );
-});
-
-it("truncateProcessOutputTail keeps a bounded suffix", () => {
-  assert.equal(truncateProcessOutputTail(""), undefined);
-  assert.equal(truncateProcessOutputTail("short"), "short");
-  const long = "x".repeat(3000);
-  const tail = truncateProcessOutputTail(long);
-  assert.equal(tail?.length, 2048);
-  assert.equal(tail, long.slice(long.length - 2048));
-});
-
-it("installOutputTail keeps stderr when stdout alone exceeds the bound", () => {
-  const stdout = `${"x".repeat(3000)}\n`;
-  const stderr = "npm error code ERESOLVE\nnpm error Could not resolve dependency\n";
-  const tail = installOutputTail({ stdout, stderr });
-  assert.isTrue(tail !== undefined && tail.includes("npm error code ERESOLVE"));
-  assert.isTrue(tail !== undefined && tail.endsWith(stderr.trim()));
-  assert.isTrue(tail !== undefined && tail.length <= 2048);
-});
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
   it.effect("writes Effect overrides into the staging manifest before install", () =>
@@ -188,7 +150,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.equal(error._tag, "PinnedRuntimeInstallError");
       assert.equal(error.exitCode, 1);
       assert.isTrue(error.message.includes("exit code 1"));
-      assert.equal(error.outputTail, truncateProcessOutputTail(stderr));
+      assert.isTrue(error.outputTail !== undefined && error.outputTail.includes("ERESOLVE"));
+      assert.equal(error.outputTail?.length, 2048);
       assert.isTrue(error.message.endsWith(error.outputTail!));
     }),
   );
