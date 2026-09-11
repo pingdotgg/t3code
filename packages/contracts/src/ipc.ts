@@ -118,6 +118,8 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Explains why a disabled item is unavailable. Native menus may ignore this presentation hint. */
+  disabledReason?: string | null;
   /** Renders as a non-interactive section header label. Web fallback only — stripped on desktop native menus. */
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
@@ -136,6 +138,7 @@ export interface ContextMenuItemSchemaType {
   readonly label: string;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
+  readonly disabledReason?: string | null;
   readonly header?: boolean;
   readonly icon?: string;
   readonly separatorBefore?: boolean;
@@ -147,6 +150,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   label: Schema.String,
   destructive: Schema.optionalKey(Schema.Boolean),
   disabled: Schema.optionalKey(Schema.Boolean),
+  disabledReason: Schema.optionalKey(Schema.NullOr(Schema.String)),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
   separatorBefore: Schema.optionalKey(Schema.Boolean),

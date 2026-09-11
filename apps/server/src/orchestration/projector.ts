@@ -424,6 +424,8 @@ export function projectEvent(
             branch: payload.branch,
             worktreePath: payload.worktreePath,
             pullRequests: [],
+            ...(payload.fork !== undefined ? { fork: payload.fork } : {}),
+            ...(payload.sideChat !== undefined ? { sideChat: payload.sideChat } : {}),
             branchPullRequest: null,
             latestTurn: null,
             createdAt: payload.createdAt,
@@ -618,6 +620,7 @@ export function projectEvent(
               ...(payload.activeOrderKey !== undefined
                 ? { activeOrderKey: payload.activeOrderKey }
                 : {}),
+              ...(payload.sideChat !== undefined ? { sideChat: payload.sideChat } : {}),
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),

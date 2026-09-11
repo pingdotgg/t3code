@@ -1,4 +1,9 @@
-import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationThreadShell,
+  ServerConfig,
+  ThreadForkOrigin,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -8,6 +13,21 @@ import {
   type EnvironmentPresentation,
 } from "../connection/presentation.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
+
+export type ThreadForkOriginPresentation =
+  | { readonly kind: "available"; readonly title: string }
+  | { readonly kind: "deleted" }
+  | null;
+
+export function presentThreadForkOrigin(
+  origin: ThreadForkOrigin | null | undefined,
+  sourceShell: Pick<OrchestrationThreadShell, "title"> | null,
+): ThreadForkOriginPresentation {
+  if (origin == null) return null;
+  return sourceShell === null
+    ? { kind: "deleted" }
+    : { kind: "available", title: sourceShell.title };
+}
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
   if (left.size !== right.size) {

@@ -111,13 +111,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
@@ -134,6 +127,14 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+      });
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        driverKind: DRIVER_KIND,
+        displayName,
+        accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+        adapterCapabilities: adapter.capabilities,
       });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 

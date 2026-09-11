@@ -188,6 +188,16 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("binds side chat by default and leaves fork thread unbound", () =>
+    Effect.sync(() => {
+      const defaultsByCommand = new Map(
+        Keybindings.DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
+      );
+      assert.equal(defaultsByCommand.get("chat.sideChat"), "mod+shift+b");
+      assert.isFalse(defaultsByCommand.has("chat.forkThread"));
+    }),
+  );
+
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
