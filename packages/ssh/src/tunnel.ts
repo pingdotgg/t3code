@@ -6,7 +6,7 @@ import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
 } from "@t3tools/shared/httpReadiness";
-import { CLI_RELEASE_REPOSITORY } from "@t3tools/shared/cliRelease";
+import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -420,7 +420,31 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
   # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
   T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
   T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
-  if [ ! -x "$T3_RUNTIME_DIR/t3" ] || [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" != "$T3_ARCHIVE_VERSION" ]; then
+  t3_runtime_ready() {
+    [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
+  }
+  if ! t3_runtime_ready; then
+    mkdir -p "$HOME/.t3/runtime/versions"
+    # Concurrent launches (two clients, a retry racing a slow first run) must
+    # not both install: mkdir is the atomic lock, a stale lock older than
+    # ten minutes is reclaimed, and the ready check repeats under the lock.
+    T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+    T3_LOCK_WAITED=0
+    while ! mkdir "$T3_LOCK" 2>/dev/null; do
+      if [ -n "$(find "$T3_LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+        rm -rf "$T3_LOCK"
+        continue
+      fi
+      if [ "$T3_LOCK_WAITED" -ge 600 ]; then
+        printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
+        exit 1
+      fi
+      sleep 1
+      T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
+    done
+    trap 'rm -rf "$T3_LOCK"' EXIT
+  fi
+  if ! t3_runtime_ready; then
     case "$(uname -s)" in
       Darwin) T3_PLATFORM="darwin" ;;
       Linux) T3_PLATFORM="linux" ;;
@@ -432,9 +456,8 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
       *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
     esac
     T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-    mkdir -p "$HOME/.t3/runtime/versions"
     T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
-    trap 'rm -rf "$T3_STAGING"' EXIT
+    trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
     t3_fetch() {
       if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"
       elif command -v wget >/dev/null 2>&1; then wget -q "$1" -O "$2"
@@ -457,6 +480,9 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
     rm -rf "$T3_RUNTIME_DIR"
     mv "$T3_STAGING" "$T3_RUNTIME_DIR"
+  fi
+  if [ -n "\${T3_LOCK:-}" ]; then
+    rm -rf "$T3_LOCK"
     trap - EXIT
   fi
   exec "$T3_RUNTIME_DIR/t3" "$@"
@@ -657,7 +683,11 @@ fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
-    printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
+    if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+      printf 'Failed to find an available port on the remote host.\\n' >&2
+    else
+      printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
+    fi
     exit 1
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
@@ -729,9 +759,11 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   const archiveVersion = input?.archiveVersion?.trim() || "";
-  const releaseBaseUrl =
-    input?.releaseBaseUrl?.trim().replace(/\/+$/u, "") ||
-    `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
+  // Strip the `/v<version>` the helper appends: the script builds URLs itself.
+  const releaseBaseUrl = cliReleaseDownloadBaseUrl("", input?.releaseBaseUrl ?? undefined).replace(
+    /\/v$/u,
+    "",
+  );
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,

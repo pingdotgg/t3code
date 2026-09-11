@@ -142,6 +142,14 @@ describe("ssh tunnel scripts", () => {
     assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
+    // Concurrent launches serialize on a per-version mkdir lock and recheck
+    // the completion marker after acquiring it.
+    assert.include(
+      script,
+      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
+    );
+    assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
+    assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
     // The archive branch execs before any of the Node discovery runs.
     assert.isBelow(
       script.indexOf('exec "$T3_RUNTIME_DIR/t3"'),
