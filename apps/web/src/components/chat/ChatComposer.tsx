@@ -101,6 +101,7 @@ import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
+import { ComposerVoiceInput } from "./ComposerVoiceInput";
 import {
   ComposerTasksBadge,
   ComposerTasksContent,
@@ -893,6 +894,11 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  resolveVoiceSendDisabledReason,
+  type ComposerVoiceCommit,
+  type ComposerVoiceDraft,
+} from "../../voice/composerVoiceSession";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -1570,6 +1576,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             environmentId,
           })
       : null);
+  // Voice dictation busy flag, lifted from ComposerVoiceInput so an
+  // in-flight recording/transcription blocks send via the existing reason
+  // path (layered onto the base reason below). The transcript itself always
+  // lands as an editable draft.
+  const [voiceInputBusy, setVoiceInputBusy] = useState(false);
+  const handleVoiceInputBusyChange = useCallback((busy: boolean) => {
+    setVoiceInputBusy(busy);
+  }, []);
+
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
@@ -1763,17 +1778,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
-  const sendDisabledReason =
-    externalSendDisabledReason ??
-    (activePendingProgress
-      ? attachmentBlockReason
-      : (attachmentBlockReason ?? providerSendBlockReason));
+  const sendDisabledReason = resolveVoiceSendDisabledReason({
+    external:
+      externalSendDisabledReason ??
+      (activePendingProgress
+        ? attachmentBlockReason
+        : (attachmentBlockReason ?? providerSendBlockReason)),
+    voiceBusy: voiceInputBusy,
+    fallback: null,
+  });
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  // Voice dictation is Codex-only for now (see
+  // `isVoiceSupportedDriver`). The mic stays visible-but-disabled for other
+  // drivers ("coming soon"); Codex availability itself is probed from
+  // GET /api/voice/availability inside ComposerVoiceInput. Desktop needs no
+  // fork — it renders this same web UI; the native mic permission
+  // (NSMicrophoneUsageDescription) is tracked separately in #5321.
+  const composerVoiceDisabled =
+    isConnecting ||
+    activePendingApproval !== null ||
+    pendingUserInputs.length > 0 ||
+    projectSelectionRequired ||
+    environmentUnavailable !== null;
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : [];
@@ -2838,6 +2869,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       terminalContextIds: composerTerminalContexts.map((context) => context.id),
     };
   }, [composerCursor, composerTerminalContexts, promptRef]);
+
+  // Voice dictation adapters: the session captures environment + thread +
+  // selection at start (the ownerKey pins the exact draft) and commits
+  // through the guarded prompt replacement, so the transcript always lands
+  // as an editable draft at the captured cursor — never auto-sent.
+  const readVoiceDraft = useCallback((): ComposerVoiceDraft | null => {
+    const snapshot = readComposerSnapshot();
+    return {
+      ownerKey: `${environmentId}:${composerTargetKey(composerDraftTarget)}`,
+      text: snapshot.value,
+      selectionStart: snapshot.expandedCursor,
+      selectionEnd: snapshot.expandedCursor,
+    };
+  }, [composerDraftTarget, environmentId, readComposerSnapshot]);
+
+  const commitVoiceTranscript = useCallback(
+    (commit: ComposerVoiceCommit): boolean =>
+      applyPromptReplacement(commit.rangeStart, commit.rangeEnd, commit.insertion, {
+        expectedText: commit.expectedText,
+      }),
+    [applyPromptReplacement],
+  );
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -5788,6 +5841,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {/* TODO(composer.dictate): bind `composer.dictate` (default
+                      mod+shift+D) to the voice session start/stop once the
+                      command ships in contracts. The mic button is the
+                      supported entry point until then. */}
+                  <ComposerVoiceInput
+                    key={composerTargetKey(composerDraftTarget)}
+                    driverKind={selectedProvider}
+                    composerDisabled={composerVoiceDisabled}
+                    readDraft={readVoiceDraft}
+                    commitDraft={commitVoiceTranscript}
+                    onBusyChange={handleVoiceInputBusyChange}
+                  />
                   {showComposerAttachAction ? (
                     <>
                       <input

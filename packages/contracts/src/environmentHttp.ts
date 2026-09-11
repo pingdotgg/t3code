@@ -53,6 +53,14 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  VOICE_AVAILABILITY_PATH,
+  VOICE_TRANSCRIBE_PATH,
+  VoiceAudioPayload,
+  VoiceAvailabilityResponse,
+  VoiceProviderUnsupportedError,
+  VoiceTranscribeResponse,
+} from "./voice.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -614,9 +622,34 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/** Codex-native one-shot dictation: binary audio in, editable transcript out. */
+export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("availability", VOICE_AVAILABILITY_PATH, {
+      headers: OptionalBearerHeaders,
+      success: VoiceAvailabilityResponse,
+      error: [EnvironmentHttpInternalServerError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribe", VOICE_TRANSCRIBE_PATH, {
+      headers: OptionalBearerHeaders,
+      payload: VoiceAudioPayload,
+      success: VoiceTranscribeResponse,
+      error: [
+        VoiceProviderUnsupportedError,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        EnvironmentScopeRequiredError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi) {}
