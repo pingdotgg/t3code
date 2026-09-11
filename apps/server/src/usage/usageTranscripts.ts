@@ -195,6 +195,12 @@ export function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
   return counters;
 }
 
+function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsage) {
+  return readCodexTokenUsage(
+    Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, (previous?.[key] ?? 0) + last[key]])),
+  );
+}
+
 /**
  * Rolling state for a single Codex rollout file.
  *
@@ -311,8 +317,12 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   if (state.suppressingForkCopies) {
     if (timestampMs - state.forkCopyAnchorMs < FORK_COPY_MAX_GAP_MS) {
       state.forkCopyAnchorMs = timestampMs;
-      state.lastCumulativeUsage = cumulative;
-      state.lastUsageSignature = last === null ? null : JSON.stringify(last);
+      const signature = last === null ? null : JSON.stringify(last);
+      if (cumulative !== null) state.lastCumulativeUsage = cumulative;
+      else if (last !== null && signature !== state.lastUsageSignature) {
+        state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
+      }
+      state.lastUsageSignature = signature;
       return null;
     }
     state.suppressingForkCopies = false;
@@ -326,7 +336,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
   const previous = state.lastCumulativeUsage;
   // A structurally valid counter is the baseline for the next event even if
   // this delta is inconsistent, so one bad event does not spoil the whole file.
-  state.lastCumulativeUsage = cumulative;
+  if (cumulative !== null) state.lastCumulativeUsage = cumulative;
 
   // Codex fill_to_context_window replaces usage with zero component counters
   // and a context estimate in total_tokens. It is not a billable request.
@@ -356,8 +366,17 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
       state.malformedRecords += 1;
       return null;
     }
-  } else if (signature === state.lastUsageSignature) {
-    return null;
+  } else {
+    if (signature === state.lastUsageSignature) return null;
+    // Legacy usage already contributes to the records. Advance the expected
+    // total too, so a later cumulative snapshot neither drops the next delta
+    // nor bills this legacy request again.
+    const advanced = advanceCodexUsage(previous, last);
+    if (advanced === null) {
+      state.malformedRecords += 1;
+      return null;
+    }
+    state.lastCumulativeUsage = advanced;
   }
   state.lastUsageSignature = signature;
 

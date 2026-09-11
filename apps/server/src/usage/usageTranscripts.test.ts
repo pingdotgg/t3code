@@ -177,6 +177,36 @@ describe("parseCodexLine", () => {
     expect(state.malformedRecords).toBe(0);
   });
 
+  it("retains cumulative progress across a duplicate legacy event", () => {
+    const state = ready();
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    expect(parseCodexLine(tokenCount(100, 0, 20, 0), state)).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(100, 20), counters(200, 40)), state)?.totals.outputTokens,
+    ).toBe(20);
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it.each([false, true])(
+    "reconciles counted legacy requests without billing them again, initial cumulative=%s",
+    (initialCumulative) => {
+      const state = ready();
+      parseCodexLine(
+        initialCumulative
+          ? counted(counters(100, 20), counters(100, 20))
+          : tokenCount(100, 0, 20, 0),
+        state,
+      );
+      expect(parseCodexLine(tokenCount(20, 0, 5, 0), state)?.totals.outputTokens).toBe(5);
+      // The same request is later re-emitted with cumulative counters.
+      expect(parseCodexLine(counted(counters(20, 5), counters(120, 25)), state)).toBeNull();
+      expect(
+        parseCodexLine(counted(counters(10, 2), counters(130, 27)), state)?.totals.outputTokens,
+      ).toBe(2);
+      expect(state.malformedRecords).toBe(0);
+    },
+  );
+
   it.each([counters(130, 28), counters(50, 10)])(
     "reports inconsistent deltas and recovers from the next valid counter pair %#",
     (total) => {
