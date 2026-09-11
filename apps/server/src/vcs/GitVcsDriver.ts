@@ -747,7 +747,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
-            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             // Retain stat data only where the copied index already matches HEAD.
             yield* execute({
               operation,
@@ -755,6 +754,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               args: ["-c", "core.fsmonitor=false", "read-tree", "--reset", "HEAD"],
               env: commitEnv,
             });
+            // read-tree can rewrite the index, so restore its racy timestamp afterward.
+            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             const entries = yield* execute({
               operation,
               cwd: input.cwd,
