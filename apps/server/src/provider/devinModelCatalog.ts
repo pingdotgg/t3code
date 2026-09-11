@@ -8,8 +8,8 @@
  * mode. This module owns both directions:
  *
  * - `devinModelsFromCatalog` groups `devin models list --format json` into
- *   per-base rows with `effort` / `speed` / `context` option descriptors.
- * - `resolveDevinModelUid` turns `{ model: <base>, options }` back into a
+ *   per-family rows with `effort` / `speed` / `context` option descriptors.
+ * - `resolveDevinModelUid` turns `{ model: <family>, options }` back into a
  *   concrete advertised uid for `session/set_config_option`.
  *
  * @module devinModelCatalog
@@ -146,6 +146,72 @@ export interface DevinModelsListJson {
 /** `adaptive` is Devin's recommended auto-router and the picker default. */
 const DEVIN_DEFAULT_MODEL_SLUG = "adaptive";
 
+interface ParsedVariant {
+  readonly uid: string;
+  readonly label: string | undefined;
+  readonly dims: DevinModelDims;
+  readonly isNew: boolean;
+}
+
+function effortRank(effort: string): number {
+  const index = EFFORT_ORDER.indexOf(effort as (typeof EFFORT_ORDER)[number]);
+  return index === -1 ? EFFORT_ORDER.length : index;
+}
+
+/**
+ * Label-derived dims for families whose variant uids are opaque
+ * (`MODEL_PRIVATE_*`): the variant label minus the family label carries the
+ * effort words — "GPT-5.1 Low Thinking" → `low`, "… No Thinking" → `none`,
+ * "… Thinking" → `thinking`. Returns `undefined` when the label does not
+ * extend the family label so callers fall back to uid parsing.
+ */
+export function parseDevinVariantLabel(
+  familyLabel: string | undefined,
+  variantLabel: string | undefined,
+): DevinModelDims | undefined {
+  if (!familyLabel || !variantLabel) return undefined;
+  const trimmedFamily = familyLabel.trim();
+  const trimmedVariant = variantLabel.trim();
+  if (
+    !trimmedVariant.toLowerCase().startsWith(trimmedFamily.toLowerCase()) ||
+    trimmedVariant.length === trimmedFamily.length
+  ) {
+    return undefined;
+  }
+  let rest = trimmedVariant.slice(trimmedFamily.length).trim().toLowerCase();
+
+  let context: string | undefined;
+  let speed: string | undefined;
+  for (const token of rest.split(/\s+/).reverse()) {
+    if (context === undefined && CONTEXT_TOKENS.has(token)) {
+      context = token;
+      rest = rest.slice(0, rest.length - token.length).trim();
+      continue;
+    }
+    if (speed === undefined && SPEED_TOKENS.has(token)) {
+      speed = token;
+      rest = rest.slice(0, rest.length - token.length).trim();
+      continue;
+    }
+    break;
+  }
+
+  let effort: string | undefined;
+  if (rest === "no thinking") {
+    effort = "none";
+  } else if (rest === "thinking") {
+    effort = "thinking";
+  } else {
+    const stripped = rest.replace(/\s*thinking$/, "");
+    if (stripped !== rest && EFFORT_TOKENS.has(stripped)) {
+      effort = stripped;
+    } else if (EFFORT_TOKENS.has(rest)) {
+      effort = rest;
+    }
+  }
+  return { base: "", effort, speed, context };
+}
+
 function effortChoice(effort: string, isDefault: boolean): ProviderOptionChoice {
   return {
     id: effort,
@@ -155,11 +221,12 @@ function effortChoice(effort: string, isDefault: boolean): ProviderOptionChoice 
 }
 
 /**
- * One row per (family, base) group. Variants sharing a base become option
- * descriptor choices: bare variants contribute a "Default" effort choice,
- * `-fast`/`-priority` a Speed select, and `-1m` a Context select. Variant
- * uids land in `aliases` so stored flat selections like `swe-2-high` still
- * resolve to the grouped row.
+ * One row per family. Variants sharing a uid base become `effort`/`speed`/
+ * `context` option descriptors (token-valued choices resolved by dims match);
+ * families whose uids share no base (`MODEL_PRIVATE_*` under gpt-5.1) emit a
+ * single effort select whose choices carry the concrete uid, which
+ * `resolveDevinModelUid` passes through. Variant uids land in `aliases` so
+ * stored flat selections like `swe-2-high` still resolve to the family row.
  */
 export function devinModelsFromCatalog(
   parsed: DevinModelsListJson | undefined,
@@ -172,69 +239,55 @@ export function devinModelsFromCatalog(
       typeof family.family_label === "string" && family.family_label.trim()
         ? family.family_label.trim()
         : undefined;
-    const familyAliases = (family.aliases ?? []).filter(
-      (alias): alias is string => typeof alias === "string" && alias.trim().length > 0,
-    );
+    const familySlug = typeof family.slug === "string" ? family.slug.trim() : "";
+    const familyAliases = [
+      ...(family.aliases ?? []).filter(
+        (alias): alias is string => typeof alias === "string" && alias.trim().length > 0,
+      ),
+      ...(familySlug ? [familySlug] : []),
+    ];
 
-    // Group variants by parsed base; several bases in one family (e.g.
-    // MODEL_PRIVATE_* under claude-sonnet-4.5) are genuinely distinct models.
-    const groups = new Map<
-      string,
-      {
-        uids: Array<string>;
-        dims: Array<DevinModelDims>;
-        label: string | undefined;
-        isNew: boolean;
-      }
-    >();
+    const variants: Array<ParsedVariant> = [];
     for (const variant of family.variants ?? []) {
       const uid = typeof variant.model_uid === "string" ? variant.model_uid.trim() : "";
       if (!uid) continue;
-      const dims = parseDevinModelUid(uid);
-      const variantLabel =
+      const label =
         typeof variant.label === "string" && variant.label.trim()
           ? variant.label.trim()
           : undefined;
-      const group = groups.get(dims.base);
-      if (group) {
-        group.uids.push(uid);
-        group.dims.push(dims);
-        group.isNew ||= variant.is_new === true;
-      } else {
-        groups.set(dims.base, {
-          uids: [uid],
-          dims: [dims],
-          label: variantLabel,
-          isNew: variant.is_new === true,
-        });
-      }
+      variants.push({ uid, label, dims: parseDevinModelUid(uid), isNew: variant.is_new === true });
     }
+    if (variants.length === 0) continue;
 
-    for (const [base, group] of groups) {
-      if (seenSlugs.has(base)) continue;
-      seenSlugs.add(base);
+    const distinctBases = new Set(variants.map((variant) => variant.dims.base));
+    const isNew = variants.some((variant) => variant.isNew);
+    const optionDescriptors: Array<{
+      id: string;
+      label: string;
+      type: "select";
+      options: Array<ProviderOptionChoice>;
+    }> = [];
+    let slug: string;
 
+    if (distinctBases.size <= 1) {
+      // Shared uid base — multi-axis dims from uid suffixes.
+      slug = variants[0]!.dims.base;
       const efforts = new Set<string>();
       const speeds = new Set<string>();
       const contexts = new Set<string>();
-      for (const dims of group.dims) {
-        if (dims.effort) efforts.add(dims.effort);
-        if (dims.speed) speeds.add(dims.speed);
-        if (dims.context) contexts.add(dims.context);
+      for (const variant of variants) {
+        if (variant.dims.effort) efforts.add(variant.dims.effort);
+        if (variant.dims.speed) speeds.add(variant.dims.speed);
+        if (variant.dims.context) contexts.add(variant.dims.context);
       }
-      const hasBare = group.dims.some(
-        (dims) =>
-          dims.effort === undefined && dims.speed === undefined && dims.context === undefined,
+      const hasBare = variants.some(
+        (variant) =>
+          variant.dims.effort === undefined &&
+          variant.dims.speed === undefined &&
+          variant.dims.context === undefined,
       );
 
-      const optionDescriptors: Array<{
-        id: string;
-        label: string;
-        type: "select";
-        options: Array<ProviderOptionChoice>;
-      }> = [];
-
-      if (efforts.size > 0 || hasBare) {
+      if (efforts.size > 0 || (hasBare && variants.length > 1)) {
         const options: Array<ProviderOptionChoice> = [];
         if (hasBare) {
           options.push(effortChoice(DEFAULT_EFFORT_VALUE, true));
@@ -255,7 +308,7 @@ export function devinModelsFromCatalog(
 
       if (speeds.size > 0) {
         const options: Array<ProviderOptionChoice> = [];
-        const hasStandard = group.dims.some((dims) => dims.speed === undefined);
+        const hasStandard = variants.some((variant) => variant.dims.speed === undefined);
         if (hasStandard) {
           options.push({
             id: STANDARD_SPEED_VALUE,
@@ -283,7 +336,7 @@ export function devinModelsFromCatalog(
 
       if (contexts.size > 0) {
         const options: Array<ProviderOptionChoice> = [];
-        const hasStandard = group.dims.some((dims) => dims.context === undefined);
+        const hasStandard = variants.some((variant) => variant.dims.context === undefined);
         if (hasStandard) {
           options.push({
             id: STANDARD_CONTEXT_VALUE,
@@ -308,22 +361,72 @@ export function devinModelsFromCatalog(
           });
         }
       }
+    } else {
+      // Opaque uids — one effort select with uid-valued choices, ordered by
+      // effort rank. `resolveDevinModelUid` passes a uid-valued selection
+      // straight through, so no shared base is needed.
+      const byVariant = variants.map((variant) => ({
+        ...variant,
+        labelDims: parseDevinVariantLabel(familyLabel, variant.label),
+      }));
+      const isBare = (variant: (typeof byVariant)[number]) =>
+        variant.labelDims?.effort === undefined &&
+        variant.labelDims?.speed === undefined &&
+        variant.labelDims?.context === undefined;
+      const defaultVariant =
+        byVariant.find(isBare) ??
+        byVariant.find((variant) => variant.labelDims?.effort === "medium") ??
+        byVariant[0]!;
+      slug = defaultVariant.uid;
 
-      models.push({
-        slug: base,
-        name:
-          groups.size === 1
-            ? (familyLabel ?? group.label ?? base)
-            : (group.label ?? familyLabel ?? base),
-        ...(familyAliases.length > 0 || group.uids.length > 1
-          ? { aliases: [...familyAliases, ...group.uids.filter((uid) => uid !== base)] }
-          : {}),
-        ...(group.isNew ? { badge: "new" as const } : {}),
-        isCustom: false,
-        isDefault: base === DEVIN_DEFAULT_MODEL_SLUG,
-        capabilities: optionDescriptors.length > 0 ? { optionDescriptors } : null,
-      });
+      const options = byVariant
+        .toSorted(
+          (left, right) =>
+            effortRank(left.labelDims?.effort ?? DEFAULT_EFFORT_VALUE) -
+            effortRank(right.labelDims?.effort ?? DEFAULT_EFFORT_VALUE),
+        )
+        .map((variant) => {
+          const suffix =
+            familyLabel &&
+            variant.label !== undefined &&
+            variant.label.toLowerCase().startsWith(familyLabel.toLowerCase())
+              ? variant.label.slice(familyLabel.length).trim()
+              : "";
+          return {
+            id: variant.uid,
+            label:
+              suffix !== ""
+                ? suffix
+                : EFFORT_LABELS[variant.labelDims?.effort ?? DEFAULT_EFFORT_VALUE]!,
+            ...(variant.uid === defaultVariant.uid ? { isDefault: true } : {}),
+          };
+        });
+      if (options.length > 1) {
+        optionDescriptors.push({
+          id: DEVIN_EFFORT_OPTION_ID,
+          label: "Reasoning",
+          type: "select",
+          options,
+        });
+      }
     }
+
+    if (seenSlugs.has(slug)) continue;
+    seenSlugs.add(slug);
+    const aliases = [...familyAliases, ...variants.map((variant) => variant.uid)].filter(
+      (alias) => alias !== slug,
+    );
+    models.push({
+      slug,
+      name: familyLabel ?? slug,
+      ...(aliases.length > 0 ? { aliases } : {}),
+      ...(isNew ? { badge: "new" as const } : {}),
+      isCustom: false,
+      isDefault:
+        slug === DEVIN_DEFAULT_MODEL_SLUG ||
+        variants.some((v) => v.uid === DEVIN_DEFAULT_MODEL_SLUG),
+      capabilities: optionDescriptors.length > 0 ? { optionDescriptors } : null,
+    });
   }
   return models;
 }
@@ -382,6 +485,17 @@ export function resolveDevinModelUid(input: {
 }): string {
   const model = input.model.trim();
   if (!model) return model;
+
+  // Opaque families (no shared uid base, e.g. `MODEL_PRIVATE_*`) put the
+  // concrete uid in the dim choice id — a selection that is itself an
+  // advertised value wins outright.
+  const direct = (input.selections ?? []).find(
+    (selection) =>
+      isDevinModelDimOptionId(selection.id) &&
+      typeof selection.value === "string" &&
+      input.advertisedValues.includes(selection.value),
+  );
+  if (direct) return direct.value as string;
 
   const wanted = wantedDims(input.selections);
   // A base id like `swe-1-7` is often *also* an advertised uid (the family's

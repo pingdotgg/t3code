@@ -119,12 +119,13 @@ describe("devinModelsFromCatalog grouping", () => {
     ]);
   });
 
-  it("splits families whose variants parse to different bases", () => {
+  it("groups families whose opaque uids share no base via label dims", () => {
     const models = devinModelsFromCatalog({
       families: [
         {
           family_label: "Claude Sonnet 4.5",
           family_uid: "claude-sonnet-4.5",
+          slug: "claude-sonnet-4.5",
           variants: [
             { model_uid: "MODEL_PRIVATE_2", label: "Claude Sonnet 4.5" },
             { model_uid: "MODEL_PRIVATE_3", label: "Claude Sonnet 4.5 Thinking" },
@@ -132,8 +133,19 @@ describe("devinModelsFromCatalog grouping", () => {
         },
       ],
     });
-    expect(models.map((m) => m.slug)).toEqual(["model-private-2", "model-private-3"]);
-    expect(models.map((m) => m.name)).toEqual(["Claude Sonnet 4.5", "Claude Sonnet 4.5 Thinking"]);
+    expect(models).toHaveLength(1);
+    const row = models[0]!;
+    expect(row.slug).toBe("MODEL_PRIVATE_2");
+    expect(row.name).toBe("Claude Sonnet 4.5");
+    const effort = row.capabilities?.optionDescriptors?.find((d) => d.id === "effort");
+    expect(effort?.type === "select" ? effort.options.map((o) => o.id) : []).toEqual([
+      "MODEL_PRIVATE_2",
+      "MODEL_PRIVATE_3",
+    ]);
+    expect(effort?.type === "select" ? effort.options.map((o) => o.label) : []).toEqual([
+      "Default",
+      "Thinking",
+    ]);
   });
 });
 
@@ -151,6 +163,16 @@ describe("resolveDevinModelUid", () => {
     "glm-5-2-1m",
     "adaptive",
   ];
+
+  it("passes through uid-valued dim selections from opaque families", () => {
+    expect(
+      resolveDevinModelUid({
+        model: "MODEL_PRIVATE_14",
+        selections: [{ id: "effort", value: "MODEL_PRIVATE_12" }],
+        advertisedValues: ["MODEL_PRIVATE_12", "MODEL_PRIVATE_13", "MODEL_PRIVATE_14"],
+      }),
+    ).toBe("MODEL_PRIVATE_12");
+  });
 
   it("passes through exact uid matches", () => {
     expect(resolveDevinModelUid({ model: "swe-2-high", advertisedValues: advertised })).toBe(
