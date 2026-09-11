@@ -30,6 +30,8 @@ let T3 Code detect an icon again.
 Enable **Automatically pull** to keep the default-branch checkout up to date with its configured
 upstream.
 
-T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
-or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
-local work, resolve it yourself before automatic pulls can resume.
+T3 Code pulls when it can fast-forward without overwriting local changes. Untracked files and
+uncommitted edits can remain if they do not block the update. It skips checkouts with local commits,
+on another branch, or without an upstream. If Git refuses an update because it would overwrite local
+work, resolve that work yourself before automatic pulls can resume. T3 Code does not automatically
+stash changes.

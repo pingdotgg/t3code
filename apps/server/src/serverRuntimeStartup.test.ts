@@ -17,7 +17,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
-it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
+it.effect("automatic pull only updates enabled, behind default-branch checkouts", () =>
   Effect.gen(function* () {
     const pulled: string[] = [];
     const git = {
@@ -52,7 +52,7 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
       project("/disabled", false),
     ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
 
-    assert.deepStrictEqual(pulled, ["/clean"]);
+    assert.deepStrictEqual(pulled.toSorted(), ["/clean", "/dirty"]);
 
     pulled.length = 0;
     yield* ServerRuntimeStartup.autoPullProjects(
@@ -62,7 +62,7 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
         projectAutoPullOverrides: { [ProjectId.make("/opted-out")]: false },
       },
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
-    assert.deepStrictEqual(pulled, ["/inherited"]);
+    assert.deepStrictEqual(pulled.toSorted(), ["/dirty", "/inherited"]);
   }),
 );
 

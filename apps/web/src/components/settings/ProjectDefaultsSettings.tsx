@@ -315,7 +315,7 @@ export function ProjectDefaultsSettings({
         />
         <SettingsRow
           title="Automatically pull"
-          description="Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+          description="Keeps the default branch current when it can fast-forward without overwriting local changes. Projects can override it."
           status={mixedAutoPull ? "Differs by machine" : undefined}
           resetAction={
             serverSettings.defaultAutoPull || mixedAutoPull ? (

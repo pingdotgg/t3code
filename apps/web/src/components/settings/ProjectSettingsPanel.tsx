@@ -1155,7 +1155,7 @@ function ProjectDetail({
           />
           <SettingsRow
             title="Automatically pull"
-            description="Keeps the default branch current in the background when the checkout has no local changes or commits."
+            description="Keeps the default branch current in the background when it can fast-forward without overwriting local changes."
             status={
               mixedAutoPull
                 ? "Mixed"
