@@ -38,6 +38,3 @@ node_modules/
 *.log
 .env*
 !.env.example
-
-# pnpm content-addressable store; never belongs in the repo.
-.pnpm-store/

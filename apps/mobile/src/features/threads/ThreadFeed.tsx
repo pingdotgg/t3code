@@ -1680,7 +1680,14 @@ function UserMessageContent(props: {
 }) {
   // Inline context references render as their labels until mobile grows chips for them.
   const text = replaceComposerContextReferences(props.text, (occurrence) => occurrence.label);
-  const segments = parseReviewCommentMessageSegments(text);
+  const segments = parseReviewCommentMessageSegments(props.text).map((segment) =>
+    segment.kind === "text"
+      ? {
+          ...segment,
+          text: replaceComposerContextReferences(segment.text, (occurrence) => occurrence.label),
+        }
+      : segment,
+  );
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
   if (!hasReviewComment) {
     if (hasNativeSelectableMarkdownText()) {

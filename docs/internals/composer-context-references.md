@@ -31,7 +31,7 @@ the whole message. The field is optional on `OrchestrationMessage`, both turn-st
 - `ComposerContextId`: durable payload identity. Branded. Values match `[a-z0-9_-]+` and do not
   require a `ctx_` prefix.
 - `ComposerContextReferenceId` (`ref_…`): one document occurrence. Branded. Lives in editor state,
-  not on the wire.
+  not on the wire and is regenerated when canonical Markdown is reparsed.
 - `ChatAttachmentId`: the existing server-owned attachment resource. A record's `attachmentId` is
   a binding, not the chip's identity, so upload normalization can rename the resource without
   rewriting references.
@@ -93,11 +93,11 @@ transcript renderer moves to records.
 
 `ComposerContextReferenceNode` (`apps/web/src/components/ComposerContextReferenceNode.tsx`) is
 the one inline Lexical node for every context kind. It stores `kind`, `contextId`, `label`, and a
-per-occurrence `referenceId`, and its text content is the canonical link. Because the composer's
-prompt string is built from node text, the string carries identity, and rebuilding the editor from
-the string restores the same chips. Old drafts that used the U+FFFC ordinal placeholder migrate on
-hydration: placeholders bind to the terminal contexts in array order, then any context the prompt
-does not mention is prepended as a link.
+per-occurrence `referenceId`, and its text content is the canonical link. The prompt string carries
+payload identity and position, so rebuilding the editor restores equivalent chips; it does not
+preserve the editor-local occurrence ids. Old drafts that used the U+FFFC ordinal placeholder
+migrate on hydration: placeholders bind to the terminal contexts in array order, then any context
+the prompt does not mention is prepended as a link.
 
 Records stay in the draft store's typed arrays for now. The editor builds a `Map` keyed by
 `contextId` from them (`composerContextRecordsFromDraft`) and provides it through
@@ -106,9 +106,17 @@ the kind's chip; an unknown kind or a missing record renders the unresolved chip
 vanishing. Removing a chip removes only that occurrence; the composer's change handler compares
 the referenced ids against the draft array and drops records no chip points at.
 
-Send time is unchanged for terminal context: the link is replaced by the readable
-`@terminal-1:509-514` label and the full excerpt trails in `<terminal_context>`. Unifying this
-with the provider projection above is the next step.
+Version 1 deliberately keeps kind presentation explicit in each client instead of exposing a
+runtime handler registry. The contract and codecs are shared; web/desktop render rich chips and
+mobile renders the readable label. Add a registry only when a third-party or runtime-defined kind
+must provide behaviour that cannot ship with the client. Likewise, a durable occurrence id belongs
+in the canonical reference syntax only if a future feature needs to address one occurrence across
+serialization boundaries.
+
+Terminal context now follows the same send path as every other context record: the persisted
+message keeps its canonical link and structured record, while the provider projection replaces
+the link with a readable marker and includes the excerpt once in the context envelope. The legacy
+trailing `<terminal_context>` form is parsed only when reading messages sent by older clients.
 
 ## Sending and reading messages
 
@@ -118,10 +126,11 @@ The composer sends `message.text` as canonical prose with reference links and
 The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
 message stays readable and the provider receives markers plus one envelope.
 
-Review comments and preview annotations enter the draft through store mutators that append a
-reference at the end of the prompt, because the diff and preview panels do not know the caret.
-Terminal excerpts insert at the caret through the composer handle. Removing a chip in the editor
-removes the record; removing a preview screenshot thumbnail removes its annotation and chip.
+Review comments and preview annotations enter the draft through store mutators. A mounted composer
+registers a context insertion handler so panel-originated references land at its current or
+last-known caret; when no composer is mounted, the store appends them. Terminal excerpts and
+attachments use the same caret-first behavior. Removing a chip in the editor removes the record;
+removing a preview screenshot thumbnail removes its annotation and chip.
 
 The transcript resolves a message with `resolveUserMessageContext`: structured context is used as
 is, older messages are upgraded in memory. `ChatMarkdown` renders `t3-context://` links through
@@ -146,3 +155,42 @@ gain image chips.
 
 In the transcript an image chip opens the gallery preview and a file chip opens or downloads the
 file. The gallery still shows every image; file rows remain only for files no chip references.
+
+## Clipboard
+
+Every copy path writes the canonical Markdown as `text/plain` and, when the selection holds
+chips, a structured fragment under `web application/x-t3-context-fragment+json`
+(`ComposerContextClipboardFragment`: version, source environment/thread/message, records; no
+bytes, no URLs). Composer copy and cut add it through a Lexical command listener; transcript
+selection copy adds it from an `onCopyCapture` on the user message body while chips re-emit their
+links through `data-markdown-copy`; the whole-message button writes both through `ClipboardItem`
+and falls back to plain text.
+
+On paste the composer decodes the fragment before the plain text. Records the draft does not
+already hold are imported: terminal excerpts and review comments as they are, preview
+annotations rebuilt from their record, and images or files re-fetched through the source
+environment's asset URL and attached under a fresh local id, with the pasted link rewritten to
+that id. A pasted binary reads as an unresolved chip until its bytes arrive; a fragment from
+another environment leaves binaries unresolved. Rendered chips and sent messages are never
+mutated by a paste.
+
+Pasting across threads, projects, or environments uses the same path: the client mints an asset
+URL from the source environment, downloads the bytes, and attaches them here. There is no
+server-side clone; if the source is unreachable or the attachment is gone, a toast says so and
+the chip stays unresolved.
+
+## Ids, persistence, and the stash
+
+Producers keep their own id grammars; `toComposerContextId` folds anything outside
+`[a-z0-9_-]` into a slug plus a hash, deterministically, at the reference and record boundary.
+A preview annotation's context id is derived from `annotation-<id>` so it stays distinct from its
+screenshot image, whose attachment id is the annotation id; the record links the two through
+`screenshotContextId`.
+
+`projection_thread_messages.context_json` persists records, so a restart or projection reload
+keeps chips resolvable. Prompt stash entries carry `records` for terminal excerpts, review
+comments, and preview annotations; stashing moves them out of the draft and restoring imports
+them back through the same importer the paste path uses.
+
+Context produced by other panels reaches the caret through `setContextInsertionHandler`: a
+mounted composer registers an inserter for its draft and the store falls back to appending.

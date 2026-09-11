@@ -24,6 +24,7 @@ import {
   reviewCommentContextId,
   reviewCommentContextLabel,
   terminalContextReference,
+  uploadedAttachmentContextRecord,
 } from "~/lib/composerContextRecords";
 import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -58,6 +59,11 @@ export const ComposerContextActionsContext = createContext<ComposerContextAction
 export type ComposerDraftContextRecords = ReadonlyMap<string, ComposerDraftContextRecord>;
 
 export const EMPTY_COMPOSER_CONTEXT_RECORDS: ComposerDraftContextRecords = new Map();
+
+export function uploadedContextRecordFromDraft(entry: ComposerDraftContextRecord) {
+  if (entry.kind !== "image" && entry.kind !== "file") return null;
+  return uploadedAttachmentContextRecord(entry.record, entry.upload);
+}
 
 export const ComposerContextRecordsContext = createContext<ComposerDraftContextRecords>(
   EMPTY_COMPOSER_CONTEXT_RECORDS,
@@ -110,6 +116,7 @@ function ContextChip(props: {
         render={
           <span
             className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+            tabIndex={props.tooltip ? 0 : undefined}
             aria-label={`${props.kindLabel}, ${props.label}`}
           >
             {props.icon}

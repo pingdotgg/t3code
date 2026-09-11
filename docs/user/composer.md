@@ -109,6 +109,32 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+## Context in your message
+
+Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,
+a review comment from a diff or file, a preview annotation, or a file. You can type before and
+after a chip, move it by cutting and pasting, and delete it like a character. Hover a chip for
+its details; in a sent message, select a review comment or preview annotation chip to open the
+full card. Chips read as "Terminal excerpt, Terminal 1 lines 3-4" and similar to screen readers.
+
+Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
+say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
+the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
+exist only as chips: deleting a file's last chip removes the file from the message.
+
+Copy text that holds chips and paste it into another draft, in the same thread or another one,
+and the chips come along with what they point to. Images and files are fetched again from the
+environment they came from; while that happens the chip shows a dashed outline, and if it cannot
+complete T3 Code tells you and leaves the chip for you to remove or replace. A chip whose
+context is no longer available shows the same dashed outline; hover it for what to do.
+
+Copying a message with the copy button, or copying text out of it, gives other apps readable
+Markdown with a link in place of each chip. Older messages that were sent before chips still
+show their context. Stashing a prompt keeps its chips and what they point to; restoring brings
+them back.
+
+On mobile, chips in sent messages read as their labels.
+
 ## Images and videos in messages
 
 Select an image or video attachment or link to preview it. Playback support depends

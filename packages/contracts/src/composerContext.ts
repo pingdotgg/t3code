@@ -165,6 +165,10 @@ export const PreviewAnnotationContextRecord = Schema.Struct({
   elements: Schema.optional(Schema.Array(ElementContextDetails).check(Schema.isMaxLength(50))),
   /** Original target ids and edits allow pasted annotations to retain exact style changes. */
   elementIds: Schema.optional(Schema.Array(ShortString).check(Schema.isMaxLength(50))),
+  /** Region and stroke geometry is lossy on purpose, but their counts feed the target summary,
+      so a pasted annotation still says what it marked. */
+  regionCount: Schema.optional(NonNegativeInt),
+  strokeCount: Schema.optional(NonNegativeInt),
   styleChangeDetails: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -250,7 +254,7 @@ export const ComposerContextRecord = Schema.Union([
 ]);
 export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 
-const COMPOSER_CONTEXT_MAX_RECORDS = 200;
+export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
 const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */

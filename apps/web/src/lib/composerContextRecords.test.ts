@@ -1,9 +1,11 @@
 import {
+  EnvironmentId,
   OrchestrationMessageContext,
   ThreadId,
   type PreviewAnnotationPayload,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 
 import {
   formatInlineContextReference,
@@ -12,14 +14,21 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  asKnownContextRecord,
   attachmentContextRecord,
   buildMessageContext,
+  composerContextImportLookupIds,
+  isSameComposerContextPayload,
   previewAnnotationContextLabel,
   previewAnnotationContextRecord,
+  previewAnnotationFromRecord,
   resolveUserMessageContext,
   reviewCommentContextRecord,
+  reviewCommentFromRecord,
   terminalContextRecord,
   terminalContextReference,
+  terminalContextDraftFromRecord,
+  uploadedAttachmentContextRecord,
 } from "./composerContextRecords";
 
 const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
@@ -57,6 +66,52 @@ const annotation: PreviewAnnotationPayload = {
 };
 
 describe("composerContextRecords", () => {
+  it("copies only ready or persisted server-side attachment IDs", () => {
+    const environmentId = EnvironmentId.make("env");
+    const image = {
+      type: "image" as const,
+      id: "local-image",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      file: new File(["x"], "shot.png"),
+      previewUrl: "blob:shot",
+    };
+    expect(uploadedAttachmentContextRecord(image, undefined)).toBeNull();
+    expect(
+      uploadedAttachmentContextRecord(image, { status: "uploading", environmentId, progress: 0.5 }),
+    ).toBeNull();
+    expect(
+      uploadedAttachmentContextRecord(image, {
+        status: "failed",
+        environmentId,
+        reason: "offline",
+        attachmentId: "unfinished",
+      }),
+    ).toBeNull();
+    expect(
+      uploadedAttachmentContextRecord(image, {
+        status: "ready",
+        environmentId,
+        attachmentId: "uploaded-image",
+      }),
+    ).toMatchObject({ attachmentId: "uploaded-image", contextId: "image_local-image" });
+    const file = {
+      type: "file" as const,
+      id: "local-file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      file: null,
+    };
+    expect(uploadedAttachmentContextRecord(file, undefined)).toBeNull();
+    expect(
+      uploadedAttachmentContextRecord(
+        { ...file, uploadedAttachmentId: "persisted-file", uploadEnvironmentId: environmentId },
+        undefined,
+      ),
+    ).toMatchObject({ attachmentId: "persisted-file", contextId: "file_local-file" });
+  });
   it("does not bind an annotation screenshot to a same-ID file", () => {
     const context = buildMessageContext({
       terminalContexts: [],
@@ -79,6 +134,52 @@ describe("composerContextRecords", () => {
     expect(context.records.map((record) => record.kind)).toEqual(["preview-annotation", "file"]);
     expect(context.records[0]).not.toHaveProperty("screenshotContextId");
   });
+  it.each(["x", "terminal_x"])(
+    "preserves canonical terminal IDs across repeated imports: %s",
+    (id) => {
+      const threadId = ThreadId.make("t1");
+      const record = terminalContextRecord({
+        id,
+        threadId,
+        terminalId: "default",
+        terminalLabel: "Terminal",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "output",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      const restored = terminalContextRecord(terminalContextDraftFromRecord(record, threadId));
+      expect(restored).toEqual(record);
+      expect(terminalContextRecord(terminalContextDraftFromRecord(restored, threadId))).toEqual(
+        record,
+      );
+    },
+  );
+
+  it.each(["x", "review-comment_x"])("preserves canonical review IDs across imports: %s", (id) => {
+    const record = reviewCommentContextRecord({
+      id,
+      sectionId: "s",
+      sectionTitle: "Review",
+      filePath: "a.ts",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "L1",
+      text: "Review",
+      diff: "",
+    });
+    expect(reviewCommentContextRecord(reviewCommentFromRecord(record))).toEqual(record);
+  });
+
+  it.each(["x", "preview-annotation_x"])(
+    "preserves canonical annotation IDs across imports: %s",
+    (id) => {
+      const record = previewAnnotationContextRecord({ ...annotation, id });
+      expect(previewAnnotationContextRecord(previewAnnotationFromRecord(record)).contextId).toBe(
+        record.contextId,
+      );
+    },
+  );
   it("builds distinct records for producer IDs that differ by a kind prefix", () => {
     const context = buildMessageContext({
       terminalContexts: [],
@@ -97,11 +198,10 @@ describe("composerContextRecords", () => {
         attachmentId: `uploaded-${id}`,
       })),
     })!;
-    expect(
-      Schema.decodeUnknownSync(OrchestrationMessageContext)(context).records.map(
-        (record) => record.contextId,
-      ),
-    ).toEqual(["image_x", "image_image_x"]);
+    expect(decodeMessageContext(context).records.map((record) => record.contextId)).toEqual([
+      "image_x",
+      "image_image_x",
+    ]);
   });
   it("scopes colliding producer ids and links the annotation to its screenshot record", () => {
     const id = "same.id:1";
@@ -158,13 +258,30 @@ describe("composerContextRecords", () => {
         },
       ],
     })!;
-    expect(Schema.decodeUnknownSync(OrchestrationMessageContext)(context).records).toHaveLength(5);
+    expect(decodeMessageContext(context).records).toHaveLength(5);
     const preview = context.records.find((record) => record.kind === "preview-annotation");
     const image = context.records.find((record) => record.kind === "image");
     expect(preview).toMatchObject({ screenshotContextId: image!.contextId });
     expect(image).toMatchObject({ attachmentId: "uploaded-image" });
   });
 
+  it("restores multiple edits on one target without parsing display strings", () => {
+    const styleChanges = [
+      ...annotation.styleChanges,
+      {
+        targetId: "el_1",
+        selector: "#pay",
+        property: "content",
+        previousValue: "a → b",
+        value: "first\nsecond → third",
+      },
+    ];
+    const restored = previewAnnotationFromRecord(
+      previewAnnotationContextRecord({ ...annotation, styleChanges }),
+    );
+    expect(restored.styleChanges).toEqual(styleChanges);
+    expect(restored.elements[0]?.id).toBe("el_1");
+  });
   it("builds a preview annotation record with element details and readable style changes", () => {
     expect(previewAnnotationContextLabel(annotation)).toBe("Make this bigger");
     expect(previewAnnotationContextRecord(annotation, { screenshotContextId: "ann_1" })).toEqual({
@@ -239,6 +356,93 @@ describe("composerContextRecords", () => {
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();
     expect(() => decodeMessageContext({ version: 1, records: [overLimit] })).not.toThrow();
+  });
+
+  it("keeps a region-only annotation's target summary and screenshot across a round trip", () => {
+    const regionOnly: PreviewAnnotationPayload = {
+      ...annotation,
+      elements: [],
+      styleChanges: [],
+      regions: [{ id: "rg_1", rect: { x: 1, y: 2, width: 3, height: 4 } }],
+    };
+    const record = previewAnnotationContextRecord(regionOnly, { screenshotContextId: "ann_1" });
+    expect(record.targetSummary).toBe("1 marked region");
+    expect(record.screenshotContextId).toBe("image_ann_1");
+
+    // Re-encoding what a paste rebuilt must not empty the summary or drop the screenshot.
+    const reencoded = previewAnnotationContextRecord(previewAnnotationFromRecord(record), {
+      screenshotContextId: "ann_1",
+    });
+    expect(reencoded.targetSummary).toBe("1 marked region");
+    expect(reencoded.screenshotContextId).toBe("image_ann_1");
+  });
+
+  it("treats colliding ids with different payloads as distinct records", () => {
+    const base = terminalContextRecord({
+      id: "term-1",
+      threadId: ThreadId.make("t"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2,
+      text: "A",
+    });
+    expect(isSameComposerContextPayload(base, { ...base })).toBe(true);
+    // Labels are display text, never identity.
+    expect(isSameComposerContextPayload(base, { ...base, label: "different" })).toBe(true);
+    expect(isSameComposerContextPayload(base, { ...base, text: "B" })).toBe(false);
+  });
+
+  it("finds the destination collision for different legacy terminal messages", () => {
+    const legacy = (text: string) =>
+      asKnownContextRecord(
+        upgradeLegacyContextMessage(
+          `Inspect this\n\n<terminal_context>\n- Terminal 1 line 1:\n  1 | ${text}\n</terminal_context>`,
+        ).records[0],
+      )!;
+    const first = legacy("A");
+    const second = legacy("B");
+    if (first.kind !== "terminal" || second.kind !== "terminal") {
+      throw new Error("Expected legacy terminal records");
+    }
+    const destinationId = terminalContextReference(
+      terminalContextDraftFromRecord(first, ThreadId.make("t")),
+    ).contextId;
+
+    expect(destinationId).toBe("terminal_legacy_terminal_1");
+    expect(composerContextImportLookupIds(second)[0]).toBe(destinationId);
+    expect(isSameComposerContextPayload(first, second)).toBe(false);
+  });
+
+  it("compares nested annotation element and source payloads", () => {
+    const base = previewAnnotationContextRecord(annotation);
+    expect(isSameComposerContextPayload(base, { ...base, label: "Different display label" })).toBe(
+      true,
+    );
+    expect(
+      isSameComposerContextPayload(base, {
+        ...base,
+        elements: base.elements?.map((element) => ({
+          ...element,
+          htmlPreview: '<button id="pay">Changed</button>',
+        })),
+      }),
+    ).toBe(false);
+    expect(
+      isSameComposerContextPayload(base, {
+        ...base,
+        elements: base.elements?.map((element) => ({
+          ...element,
+          source: {
+            functionName: "Checkout",
+            fileName: "src/Checkout.tsx",
+            lineNumber: 20,
+            columnNumber: 4,
+          },
+        })),
+      }),
+    ).toBe(false);
   });
 
   it("builds terminal and review records and a message context in draft order", () => {

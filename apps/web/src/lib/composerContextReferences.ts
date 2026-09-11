@@ -52,6 +52,15 @@ export function toKindScopedComposerContextId(
   return toComposerContextId(`${prefix}${producerId}`);
 }
 
+/** Only for importing canonical records: undo one namespace before rebuilding a draft. */
+export function producerIdFromComposerContextId(
+  kind: ComposerContextKind,
+  contextId: string,
+): string {
+  const prefix = `${kind}_`;
+  return contextId.startsWith(prefix) ? contextId.slice(prefix.length) : contextId;
+}
+
 export function formatInlineContextReference(reference: ComposerContextReference): string {
   return formatComposerContextReference({
     kind: reference.kind,

@@ -1775,10 +1775,12 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('aria-label="Image attachment, shot.png"');
+    // Selection copy re-emits chips as their canonical links.
+    expect(markup).toContain('data-markdown-copy="![shot.png](t3-context://v1/image/img-1)"');
     expect(markup).toContain('aria-label="File attachment, notes.txt"');
     expect(markup).not.toContain('aria-label="Download notes.txt"');
     expect(markup).toContain("legacy.txt");
-    expect(markup).not.toContain("t3-context://");
+    expect(markup).not.toContain('href="t3-context://');
   });
 
   it("resolves an annotation screenshot through its image context record", () => {
@@ -1894,7 +1896,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Terminal 1 line 4");
     expect(markup).toContain('data-context-unresolved="true"');
     expect(markup).toContain(">gone<");
-    expect(markup).not.toContain("t3-context://");
+    expect(markup).not.toContain('href="t3-context://');
   });
 
   it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {

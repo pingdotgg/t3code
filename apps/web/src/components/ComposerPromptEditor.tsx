@@ -5,7 +5,11 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
-import { type ServerProviderSkill } from "@t3tools/contracts";
+import {
+  type ComposerContextClipboardFragment,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
@@ -28,6 +32,8 @@ import {
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
+  COPY_COMMAND,
+  CUT_COMMAND,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
   BLUR_COMMAND,
@@ -830,6 +836,14 @@ interface ComposerPromptEditorProps {
   cursor: number;
   /** Draft records behind the prompt's context references, keyed by context id. */
   contextRecords: ComposerDraftContextRecords;
+  /** Structured clipboard payload for the given referenced ids, or null to skip. */
+  buildContextClipboardFragment?:
+    | ((contextIds: ReadonlyArray<string>) => string | null)
+    | undefined;
+  /** Imports a structured paste's records; returns ids that changed. */
+  importContextFragment?:
+    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
+    | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
@@ -1253,8 +1267,11 @@ function ComposerChipSelectionPlugin() {
   return null;
 }
 
-function ComposerInlineTokenPastePlugin() {
+function ComposerInlineTokenPastePlugin(props: {
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+}) {
   const [editor] = useLexicalComposerContext();
+  const importContextFragment = props.importContextFragment;
 
   useEffect(
     () =>
@@ -1263,9 +1280,43 @@ function ComposerInlineTokenPastePlugin() {
         createCitationNode: $createComposerCitationNode,
         createContextReferenceNode: $createComposerContextReferenceNode,
         getExpandedAbsoluteOffsetForPoint,
+        ...(importContextFragment ? { importContextFragment } : {}),
       }),
-    [editor],
+    [editor, importContextFragment],
   );
+
+  return null;
+}
+
+/**
+ * Copying chips must carry their payloads: the default copy writes the canonical links as
+ * text, and this adds the structured fragment for the referenced records beside it.
+ */
+function ComposerContextClipboardPlugin(props: {
+  buildContextClipboardFragment?: ComposerPromptEditorProps["buildContextClipboardFragment"];
+}) {
+  const [editor] = useLexicalComposerContext();
+  const build = props.buildContextClipboardFragment;
+
+  useEffect(() => {
+    if (!build) return;
+    const listener = (event: ClipboardEvent | null) => {
+      if (!event?.clipboardData) return false;
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const contextIds = collectInlineContextIds(selection.getTextContent());
+      if (contextIds.length === 0) return false;
+      const fragment = build(contextIds);
+      if (fragment) event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+      return false;
+    };
+    const unregisterCopy = editor.registerCommand(COPY_COMMAND, listener, COMMAND_PRIORITY_HIGH);
+    const unregisterCut = editor.registerCommand(CUT_COMMAND, listener, COMMAND_PRIORITY_HIGH);
+    return () => {
+      unregisterCopy();
+      unregisterCut();
+    };
+  }, [build, editor]);
 
   return null;
 }
@@ -1532,6 +1583,8 @@ function ComposerPromptEditorInner({
   value,
   cursor,
   contextRecords,
+  buildContextClipboardFragment,
+  importContextFragment,
   skills,
   disabled,
   placeholder,
@@ -1955,7 +2008,10 @@ function ComposerPromptEditorInner({
           <ComposerInlineTokenArrowPlugin />
           <ComposerInlineTokenSelectionNormalizePlugin />
           <ComposerInlineTokenBackspacePlugin />
-          <ComposerInlineTokenPastePlugin />
+          <ComposerInlineTokenPastePlugin importContextFragment={importContextFragment} />
+          <ComposerContextClipboardPlugin
+            buildContextClipboardFragment={buildContextClipboardFragment}
+          />
           <ComposerChipSelectionPlugin />
           <HistoryPlugin />
         </div>
@@ -1968,6 +2024,8 @@ export function ComposerPromptEditor({
   value,
   cursor,
   contextRecords,
+  buildContextClipboardFragment,
+  importContextFragment,
   skills,
   disabled,
   placeholder,
@@ -2012,6 +2070,8 @@ export function ComposerPromptEditor({
         value={value}
         cursor={cursor}
         contextRecords={contextRecords}
+        buildContextClipboardFragment={buildContextClipboardFragment}
+        importContextFragment={importContextFragment}
         skills={skills}
         disabled={disabled}
         placeholder={placeholder}

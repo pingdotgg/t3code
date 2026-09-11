@@ -7,6 +7,25 @@ import {
 } from "./useCopyToClipboard";
 
 describe("writeTextToClipboard", () => {
+  it("reserves plain text even when an extra flavor attempts to replace it", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", { clipboard: { write, writeText: vi.fn() } });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor(readonly data: Record<string, Blob>) {}
+      },
+    );
+    await expect(
+      writeTextToClipboard("original", "message", {
+        "text/plain": "replacement",
+        "text/html": "<b>original</b>",
+      }),
+    ).resolves.toBe(true);
+    const items = write.mock.calls[0]![0] as Array<{ data: Record<string, Blob> }>;
+    expect(await items[0]!.data["text/plain"]!.text()).toBe("original");
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });

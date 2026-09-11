@@ -13,15 +13,18 @@ import type {
   PreviewAnnotationPayload,
   ReviewCommentContextRecord,
   TerminalContextRecord,
+  ThreadId,
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { sanitizeComposerContextLabel } from "@t3tools/shared/composerContextReferences";
 
 import {
   type ComposerContextReference,
+  producerIdFromComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
+import type { AttachmentUploadState } from "./attachmentUploadState";
 import { normalizeElementContextSelection } from "./elementContext";
 import {
   formatTerminalContextLabel,
@@ -181,6 +184,8 @@ export function previewAnnotationContextRecord(
         }
       : {}),
     styleChangeDetails: annotation.styleChanges.map((change) => ({ ...change })),
+    ...(annotation.regions.length > 0 ? { regionCount: annotation.regions.length } : {}),
+    ...(annotation.strokes.length > 0 ? { strokeCount: annotation.strokes.length } : {}),
     ...(options?.screenshotContextId !== undefined
       ? { screenshotContextId: toKindScopedComposerContextId("image", options.screenshotContextId) }
       : {}),
@@ -207,6 +212,20 @@ export function fileContextReference(file: ComposerFileAttachment): ComposerCont
 export interface BoundComposerAttachment {
   attachment: ComposerImageAttachment | ComposerFileAttachment;
   attachmentId: string;
+}
+
+/** Clipboard payloads may only point at attachments that already exist on the server. */
+export function uploadedAttachmentContextRecord(
+  attachment: ComposerImageAttachment | ComposerFileAttachment,
+  upload: AttachmentUploadState | undefined,
+): ImageContextRecord | FileContextRecord | null {
+  const attachmentId =
+    attachment.type === "file" && attachment.uploadedAttachmentId !== undefined
+      ? attachment.uploadedAttachmentId
+      : upload?.status === "ready"
+        ? upload.attachmentId
+        : undefined;
+  return attachmentId === undefined ? null : attachmentContextRecord({ attachment, attachmentId });
 }
 
 export function attachmentContextRecord(
@@ -261,6 +280,19 @@ export function asKnownContextRecord(
   return record as KnownComposerContextRecord;
 }
 
+/** Candidate keys for finding the draft record an imported wire record would reconstruct. */
+export function composerContextImportLookupIds(
+  record: KnownComposerContextRecord,
+): ReadonlyArray<ComposerContextId> {
+  const destinationId = toKindScopedComposerContextId(
+    record.kind,
+    producerIdFromComposerContextId(record.kind, record.contextId),
+  );
+  return destinationId === record.contextId
+    ? [record.contextId]
+    : [destinationId, record.contextId];
+}
+
 export interface ResolvedUserMessageContext {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
@@ -280,4 +312,115 @@ export function resolveUserMessageContext(message: {
     records: resolved.records,
     recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Records back into draft shapes (paste)
+// ---------------------------------------------------------------------------
+
+export function terminalContextDraftFromRecord(
+  record: TerminalContextRecord,
+  threadId: ThreadId,
+): TerminalContextDraft {
+  return {
+    id: producerIdFromComposerContextId("terminal", record.contextId),
+    threadId,
+    createdAt: new Date().toISOString(),
+    terminalId: record.terminalId,
+    terminalLabel: record.terminalLabel,
+    lineStart: record.lineStart,
+    lineEnd: record.lineEnd,
+    text: record.text,
+  };
+}
+
+export function reviewCommentFromRecord(record: ReviewCommentContextRecord): ReviewCommentContext {
+  return {
+    id: producerIdFromComposerContextId("review-comment", record.contextId),
+    sectionId: record.sectionId,
+    sectionTitle: record.sectionTitle,
+    filePath: record.filePath,
+    startIndex: record.startIndex,
+    endIndex: record.endIndex,
+    rangeLabel: record.rangeLabel,
+    text: record.text,
+    diff: record.diff,
+    ...(record.fenceLanguage !== undefined ? { fenceLanguage: record.fenceLanguage } : {}),
+    ...(record.pullRequest !== undefined ? { pullRequest: record.pullRequest } : {}),
+  };
+}
+
+/** Lossy on purpose: geometry and screenshot do not travel; the agent-facing detail does. */
+export function previewAnnotationFromRecord(
+  record: PreviewAnnotationContextRecord,
+): PreviewAnnotationPayload {
+  return {
+    id:
+      record.annotationId ||
+      producerIdFromComposerContextId("preview-annotation", record.contextId),
+    pageUrl: record.pageUrl,
+    pageTitle: record.pageTitle,
+    comment: record.comment,
+    elements: (record.elements ?? []).map((element, index) => ({
+      id: record.elementIds?.[index] ?? `${record.contextId}-element-${index + 1}`,
+      rect: { x: 0, y: 0, width: 0, height: 0 },
+      element: { ...element, stack: [], pickedAt: new Date().toISOString() },
+    })),
+    // Geometry does not travel, but the counts do, so the rebuilt summary still reports
+    // what the annotation marked.
+    regions: Array.from({ length: record.regionCount ?? 0 }, (_unused, index) => ({
+      id: `${record.contextId}-region-${index + 1}`,
+      rect: { x: 0, y: 0, width: 0, height: 0 },
+    })),
+    strokes: Array.from({ length: record.strokeCount ?? 0 }, (_unused, index) => ({
+      id: `${record.contextId}-stroke-${index + 1}`,
+      color: "",
+      width: 0,
+      points: [],
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
+    })),
+    styleChanges:
+      record.styleChangeDetails ??
+      record.styleChanges.flatMap((change) => {
+        const match = /^(.+?): ([\s\S]*?) → ([\s\S]*)$/.exec(change);
+        if (!match) return [];
+        return [
+          {
+            targetId: record.elementIds?.[0] ?? `${record.contextId}-element-1`,
+            selector: null,
+            property: match[1]!,
+            previousValue: match[2] === "(unset)" ? "" : match[2]!,
+            value: match[3]!,
+          },
+        ];
+      }),
+    screenshot: null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Whether two records carry the same payload, ignoring the label (display text, never
+ * identity). Context ids are a folded form of producer ids, so a collision alone does not mean
+ * the records are the same excerpt; the paste path compares payloads before de-duplicating.
+ */
+export function isSameComposerContextPayload(
+  left: ComposerContextRecord,
+  right: ComposerContextRecord,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  const stableKey = (record: ComposerContextRecord) => {
+    const { label: _label, ...rest } = record;
+    const sortDeep = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(sortDeep);
+      if (value === null || typeof value !== "object") return value;
+      return Object.fromEntries(
+        Object.entries(value)
+          .toSorted(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+          .map(([key, nested]) => [key, sortDeep(nested)]),
+      );
+    };
+    return JSON.stringify(sortDeep(rest));
+  };
+  return stableKey(left) === stableKey(right);
 }

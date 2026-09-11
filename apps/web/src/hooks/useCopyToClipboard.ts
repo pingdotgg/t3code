@@ -79,7 +79,11 @@ function writeTextWithExecCommand(value: string): boolean {
   }
 }
 
-export async function writeTextToClipboard(value: string, target = "text") {
+export async function writeTextToClipboard(
+  value: string,
+  target = "text",
+  extraFlavors?: Readonly<Record<string, string>>,
+) {
   if (typeof window === "undefined") {
     throw new ClipboardApiUnavailableError({
       target,
@@ -87,6 +91,11 @@ export async function writeTextToClipboard(value: string, target = "text") {
   }
 
   if (!value) return false;
+  if (extraFlavors) {
+    extraFlavors = Object.fromEntries(
+      Object.entries(extraFlavors).filter(([type]) => type !== "text/plain"),
+    );
+  }
 
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
     if (writeTextWithExecCommand(value)) return true;
@@ -96,6 +105,26 @@ export async function writeTextToClipboard(value: string, target = "text") {
   }
 
   try {
+    // Custom flavors need ClipboardItem; when it is missing or refuses the type, plain text
+    // still lands so the copy never silently fails.
+    if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+            ...Object.fromEntries(
+              Object.entries(extraFlavors).map(([type, data]) => [
+                type,
+                new Blob([data], { type }),
+              ]),
+            ),
+          }),
+        ]);
+        return true;
+      } catch {
+        // fall through to plain text
+      }
+    }
     await navigator.clipboard.writeText(value);
     return true;
   } catch (cause) {
@@ -132,11 +161,13 @@ export function useCopyToClipboard<TContext = void>({
   target = "text",
   onCopy,
   onError,
+  extraFlavors,
 }: {
   timeout?: number;
   target?: string;
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
+  extraFlavors?: Readonly<Record<string, string>>;
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -147,11 +178,13 @@ export function useCopyToClipboard<TContext = void>({
 
   onCopyRef.current = onCopy;
   onErrorRef.current = onError;
+  const extraFlavorsRef = React.useRef(extraFlavors);
   targetRef.current = target;
   timeoutRef.current = timeout;
+  extraFlavorsRef.current = extraFlavors;
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current).then(
+    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {

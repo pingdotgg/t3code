@@ -2,9 +2,34 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildMessageContext } from "~/lib/composerContextRecords";
-import { composerContextRecordsFromDraft } from "./composerContextPresentation";
+import {
+  composerContextRecordsFromDraft,
+  uploadedContextRecordFromDraft,
+} from "./composerContextPresentation";
 
 describe("composerContextRecordsFromDraft", () => {
+  it("recovers the uploaded record when clipboard data points at an attachment already in the draft", () => {
+    const file = {
+      type: "file" as const,
+      id: "file-1",
+      name: "file.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      file: new File(["test"], "file.txt"),
+      uploadedAttachmentId: "attachment-1",
+    };
+    const draftRecord = composerContextRecordsFromDraft({
+      terminalContexts: [],
+      files: [file],
+    }).get("file_file-1");
+
+    expect(draftRecord && uploadedContextRecordFromDraft(draftRecord)).toMatchObject({
+      kind: "file",
+      contextId: "file_file-1",
+      attachmentId: "attachment-1",
+    });
+  });
+
   it("resolves each wire reference to its own backing draft even when producer ids collide", () => {
     const id = "same.id:1";
     const terminal = {
