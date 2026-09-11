@@ -1887,6 +1887,26 @@ describe.each([CODEX_INSTANCE, CODEX_SECONDARY_INSTANCE])(
       expect(nextSelection(astra)).toEqual(sol);
     });
 
+    it("accepts a trait choice that matches the cache but differs from the synchronized options", () => {
+      const store = useComposerDraftStore.getState();
+      const localOptions = toSelections({ reasoningEffort: "low" });
+      store.setProviderModelOptions(threadRef, CODEX_DRIVER, localOptions, {
+        instanceId,
+        model: sol.model,
+        persistSticky: true,
+      });
+      store.acknowledgeModelSelection(threadRef, store.getComposerDraft(threadRef));
+      const remote = createModelSelection(instanceId, sol.model, astra.options);
+      expect(nextSelection(remote)).toEqual(remote);
+
+      store.setProviderModelOptions(threadRef, CODEX_DRIVER, localOptions, {
+        instanceId,
+        model: sol.model,
+        persistSticky: true,
+      });
+      expect(nextSelection(remote)).toEqual(sol);
+    });
+
     it("follows remote selections after persisted draft rehydration", async () => {
       vi.useFakeTimers();
       try {

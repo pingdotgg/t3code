@@ -684,11 +684,10 @@ export interface EffectiveComposerModelState {
   modelOptions: ProviderOptionSelectionsByProvider | null;
 }
 
-interface ComposerDraftModelState {
-  activeProvider: ProviderInstanceId | null;
-  modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
-  modelSelectionExplicit?: boolean;
-}
+type ComposerDraftModelState = Pick<
+  ComposerThreadDraftState,
+  "activeProvider" | "modelSelectionByProvider" | "modelSelectionExplicit"
+>;
 
 function providerSelectionsFromModelSelection(
   modelSelection: ModelSelection | null | undefined,
@@ -1237,20 +1236,20 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  let modelOptions =
+  const baseModelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
     providerSelectionsFromModelSelection(input.projectModelSelection) ??
     null;
   const selectedOptionsSource = useThreadSelection ? input.threadModelSelection : activeSelection;
-  if (selectedOptionsSource) {
-    // Replace this instance's options as a complete snapshot, including an
-    // empty selection. Keep the other instances' cached options for switching.
-    modelOptions = {
-      ...modelOptions,
-      [selectedOptionsSource.instanceId]: selectedOptionsSource.options ?? [],
-    };
-  }
+  // Replace this instance's options as a complete snapshot, including an
+  // empty selection. Keep the other instances' cached options for switching.
+  const modelOptions = selectedOptionsSource
+    ? {
+        ...baseModelOptions,
+        [selectedOptionsSource.instanceId]: selectedOptionsSource.options ?? [],
+      }
+    : baseModelOptions;
 
   return {
     selectedModel,
@@ -3171,10 +3170,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return;
           }
           const instanceKey = options?.instanceId ?? defaultInstanceIdForDriver(normalizedProvider);
+          const requestedModel = normalizeModelSlug(options?.model, normalizedProvider);
           const fallbackModel =
-            normalizeModelSlug(options?.model, normalizedProvider) ??
-            DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
-            DEFAULT_MODEL;
+            requestedModel ?? DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ?? DEFAULT_MODEL;
           const providerOpts =
             nextProviderOptions && nextProviderOptions.length > 0 ? nextProviderOptions : undefined;
 
@@ -3185,10 +3183,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Update the map entry for this provider
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
-            const selectedModel =
-              normalizeModelSlug(options?.model, normalizedProvider) ??
-              currentForProvider?.model ??
-              fallbackModel;
+            const selectedModel = requestedModel ?? currentForProvider?.model ?? fallbackModel;
             if (providerOpts || options?.model !== undefined) {
               nextMap[instanceKey] = createModelSelection(instanceKey, selectedModel, providerOpts);
             } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
@@ -3215,7 +3210,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (base.activeProvider ?? instanceKey);
             }
 
+            const nextActiveProvider = options?.instanceId ?? base.activeProvider;
             if (
+              base.modelSelectionExplicit === true &&
+              base.activeProvider === nextActiveProvider &&
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
               state.stickyActiveProvider === nextStickyActiveProvider
@@ -3228,7 +3226,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
             const nextDraft: ComposerThreadDraftState = {
               ...restBase,
-              ...(options?.instanceId ? { activeProvider: instanceKey } : {}),
+              activeProvider: nextActiveProvider,
               modelSelectionByProvider: nextMap,
               modelSelectionExplicit: true,
             };
