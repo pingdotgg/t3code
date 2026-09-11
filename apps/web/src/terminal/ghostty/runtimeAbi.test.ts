@@ -1,11 +1,20 @@
+// @effect-diagnostics nodeBuiltinImport:off -- exercises the checked-in WASM artifacts.
+import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
+
 import { describe, expect, it } from "vite-plus/test";
 
-import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
-import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
 import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
 import { ghosttyKeyForCode } from "./keyCodes";
 
 type WasmFunction = (...args: number[]) => number;
+
+const wasmDataUrl = `data:application/wasm;base64,${NodeFS.readFileSync(
+  NodeURL.fileURLToPath(new URL("./vendor/ghostty-vt.wasm", import.meta.url)),
+).toString("base64")}`;
+const writePtyWasmDataUrl = `data:application/wasm;base64,${NodeFS.readFileSync(
+  NodeURL.fileURLToPath(new URL("./vendor/ghostty-write-pty.wasm", import.meta.url)),
+).toString("base64")}`;
 
 function decodeWasmDataUrl(dataUrl: string): Uint8Array {
   const encoded = dataUrl.split(",", 2)[1];
