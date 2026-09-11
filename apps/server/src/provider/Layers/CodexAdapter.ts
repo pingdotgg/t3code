@@ -2374,6 +2374,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
             let usageLimitError: ProviderRuntimeEvent | undefined;
             let usageLimitMessage: string | undefined;
+            let usageLimitResetsAtMs: number | undefined;
             if (event.method === "turn/completed") {
               const completedPayload = readPayload(
                 EffectCodexSchema.V2TurnCompletedNotification,
@@ -2384,7 +2385,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   ? completedPayload.turn.error
                   : undefined;
               if (turnError?.codexErrorInfo === "usageLimitExceeded") {
-                usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
+                const limit = codexUsageLimitMessage(rateLimits, event.createdAt);
+                usageLimitMessage = limit.message;
+                usageLimitResetsAtMs = limit.resetsAtMs;
                 usageLimitError = {
                   ...runtimeEventBase(event, event.threadId),
                   type: "runtime.error",
@@ -2403,7 +2406,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   ...runtimeEvent,
                   payload: {
                     ...runtimeEvent.payload,
-                    ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
+                    ...(usageLimitMessage
+                      ? {
+                          errorMessage: usageLimitMessage,
+                          failureReason: "usage_limit" as const,
+                          ...(usageLimitResetsAtMs !== undefined
+                            ? { failureResetsAt: usageLimitResetsAtMs }
+                            : {}),
+                        }
+                      : {}),
                     tokenUsage: completeCodexTurnTokenUsage(
                       turnTokenUsage,
                       String(runtimeEvent.turnId),

@@ -1571,7 +1571,19 @@ const make = Effect.gen(function* () {
             case "turn.started":
               return "running";
             case "session.exited":
-              return "stopped";
+              // A graceful exit right after a classified usage-limit failure
+              // (the stream-end path completes the parked turn, then stops the
+              // session) must keep the failure visible: downgrading to stopped
+              // would hide the failure from every consumer — the decider's arm
+              // invariant, the composer card, and the calm banner — and leave
+              // an armed resume unable to fire. The classification clears when
+              // the session genuinely recovers (ready/interrupted) or a fresh
+              // failure replaces it, not when the process merely stops.
+              return thread.session?.status === "error" &&
+                thread.session?.lastErrorKind === "usage_limit" &&
+                thread.session?.lastErrorResetsAt != null
+                ? "error"
+                : "stopped";
             case "turn.aborted":
               return "interrupted";
             case "turn.completed":
@@ -1605,6 +1617,39 @@ const make = Effect.gen(function* () {
               : status === "ready" || status === "interrupted"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // A usage-limit failure keeps the failure classified until the next
+        // failure overwrites it or the session recovers to ready/interrupted.
+        // Any other fresh failure (a failed turn with a different reason, or
+        // the session entering error) replaces the classification — the raw
+        // error text changes, so the class must follow it.
+        const isNewFailure =
+          (event.type === "session.state.changed" && event.payload.state === "error") ||
+          (event.type === "turn.completed" &&
+            normalizeRuntimeTurnState(event.payload.state) === "failed");
+        const lastErrorKind =
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "failed" &&
+          event.payload.failureReason === "usage_limit"
+            ? ("usage_limit" as const)
+            : isNewFailure || status === "ready" || status === "interrupted"
+              ? undefined
+              : (thread.session?.lastErrorKind ?? undefined);
+        const lastErrorResetsAt =
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "failed" &&
+          event.payload.failureReason === "usage_limit"
+            ? typeof event.payload.failureResetsAt === "number" &&
+              Number.isFinite(event.payload.failureResetsAt)
+              ? DateTime.make(event.payload.failureResetsAt).pipe(
+                  Option.match({
+                    onNone: () => null,
+                    onSome: (resetsAt) => DateTime.formatIso(resetsAt),
+                  }),
+                )
+              : null
+            : isNewFailure || status === "ready" || status === "interrupted"
+              ? null
+              : (thread.session?.lastErrorResetsAt ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1641,10 +1686,24 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(lastErrorKind !== undefined ? { lastErrorKind } : {}),
+              ...(lastErrorResetsAt !== undefined ? { lastErrorResetsAt } : {}),
               updatedAt: now,
             },
             createdAt: now,
           });
+
+          // Arming is the user's call (the composer card toggles it); the
+          // ingestion only drops a stale arm when the thread recovers to
+          // ready, so the sweep never resurrects a thread that got better.
+          if (status === "ready" && thread.usageLimitResumeAt != null) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.usage-resume.disarm",
+              commandId: yield* providerCommandId(event, "thread-usage-resume-disarm"),
+              threadId: thread.id,
+              createdAt: now,
+            });
+          }
         }
       }
 

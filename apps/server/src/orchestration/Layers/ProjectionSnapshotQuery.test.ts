@@ -429,6 +429,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           activeOrderKey: "hq",
           titleRegeneration: null,
+          usageLimitResumeAt: null,
           deletedAt: null,
           messages: [
             {
@@ -554,6 +555,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           activeOrderKey: "hq",
           titleRegeneration: null,
+          usageLimitResumeAt: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -683,7 +685,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.deepEqual(context.value, {
           id: ThreadId.make("thread-1"),
           title: "Thread 1",
-          session: snapshot.threads[0]?.session,
+          usageLimitResumeAt: null,
+          session: snapshot.threads[0]?.session ?? null,
         });
       }
 

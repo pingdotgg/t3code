@@ -1385,7 +1385,116 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      // A user-sent (or auto-resume) turn supersedes any armed usage-limit
+      // resume: the failure is about to be retried by this very turn.
+      if (targetThread.usageLimitResumeAt != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.usage-resume-disarmed",
+          payload: {
+            threadId: command.threadId,
+            reason: "turn-started",
+          },
+        });
+      }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.usage-resume.arm": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.session?.status === "running" || thread.session?.status === "starting") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has an active turn and cannot arm a usage-limit resume`,
+        });
+      }
+      // Arming is only meaningful for a thread actually parked on a
+      // provider-reported usage-limit failure with a known window end, and
+      // the resume time is the persisted one — never a client-chosen stamp.
+      const session = thread.session;
+      if (
+        session?.status !== "error" ||
+        session.lastErrorKind !== "usage_limit" ||
+        session.lastErrorResetsAt == null
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no usage-limit failure to arm a resume for`,
+        });
+      }
+      const resetsAt = session.lastErrorResetsAt;
+      if (command.resumeAt !== resetsAt) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} usage-resume time ${command.resumeAt} does not match the failure window ${resetsAt}`,
+        });
+      }
+      // Judge the window against the server clock: command.createdAt rides
+      // along with the client and may be stale or skewed.
+      if (!(Date.parse(resetsAt) > Date.parse(yield* nowIso))) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} usage-limit window already ended at ${resetsAt}`,
+        });
+      }
+      const alreadyArmed = thread.usageLimitResumeAt === command.resumeAt;
+      if (alreadyArmed) {
+        // Re-arming with the same window is a no-op: the engine rejects
+        // zero-event commands, so surface it as an invariant instead.
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} already has a usage-limit resume armed at ${command.resumeAt}`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.usage-resume-armed",
+        payload: {
+          threadId: command.threadId,
+          resumeAt: command.resumeAt,
+        },
+      };
+    }
+
+    case "thread.usage-resume.disarm": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.usageLimitResumeAt == null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has no usage-limit resume armed`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.usage-resume-disarmed",
+        payload: {
+          threadId: command.threadId,
+          reason: "cleared",
+        },
+      };
     }
 
     case "thread.turn.interrupt": {

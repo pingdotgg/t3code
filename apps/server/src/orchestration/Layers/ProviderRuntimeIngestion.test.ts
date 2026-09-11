@@ -441,6 +441,57 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("keeps a usage-limit failure classified when the session exits after the failed turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // The Claude stream-end path completes the parked turn, then stops the
+    // session. The exit must not downgrade the classified failure to a plain
+    // stopped session, or the arm invariant, the composer card, and the calm
+    // banner all lose their gate.
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-limit-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: now,
+        turnId: asTurnId("turn-1"),
+      },
+      {
+        type: "turn.completed",
+        eventId: asEventId("evt-limit-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          state: "failed",
+          errorMessage: "Claude usage limit reached. Send the message again once the limit resets.",
+          failureReason: "usage_limit",
+          failureResetsAt: Date.parse("2026-01-01T02:00:00.000Z"),
+        },
+      },
+      {
+        type: "session.exited",
+        eventId: asEventId("evt-limit-exited"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        payload: { reason: "Session stopped", exitKind: "graceful" },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("error");
+    expect(thread?.session?.lastErrorKind).toBe("usage_limit");
+    expect(thread?.session?.lastErrorResetsAt).toBe("2026-01-01T02:00:00.000Z");
+    expect(thread?.session?.lastError).toContain("usage limit");
+    expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
   it.each([
     { delivery: "buffered", enableLegacyTokenStreaming: false },
     { delivery: "streamed", enableLegacyTokenStreaming: true },
