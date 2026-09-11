@@ -13,6 +13,7 @@ import {
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import {
+  type ContextMenuItem,
   type EnvironmentId,
   type ModelSelection,
   type ProjectIconOverride,
@@ -34,11 +35,20 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import {
@@ -60,6 +70,13 @@ import {
 } from "../../projectScripts";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
+import { SidebarInset } from "../ui/sidebar";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+} from "../WorkspaceBreadcrumb";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -155,6 +172,105 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
 
 function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
+}
+
+export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
+  const navigate = useNavigate();
+  const canGoBack = useCanGoBack();
+  const navigateBackWithinApp = useCallback(() => {
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, navigate]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement) {
+        activeElement.blur();
+      }
+      navigateBackWithinApp();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigateBackWithinApp]);
+
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
+        <WorkspacePageHeader electron={isElectron}>
+          <ProjectSettingsBreadcrumb projectKey={projectKey} />
+        </WorkspacePageHeader>
+        <ProjectSettingsPanel projectKey={projectKey} />
+      </div>
+    </SidebarInset>
+  );
+}
+
+function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
+  const groups = useSettingsProjectGroups();
+  const navigate = useNavigate();
+  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const openProjectMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const api = readLocalApi();
+    if (!api) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const items: ContextMenuItem<string>[] = groups.map((group) => ({
+      id: group.projectKey,
+      label: group.displayName,
+    }));
+    void settlePromise(() =>
+      api.contextMenu.show(items, { x: rect.left, y: rect.bottom + 4 }),
+    ).then((clicked) => {
+      if (clicked._tag === "Failure" || clicked.value === null) return;
+      void navigate({
+        to: "/projects/$projectKey",
+        params: { projectKey: clicked.value },
+        replace: true,
+        hashScrollIntoView: false,
+      });
+    });
+  };
+
+  return (
+    <WorkspaceBreadcrumb ariaLabel="Project settings breadcrumb">
+      <WorkspaceBreadcrumbItem>
+        <button
+          type="button"
+          onClick={() => void navigate({ to: "/projects" })}
+          className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Projects
+        </button>
+      </WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbSeparator />
+      <WorkspaceBreadcrumbItem current>
+        {selected ? (
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-label="Switch project"
+            onClick={openProjectMenu}
+            className="group/project-title inline-flex min-w-0 max-w-64 cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="min-w-0 truncate">{selected.displayName}</span>
+            <ChevronDownIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/project-title:opacity-100 group-focus-visible/project-title:opacity-100"
+            />
+          </button>
+        ) : (
+          <span className="truncate text-muted-foreground">Unavailable project</span>
+        )}
+      </WorkspaceBreadcrumbItem>
+    </WorkspaceBreadcrumb>
+  );
 }
 
 export function ProjectSettingsPanel({
