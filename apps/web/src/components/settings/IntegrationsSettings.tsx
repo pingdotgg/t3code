@@ -567,8 +567,8 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
 
 /**
  * Device support installs helper processes and hosts on one machine, so it
- * follows the header's environment select. An aggregate selection shows the
- * representative environment and says so.
+ * follows the environment crumb. With several environments selected it shows
+ * the representative, named in the section title.
  */
 function DeviceIntegrationSettings() {
   const { scope, environment: selected, connectedEnvironments } = useSettingsScope();
@@ -577,13 +577,10 @@ function DeviceIntegrationSettings() {
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
 
   return (
-    <SettingsSection id="devices" title="Devices">
-      {aggregate && selected ? (
-        <SettingsRow
-          title="Environment"
-          description={`Device support and hosts are configured per environment. Showing ${selected.label}; choose one environment above to manage another.`}
-        />
-      ) : null}
+    <SettingsSection
+      id="devices"
+      title={aggregate && selected ? `Devices · ${selected.label}` : "Devices"}
+    >
       <DeviceIntegrationControls
         key={selected?.environmentId ?? "none"}
         environmentId={environmentId}

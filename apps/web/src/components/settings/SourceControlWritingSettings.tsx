@@ -129,6 +129,7 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
+        mixed={writingStyleMixed}
         {...searchableSetting("source-control-writing-style")}
         description={MODE_OPTIONS[style.mode].description}
         resetAction={
@@ -245,6 +246,7 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
+        mixed={templatesMixed}
         {...searchableSetting("follow-change-request-templates")}
         description="Use the repository's template for change request descriptions when available."
         resetAction={
