@@ -29,7 +29,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import {
@@ -49,7 +49,7 @@ const TRIAGE_AGENTS: ReadonlyArray<TriageAgent> = [
   { id: "codex", command: "codex", label: "Codex" },
 ];
 
-export class TriageAgentUnavailableError extends Schema.TaggedErrorClass<TriageAgentUnavailableError>()(
+export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
   "TriageAgentUnavailableError",
   { agent: Schema.String },
 ) {
@@ -58,7 +58,7 @@ export class TriageAgentUnavailableError extends Schema.TaggedErrorClass<TriageA
   }
 }
 
-export class TriageAgentChoiceRequiredError extends Schema.TaggedErrorClass<TriageAgentChoiceRequiredError>()(
+export class TriageAgentChoiceRequiredError extends Schema.TaggedError<TriageAgentChoiceRequiredError>()(
   "TriageAgentChoiceRequiredError",
   {},
 ) {
@@ -67,7 +67,7 @@ export class TriageAgentChoiceRequiredError extends Schema.TaggedErrorClass<Tria
   }
 }
 
-export class TriageAgentSpawnError extends Schema.TaggedErrorClass<TriageAgentSpawnError>()(
+export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnError>()(
   "TriageAgentSpawnError",
   { command: Schema.String, cause: Schema.Defect() },
 ) {
@@ -75,17 +75,6 @@ export class TriageAgentSpawnError extends Schema.TaggedErrorClass<TriageAgentSp
     return `Could not start \`${this.command}\`.`;
   }
 }
-
-// signal 0 delivers nothing; it only reports whether the pid exists. EPERM
-// means it exists but belongs to another user, which still counts as alive.
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
 
 /** One human-readable line about the local server, for `context.md`. */
 const describeServerProcess = Effect.fn("triage.describeServerProcess")(function* (

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * suppress the offending address so SES never attempts it again.
  * Account-level operation. Provide the implementation with
  * `Effect.provide(AWS.SES.PutSuppressedDestinationHttp)`.
- * @binding
- * @section Suppression List
- * @example Suppress a Hard-Bouncing Address
+ * ### Suppression List
+ * **Example:** Suppress a Hard-Bouncing Address
  * ```typescript
  * // init — account-level binding, no resource argument
  * const suppress = yield* SES.PutSuppressedDestination();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   Reason: "BOUNCE",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutSuppressedDestination extends Binding.Service<
   PutSuppressedDestination,

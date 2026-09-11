@@ -1,4 +1,5 @@
 import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -243,17 +244,22 @@ function terminalColumnOffset(row: GhosttySnapshot["rowData"][number], column: n
   return offset;
 }
 
-export function terminalLinkAtPosition(
-  rows: GhosttySnapshot["rowData"],
-  rowIndex: number,
-  column: number,
-): string | null {
-  return terminalLinkAtPositionWithRange(rows, rowIndex, column)?.text ?? null;
-}
-
 export interface TerminalLinkWithRange {
   readonly text: string;
   readonly range: GhosttyCellRange;
+}
+
+function isSameTerminalLink(
+  left: TerminalLinkWithRange,
+  right: TerminalLinkWithRange | null,
+): boolean {
+  return (
+    right?.text === left.text &&
+    right.range.start.x === left.range.start.x &&
+    right.range.start.y === left.range.start.y &&
+    right.range.end.x === left.range.end.x &&
+    right.range.end.y === left.range.end.y
+  );
 }
 
 function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
@@ -324,10 +330,6 @@ export function terminalLinkAtPositionWithRange(
   return null;
 }
 
-export function terminalLinkAtColumn(row: GhosttySnapshot["rowData"][number], column: number) {
-  return terminalLinkAtPosition([row], 0, column);
-}
-
 export function isTerminalCopyShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
@@ -339,6 +341,47 @@ export function isTerminalCopyShortcut(
   if (key !== "c") return false;
   if (isMacPlatform(platform)) return event.metaKey && !event.ctrlKey;
   return event.ctrlKey && (event.shiftKey || isWindowsPlatform(platform)) && !event.metaKey;
+}
+
+/**
+ * Canvas terminals have no DOM selection. Native copy and Electron's Edit
+ * menu `role: "copy"` both read the focused textarea, so an empty IME field
+ * writes blankness to the clipboard. Park the Ghostty selection there first.
+ */
+export function primeTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value" | "select">,
+  selection: string,
+): void {
+  input.value = selection;
+  if (selection.length === 0) return;
+  input.select();
+}
+
+export function clearPrimedTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value">,
+  primedSelection: string,
+): void {
+  // Only blank the copy we parked. The same textarea holds the IME candidate;
+  // wiping whatever is there would cancel CJK composition.
+  if (primedSelection.length === 0 || input.value !== primedSelection) return;
+  input.value = "";
+}
+
+/**
+ * Only a copy event that actually received the selection may cancel the
+ * clipboard.writeText fallback. Claiming without clipboardData (Electron's
+ * menu Copy) used to preventDefault an empty write and skip the fallback,
+ * which is how Cmd+C copied blankness.
+ */
+export function applyTerminalCopyEvent(
+  selection: string,
+  clipboardData: { setData: (type: string, data: string) => void } | null | undefined,
+): { preventDefault: boolean; claimWriteFallback: boolean } {
+  if (selection.length === 0 || !clipboardData) {
+    return { preventDefault: false, claimWriteFallback: false };
+  }
+  clipboardData.setData("text/plain", selection);
+  return { preventDefault: true, claimWriteFallback: true };
 }
 
 export function isTerminalPasteShortcut(
@@ -353,12 +396,29 @@ export function isTerminalPasteShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
+/**
+ * Middle-click paste is an X11/Wayland convention. macOS and Windows have no
+ * primary selection and use the button for autoscroll, so only desktops that
+ * expect the gesture get it.
+ */
+function isMiddleClickPastePlatform(): boolean {
+  return /linux|bsd/i.test(navigator.platform);
+}
+
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
   return (
     event.inputType === "" ||
     event.inputType === "insertCompositionText" ||
     event.inputType === "insertFromComposition"
   );
+}
+
+/** IME keydowns must not touch the hidden textarea; it holds the candidate. */
+export function isTerminalCompositionKey(
+  event: Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">,
+  composing: boolean,
+): boolean {
+  return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
 }
 
 export function isTerminalAltGraphText(
@@ -372,6 +432,31 @@ export function shouldReportTerminalMouse(
   event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">,
 ): boolean {
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
+}
+
+type TerminalMouseAction = "press" | "release" | "motion";
+
+export function resolveTerminalMouseData(
+  action: TerminalMouseAction,
+  data: string,
+  previousMotionData: string,
+): { readonly send: boolean; readonly nextMotionData: string } {
+  const nextMotionData = action === "motion" ? data : "";
+  return {
+    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    nextMotionData,
+  };
+}
+
+export function resolveTerminalMouseTrackingState(
+  previousTracking: boolean,
+  tracking: boolean,
+  motionData: string,
+): { readonly tracking: boolean; readonly motionData: string } {
+  return {
+    tracking,
+    motionData: previousTracking === tracking ? motionData : "",
+  };
 }
 
 export function terminalWheelDeltaRows(
@@ -405,22 +490,6 @@ export function terminalWheelArrowData(rows: number, applicationCursorKeys: bool
   return sequence.repeat(Math.abs(rows));
 }
 
-export function isTerminalLinkPointerGesture(
-  event: Pick<MouseEvent, "ctrlKey" | "metaKey">,
-  platform = navigator.platform,
-): boolean {
-  return isMacPlatform(platform)
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
-}
-
-export function shouldShowTerminalLinkHover(
-  mouseTracking: boolean,
-  linkModifierActive: boolean,
-): boolean {
-  return !mouseTracking || linkModifierActive;
-}
-
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -445,14 +514,17 @@ export interface TerminalSelectionClickSequence {
   readonly y: number;
 }
 
+const TERMINAL_LINK_DRAG_THRESHOLD_PX = 4;
+
 export function advanceTerminalSelectionClickSequence(
   previous: TerminalSelectionClickSequence | null,
   event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
 ): TerminalSelectionClickSequence {
   const repeats =
     previous !== null &&
-    event.timeStamp - previous.time <= 500 &&
-    Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 4;
+    event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
+    Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <=
+      TERMINAL_LINK_DRAG_THRESHOLD_PX;
   return {
     count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,
     time: event.timeStamp,
@@ -469,6 +541,8 @@ export interface GhosttySelectionPosition {
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
+  /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
+  readonly visible?: boolean;
   readonly onData: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
@@ -493,6 +567,8 @@ export class GhosttyTerminalSurface {
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
+  private visible: boolean;
+  private hasSize = false;
   private metrics: GhosttyCellMetrics;
   private fontFamily: string;
   private requestedFontFamily: string | undefined;
@@ -533,9 +609,14 @@ export class GhosttyTerminalSurface {
   private mouseReportingPointerId: number | null = null;
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
+  private linkActivationLink: TerminalLinkWithRange | null = null;
+  private linkActivationOrigin: {
+    x: number;
+    y: number;
+    clickCount: number;
+  } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
-  private linkModifierActive = false;
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
   private composing = false;
@@ -547,7 +628,10 @@ export class GhosttyTerminalSurface {
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
+  private primedCopySelection = "";
   private wheelRemainder = 0;
+  private lastMouseMotionData = "";
+  private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -574,8 +658,10 @@ export class GhosttyTerminalSurface {
     this.scrollbarThumb = scrollbarThumb;
     this.context = context;
     this.core = core;
+    this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
     this.metrics = metrics;
     this.options = options;
+    this.visible = options.visible ?? true;
     this.theme = options.theme;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
@@ -658,13 +744,28 @@ export class GhosttyTerminalSurface {
       options,
     );
     surface.fit();
-    surface.requestRender();
     return surface;
+  }
+
+  /** Pause canvas work without interrupting output parsing or terminal replies. */
+  setVisible(visible: boolean): void {
+    if (this.disposed || this.visible === visible) return;
+    this.visible = visible;
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    if (!visible) {
+      this.cancelRender();
+      this.setSelectionAutoscroll(0);
+      return;
+    }
+    this.fit();
   }
 
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -674,7 +775,9 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -754,10 +857,16 @@ export class GhosttyTerminalSurface {
   };
 
   fit(): boolean {
-    if (this.disposed) return false;
+    if (this.disposed || !this.visible) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
-    if (width <= 0 || height <= 0) return false;
+    if (width <= 0 || height <= 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return false;
+    }
+    this.hasSize = true;
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -794,7 +903,7 @@ export class GhosttyTerminalSurface {
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
-    if (shouldRender) this.renderFrame();
+    if (shouldRender || this.forceFullRender) this.renderFrame();
     return true;
   }
 
@@ -813,6 +922,7 @@ export class GhosttyTerminalSurface {
   }
 
   focus(): void {
+    if (this.disposed || !this.visible) return;
     this.input.focus({ preventScroll: true });
   }
 
@@ -836,6 +946,20 @@ export class GhosttyTerminalSurface {
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
     if (encoded.length > 0) this.options.onData(encoded);
+  }
+
+  /**
+   * Middle-click pastes the terminal's own selection, which is the only
+   * primary-selection-like buffer a browser can read. It goes through
+   * pasteFromClipboard so it joins the same paste race as every other path.
+   * With nothing selected here there is no buffer to paste, and CLIPBOARD is
+   * deliberately not substituted: middle-click must never emit text the user
+   * only ever copied.
+   */
+  private pasteTerminalSelection(): void {
+    const selection = this.getSelection();
+    if (selection.length === 0) return;
+    void this.pasteFromClipboard(() => Promise.resolve(selection));
   }
 
   hasSelection(): boolean {
@@ -871,6 +995,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
@@ -911,8 +1036,7 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows);
     }
-    if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
-    if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+    this.cancelRender();
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
@@ -930,7 +1054,6 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    this.updateLinkModifier(event);
     // Presses handled outside the terminal must also swallow their release:
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
@@ -950,6 +1073,7 @@ export class GhosttyTerminalSurface {
         key === "c" && !event.shiftKey && isWindowsPlatform(navigator.platform);
       const token = ++this.copyShortcutToken;
       const selection = this.getSelection();
+      this.primeCopy(selection);
       if (event.shiftKey || key === "insert") {
         event.preventDefault();
         try {
@@ -1008,10 +1132,12 @@ export class GhosttyTerminalSurface {
       return;
     }
     // keyCode 229 is Safari's only signal that this keydown opens an IME
-    // composition; encoding it would double the committed text.
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    // composition; encoding it would double the committed text. Do not blank
+    // the textarea first: onInput leaves the in-progress candidate there.
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
+    this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
@@ -1021,9 +1147,8 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
     // Ghostty's encoder only emits release codes when the terminal enabled the
@@ -1043,7 +1168,6 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
-    this.linkModifierActive = false;
     this.refreshHoveredLink();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for
     // example terminal-toggle) must still swallow its own keyup if focus comes
@@ -1067,15 +1191,32 @@ export class GhosttyTerminalSurface {
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
 
+  private primeCopy(selection: string): void {
+    this.primedCopySelection = selection;
+    primeTerminalCopyInput(this.input, selection);
+  }
+
+  private clearPrimedCopy(): void {
+    clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
+    this.primedCopySelection = "";
+  }
+
   private readonly onCopyEvent = (event: ClipboardEvent) => {
-    if (!this.hasSelection()) return;
-    event.preventDefault();
-    event.clipboardData?.setData("text/plain", this.getSelection());
-    // The native event beat any deferred write; drop the in-flight fallback.
-    this.copyShortcutToken += 1;
-    if (this.clearSelectionAfterCopy) {
-      this.clearSelectionAfterCopy = false;
-      this.clearSelection();
+    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    // Menu-role Copy never hits the keydown primer. The native action reads
+    // this.input, so park the current selection first — including when
+    // clipboardData is missing and we must not preventDefault.
+    this.primeCopy(selection);
+    const result = applyTerminalCopyEvent(selection, event.clipboardData);
+    if (result.preventDefault) event.preventDefault();
+    if (result.claimWriteFallback) {
+      // The native event actually wrote the selection; drop the in-flight
+      // writeText so a late resolution cannot clobber a later user copy.
+      this.copyShortcutToken += 1;
+      if (this.clearSelectionAfterCopy) {
+        this.clearSelectionAfterCopy = false;
+        this.clearSelection();
+      }
     }
   };
 
@@ -1093,6 +1234,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onCompositionStart = () => {
+    this.clearPrimedCopy();
     this.clearCompositionInputSuppression();
     this.composing = true;
   };
@@ -1145,22 +1287,46 @@ export class GhosttyTerminalSurface {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      // Left uncancelled on purpose: cancelling pointerdown drops the
+      // compatibility mousedown, which is what activates a split pane.
+      this.pasteTerminalSelection();
+      return;
+    }
     if (event.button !== 0) return;
-    if (isTerminalLinkPointerGesture(event)) {
+    const clickCount = this.recordSelectionClick(event);
+    const link = this.linkAt(event.clientX, event.clientY);
+    if (link && !event.shiftKey && clickCount === 1) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;
+      this.linkActivationLink = link;
+      this.linkActivationOrigin = {
+        x: event.clientX,
+        y: event.clientY,
+        clickCount,
+      };
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
     this.clearHoveredLink();
-    const cell = this.cellAt(event.clientX, event.clientY);
-    this.selectionMoved = false;
+    this.beginSelection(event, clickCount);
+    this.canvas.setPointerCapture(event.pointerId);
+  };
+
+  private recordSelectionClick(
+    event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
+  ): number {
     this.selectionClickSequence = advanceTerminalSelectionClickSequence(
       this.selectionClickSequence,
       event,
     );
-    const clickCount = this.selectionClickSequence.count;
+    return this.selectionClickSequence.count;
+  }
+
+  private beginSelection(event: { clientX: number; clientY: number }, clickCount: number): void {
+    const cell = this.cellAt(event.clientX, event.clientY);
+    this.selectionMoved = false;
     this.selectionMode = clickCount >= 3 ? "line" : clickCount === 2 ? "word" : "cell";
     const range =
       this.selectionMode === "line"
@@ -1188,21 +1354,40 @@ export class GhosttyTerminalSurface {
       }
     }
     this.forceFullRender = true;
-    this.canvas.setPointerCapture(event.pointerId);
     this.requestRender();
-  };
+  }
 
   private readonly onPointerMove = (event: PointerEvent) => {
-    if (this.linkActivationPointerId === event.pointerId) return;
+    if (this.linkActivationPointerId === event.pointerId) {
+      const origin = this.linkActivationOrigin;
+      if (
+        origin === null ||
+        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) <=
+          TERMINAL_LINK_DRAG_THRESHOLD_PX
+      ) {
+        return;
+      }
+      this.linkActivationPointerId = null;
+      this.linkActivationLink = null;
+      this.linkActivationOrigin = null;
+      this.clearHoveredLink();
+      this.beginSelection(
+        {
+          clientX: origin.x,
+          clientY: origin.y,
+        },
+        origin.clickCount,
+      );
+    }
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
+    const anyEventTracking = this.synchronizeMouseTrackingState();
     if (
       this.mouseReportingPointerId === event.pointerId ||
-      shouldReportTerminalMouse(this.core.isMouseAnyEventTracking(), event)
+      shouldReportTerminalMouse(anyEventTracking, event)
     ) {
       event.preventDefault();
       this.hoverPointer = { x: event.clientX, y: event.clientY };
-      this.linkModifierActive = isTerminalLinkPointerGesture(event);
       // A drag whose press was already sent to the terminal application cannot
       // turn into link activation midway through, so link feedback would lie.
       this.setHoveredLink(null);
@@ -1210,6 +1395,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
+    this.lastMouseMotionData = "";
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1276,18 +1462,11 @@ export class GhosttyTerminalSurface {
 
   private updateHoverCursor(event: PointerEvent): void {
     this.hoverPointer = { x: event.clientX, y: event.clientY };
-    this.linkModifierActive = isTerminalLinkPointerGesture(event);
-    this.refreshHoveredLink();
-  }
-
-  private updateLinkModifier(event: Pick<KeyboardEvent, "ctrlKey" | "metaKey">): void {
-    const active = isTerminalLinkPointerGesture(event);
-    if (active === this.linkModifierActive) return;
-    this.linkModifierActive = active;
     this.refreshHoveredLink();
   }
 
   private readonly onPointerLeave = () => {
+    this.lastMouseMotionData = "";
     this.clearHoveredLink();
   };
 
@@ -1299,10 +1478,7 @@ export class GhosttyTerminalSurface {
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link =
-      pointer && shouldShowTerminalLinkHover(this.core.isMouseTracking(), this.linkModifierActive)
-        ? this.linkAt(pointer.x, pointer.y)
-        : null;
+    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
     this.setHoveredLink(link);
   }
 
@@ -1326,13 +1502,17 @@ export class GhosttyTerminalSurface {
     if (this.linkActivationPointerId === event.pointerId) {
       event.preventDefault();
       event.stopPropagation();
+      const link = this.linkActivationLink;
       this.linkActivationPointerId = null;
+      this.linkActivationLink = null;
+      this.linkActivationOrigin = null;
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
       if (event.type !== "pointercancel") {
-        const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link.text, event);
+        if (link && isSameTerminalLink(link, this.linkAt(event.clientX, event.clientY))) {
+          this.options.onLinkActivate(link.text, event);
+        }
       }
       return;
     }
@@ -1349,13 +1529,16 @@ export class GhosttyTerminalSurface {
         this.clearHoveredLink();
       } else {
         this.hoverPointer = { x: event.clientX, y: event.clientY };
-        this.linkModifierActive = isTerminalLinkPointerGesture(event);
         this.refreshHoveredLink();
       }
       return;
     }
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
+    }
+    if (event.button === 1 && isMiddleClickPastePlatform()) {
+      event.preventDefault();
+      return;
     }
     if (event.button !== 0) return;
     if (!this.selectionMoved && this.selectionMode === "cell") {
@@ -1393,8 +1576,21 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0) event.preventDefault();
+    // Cancelling the middle button here stops autoscroll while still letting
+    // the event bubble to the drawer handler that activates a split pane.
+    if (event.button === 0 || (event.button === 1 && isMiddleClickPastePlatform())) {
+      event.preventDefault();
+    }
     this.focus();
+  };
+
+  /**
+   * Chromium pastes PRIMARY into the focused editable on a middle mouseup, and
+   * the hidden textarea is focused, so leaving the default alive would deliver
+   * a second paste through onPaste on top of the one onPointerDown sent.
+   */
+  private readonly onMouseUp = (event: MouseEvent) => {
+    if (event.button === 1 && isMiddleClickPastePlatform()) event.preventDefault();
   };
 
   private readonly onContextMenu = (event: MouseEvent) => {
@@ -1486,6 +1682,7 @@ export class GhosttyTerminalSurface {
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.canvas.addEventListener("mousedown", this.onMouseDown);
+    this.canvas.addEventListener("mouseup", this.onMouseUp);
     this.canvas.addEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
@@ -1511,6 +1708,7 @@ export class GhosttyTerminalSurface {
     this.canvas.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas.removeEventListener("wheel", this.onWheel);
     this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("contextmenu", this.onContextMenu);
     this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
@@ -1575,18 +1773,38 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || this.frame !== 0) return;
+    if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();
     });
   }
 
-  private renderFrame(): void {
-    if (this.disposed) return;
+  private cancelRender(): void {
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
+    }
+    if (this.cursorTimer !== null) {
+      window.clearTimeout(this.cursorTimer);
+      this.cursorTimer = null;
+    }
+  }
+
+  private renderFrame(): void {
+    if (this.disposed || !this.visible) return;
+    if (this.frame !== 0) {
+      window.cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    // Hidden thread drawers stay mounted so switching back is instant, but a
+    // display:none canvas has nothing to show. Ghostty keeps parsing; the
+    // ResizeObserver refits and repaints in full once the mount has a size.
+    if (this.mount.clientWidth === 0 || this.mount.clientHeight === 0) {
+      this.hasSize = false;
+      this.forceFullRender = true;
+      this.cancelRender();
+      return;
     }
     this.snapshot = this.core.snapshot();
     // A cursor that is not blinking right now must be drawn, never caught in an
@@ -1653,7 +1871,7 @@ export class GhosttyTerminalSurface {
 
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot;
-    if (!snapshot) return false;
+    if (!snapshot || !this.visible || !this.hasSize) return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,
@@ -1746,11 +1964,7 @@ export class GhosttyTerminalSurface {
     return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
   }
 
-  private sendMouse(
-    action: "press" | "release" | "motion",
-    button: number | null,
-    event: MouseEvent,
-  ): void {
+  private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
     const data = this.core.encodeMouse({
       action,
@@ -1772,7 +1986,23 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    this.lastMouseMotionData = resolution.nextMotionData;
+    if (resolution.send) this.options.onData(data);
+  }
+
+  private synchronizeMouseTrackingState(): boolean {
+    // Output writes can toggle DEC 1003 without moving the pointer. Keep the
+    // previous mode so the next same-cell motion starts a fresh tracking session.
+    const tracking = this.core.isMouseAnyEventTracking();
+    const state = resolveTerminalMouseTrackingState(
+      this.mouseAnyEventTracking,
+      tracking,
+      this.lastMouseMotionData,
+    );
+    this.mouseAnyEventTracking = state.tracking;
+    this.lastMouseMotionData = state.motionData;
+    return tracking;
   }
 
   private buttonFromButtons(buttons: number): number | null {

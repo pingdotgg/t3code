@@ -12,9 +12,8 @@ import type { Flow } from "./Flow.ts";
  * `BadRequestException` tag. The flow ARN is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.MediaConnect.StopFlowHttp)`.
- * @binding
- * @section Controlling Flows
- * @example Stop the Flow After the Broadcast
+ * ### Controlling Flows
+ * **Example:** Stop the Flow After the Broadcast
  * ```typescript
  * // init — bind the operation to the flow
  * const stopFlow = yield* AWS.MediaConnect.StopFlow(flow);
@@ -25,6 +24,8 @@ import type { Flow } from "./Flow.ts";
  *   Effect.catchTag("BadRequestException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface StopFlow extends Binding.Service<
   StopFlow,

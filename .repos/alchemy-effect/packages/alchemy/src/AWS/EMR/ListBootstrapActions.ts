@@ -5,14 +5,15 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:ListBootstrapActions` — lists the bootstrap actions the bound cluster ran at launch.
- * @binding
- * @section Inspecting the Cluster
- * @example List Bootstrap Actions
+ * ### Inspecting the Cluster
+ * **Example:** List Bootstrap Actions
  * ```typescript
  * const listBootstrapActions = yield* AWS.EMR.ListBootstrapActions(cluster);
  *
  * const { BootstrapActions } = yield* listBootstrapActions();
  * ```
+ *
+ * @binding
  */
 export interface ListBootstrapActions extends Binding.Service<
   ListBootstrapActions,

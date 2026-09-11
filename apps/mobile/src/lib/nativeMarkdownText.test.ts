@@ -11,6 +11,43 @@ import {
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("links a path-shaped code span without changing the same path in prose", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          { type: "text", content: "/tmp/frame.png " },
+          { type: "code_inline", content: "/tmp/frame.png" },
+        ],
+      }),
+    ).toEqual([
+      { text: "/tmp/frame.png " },
+      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
+    ]);
+  });
+
+  it("preserves the destination of a link with a code-formatted label", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "https://example.com/docs",
+            children: [{ type: "code_inline", content: "src/main.ts" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: "src/main.ts",
+        code: true,
+        href: "https://example.com/docs",
+        externalHost: "example.com",
+      },
+    ]);
+  });
+
   it("preserves inline emphasis and code styles", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -184,6 +221,29 @@ describe("nativeMarkdownDocumentRuns", () => {
         role: "body",
         skillName: "ui",
         skillLabel: "UI",
+      },
+      { text: " for this.", role: "body" },
+    ]);
+  });
+
+  it("decorates known skill references that begin with a digit", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $2spec for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }])).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: "$2spec",
+        role: "body",
+        skillName: "2spec",
+        skillLabel: "2Spec",
       },
       { text: " for this.", role: "body" },
     ]);
@@ -476,7 +536,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     ).toEqual([
       {
         kind: "rich",
-        key: "rich:blockquote:0:120",
+        key: "rich:blockquote:offset:0",
         node: blockquote,
       },
     ]);
@@ -603,7 +663,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:code_block:11:35",
+      key: "rich:code_block:offset:11",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -640,7 +700,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(nativeMarkdownDocumentChunks(document)).toEqual([
       {
         kind: "rich",
-        key: "rich:list:0:45",
+        key: "rich:list:offset:0",
         node: document.children?.[0],
       },
     ]);
@@ -668,7 +728,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:horizontal_rule:1:1",
+      key: "rich:horizontal_rule:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -714,7 +774,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:list:1:1",
+      key: "rich:list:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -762,6 +822,89 @@ describe("nativeMarkdownDocumentChunks", () => {
       kind: "rich",
       node: { type: "blockquote" },
     });
+  });
+
+  it("keys positioned and offset-free siblings in separate namespaces", () => {
+    const positioned: MarkdownNode = {
+      type: "blockquote",
+      beg: 1,
+      end: 10,
+      children: [{ type: "paragraph", children: [{ type: "text", content: "Positioned" }] }],
+    };
+    const offsetFree: MarkdownNode = {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ type: "text", content: "Generated" }] }],
+    };
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 0, children: [] },
+        offsetFree,
+        positioned,
+        { type: "paragraph", children: [{ type: "text", content: "Tail" }] },
+      ],
+    });
+
+    expect(chunks.map((chunk) => chunk.key)).toEqual([
+      "selectable:offset:0",
+      "rich:blockquote:index:1",
+      "rich:blockquote:offset:1",
+      "selectable:index:3",
+    ]);
+  });
+
+  it("gives every offset-free selectable group its own key", () => {
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        { type: "paragraph", children: [{ type: "text", content: "One" }] },
+        { type: "horizontal_rule" },
+        { type: "paragraph", children: [{ type: "text", content: "Two" }] },
+        { type: "horizontal_rule" },
+        { type: "paragraph", children: [{ type: "text", content: "Three" }] },
+      ],
+    });
+
+    expect(chunks.map((chunk) => chunk.key)).toEqual([
+      "selectable:index:0",
+      "rich:horizontal_rule:index:1",
+      "selectable:index:2",
+      "rich:horizontal_rule:index:3",
+      "selectable:index:4",
+    ]);
+  });
+
+  it("keeps positioned chunk keys stable while text streams in", () => {
+    const before: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 5, children: [{ type: "text", content: "Intro" }] },
+        {
+          type: "code_block",
+          language: "ts",
+          beg: 7,
+          end: 20,
+          children: [{ type: "text", content: "const a" }],
+        },
+      ],
+    };
+    const after: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 5, children: [{ type: "text", content: "Intro" }] },
+        {
+          type: "code_block",
+          language: "ts",
+          beg: 7,
+          end: 40,
+          children: [{ type: "text", content: "const a = 1;\nconst b" }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentChunks(after).map((chunk) => chunk.key)).toEqual(
+      nativeMarkdownDocumentChunks(before).map((chunk) => chunk.key),
+    );
   });
 
   it("keeps a plain list in one selectable native text container", () => {

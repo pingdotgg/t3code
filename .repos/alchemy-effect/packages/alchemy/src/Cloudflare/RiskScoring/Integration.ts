@@ -45,7 +45,7 @@ export type IntegrationAttributes = {
   /** Account that owns the integration. */
   accountId: string;
   /** The third-party consumer of risk-score changes. */
-  integrationType: "Okta";
+  integrationType: "Okta" | (string & {});
   /** Observed tenant base URL. */
   tenantUrl: string;
   /** Observed client-supplied reference id. */
@@ -75,11 +75,8 @@ export type Integration = Resource<
  * Requires the Zero Trust risk-scoring entitlement (an Enterprise
  * feature); accounts without it receive the typed `Forbidden` error on
  * all writes.
- * @resource
- * @product Risk Scoring
- * @category Cloudflare One (Zero Trust)
- * @section Creating a risk scoring integration
- * @example Push risk scores to an Okta tenant
+ * ### Creating a risk scoring integration
+ * **Example:** Push risk scores to an Okta tenant
  * ```typescript
  * const okta = yield* Cloudflare.RiskScoring.Integration("OktaSsf", {
  *   tenantUrl: "https://tenant.okta.com",
@@ -87,7 +84,7 @@ export type Integration = Resource<
  * });
  * ```
  *
- * @example Pause exporting without deleting
+ * **Example:** Pause exporting without deleting
  * ```typescript
  * const okta = yield* Cloudflare.RiskScoring.Integration("OktaSsf", {
  *   tenantUrl: "https://tenant.okta.com",
@@ -96,6 +93,10 @@ export type Integration = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/insights/risk-score/
+ *
+ * @resource
+ * @product Risk Scoring
+ * @category Cloudflare One (Zero Trust)
  */
 export const Integration = Resource<Integration>(TypeId);
 
@@ -216,7 +217,7 @@ type ObservedIntegration = {
   id: string;
   active: boolean;
   createdAt: string;
-  integrationType: "Okta";
+  integrationType: string;
   referenceId: string;
   tenantUrl: string;
   wellKnownUrl: string;

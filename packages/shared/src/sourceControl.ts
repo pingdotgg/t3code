@@ -1,4 +1,8 @@
-import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
+import type {
+  RepositoryIdentity,
+  SourceControlProviderInfo,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
@@ -92,21 +96,10 @@ export function resolveChangeRequestPresentation(
   }
 }
 
-export function resolveChangeRequestPresentationForKind(
+function resolveChangeRequestPresentationForKind(
   kind: SourceControlProviderKind,
 ): ChangeRequestPresentation {
   return resolveChangeRequestPresentation({ kind, name: "", baseUrl: "" });
-}
-
-export function formatChangeRequestAction(
-  verb: "View" | "Create",
-  presentation: ChangeRequestPresentation,
-): string {
-  return `${verb} ${presentation.shortName}`;
-}
-
-export function formatCreateChangeRequestPhrase(presentation: ChangeRequestPresentation): string {
-  return `create ${presentation.shortName}`;
 }
 
 export function getChangeRequestTerminology(
@@ -244,4 +237,44 @@ export function detectSourceControlProviderFromRemoteUrl(
     name: host,
     baseUrl: toBaseUrl(host),
   };
+}
+
+/**
+ * The provider-native repository selector. `displayName` is the full path below the host, which
+ * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
+ * recorded before that field existed.
+ *
+ * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
+ * takes the organisation and project from the checkout it detects — so the recorded
+ * `org/project/_git/repo` path is refused outright and the whole repository reads as
+ * unavailable. Its name is the last segment, which is what this hands over.
+ *
+ * One function because everything downstream is keyed by what it answers: the rows' own
+ * `repository`, the per-repository cursors, and the detail and diff reads a row leads to.
+ */
+export function sourceControlRepositorySelector(
+  identity:
+    | Pick<RepositoryIdentity, "provider" | "displayName" | "owner" | "name">
+    | null
+    | undefined,
+): string | null {
+  if (!identity) return null;
+  if (identity.provider === "azure-devops") {
+    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
+    return identity.name || segments.at(-1) || null;
+  }
+  if (identity.displayName) return identity.displayName;
+  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
+}
+
+export function canonicalRepositoryKey(key: string): string {
+  return key
+    .replace(
+      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    )
+    .replace(
+      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    );
 }

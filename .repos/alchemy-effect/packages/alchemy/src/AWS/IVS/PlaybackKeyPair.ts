@@ -60,9 +60,8 @@ export interface PlaybackKeyPair extends Resource<
  * authorization tokens with the private half. Channels created with
  * `authorized: true` require viewers to present a token signed by an
  * imported key pair.
- * @resource
- * @section Importing a Key Pair
- * @example Private Channel Playback Authorization
+ * ### Importing a Key Pair
+ * **Example:** Private Channel Playback Authorization
  * ```typescript
  * import * as IVS from "alchemy/AWS/IVS";
  *
@@ -73,6 +72,8 @@ export interface PlaybackKeyPair extends Resource<
  *   authorized: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const PlaybackKeyPair = Resource<PlaybackKeyPair>(
   "AWS.IVS.PlaybackKeyPair",

@@ -21,7 +21,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
-export class ServerRuntimeStateError extends Schema.TaggedErrorClass<ServerRuntimeStateError>()(
+export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
   {
     operation: Schema.Literals(["persist", "read", "decode", "clear"]),
@@ -103,6 +103,21 @@ export const clearPersistedServerRuntimeState = (path: string) =>
       }),
     );
   });
+
+/**
+ * Report whether the pid recorded in a persisted runtime state is still
+ * running. Signal 0 delivers nothing; it only reports whether the pid exists.
+ * EPERM means it exists but belongs to another user, which still counts as
+ * alive.
+ */
+export const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+};
 
 export const readPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {

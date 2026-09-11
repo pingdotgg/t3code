@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./load-balancing": {
+      "types": "./src/load-balancing.ts",
+      "default": "./src/load-balancing.ts"
+    },
+    "./project-favicon-cache": {
+      "types": "./src/projectFaviconCache.ts",
+      "default": "./src/projectFaviconCache.ts"
+    },
+    "./pending-requests": {
+      "types": "./src/pendingRequests.ts",
+      "default": "./src/pendingRequests.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
@@ -14,6 +26,38 @@
     "./environment": {
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
+    },
+    "./markdown-images": {
+      "types": "./src/markdownImages.ts",
+      "default": "./src/markdownImages.ts"
+    },
+    "./markdown-links": {
+      "types": "./src/markdownLinks.ts",
+      "default": "./src/markdownLinks.ts"
+    },
+    "./media-reference": {
+      "types": "./src/mediaReference.ts",
+      "default": "./src/mediaReference.ts"
+    },
+    "./media-source": {
+      "types": "./src/mediaSource.ts",
+      "default": "./src/mediaSource.ts"
+    },
+    "./media-actions": {
+      "types": "./src/mediaActions.ts",
+      "default": "./src/mediaActions.ts"
+    },
+    "./codex-file-citations": {
+      "types": "./src/codexFileCitations.ts",
+      "default": "./src/codexFileCitations.ts"
+    },
+    "./codex-artifact-templates": {
+      "types": "./src/codexArtifactTemplates.ts",
+      "default": "./src/codexArtifactTemplates.ts"
+    },
+    "./codex-markdown-directives": {
+      "types": "./src/codexMarkdownDirectives.ts",
+      "default": "./src/codexMarkdownDirectives.ts"
     },
     "./errors": {
       "types": "./src/errors/index.ts",
@@ -39,6 +83,10 @@
       "types": "./src/providerSkills.ts",
       "default": "./src/providerSkills.ts"
     },
+    "./voice-input": {
+      "types": "./src/voice-input/index.ts",
+      "default": "./src/voice-input/index.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"
@@ -50,6 +98,10 @@
     "./state/assets": {
       "types": "./src/state/assets.ts",
       "default": "./src/state/assets.ts"
+    },
+    "./state/attachments": {
+      "types": "./src/state/attachments.ts",
+      "default": "./src/state/attachments.ts"
     },
     "./state/connections": {
       "types": "./src/state/connections.ts",
@@ -79,6 +131,14 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/device": {
+      "types": "./src/state/device.ts",
+      "default": "./src/state/device.ts"
+    },
+    "./state/deviceHubAccess": {
+      "types": "./src/state/deviceHubAccess.ts",
+      "default": "./src/state/deviceHubAccess.ts"
+    },
     "./state/preview": {
       "types": "./src/state/preview.ts",
       "default": "./src/state/preview.ts"
@@ -86,6 +146,10 @@
     "./state/projects": {
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
+    },
+    "./state/provider-instance-display": {
+      "types": "./src/state/providerInstanceDisplay.ts",
+      "default": "./src/state/providerInstanceDisplay.ts"
     },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
@@ -107,6 +171,10 @@
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
     },
+    "./state/usage": {
+      "types": "./src/state/usage.ts",
+      "default": "./src/state/usage.ts"
+    },
     "./state/server": {
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
@@ -114,6 +182,10 @@
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
+    },
+    "./state/shared-settings": {
+      "types": "./src/state/sharedSettings.ts",
+      "default": "./src/state/sharedSettings.ts"
     },
     "./state/shell": {
       "types": "./src/state/shell.ts",
@@ -150,19 +222,49 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./work-log/user-input": {
+      "types": "./src/work-log/userInput.ts",
+      "default": "./src/work-log/userInput.ts"
+    },
+    "./work-log/presentation": {
+      "types": "./src/work-log/presentation.ts",
+      "default": "./src/work-log/presentation.ts"
+    },
+    "./work-log/tool-presentation": {
+      "types": "./src/work-log/toolPresentation.ts",
+      "default": "./src/work-log/toolPresentation.ts"
+    },
+    "./work-log/command-label": {
+      "types": "./src/work-log/commandLabel.ts",
+      "default": "./src/work-log/commandLabel.ts"
+    },
+    "./work-log/scroll-anchor": {
+      "types": "./src/work-log/scrollAnchor.ts",
+      "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./thread-pull-request-compatibility": {
+      "types": "./src/threadPullRequestCompatibility.ts",
+      "default": "./src/threadPullRequestCompatibility.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "mdast-util-directive": "^3.1.0",
+    "micromark-extension-directive": "^4.0.0",
+    "micromark-util-character": "^2.1.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }
 }

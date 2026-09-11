@@ -1,5 +1,5 @@
+import { listOrganizations } from "@distilled.cloud/planetscale";
 import * as PsCredentialsModule from "@distilled.cloud/planetscale/Credentials";
-import { listOrganizations } from "@distilled.cloud/planetscale/Operations";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -199,10 +199,23 @@ export const PlanetscaleAuth = AuthProviderLayer<
           ),
         );
         yield* Clank.info(
-          "Planetscale: waiting for authorization (up to 5 minutes)...",
+          "Planetscale: waiting for authorization (up to 5 minutes).",
         );
 
-        const credentials = yield* OAuthClient.callback(authorization);
+        const credentials = yield* Effect.raceFirst(
+          OAuthClient.callback(authorization),
+          Clank.text({
+            message: "Paste the authorization code or callback URL",
+            placeholder:
+              "The browser will complete this automatically when local",
+            validate: (value) =>
+              value.trim().length > 0 ? undefined : "Paste a code or URL",
+          }).pipe(
+            Effect.flatMap((input) =>
+              OAuthClient.exchangeCallbackInput(input, authorization),
+            ),
+          ),
+        );
         yield* store.write(profileName, "planetscale-oauth", credentials);
         yield* Clank.success("Planetscale: OAuth credentials saved.");
         return credentials;

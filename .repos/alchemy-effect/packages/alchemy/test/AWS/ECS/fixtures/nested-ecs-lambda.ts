@@ -33,7 +33,7 @@ export class NestedEcsReproFunction extends Lambda.Function<Lambda.Function>()(
 export default NestedEcsReproFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
     memorySize: 512,
   },

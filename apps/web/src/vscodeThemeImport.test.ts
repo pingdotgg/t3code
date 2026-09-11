@@ -90,6 +90,28 @@ describe("VS Code theme import", () => {
     expect(theme.colors.sidebarRowSelected).not.toBe(theme.colors.sidebar);
   });
 
+  it("keeps a fallback placeholder dimmer than entered text", () => {
+    const theme = parseVsCodeThemeFile({
+      name: "Dark placeholder fallback",
+      type: "dark",
+      colors: {
+        "editor.background": "#1e1e2e",
+        "editor.foreground": "#cdd6f4",
+        "input.placeholderForeground": "#cdd6f473",
+      },
+    });
+
+    expect(
+      contrastRatio(theme.colors.placeholder, theme.colors.surfaceRaised),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(theme.colors.placeholder, theme.colors.canvas)).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    expect(contrastRatio(theme.colors.placeholder, theme.colors.canvas)).toBeLessThan(
+      contrastRatio(theme.colors.text, theme.colors.canvas),
+    );
+  });
+
   it("fills every role the file omits with a readable derived value", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     const colors = getThemeColorsForMode(theme, "dark")!;

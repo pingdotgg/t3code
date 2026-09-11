@@ -49,7 +49,7 @@ export const BucketAndDeliveryStreamLive = Layer.effect(
 export const FirehoseApiFunctionLive = FirehoseApiFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

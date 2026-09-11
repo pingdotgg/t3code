@@ -29,6 +29,13 @@ public final class T3KeyboardCommandsView: ExpoView {
       enabledCommand("files", input: "f", modifiers: [.command, .shift], action: #selector(openFiles), title: "Open Files"),
       enabledCommand("terminal", input: "t", modifiers: [.command, .shift], action: #selector(openTerminal), title: "Open Terminal"),
       enabledCommand("review", input: "r", modifiers: [.command, .shift], action: #selector(openReview), title: "Open Review"),
+      enabledCommand(
+        "copyThreadReference",
+        input: "c",
+        modifiers: [.command, .shift],
+        action: #selector(copyThreadReference),
+        title: "Copy PR Link or Thread ID"
+      ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
     ].compactMap { $0 }
   }
@@ -106,6 +113,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   @objc private func openFiles() { emit("files") }
   @objc private func openTerminal() { emit("terminal") }
   @objc private func openReview() { emit("review") }
+  @objc private func copyThreadReference() { emit("copyThreadReference") }
   @objc private func handleToggleSidebar() { emit("toggleSidebar") }
 
   private func emit(_ command: String) {
