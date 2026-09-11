@@ -10,6 +10,7 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
@@ -28,17 +29,28 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import {
+  ProjectionProjectRepository,
+  type ProjectionProject,
+} from "../persistence/Services/ProjectionProjects.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  cwd = "/work/app",
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
     sessionId: "session-1",
+    cwd,
     message: {
       id: `msg_${id}`,
       model,
@@ -82,6 +94,8 @@ const serviceLayers = (input: {
   /** Defaults to an unparsable document so every scan retries the fetch. */
   readonly ratesDocument?: unknown;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Defaults to no projects, so every session with a cwd is outside projects. */
+  readonly listProjects?: ProjectionProjectRepository["Service"]["listAll"];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -105,7 +119,29 @@ const serviceLayers = (input: {
         ...input.environment,
       }),
     ),
+    Layer.provideMerge(
+      Layer.succeed(ProjectionProjectRepository, {
+        upsert: () => Effect.die("unused"),
+        getById: () => Effect.die("unused"),
+        listAll: input.listProjects ?? (() => Effect.succeed([])),
+      }),
+    ),
   );
+
+function project(projectId: string, workspaceRoot: string, title: string): ProjectionProject {
+  return {
+    projectId: ProjectId.make(projectId),
+    title,
+    workspaceRoot,
+    defaultModelSelection: null,
+    defaultThreadEnvMode: null,
+    autoPull: false,
+    scripts: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    deletedAt: null,
+  };
+}
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
@@ -225,6 +261,71 @@ describe("UsageService", () => {
       assert.strictEqual(
         sources.filter((source) => source.fingerprint.provider === "codex").length,
         1,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("attributes usage to the project containing each session's cwd", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 5, "claude-fable-5", "/work/app/src") +
+            claudeLine(2, 7, "claude-fable-5", "/elsewhere"),
+        ),
+      );
+
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-test",
+            home,
+            settings,
+            listProjects: () => Effect.succeed([project("project-app", "/work/app", "App")]),
+          }),
+        ),
+      );
+
+      const attribution = summary.buckets.map((bucket) => [
+        bucket.projectAttribution,
+        bucket.projectId ?? null,
+        bucket.totals.outputTokens,
+      ]);
+      assert.sameDeepMembers(attribution, [
+        ["project", ProjectId.make("project-app"), 5],
+        ["outside", null, 7],
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports unknown attribution when the project list cannot be read", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-failure-test",
+            home,
+            settings,
+            listProjects: () =>
+              Effect.fail(new PersistenceSqlError({ operation: "ProjectionProjects.listAll" })),
+          }),
+        ),
+      );
+
+      assert.strictEqual(totalOutputTokens(summary), 5);
+      assert.deepStrictEqual(
+        summary.buckets.map((bucket) => bucket.projectAttribution),
+        ["unknown"],
       );
     }).pipe(Effect.scoped),
   );

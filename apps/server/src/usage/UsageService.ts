@@ -44,10 +44,11 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
+import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -150,6 +151,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
+  const projectRepository = yield* ProjectionProjectRepository;
 
   const fileCache: ScanCache = new Map();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
@@ -335,6 +337,29 @@ export const make = Effect.gen(function* () {
     }
     return dirs;
   });
+
+  /**
+   * Builds the cwd → project resolver for one scan.
+   *
+   * Projects are re-read every scan so a project created or renamed since the
+   * last refresh attributes correctly. If the project list cannot be read, the
+   * scan reports unknown attribution rather than claiming the work ran outside
+   * every project.
+   */
+  const resolveProjects = projectRepository.listAll().pipe(
+    Effect.map((projects) =>
+      makeProjectResolver(
+        projects.map((project) => ({
+          projectId: project.projectId,
+          workspaceRoot: project.workspaceRoot,
+          title: project.title,
+          deleted: project.deletedAt !== null,
+        })),
+        path.sep,
+      ),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
 
   /**
    * Loads the persisted scan cache exactly once per process.
@@ -550,6 +575,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      resolveProject: yield* resolveProjects,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
