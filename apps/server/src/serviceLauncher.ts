@@ -7,6 +7,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 
 import type {
   PendingServiceUpdate,
@@ -63,6 +64,14 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) =>
   paths.executable
     ? { command: paths.entryPath, args: ["serve"] }
     : { command: process.execPath, args: [paths.entryPath, "serve"] };
+
+// An npm-layout runtime needs a Node interpreter. When the launcher itself is
+// the single-executable, process.execPath is `t3`, which cannot run a
+// bin.mjs, so the two layouts cannot be mixed within one service install.
+const launcherIsExecutable = NodeSea.isSea();
+
+const canLaunchRuntime = (paths: ReturnType<typeof runtimePaths>) =>
+  paths.executable || !launcherIsExecutable;
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -494,6 +503,12 @@ export class Launcher {
     }
     if (!NodePath.isAbsolute(message.dbPath)) {
       await reject("The requested database path is not absolute.");
+      return;
+    }
+    if (!canLaunchRuntime(runtimePaths(this.#baseDir, message.targetVersion))) {
+      await reject(
+        "This service runs from a self-contained t3 executable and cannot switch to an npm-installed version. Reinstall the service with the target version instead.",
+      );
       return;
     }
     if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {

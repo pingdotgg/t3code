@@ -24,10 +24,14 @@ function Fail([string] $message) {
   exit 1
 }
 
-$arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
-  "X64" { "x64" }
-  "Arm64" { "arm64" }
-  default { Fail "unsupported architecture $_" }
+# PROCESSOR_ARCHITEW6432 reports the real machine when a 32-bit PowerShell
+# runs under WOW64; RuntimeInformation needs .NET 4.7.1+, which 5.1 hosts
+# may lack.
+$rawArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+$arch = switch ($rawArch) {
+  "AMD64" { "x64" }
+  "ARM64" { "arm64" }
+  default { Fail "unsupported architecture $rawArch" }
 }
 
 $version = $env:T3CODE_VERSION
@@ -81,7 +85,9 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
-Set-Content -Path $shim -Value "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*" -Encoding ASCII
+# UTF-8 without a BOM: cmd.exe reads the shim as-is, and ASCII would corrupt
+# non-ASCII characters in the user's home path.
+[System.IO.File]::WriteAllText($shim, "@echo off`r`n`"$(Join-Path $targetDir 't3.exe')`" %*", (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Installed t3 $version"
 Write-Host "  $shim -> $(Join-Path $targetDir 't3.exe')"
 if (($env:PATH -split ";") -notcontains $binDir) {
