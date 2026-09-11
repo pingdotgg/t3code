@@ -1,5 +1,6 @@
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
+import { groupTurnSections } from "@t3tools/client-runtime/turn-sections";
 import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
@@ -483,6 +484,7 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
 }
 
 interface TurnFold {
+  id: string;
   turnId: TurnId;
   anchorEntryId: string;
   createdAt: string;
@@ -567,9 +569,24 @@ function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   );
 }
 
+/** Section IDs are available before settling, so citations and interrupts can expand them. */
+export function deriveTimelineTurnSections(timelineEntries: ReadonlyArray<TimelineEntry>) {
+  return groupTurnSections(
+    timelineEntries,
+    (entry) =>
+      entry.kind === "message" && entry.message.role === "user" ? entry.message.createdAt : null,
+    (entry) =>
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? (entry.message.turnId ?? null)
+        : entry.kind === "work"
+          ? (entry.entry.turnId ?? null)
+          : null,
+  );
+}
+
 /**
- * Settled turns fold activity before their terminal assistant message behind
- * a "Worked for ..." row. A single ordinary activity after that message joins
+ * Settled turns fold activity between user messages behind "Worked for ..."
+ * rows, preserving the terminal assistant message. A single activity after it joins
  * the fold, while larger groups and failures stay visible as a trailing summary.
  */
 function deriveTurnFolds(input: {
@@ -578,74 +595,27 @@ function deriveTurnFolds(input: {
   latestTurn: TimelineLatestTurn | null;
   unfoldedTurnIds: ReadonlySet<TurnId>;
 }): ReadonlyMap<string, TurnFold> {
-  interface TurnGroup {
-    entries: Array<TimelineEntry>;
-    terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
-    hasStreamingMessage: boolean;
-    /**
-     * The user message that kicked the turn off. Entry timestamps alone
-     * undercount the duration (the first entry appears only once the
-     * provider starts producing output), and a turn cut short by a steer may
-     * hold a single instantaneous commentary message.
-     */
-    startBoundary: string | null;
-  }
-  const groupsByTurnId = new Map<TurnId, TurnGroup>();
-
-  let pendingUserBoundary: string | null = null;
-  for (const entry of input.timelineEntries) {
-    if (entry.kind === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
-      continue;
-    }
-    const turnId =
-      entry.kind === "message" && entry.message.role === "assistant"
-        ? (entry.message.turnId ?? null)
-        : entry.kind === "work"
-          ? (entry.entry.turnId ?? null)
-          : null;
-    if (!turnId) {
-      continue;
-    }
-    let group = groupsByTurnId.get(turnId);
-    if (!group) {
-      group = {
-        entries: [],
-        terminalEntry: null,
-        hasStreamingMessage: false,
-        // Each user boundary starts at most one turn; a second turn after the
-        // same user message (e.g. a steer-superseded continuation) falls back
-        // to its own first entry.
-        startBoundary: pendingUserBoundary,
-      };
-      pendingUserBoundary = null;
-      groupsByTurnId.set(turnId, group);
-    }
-    group.entries.push(entry);
-    if (entry.kind === "message") {
-      if (input.terminalAssistantMessageIds.has(entry.message.id)) {
-        group.terminalEntry = entry;
-      }
-      if (entry.message.streaming) {
-        group.hasStreamingMessage = true;
-      }
-    }
-  }
+  const sections = deriveTimelineTurnSections(input.timelineEntries);
 
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
-  for (const [turnId, group] of groupsByTurnId) {
+  for (const group of sections) {
+    const { turnId } = group;
     if (input.unfoldedTurnIds.has(turnId)) {
       continue;
     }
-    if (group.hasStreamingMessage) {
+    if (group.entries.some((entry) => entry.kind === "message" && entry.message.streaming)) {
       continue;
     }
+    const terminalEntry = group.entries.find(
+      (entry) =>
+        entry.kind === "message" && input.terminalAssistantMessageIds.has(entry.message.id),
+    );
     const hiddenEntryIds = new Set<string>();
-    const terminalEntryIndex = group.terminalEntry
-      ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
+    const terminalEntryIndex = terminalEntry
+      ? group.entries.indexOf(terminalEntry)
       : group.entries.length;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.id === terminalEntry?.id) {
         continue;
       }
       const isCompaction =
@@ -687,21 +657,30 @@ function deriveTurnFolds(input: {
     }
 
     const isLatestInterruptedTurn =
-      input.latestTurn?.turnId === turnId && input.latestTurn.state === "interrupted";
+      !group.continues &&
+      input.latestTurn?.turnId === turnId &&
+      input.latestTurn.state === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const elapsedMs =
+    const latestTiming =
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
       input.latestTurn.completedAt
-        ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
-              lastEntryEnd,
-          );
+        ? input.latestTurn
+        : null;
+    const elapsedMs = computeElapsedMs(
+      (!group.isContinuation ? latestTiming?.startedAt : null) ??
+        group.startBoundary ??
+        firstEntry.createdAt,
+      (group.continues ? group.endBoundary : latestTiming?.completedAt) ??
+        maxIsoTimestamp(
+          terminalEntry?.kind === "message" ? terminalEntry.message.updatedAt : null,
+          lastEntryEnd,
+        ) ??
+        lastEntryEnd,
+    );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
       ? duration
@@ -712,6 +691,7 @@ function deriveTurnFolds(input: {
         : "Worked";
 
     foldsByAnchorEntryId.set(firstHiddenEntry.id, {
+      id: group.id,
       turnId,
       anchorEntryId: firstHiddenEntry.id,
       createdAt: firstHiddenEntry.createdAt,
@@ -848,7 +828,7 @@ export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
   runningTurnId?: TurnId | null;
-  expandedTurnIds?: ReadonlySet<TurnId>;
+  expandedFoldIds?: ReadonlySet<string>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
@@ -891,7 +871,7 @@ export function deriveMessagesTimelineRows(input: {
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedTurnIds?.has(fold.turnId)) {
+    if (!input.expandedFoldIds?.has(fold.id)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1013,11 +993,11 @@ export function deriveMessagesTimelineRows(input: {
     if (anchoredTurnFold) {
       nextRows.push({
         kind: "turn-fold",
-        id: `turn-fold:${anchoredTurnFold.turnId}`,
+        id: anchoredTurnFold.id,
         createdAt: anchoredTurnFold.createdAt,
         turnId: anchoredTurnFold.turnId,
         label: anchoredTurnFold.label,
-        expanded: input.expandedTurnIds?.has(anchoredTurnFold.turnId) ?? false,
+        expanded: input.expandedFoldIds?.has(anchoredTurnFold.id) ?? false,
       });
     }
 
@@ -1254,7 +1234,7 @@ function replaceStreamingMessageRows(
     timelineEntries: previousEntries,
     turnDiffSummaries: previousSummaries,
     latestTurn: previousLatestTurn,
-    expandedTurnIds: previousExpandedTurns,
+    expandedFoldIds: previousExpandedFolds,
     expandedWorkGroupIds: previousExpandedGroups,
     ...previousContext
   } = previous.input;
@@ -1262,7 +1242,7 @@ function replaceStreamingMessageRows(
     timelineEntries,
     turnDiffSummaries,
     latestTurn,
-    expandedTurnIds,
+    expandedFoldIds,
     expandedWorkGroupIds,
     ...context
   } = input;
@@ -1271,7 +1251,7 @@ function replaceStreamingMessageRows(
     !shallow(previousContext, context) ||
     !shallow(previousSummaries, turnDiffSummaries) ||
     !shallow(previousLatestTurn, latestTurn) ||
-    !shallow(previousExpandedTurns, expandedTurnIds) ||
+    !shallow(previousExpandedFolds, expandedFoldIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds)
   ) {
     return null;
