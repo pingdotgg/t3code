@@ -1,23 +1,41 @@
 import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
 
-/** Missing entries preserve existing actions; null explicitly resets a checkout to machine defaults. */
+type ProjectScriptSettings = Pick<
+  ServerSettings,
+  | "defaultProjectScripts"
+  | "projectScriptOverrides"
+  | "projectSettingsOverrides"
+  | "projectSettingsFolded"
+>;
+
+/**
+ * The project's override wins, then environment defaults. Until the legacy
+ * fields have been folded into `projectSettingsOverrides`, the old map (null
+ * there meant "reset to machine defaults") and the aggregate's own scripts
+ * still count, so a server that has not run the fold yet behaves as before.
+ */
 export function resolveProjectScripts(
-  settings: Pick<ServerSettings, "defaultProjectScripts" | "projectScriptOverrides">,
+  settings: ProjectScriptSettings,
   project: { id: ProjectId; scripts: readonly ProjectScript[] },
 ): readonly ProjectScript[] {
-  const override = settings.projectScriptOverrides[project.id];
-  if (override === null) return settings.defaultProjectScripts;
-  return (
-    override ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts)
-  );
+  const override = settings.projectSettingsOverrides[project.id]?.defaultProjectScripts;
+  if (override !== undefined) return override;
+  if (settings.projectSettingsFolded) return settings.defaultProjectScripts;
+  const legacy = settings.projectScriptOverrides[project.id];
+  if (legacy === null) return settings.defaultProjectScripts;
+  return legacy ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts);
 }
 
 export function projectScriptsInheritDefaults(
-  settings: Pick<ServerSettings, "projectScriptOverrides">,
+  settings: ProjectScriptSettings,
   project: { id: ProjectId; scripts: readonly ProjectScript[] },
 ): boolean {
-  const override = settings.projectScriptOverrides[project.id];
-  return override === null || (override === undefined && project.scripts.length === 0);
+  if (settings.projectSettingsOverrides[project.id]?.defaultProjectScripts !== undefined) {
+    return false;
+  }
+  if (settings.projectSettingsFolded) return true;
+  const legacy = settings.projectScriptOverrides[project.id];
+  return legacy === null || (legacy === undefined && project.scripts.length === 0);
 }
 
 interface ProjectScriptRuntimeEnvInput {

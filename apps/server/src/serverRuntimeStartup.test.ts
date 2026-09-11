@@ -1,5 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -40,27 +46,43 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
           };
         }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
-    const project = (workspaceRoot: string, autoPull = true) =>
-      ({ id: ProjectId.make(workspaceRoot), workspaceRoot, autoPull }) as never;
+    const project = (workspaceRoot: string) =>
+      ({ id: ProjectId.make(workspaceRoot), workspaceRoot }) as never;
+    const overrides = (entries: Record<string, boolean>) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: Object.fromEntries(
+        Object.entries(entries).map(([root, defaultAutoPull]) => [
+          ProjectId.make(root),
+          { defaultAutoPull },
+        ]),
+      ),
+    });
 
-    yield* ServerRuntimeStartup.autoPullProjects([
-      project("/clean"),
-      project("/current"),
-      project("/dirty"),
-      project("/ahead"),
-      project("/feature"),
-      project("/disabled", false),
-    ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+    yield* ServerRuntimeStartup.autoPullProjects(
+      [
+        project("/clean"),
+        project("/current"),
+        project("/dirty"),
+        project("/ahead"),
+        project("/feature"),
+        project("/disabled"),
+      ],
+      overrides({
+        "/clean": true,
+        "/current": true,
+        "/dirty": true,
+        "/ahead": true,
+        "/feature": true,
+        "/disabled": false,
+      }),
+    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
 
     assert.deepStrictEqual(pulled, ["/clean"]);
 
     pulled.length = 0;
     yield* ServerRuntimeStartup.autoPullProjects(
-      [project("/inherited", false), project("/opted-out"), project("/dirty", false)],
-      {
-        defaultAutoPull: true,
-        projectAutoPullOverrides: { [ProjectId.make("/opted-out")]: false },
-      },
+      [project("/inherited"), project("/opted-out"), project("/dirty")],
+      { ...overrides({ "/opted-out": false }), defaultAutoPull: true },
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),
@@ -223,7 +245,17 @@ it.effect.each([
       }>
     >([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provide(ServerSettings.layerTest({ defaultModelSelection: machineSelection })),
+      Effect.provide(
+        ServerSettings.layerTest({
+          defaultModelSelection: machineSelection,
+          projectSettingsOverrides:
+            existing && projectSelection
+              ? {
+                  [ProjectId.make("existing-project")]: { defaultModelSelection: projectSelection },
+                }
+              : {},
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -244,7 +276,7 @@ it.effect.each([
                   id: ProjectId.make("existing-project"),
                   title: "Startup Project",
                   workspaceRoot: "/tmp/startup-project",
-                  defaultModelSelection: projectSelection,
+                  defaultModelSelection: null,
                   scripts: [],
                   createdAt: "2026-01-01T00:00:00.000Z",
                   updatedAt: "2026-01-01T00:00:00.000Z",
