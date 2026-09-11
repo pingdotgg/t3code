@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -1312,7 +1313,8 @@ const exchangeAccessToken = (
   credential = defaultDesktopBootstrapToken,
   options?: {
     readonly headers?: Record<string, string>;
-    readonly scope?: string;
+    /** Pass `undefined` explicitly to omit `scope` and receive the grant's scopes. */
+    readonly scope?: string | undefined;
     readonly clientMetadata?: {
       readonly label?: string;
       readonly deviceType?: string;
@@ -1333,9 +1335,14 @@ const exchangeAccessToken = (
         subject_token: credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope:
-          options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        ...(options !== undefined && "scope" in options
+          ? options.scope !== undefined
+            ? { scope: options.scope }
+            : {}
+          : {
+              scope:
+                "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+            }),
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -2271,6 +2278,117 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(body.authenticated, true);
       assert.equal(response.headers["set-cookie"], cookie);
       assert.equal(response.headers["cache-control"], "no-store");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.each(["current", "legacy"] as const)(
+    "replaces only the presented %s browser session when pairing again",
+    (cookieKind) =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ config: { mode: "web", host: "192.168.1.50" } });
+        const previous = yield* bootstrapBrowserSession();
+        const unrelated = yield* bootstrapBrowserSession();
+        const currentCookie = previous.cookie?.split(";")[0] ?? "";
+        const previousCookie =
+          cookieKind === "legacy"
+            ? currentCookie.replace(/^t3_session_[^=]+=/, "t3_session=")
+            : currentCookie;
+        const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: previousCookie },
+          body: yield* HttpBody.json({ scopes: ["orchestration:read"] }),
+        });
+        assert.equal(pairingResponse.status, 200);
+        const pairing = yield* responseJsonEffect<{ readonly credential: string }>(pairingResponse);
+
+        const replacement = yield* bootstrapBrowserSession(pairing.credential, {
+          headers: { cookie: previousCookie },
+        });
+        assert.equal(replacement.response.status, 200);
+        assert.isDefined(replacement.cookie);
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const readSession = (cookie: string) =>
+          fetchEffect(sessionUrl, { headers: { cookie } }).pipe(
+            Effect.flatMap(
+              responseJsonEffect<{
+                readonly authenticated: boolean;
+                readonly scopes?: ReadonlyArray<string>;
+              }>,
+            ),
+          );
+        assert.equal((yield* readSession(previousCookie)).authenticated, false);
+        assert.deepEqual((yield* readSession(replacement.cookie?.split(";")[0] ?? "")).scopes, [
+          "orchestration:read",
+        ]);
+        assert.equal(
+          (yield* readSession(unrelated.cookie?.split(";")[0] ?? "")).authenticated,
+          true,
+        );
+        const oldTicket = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { cookie: previousCookie },
+        });
+        assert.equal(oldTicket.status, 401);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves the presented browser session when replacement pairing is invalid", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const previous = yield* bootstrapBrowserSession();
+      const previousCookie = previous.cookie?.split(";")[0] ?? "";
+      const rejected = yield* bootstrapBrowserSession("invalid-pairing-credential", {
+        headers: { cookie: previousCookie },
+      });
+
+      assert.equal(rejected.response.status, 401);
+      assert.isUndefined(rejected.cookie);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { cookie: previousCookie },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("pairs a browser without revoking a bearer token presented as its cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const initial = yield* bootstrapBrowserSession();
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const cookieName = initial.cookie?.split("=")[0] ?? "";
+      const replacement = yield* bootstrapBrowserSession(defaultDesktopBootstrapToken, {
+        headers: { cookie: `${cookieName}=${token}` },
+      });
+
+      assert.equal(replacement.response.status, 200);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("accepts valid pairing when the previous browser cookie is invalid", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const initial = yield* bootstrapBrowserSession();
+      const cookieName = initial.cookie?.split("=")[0] ?? "";
+      const replacement = yield* bootstrapBrowserSession(defaultDesktopBootstrapToken, {
+        headers: { cookie: `${cookieName}=invalid-session-token` },
+      });
+
+      assert.equal(replacement.response.status, 200);
+      const sessionResponse = yield* fetchEffect(yield* getHttpServerUrl("/api/auth/session"), {
+        headers: { cookie: replacement.cookie?.split(";")[0] ?? "" },
+      });
+      const session = yield* responseJsonEffect<{ readonly authenticated: boolean }>(
+        sessionResponse,
+      );
+      assert.equal(session.authenticated, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4432,6 +4550,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         body: yield* HttpBody.json({}),
       });
       assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues the grant's scopes when an exchange omits scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const owner = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: undefined,
+      });
+      assert.equal(owner.response.status, 200);
+      assert.equal(owner.body.scope, AuthAdministrativeScopes.join(" "));
+
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+        body: yield* HttpBody.json({ scopes: ["orchestration:read", "relay:read"] }),
+      });
+      assert.equal(createdResponse.status, 200);
+      const created = (yield* createdResponse.json) as { credential: string };
+      const paired = yield* exchangeAccessToken(created.credential, { scope: undefined });
+      assert.equal(paired.response.status, 200);
+      assert.equal(paired.body.scope, "orchestration:read relay:read");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
