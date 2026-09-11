@@ -2060,14 +2060,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     (event: ReactMouseEvent<HTMLElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      const position =
-        event.clientX === 0 && event.clientY === 0
-          ? (() => {
-              const bounds = event.currentTarget.getBoundingClientRect();
-              return { x: bounds.left, y: bounds.bottom };
-            })()
-          : { x: event.clientX, y: event.clientY };
-      void showFileContextMenu(position, event.currentTarget);
+      void showFileContextMenu({ x: event.clientX, y: event.clientY }, event.currentTarget);
     },
     [showFileContextMenu],
   );

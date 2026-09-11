@@ -38,6 +38,10 @@ export function useMessageLinkMenu() {
         setState(null);
         return Promise.resolve(null);
       }
+      if (position.x === 0 && position.y === 0) {
+        const bounds = trigger.getBoundingClientRect();
+        position = { x: bounds.left, y: bounds.bottom };
+      }
       return new Promise((resolve) => {
         pending.current = (value) => resolve(value as T | null);
         setState({ items, position, trigger });
