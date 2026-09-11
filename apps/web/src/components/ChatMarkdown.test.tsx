@@ -120,6 +120,7 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => {
         renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
       });
+      expect(highlight).toHaveBeenCalled();
       highlight.mockClear();
       await act(async () => {
         renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
