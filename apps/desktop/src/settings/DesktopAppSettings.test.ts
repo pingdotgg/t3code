@@ -30,6 +30,7 @@ const DesktopSettingsPatch = Schema.Struct({
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
+  updateRepository: Schema.optionalKey(Schema.NullOr(Schema.String)),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
   wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
   wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -132,6 +133,7 @@ describe("DesktopSettings", () => {
         tailscaleServePort: 443,
         updateChannel: "nightly",
         updateChannelConfiguredByUser: false,
+        updateRepository: null,
         wslBackendEnabled: false,
         wslOnly: false,
         wslDistro: null,
@@ -150,6 +152,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          updateRepository: null,
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -162,6 +165,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          updateRepository: null,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -228,6 +232,46 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("persists and normalizes a custom GitHub update repository", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setUpdateRepository("https://github.com/acme/t3code.git");
+
+        assert.equal((yield* settings.get).updateRepository, "acme/t3code");
+        assert.equal((yield* settings.get).updateChannel, "nightly");
+        assert.isTrue((yield* settings.get).updateChannelConfiguredByUser);
+        assert.equal((yield* settings.load).updateRepository, "acme/t3code");
+
+        yield* settings.setUpdateChannel("latest");
+        assert.equal((yield* settings.get).updateChannel, "latest");
+        assert.isNull((yield* settings.get).updateRepository);
+
+        yield* settings.setUpdateRepository("acme/t3code");
+        yield* settings.setUpdateRepository(null);
+        assert.isNull((yield* settings.get).updateRepository);
+      }),
+    ),
+  );
+
+  it.effect("migrates a persisted custom source to the Nightly release channel", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+          updateRepository: "acme/t3code",
+        });
+
+        const loaded = yield* settings.load;
+        assert.equal(loaded.updateRepository, "acme/t3code");
+        assert.equal(loaded.updateChannel, "nightly");
+        assert.isTrue(loaded.updateChannelConfiguredByUser);
+      }),
+    ),
+  );
+
   it.effect("falls back to defaults when the settings file is malformed", () =>
     withSettings(
       Effect.gen(function* () {
@@ -270,6 +314,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 8443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          updateRepository: null,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -327,6 +372,7 @@ describe("DesktopSettings", () => {
             tailscaleServePort: 8443,
             updateChannel: "nightly",
             updateChannelConfiguredByUser: true,
+            updateRepository: null,
             wslBackendEnabled: false,
             wslOnly: false,
             wslDistro: null,
@@ -376,6 +422,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
+          updateRepository: null,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -393,6 +440,7 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          updateRepository: null,
         });
 
         assert.deepEqual(yield* settings.load, {
@@ -405,6 +453,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
+          updateRepository: null,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
@@ -433,6 +482,7 @@ describe("DesktopSettings", () => {
           tailscaleServePort: 443,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
+          updateRepository: null,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,

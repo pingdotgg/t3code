@@ -11,6 +11,7 @@ const nightlyState: DesktopUpdateState = {
   enabled: true,
   status: "available",
   channel: "nightly",
+  repository: null,
   currentVersion: "0.0.35",
   hostArch: "arm64",
   appArch: "arm64",

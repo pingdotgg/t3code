@@ -58,6 +58,7 @@ export type ElectronUpdaterError = typeof ElectronUpdaterError.Type;
 export class ElectronUpdater extends Context.Service<
   ElectronUpdater,
   {
+    readonly resetFeed: Effect.Effect<void>;
     readonly setFeedURL: (options: ElectronUpdaterFeedUrl) => Effect.Effect<void>;
     readonly setAutoDownload: (value: boolean) => Effect.Effect<void>;
     readonly setAutoInstallOnAppQuit: (value: boolean) => Effect.Effect<void>;
@@ -82,6 +83,9 @@ export class ElectronUpdater extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
+  resetFeed: Effect.sync(() => {
+    autoUpdater.updateConfigPath = null;
+  }),
   setFeedURL: (options) =>
     Effect.suspend(() => {
       autoUpdater.setFeedURL(options);

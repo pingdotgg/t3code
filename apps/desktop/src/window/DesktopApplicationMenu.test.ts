@@ -65,6 +65,7 @@ const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   disabledReason: Effect.succeedNone,
   configure: Effect.void,
   setChannel: () => Effect.die("unexpected setChannel"),
+  setRepository: () => Effect.die("unexpected setRepository"),
   check: () => Effect.die("unexpected check"),
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
