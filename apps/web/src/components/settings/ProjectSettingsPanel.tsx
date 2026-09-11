@@ -34,14 +34,15 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, CopyIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import {
+  getClientSettings,
   useClientSettings,
   useEnvironmentSettings,
   useUpdateClientSettings,
@@ -73,7 +74,13 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useProjects, useThreadShells } from "../../state/entities";
+import {
+  readProject,
+  readProjects,
+  useProjects,
+  useThreadShells,
+  waitForProject,
+} from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -90,6 +97,8 @@ import {
   type ProjectScriptEditorRequest,
 } from "../projectScriptEditor";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Input } from "../ui/input";
 import {
   Menu,
@@ -114,7 +123,15 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  checkoutKey,
+  projectGroupTitleNeedsUpdate,
+  relinkProjectPreferences,
+  resolveSettingsProjectGroup,
+} from "./ProjectSettingsPanel.logic";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { getBrowseParentPath, normalizeProjectPathForComparison } from "../../lib/projectPaths";
+import { useUiStateStore } from "../../uiStateStore";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -153,10 +170,6 @@ export function useSettingsProjectGroups(): SidebarProjectSnapshot[] {
   );
 }
 
-function memberKey(member: { environmentId: string; id: string }): string {
-  return `${member.environmentId}:${member.id}`;
-}
-
 export function ProjectSettingsPanel({
   projectKey,
   environmentId = null,
@@ -165,9 +178,14 @@ export function ProjectSettingsPanel({
   environmentId?: EnvironmentId | null;
 }) {
   const groups = useSettingsProjectGroups();
+  const projects = useProjects();
   const navigate = useNavigate();
+  const { checkout } = useSearch({ from: "/settings/projects" });
 
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const selected = useMemo(
+    () => resolveSettingsProjectGroup(groups, projectKey, checkout, projects),
+    [groups, projectKey, checkout, projects],
+  );
   const members = useMemo(
     () =>
       selected?.memberProjects.filter(
@@ -188,28 +206,32 @@ export function ProjectSettingsPanel({
     lastSelectionRef.current = {
       key: selected.projectKey,
       environmentId,
-      memberKeys: members.map((member) => member.physicalProjectKey),
+      memberKeys: members.map(checkoutKey),
     };
   }, [selected, members, environmentId]);
 
   // A grouping-rule change replaces the group key mid-visit; follow the
   // project to its new key instead of parking on the not-found state.
   useEffect(() => {
-    if (members.length > 0) return;
+    if (selected?.projectKey === projectKey && members.length > 0) return;
     const last = lastSelectionRef.current;
-    if (last?.key !== projectKey || last.environmentId !== environmentId) return;
-    const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
-    );
+    const successor =
+      (selected?.projectKey !== projectKey ? selected : null) ??
+      (last?.key === projectKey && last.environmentId === environmentId
+        ? groups.find((group) =>
+            group.memberProjects.some((member) => last.memberKeys.includes(checkoutKey(member))),
+          )
+        : null);
     if (successor) {
       void navigate({
         to: "/settings/projects",
-        search: { project: successor.projectKey, machine: environmentId ?? undefined },
+        search: { project: successor.projectKey, machine: environmentId ?? undefined, checkout },
         replace: true,
+        resetScroll: false,
         hashScrollIntoView: false,
       });
     }
-  }, [groups, navigate, projectKey, members.length, environmentId]);
+  }, [groups, navigate, projectKey, members.length, environmentId, selected, checkout]);
 
   if (!selected) {
     return (
@@ -226,6 +248,11 @@ export function ProjectSettingsPanel({
         This project has no checkout on this machine.
       </p>
     );
+  if (checkout && !members.some((member) => checkoutKey(member) === checkout)) {
+    return (
+      <p className="p-8 text-sm text-muted-foreground">This checkout is no longer available.</p>
+    );
+  }
   const scopedGroup = {
     ...selected,
     memberProjects: members,
@@ -389,6 +416,7 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate();
+  const { checkout: checkoutTarget } = useSearch({ from: "/settings/projects" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = useMemo(
@@ -713,11 +741,10 @@ function ProjectDetail({
 
   // ----- checkout selection and scripts -----
   const hasMultipleCheckouts = group.memberProjects.length > 1;
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState<string | null>(null);
-  const selectedCheckoutMatch = group.memberProjects.find(
-    (member) => member.physicalProjectKey === selectedCheckoutKey,
-  );
-  const selectedCheckout = selectedCheckoutMatch ?? representative;
+  const selectedCheckoutKey = checkoutTarget ?? checkoutKey(representative);
+  const selectedCheckout =
+    group.memberProjects.find((member) => checkoutKey(member) === selectedCheckoutKey) ??
+    representative;
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -810,9 +837,9 @@ function ProjectDetail({
       const api = readLocalApi();
       if (!api) return;
 
-      const memberKeys = new Set(members.map(memberKey));
+      const memberKeys = new Set(members.map(checkoutKey));
       const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+        memberKeys.has(checkoutKey({ environmentId: thread.environmentId, id: thread.projectId })),
       );
       const isWholeGroup = members.length === group.memberProjects.length;
       const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
@@ -907,6 +934,16 @@ function ProjectDetail({
     projectGroupingSettings.sidebarProjectGroupingOverrides?.[
       deriveProjectGroupingOverrideKey(selectedCheckout)
     ] ?? "inherit";
+  const selectedCheckoutThreadCount = threads.filter(
+    (thread) =>
+      thread.environmentId === selectedCheckout.environmentId &&
+      thread.projectId === selectedCheckout.id,
+  ).length;
+  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
+    onCopy: ({ path }) => {
+      toastManager.add({ type: "success", title: "Path copied", description: path });
+    },
+  });
   const checkoutLabel = (member: SidebarProjectGroupMember) => {
     const label = member.environmentLabel ?? "This machine";
     return group.memberProjects.some(
@@ -918,6 +955,55 @@ function ProjectDetail({
       : label;
   };
   const selectedCheckoutLabel = checkoutLabel(selectedCheckout);
+  const updateCheckoutFolder = async (workspaceRoot: string) => {
+    const ref = scopeProjectRef(selectedCheckout.environmentId, selectedCheckout.id);
+    const previous = readProject(ref);
+    if (previous === null) return false;
+    const result = await updateProject({
+      environmentId: selectedCheckout.environmentId,
+      input: { projectId: selectedCheckout.id, workspaceRoot },
+    });
+    reportFailure(
+      "Failed to update project folder",
+      mapAtomCommandResult(result, () => undefined),
+    );
+    if (result._tag === "Failure") return false;
+    const selectedPath = normalizeProjectPathForComparison(workspaceRoot);
+    if (normalizeProjectPathForComparison(previous.workspaceRoot) === selectedPath) return true;
+    // The palette submits a resolved server browse path, not the typed query.
+    const updated = await settlePromise(() => waitForProject(ref, { workspaceRoot }));
+    reportFailure(
+      "Folder updated, but project preferences could not follow it",
+      mapAtomCommandResult(updated, () => undefined),
+    );
+    if (updated._tag === "Failure") return true;
+    const projects = readProjects();
+    const project = projects.find(
+      (item) =>
+        item.environmentId === ref.environmentId &&
+        item.id === ref.projectId &&
+        normalizeProjectPathForComparison(item.workspaceRoot) === selectedPath,
+    );
+    if (!project) return true;
+    const settings = getClientSettings();
+    const next = relinkProjectPreferences(useUiStateStore.getState(), {
+      previous,
+      project,
+      projects,
+      settings,
+    });
+    useUiStateStore.setState(next.uiState);
+    if (
+      next.settings.sidebarProjectGroupingOverrides !== settings.sidebarProjectGroupingOverrides ||
+      next.settings.pullRequestMergeMethodOverrides !== settings.pullRequestMergeMethodOverrides
+    ) {
+      updateClientSettings({
+        sidebarProjectGroupingOverrides: next.settings.sidebarProjectGroupingOverrides,
+        pullRequestMergeMethodOverrides: next.settings.pullRequestMergeMethodOverrides,
+      });
+    }
+    return true;
+  };
 
   return (
     <>
@@ -1240,16 +1326,22 @@ function ProjectDetail({
           />
         </SettingsSection>
 
-        <SettingsSection title="Checkout">
+        <SettingsSection id="checkout" title="Checkout">
           {hasMultipleCheckouts ? (
             <SettingsRow
               title="Checkout"
               description="Actions and grouping belong to this checkout."
               control={
                 <Select
-                  value={selectedCheckout.physicalProjectKey}
+                  value={checkoutKey(selectedCheckout)}
                   onValueChange={(value) => {
-                    if (value) setSelectedCheckoutKey(value);
+                    if (value)
+                      void navigate({
+                        to: "/settings/projects",
+                        from: "/settings/projects",
+                        search: (search) => ({ ...search, checkout: String(value) }),
+                        resetScroll: false,
+                      });
                   }}
                 >
                   <SelectTrigger size="sm" aria-label="Checkout">
@@ -1257,7 +1349,7 @@ function ProjectDetail({
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
                     {group.memberProjects.map((member) => (
-                      <SelectItem key={member.physicalProjectKey} value={member.physicalProjectKey}>
+                      <SelectItem key={member.physicalProjectKey} value={checkoutKey(member)}>
                         <span className="max-w-96 whitespace-normal break-all">
                           {checkoutLabel(member)}
                         </span>
@@ -1268,6 +1360,70 @@ function ProjectDetail({
               }
             />
           ) : null}
+          <div className="px-3 py-2 sm:px-4">
+            <div className="flex min-w-0 items-center rounded-lg bg-muted/30 p-1 text-base text-muted-foreground sm:text-sm">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Copy checkout path"
+                      className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      type="button"
+                      onClick={() =>
+                        copyPathToClipboard(selectedCheckout.workspaceRoot, {
+                          path: selectedCheckout.workspaceRoot,
+                        })
+                      }
+                    >
+                      <code className="min-w-0 flex-1 truncate font-mono">
+                        {selectedCheckout.workspaceRoot}
+                      </code>
+                      <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">Copy path</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Update project folder"
+                      onClick={() => {
+                        void navigate({
+                          to: "/settings/projects",
+                          from: "/settings/projects",
+                          search: (search) => ({
+                            ...search,
+                            checkout: checkoutKey(selectedCheckout),
+                          }),
+                          resetScroll: false,
+                        });
+                        openCommandPalette({
+                          open: "select-folder",
+                          environmentId: selectedCheckout.environmentId,
+                          initialPath:
+                            getBrowseParentPath(selectedCheckout.workspaceRoot) ??
+                            selectedCheckout.workspaceRoot,
+                          onSelect: updateCheckoutFolder,
+                        });
+                      }}
+                    >
+                      <PencilIcon className="size-4" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Update project folder</TooltipPopup>
+              </Tooltip>
+              <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
+                {selectedCheckoutThreadCount === 1
+                  ? "1 thread"
+                  : `${selectedCheckoutThreadCount} threads`}
+              </div>
+            </div>
+          </div>
           <SettingsRow
             title="Project grouping"
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."

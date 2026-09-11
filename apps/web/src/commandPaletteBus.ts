@@ -9,11 +9,19 @@ export interface CommandPaletteLinkedThreads {
 // without owning its React state.
 const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
-export interface CommandPaletteOpenDetail {
-  readonly open?: "add-project" | "new-thread-in";
-  readonly query?: string;
-  readonly linkedThreads?: CommandPaletteLinkedThreads;
+export interface FolderSelectionRequest {
+  readonly environmentId: EnvironmentId;
+  readonly initialPath: string;
+  readonly onSelect: (path: string) => Promise<boolean>;
 }
+
+export type CommandPaletteOpenDetail =
+  | {
+      readonly open?: "add-project" | "new-thread-in";
+      readonly query?: string;
+      readonly linkedThreads?: CommandPaletteLinkedThreads;
+    }
+  | (FolderSelectionRequest & { readonly open: "select-folder" });
 
 export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {
   window.dispatchEvent(

@@ -2,9 +2,16 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ProjectsSettings } from "../components/settings/ProjectsSettings";
 
 export const Route = createFileRoute("/settings/projects")({
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    project: string | undefined;
+    machine: string | undefined;
+    checkout?: string | undefined;
+  } => ({
     project: typeof search.project === "string" ? search.project : undefined,
     machine: typeof search.machine === "string" ? search.machine : undefined,
+    checkout: typeof search.checkout === "string" ? search.checkout : undefined,
   }),
   component: ProjectsRoute,
 });
