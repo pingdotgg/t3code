@@ -59,11 +59,13 @@ import {
   resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
+  isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
+  threadKeysShareEnvironment,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -575,39 +577,39 @@ describe("resolveThreadSwitchTimeline", () => {
     resetHeldThreadTimeline();
   });
 
-  const held = { threadKey: "thread-a", entries: ["a1", "a2"] };
+  const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
 
   it("keeps the previous thread's entries while the next thread is loading", () => {
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
-        activeThreadKey: "thread-b",
+        activeThreadKey: "env-1:thread-b",
         nextEntries: [],
         lastReady: held,
       }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
   });
 
   it("shows the new thread once its detail is ready", () => {
     expect(
       resolveThreadSwitchTimeline({
         loading: false,
-        activeThreadKey: "thread-b",
+        activeThreadKey: "env-1:thread-b",
         nextEntries: ["b1"],
         lastReady: held,
       }),
-    ).toEqual({ entries: ["b1"], displayThreadKey: "thread-b" });
+    ).toEqual({ entries: ["b1"], displayThreadKey: "env-1:thread-b" });
   });
 
   it("does not invent a timeline on the first open of a thread", () => {
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
-        activeThreadKey: "thread-a",
+        activeThreadKey: "env-1:thread-a",
         nextEntries: [],
         lastReady: null,
       }),
-    ).toEqual({ entries: [], displayThreadKey: "thread-a" });
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
   });
 
   it("survives a ChatView remount by remembering the last ready timeline", () => {
@@ -616,34 +618,51 @@ describe("resolveThreadSwitchTimeline", () => {
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
-        activeThreadKey: "thread-b",
+        activeThreadKey: "env-1:thread-b",
         nextEntries: [],
       }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
   });
 
   it("paints a remembered destination instead of the last-viewed thread", () => {
     rememberReadyThreadTimeline(held);
-    rememberReadyThreadTimeline({ threadKey: "thread-b", entries: ["b1", "b2"] });
-    expect(peekRememberedThreadTimeline<string[]>("thread-a")).toEqual(["a1", "a2"]);
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
     expect(
       resolveThreadSwitchTimeline({
         loading: true,
-        activeThreadKey: "thread-a",
+        activeThreadKey: "env-1:thread-a",
         nextEntries: [],
       }),
-    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
   });
 
   it("prefers live entries over a remembered snapshot", () => {
-    rememberReadyThreadTimeline({ threadKey: "thread-b", entries: ["stale-b"] });
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
     expect(
       resolveThreadSwitchTimeline({
         loading: false,
-        activeThreadKey: "thread-b",
+        activeThreadKey: "env-1:thread-b",
         nextEntries: ["fresh-b"],
       }),
-    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "thread-b" });
+    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not hold another environment's timeline across a jump", () => {
+    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-2:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-2:thread-b" });
+  });
+
+  it("treats a foreign held timeline as paint-only", () => {
+    expect(isPaintOnlyThreadTimeline("env-1:thread-a", "env-1:thread-b")).toBe(true);
+    expect(isPaintOnlyThreadTimeline("env-1:thread-b", "env-1:thread-b")).toBe(false);
   });
 });
 

@@ -415,6 +415,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  isPaintOnlyThreadTimeline,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -1382,6 +1383,10 @@ function chatActionErrorMessage(error: unknown): string {
 }
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
+const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
+const noopHeldTurnDiff = (_turnId: TurnId, _filePath?: string) => {};
+const noopHeldRevert = (_targetTurnCount: number) => {};
+const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
 /**
  * Drops the send-time anchored end space. That space is what holds a sent
@@ -3251,6 +3256,12 @@ export default function ChatView(props: ChatViewProps) {
     nextEntries: timelineEntries,
     rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
   });
+  const displayedTimelineKey = displayedTimeline.displayThreadKey ?? routeThreadKey;
+  const paintOnlyDisplayedTimeline = isPaintOnlyThreadTimeline(
+    displayedTimeline.displayThreadKey,
+    activeThreadKey,
+  );
+  const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -8465,31 +8476,43 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
-                citationRequest={citationRequest}
+                citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
-                onCiteAssistantText={citeAssistantText}
+                onCiteAssistantText={paintOnlyDisplayedTimeline ? undefined : citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                isWorking={isWorking}
-                isPreparingWorktree={isPreparingWorktree}
-                isCompacting={isCompacting}
-                activeTurnStartedAt={activeWorkStartedAt}
+                isWorking={!paintOnlyDisplayedTimeline && isWorking}
+                isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
+                activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
-                latestTurn={activeLatestTurn}
-                runningTurnId={activeRunningTurnId}
-                turnDiffSummaries={activeThread.checkpoints}
-                activeThreadEnvironmentId={activeThread.environmentId}
-                routeThreadKey={routeThreadKey}
-                displayThreadKey={displayedTimeline.displayThreadKey ?? routeThreadKey}
-                onOpenTurnDiff={onOpenTurnDiff}
-                supportsConversationRollback={supportsConversationRollback}
-                onRevertToTurnCount={onRevertTimelineTurn}
-                onUseArtifactTemplate={useArtifactTemplate}
-                isRevertingCheckpoint={isRevertingCheckpoint}
+                latestTurn={paintOnlyDisplayedTimeline ? null : activeLatestTurn}
+                runningTurnId={paintOnlyDisplayedTimeline ? null : activeRunningTurnId}
+                turnDiffSummaries={
+                  paintOnlyDisplayedTimeline
+                    ? EMPTY_HELD_TURN_DIFF_SUMMARIES
+                    : activeThread.checkpoints
+                }
+                activeThreadEnvironmentId={
+                  displayedThreadRef?.environmentId ?? activeThread.environmentId
+                }
+                routeThreadKey={displayedTimelineKey}
+                displayThreadKey={displayedTimelineKey}
+                onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
+                supportsConversationRollback={
+                  !paintOnlyDisplayedTimeline && supportsConversationRollback
+                }
+                onRevertToTurnCount={
+                  paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
+                }
+                onUseArtifactTemplate={paintOnlyDisplayedTimeline ? undefined : useArtifactTemplate}
+                isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
-                onFileOpen={openFileAttachment}
-                onFileDownload={downloadFileAttachment}
+                onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
+                onFileDownload={
+                  paintOnlyDisplayedTimeline ? noopHeldAttachment : downloadFileAttachment
+                }
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
@@ -8499,17 +8522,17 @@ export default function ChatView(props: ChatViewProps) {
                     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
                     : EMPTY_PROVIDER_SKILLS
                 }
-                anchorMessageId={timelineAnchorMessageId}
+                anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerTimelineInset}
-                liveFollowEnabled={timelineLiveFollowEnabled}
+                liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChange}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
-                loadEarlier={loadEarlierTurns}
+                loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

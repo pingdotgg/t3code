@@ -18,6 +18,7 @@ import {
   type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -336,6 +337,25 @@ export function resetHeldThreadTimeline(): void {
   lastReadyThreadKey = null;
 }
 
+export function threadKeysShareEnvironment(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) {
+    return false;
+  }
+  const leftRef = parseScopedThreadKey(left);
+  const rightRef = parseScopedThreadKey(right);
+  return leftRef !== null && rightRef !== null && leftRef.environmentId === rightRef.environmentId;
+}
+
+/** True while we still paint another thread's last snapshot. */
+export function isPaintOnlyThreadTimeline(
+  displayThreadKey: string | null,
+  activeThreadKey: string | null,
+): boolean {
+  return (
+    displayThreadKey !== null && activeThreadKey !== null && displayThreadKey !== activeThreadKey
+  );
+}
+
 export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input: {
   loading: boolean;
   activeThreadKey: string | null;
@@ -359,7 +379,8 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
     lastReady !== null &&
     lastReady.threadKey !== null &&
     lastReady.threadKey !== input.activeThreadKey &&
-    lastReady.entries.length > 0
+    lastReady.entries.length > 0 &&
+    threadKeysShareEnvironment(lastReady.threadKey, input.activeThreadKey)
   ) {
     return { entries: lastReady.entries, displayThreadKey: lastReady.threadKey };
   }
