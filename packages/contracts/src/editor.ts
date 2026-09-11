@@ -199,9 +199,13 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
     ...ExternalLauncherSpawnFields,
     editor: EditorId,
     target: Schema.String,
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.detail) {
+      return `Failed to launch '${this.target}' in ${this.editor}: ${this.detail}`;
+    }
     return `Failed to launch '${this.target}' in ${this.editor} with '${[this.command, ...this.args].join(" ")}'`;
   }
 }

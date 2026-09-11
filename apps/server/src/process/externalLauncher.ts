@@ -52,6 +52,7 @@ interface EditorLaunch {
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly waitForExit?: boolean;
 }
 
 interface ProcessLaunch {
@@ -589,7 +590,7 @@ export function buildFileExplorerRevealPowerShellSource(
   explorerCommand: string,
   target: string,
 ): string {
-  return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
+  return `$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = ${escapePowerShellStringLiteral(target)}; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + $target + '"')`;
 }
 
 function fileExplorerRevealLaunch(
@@ -601,6 +602,7 @@ function fileExplorerRevealLaunch(
     editor: "file-manager",
     target,
     command: powershellCommand,
+    waitForExit: true,
     args: [
       ...POWERSHELL_ARGUMENTS_PREFIX,
       encodeUtf16LeBase64(buildFileExplorerRevealPowerShellSource("explorer.exe", explorerTarget)),
@@ -729,6 +731,51 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   }
 
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env });
+  if (launch.waitForExit) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    // PowerShell is a short-lived launch helper. Its successful spawn does not
+    // mean that it managed to start Explorer; collect its result before replying.
+    const [stderr, exitCode] = yield* Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          shell: spawnCommand.shell,
+          windowsHide: true,
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        }),
+      );
+      return yield* Effect.all(
+        [handle.stderr.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+        { concurrency: "unbounded" },
+      );
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.scoped,
+      Effect.mapError(
+        (cause) =>
+          new ExternalLauncherEditorSpawnError({
+            editor: launch.editor,
+            target: launch.target,
+            command: spawnCommand.command,
+            args: spawnCommand.args,
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+    if (exitCode !== 0) {
+      return yield* new ExternalLauncherEditorSpawnError({
+        editor: launch.editor,
+        target: launch.target,
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        detail: stderr.trim() || `Launch helper exited with code ${exitCode}.`,
+        cause: { exitCode, stderr },
+      });
+    }
+    return;
+  }
   yield* launchAndUnref(
     {
       command: spawnCommand.command,

@@ -29,6 +29,7 @@ const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 interface MockSpawnResult {
   readonly exitCode?: number;
   readonly stdout?: string;
+  readonly stderr?: string;
   /** Never deliver an exit code, like a child wedged on a broken desktop session. */
   readonly stall?: boolean;
 }
@@ -50,7 +51,10 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
       input.stdout === undefined
         ? Stream.empty
         : Stream.make(new TextEncoder().encode(input.stdout)),
-    stderr: Stream.empty,
+    stderr:
+      input.stderr === undefined
+        ? Stream.empty
+        : Stream.make(new TextEncoder().encode(input.stderr)),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -194,6 +198,50 @@ it.effect.skipIf(windowsHost)("reveals a file in Finder with open -R on macOS", 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([
+  {
+    stderr: "The system cannot find the file specified.",
+    expected: "The system cannot find the file specified.",
+  },
+  { stderr: "", expected: "Launch helper exited with code 1." },
+])("reports a Windows reveal helper failure: $expected", ({ stderr, expected }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-failure-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.CMD"), "@echo off\r\n");
+    const systemRoot = path.join(binDir, "system-root");
+    const powerShellPath = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    yield* fileSystem.makeDirectory(path.dirname(powerShellPath), { recursive: true });
+    yield* fileSystem.writeFileString(powerShellPath, "");
+    const result = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "C:/missing.txt",
+        reveal: true,
+      });
+    }).pipe(
+      Effect.result,
+      Effect.provide(
+        testLayer({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: systemRoot },
+          spawnResult: () => ({
+            exitCode: 1,
+            stderr,
+          }),
+        }),
+      ),
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure._tag, "ExternalLauncherEditorSpawnError");
+      assert.include(result.failure.message, expected);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -246,7 +294,7 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     // PowerShell 5.1's Start-Process passes the argument string verbatim.
     assert.equal(
       decodedCommand,
-      "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
+      "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = 'C:\\workspace with spaces\\media\\author''s clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"')",
     );
     assert.equal(spawned.options.shell, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -269,7 +317,8 @@ it.skipIf(process.platform !== "win32")(
       const outputPath = NodePath.join(tempDir, "argv.txt");
       NodeFS.writeFileSync(recorderPath, `@echo off\r\n>"${outputPath}" echo(%*\r\n`);
 
-      const target = "C:/workspace with spaces/media/author's clip.mp4";
+      const target = NodePath.join(tempDir, "author's clip.mp4").replaceAll("\\", "/");
+      NodeFS.writeFileSync(target, "");
       const explorerTarget = target.replaceAll("/", "\\");
       const source = ExternalLauncher.buildFileExplorerRevealPowerShellSource(
         recorderPath,
@@ -308,6 +357,34 @@ it.skipIf(process.platform !== "win32")(
     }
   },
 );
+
+it.skipIf(!windowsHost)("PowerShell reveal fails for a missing target or launcher", () => {
+  const powerShellPath = `${process.env.SYSTEMROOT ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  for (const target of [
+    NodePath.join(NodeOS.tmpdir(), "t3-missing-reveal-target", "missing.txt"),
+    NodeOS.tmpdir(),
+  ]) {
+    const source = ExternalLauncher.buildFileExplorerRevealPowerShellSource(
+      NodePath.join(NodeOS.tmpdir(), "t3-missing-reveal-launcher.exe"),
+      target,
+    );
+    const result = NodeChildProcess.spawnSync(
+      powerShellPath,
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        Buffer.from(source, "utf16le").toString("base64"),
+      ],
+      { encoding: "utf8", windowsHide: true, timeout: 10_000 },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1);
+    assert.isNotEmpty(result.stderr.trim());
+  }
+});
 
 it.effect("does not advertise reveal on Windows when PowerShell is missing", () =>
   Effect.gen(function* () {
@@ -392,7 +469,7 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4' + '\"')",
+        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"')",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
