@@ -11,7 +11,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import * as Option from "effect/Option";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
@@ -240,6 +241,50 @@ it.layer(NodeServices.layer)("VoiceTranscription", (it) => {
         yield* Deferred.await(entered);
         yield* Fiber.interrupt(fiber);
         yield* Deferred.await(interrupted);
+      }),
+    );
+
+    it.effect("does not follow redirects with credentials", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "voice-redirect-" });
+        yield* writeCodexAuth(homePath, "redirect-token");
+
+        let calls = 0;
+        let observedRedirect: string | undefined;
+        const redirectClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.gen(function* () {
+              calls += 1;
+              const init = yield* Effect.serviceOption(FetchHttpClient.RequestInit);
+              observedRedirect = Option.getOrUndefined(init)?.redirect;
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(null, {
+                  status: 302,
+                  headers: { location: "https://second.example/transcribe" },
+                }),
+              );
+            }),
+          ),
+        );
+
+        const error = yield* transcribeCodexVoice(new Uint8Array([1, 2, 3])).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              redirectClient,
+              ServerSettingsService.layerTest({ providers: { codex: { homePath } } }),
+            ),
+          ),
+          Effect.flip,
+        );
+
+        // Manual redirect mode surfaces 3xx as a failure instead of re-sending
+        // the bearer token and ChatGPT-Account-Id to a second origin.
+        expect(observedRedirect).toBe("manual");
+        expect(calls).toBe(1);
+        expect(error._tag).toBe("EnvironmentHttpInternalServerError");
       }),
     );
   });

@@ -24,7 +24,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpBody, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
@@ -127,6 +133,11 @@ const forwardToCodexTranscription = Effect.fn("VoiceTranscription.forwardToCodex
       HttpClientRequest.setHeader("ChatGPT-Account-Id", credentials.accountId),
       HttpClientRequest.setHeaders(CODEX_DESKTOP_HEADERS),
       httpClient.execute,
+      // Fetch follows redirects by default; cross-origin redirects strip
+      // Authorization but can preserve the custom ChatGPT-Account-Id header.
+      // Manual mode surfaces 3xx as a plain failure below instead of
+      // re-sending credentials to a second origin.
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
       Effect.mapError(
         () => new EnvironmentHttpInternalServerError({ message: "Voice transcription failed." }),
       ),
