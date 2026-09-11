@@ -249,6 +249,84 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it.each([
+    {
+      item: {
+        server: "t3-code",
+        tool: "preview_open",
+        result: { structuredContent: { url: "https://example.com/" } },
+      },
+    },
+    {
+      toolName: "mcp__t3-code__preview_navigate",
+      result: { content: '{"url":"https://example.com/"}' },
+    },
+    { tool: "t3-code_preview_status", state: { output: '{"url":"https://example.com/"}' } },
+    {
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: {
+        content: [
+          { type: "text", text: '{"url":"https://example.com/"}' },
+          { type: "text", text: "Snapshot text was bounded. Omitted: accessibilityTree." },
+        ],
+      },
+    },
+    {
+      toolName: "mcp__t3-code__preview_click",
+      result: { content: '{"toolIcon":{"_tag":"website","pageUrl":"https://example.com/"}}' },
+    },
+    {
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: { content: '{"url":"https://example.com/"}\n{"accessibilityTree":"truncated' },
+    },
+    ...[false, true].map((truncated) => ({
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: {
+        content: JSON.stringify({
+          content: [{ type: "text", text: '{"url":"https://example.com/"}' }],
+          structuredContent: { url: "https://example.com/", visibleText: "page" },
+        }).slice(0, truncated ? -5 : undefined),
+      },
+    })),
+    ...[
+      "type",
+      "press",
+      "scroll",
+      "resize",
+      "set_appearance",
+      "evaluate",
+      "wait_for",
+      "recording_start",
+      "recording_stop",
+    ].map((action) => ({
+      toolName: `mcp__t3_code__preview_${action}`,
+      result: { content: '{"toolIcon":{"_tag":"website","pageUrl":"https://example.com/"}}' },
+    })),
+  ])("preserves the preview page favicon through result slimming", (data) => {
+    const projected = projectActivityPayload(activity({ itemType: "mcp_tool_call", data }));
+    const icon = { _tag: "website", pageUrl: "https://example.com/" };
+    expect(projected.payload).toMatchObject({ toolIcon: icon });
+    expect(projectActivityPayload(projected).payload).toMatchObject({ toolIcon: icon });
+  });
+
+  it.each([
+    { toolName: "mcp__other__preview_open", result: { content: '{"url":"https://example.com/"}' } },
+    {
+      toolName: "mcp__t3-code__preview_evaluate",
+      result: { content: '{"url":"https://example.com/"}' },
+    },
+    {
+      toolName: "mcp__t3-code__preview_open",
+      result: { isError: true, content: '{"url":"https://example.com/"}' },
+    },
+    { toolName: "mcp__t3-code__preview_open", result: { content: "malformed JSON" } },
+    { toolName: "mcp__t3-code__preview_open", result: { content: '{"url":"about:blank"}' } },
+  ])("keeps the fallback for unrelated tools, failed navigation, and missing page URLs", (data) => {
+    expect(
+      projectActivityPayload(activity({ itemType: "mcp_tool_call", data })).payload,
+    ).not.toHaveProperty("toolIcon");
+  });
+
   it("passes task lifecycle payloads (no data field) through untouched", () => {
     const source = activity({
       taskId: "task-9",

@@ -127,50 +127,70 @@ it.effect("targets multiple tabs explicitly while retaining a default tab", () =
   ),
 );
 
-it.effect("does not let an older response replace a newer explicit tab target", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* makeBroker;
-      const olderTabId = PreviewTabId.make("tab-older-request");
-      const newerTabId = PreviewTabId.make("tab-newer-request");
-      const releaseOlderResponse = yield* Deferred.make<void>();
-      const routedRequests: RoutedRequest[] = [];
-      const requests = requestsFrom(yield* broker.connect(makeHost()));
-      yield* Stream.runForEach(requests, (request) => {
-        routedRequests.push(request);
-        const response = Effect.gen(function* () {
-          if (request.tabId === olderTabId) {
-            yield* Deferred.await(releaseOlderResponse);
-          }
-          yield* broker.respond({
-            clientId: "client-1",
-            connectionId: request.connectionId,
-            requestId: request.requestId,
-            ok: true,
-            result: { url: "http://localhost:3200" },
+it.effect.each([true, false])(
+  "keeps an older target stable while a newer explicit tab responds (implicit: %s)",
+  (implicit) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const olderTabId = PreviewTabId.make("tab-older-request");
+        const newerTabId = PreviewTabId.make("tab-newer-request");
+        const releaseOlderResponse = yield* Deferred.make<void>();
+        const routedRequests: RoutedRequest[] = [];
+        const requests = requestsFrom(yield* broker.connect(makeHost()));
+        yield* Stream.runForEach(requests, (request) => {
+          routedRequests.push(request);
+          const response = Effect.gen(function* () {
+            if (request.tabId === olderTabId && request.operation === "snapshot") {
+              yield* Deferred.await(releaseOlderResponse);
+            }
+            yield* broker.respond({
+              clientId: "client-1",
+              connectionId: request.connectionId,
+              requestId: request.requestId,
+              ok: true,
+              result: { url: "http://localhost:3200" },
+            });
+            if (request.tabId === newerTabId) {
+              yield* Deferred.succeed(releaseOlderResponse, undefined);
+            }
           });
-          if (request.tabId === newerTabId) {
-            yield* Deferred.succeed(releaseOlderResponse, undefined);
-          }
+          return response.pipe(Effect.forkScoped, Effect.asVoid);
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+
+        yield* broker.invoke({ scope, operation: "status", input: {}, tabId: olderTabId });
+        let capturedTabId: PreviewTabId | undefined;
+        const older = yield* broker
+          .invoke({
+            scope,
+            operation: "snapshot",
+            input: {},
+            ...(implicit ? {} : { tabId: olderTabId }),
+            onTargetTab: (tabId) => {
+              capturedTabId = tabId;
+            },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        const newer = yield* broker
+          .invoke({ scope, operation: "snapshot", input: {}, tabId: newerTabId })
+          .pipe(Effect.forkScoped);
+        yield* Fiber.join(newer);
+        yield* Fiber.join(older);
+        yield* broker.invoke({
+          scope,
+          operation: "status",
+          input: {},
+          tabId: olderTabId,
+          updateCurrentTab: false,
         });
-        return response.pipe(Effect.forkScoped, Effect.asVoid);
-      }).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
+        yield* broker.invoke({ scope, operation: "snapshot", input: {} });
 
-      const older = yield* broker
-        .invoke({ scope, operation: "snapshot", input: {}, tabId: olderTabId })
-        .pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-      const newer = yield* broker
-        .invoke({ scope, operation: "snapshot", input: {}, tabId: newerTabId })
-        .pipe(Effect.forkScoped);
-      yield* Fiber.join(newer);
-      yield* Fiber.join(older);
-      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
-
-      expect(routedRequests.at(-1)?.tabId).toBe(newerTabId);
-    }),
-  ),
+        expect(routedRequests.at(-1)?.tabId).toBe(newerTabId);
+        expect(capturedTabId).toBe(olderTabId);
+      }),
+    ),
 );
 
 it.effect("tracks the tab returned by a targeted recording stop", () =>
