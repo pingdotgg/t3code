@@ -87,6 +87,7 @@ const modelTotals = Object.freeze([
     costUsd: 10,
     totalTokens: 100,
     records: 1,
+    unpricedRecords: 0,
     costShare: 10 / 16,
   },
   {
@@ -95,6 +96,7 @@ const modelTotals = Object.freeze([
     costUsd: 5,
     totalTokens: 1_000,
     records: 1,
+    unpricedRecords: 0,
     costShare: 5 / 16,
   },
   {
@@ -103,7 +105,17 @@ const modelTotals = Object.freeze([
     costUsd: 1,
     totalTokens: 1_000,
     records: 1,
+    unpricedRecords: 0,
     costShare: 1 / 16,
+  },
+  {
+    model: "unpriced-model",
+    provider: "codex" as const,
+    costUsd: 0,
+    totalTokens: 500,
+    records: 2,
+    unpricedRecords: 2,
+    costShare: 0,
   },
 ]);
 
@@ -190,6 +202,17 @@ describe("UsagePage model breakdown", () => {
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
   });
 
+  it("flags a model with no known rates instead of showing it as free", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const unpricedRow = body.split("<tr").find((row) => row.includes("unpriced-model")) ?? "";
+
+    expect(unpricedRow).toContain("Unpriced");
+    expect(unpricedRow).not.toContain("$0.00");
+  });
+
   it("sorts models by token usage when the token metric is selected", () => {
     testState.metric = "tokens";
     testState.breakdown = "model";
@@ -202,6 +225,7 @@ describe("UsagePage model breakdown", () => {
       "expensive-model",
       "token-heavy-model",
       "token-heavy-cheaper-model",
+      "unpriced-model",
     ]);
   });
 });
