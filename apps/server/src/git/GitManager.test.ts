@@ -671,12 +671,13 @@ function makeManager(input?: {
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
       Effect.map((provider) => {
+        const baseProvider = input?.sourceControlProvider ?? provider;
         const sourceControlProvider = () => ({
-          ...provider,
+          ...baseProvider,
           kind:
             typeof input?.sourceControlProviderKind === "function"
               ? input.sourceControlProviderKind()
-              : (input?.sourceControlProviderKind ?? provider.kind),
+              : (input?.sourceControlProviderKind ?? baseProvider.kind),
         });
         return SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.sync(sourceControlProvider),
@@ -1087,7 +1088,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
 
       expect(pullRequest).toBeNull();
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+
+yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
+
+expect(
+  yield* manager.branchPullRequest({
+    cwd: repoDir,
+    branch: "feature/unknown-branch-provider",
+  }),
+).toBeNull();
+
+expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
     }),
   );
 
