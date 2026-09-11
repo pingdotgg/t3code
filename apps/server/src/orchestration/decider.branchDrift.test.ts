@@ -98,7 +98,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
           const events = Array.isArray(event) ? event : [event];
           expect(events[0]).toMatchObject({
             type: "thread.meta-updated",
-            payload: { branch: "original" },
+            payload: { branch: "original", updatedAt: NOW },
           });
 
           const idleEvent = yield* decideOrchestrationCommand({
@@ -109,7 +109,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
           const idleEvents = Array.isArray(idleEvent) ? idleEvent : [idleEvent];
           expect(idleEvents[0]).toMatchObject({
             type: "thread.meta-updated",
-            payload: { branch: "drifted" },
+            payload: { branch: "drifted", updatedAt: "1970-01-01T00:00:00.000Z" },
           });
         }),
     );
@@ -181,6 +181,30 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
       expect(events[0]).toMatchObject({
         type: "thread.meta-updated",
         payload: { branch: "original" },
+      });
+    }),
+  );
+
+  it.effect("still timestamps an explicit title update when branch adoption is blocked", () =>
+    Effect.gen(function* () {
+      const base = makeReadModel();
+      const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/new-checkout" };
+      const event = yield* decideOrchestrationCommand({
+        checkoutDirectories,
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.make("drift-with-title"),
+          threadId: thread.id,
+          title: "Renamed",
+          branch: "drifted",
+          requireIdleWorktreePath: "/shared",
+        },
+        readModel: { ...base, threads: [thread] },
+      });
+      const events = Array.isArray(event) ? event : [event];
+      expect(events[0]).toMatchObject({
+        type: "thread.meta-updated",
+        payload: { branch: "original", title: "Renamed", updatedAt: "1970-01-01T00:00:00.000Z" },
       });
     }),
   );
