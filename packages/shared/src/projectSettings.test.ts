@@ -62,6 +62,41 @@ describe("resolveProjectSettings", () => {
     expect(resolved.sources.textGenerationModelSelection).toBe("environment");
   });
 
+  it("honours the aggregate's own fields only until the server has folded them", () => {
+    const aggregateModel = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+    const project = {
+      defaultModelSelection: aggregateModel,
+      defaultThreadEnvMode: "local" as const,
+    };
+    const unfolded = resolveProjectSettings(
+      { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: false },
+      projectId,
+      project,
+    );
+    expect(unfolded.settings.defaultModelSelection).toEqual(aggregateModel);
+    expect(unfolded.settings.defaultThreadEnvMode).toBe("local");
+    expect(unfolded.sources.defaultModelSelection).toBe("project");
+    // A stored override still beats the aggregate before the fold.
+    const overridden = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsFolded: false,
+        projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+      },
+      projectId,
+      project,
+    );
+    expect(overridden.settings.defaultThreadEnvMode).toBe("worktree");
+    // After the fold a reset in the record wins over the stale aggregate.
+    const folded = resolveProjectSettings(
+      { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true },
+      projectId,
+      project,
+    );
+    expect(folded.settings.defaultModelSelection).toBeNull();
+    expect(folded.sources.defaultModelSelection).toBe("environment");
+  });
+
   it("keeps the environment default model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

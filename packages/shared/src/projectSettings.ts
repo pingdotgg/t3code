@@ -5,6 +5,7 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   type ServerSettings,
+  type ThreadEnvMode,
 } from "@t3tools/contracts";
 import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
 
@@ -40,6 +41,17 @@ export function hasProjectSettingsOverrides(
 }
 
 /**
+ * The project aggregate's own model and workspace fields. They remain the
+ * source of truth until the server has folded them into the override record;
+ * after the fold the record alone decides, so a reset there cannot be undone
+ * by a stale aggregate value.
+ */
+export interface LegacyProjectSettingsFields {
+  readonly defaultModelSelection?: ModelSelection | null | undefined;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
+}
+
+/**
  * Apply one project's overrides on top of environment settings. A model
  * override whose provider is disabled on this environment falls back to the
  * environment value, the same guard the environment-level selection gets.
@@ -47,9 +59,22 @@ export function hasProjectSettingsOverrides(
 export function resolveProjectSettings(
   settings: ServerSettings,
   projectId: ProjectId | null,
+  project?: LegacyProjectSettingsFields,
 ): ResolvedProjectSettings {
-  const overrides = projectId === null ? undefined : settings.projectSettingsOverrides[projectId];
-  if (overrides === undefined || Object.keys(overrides).length === 0) {
+  const stored = projectId === null ? undefined : settings.projectSettingsOverrides[projectId];
+  const overrides: ProjectSettingsOverrides =
+    project === undefined || settings.projectSettingsFolded
+      ? (stored ?? EMPTY_OVERRIDES)
+      : {
+          ...(project.defaultModelSelection != null
+            ? { defaultModelSelection: project.defaultModelSelection }
+            : {}),
+          ...(project.defaultThreadEnvMode != null
+            ? { defaultThreadEnvMode: project.defaultThreadEnvMode }
+            : {}),
+          ...stored,
+        };
+  if (Object.keys(overrides).length === 0) {
     return { settings, sources: ENVIRONMENT_SOURCES, overrides: EMPTY_OVERRIDES };
   }
   const sources: Record<ProjectScopedServerSettingKey, ProjectSettingSource> = {

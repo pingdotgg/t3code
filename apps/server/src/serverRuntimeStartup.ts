@@ -229,12 +229,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       } else {
         nextProjectId = existingProject.value.id;
         bootstrapProjectId = nextProjectId;
-        // The aggregate field is still written by older clients; honour it
-        // after the override so their choice keeps applying until they update.
         nextThreadModelSelection =
-          resolveProjectSettings(settings, nextProjectId).settings.defaultModelSelection ??
-          existingProject.value.defaultModelSelection ??
-          defaultModelSelection;
+          resolveProjectSettings(settings, nextProjectId, existingProject.value).settings
+            .defaultModelSelection ?? defaultModelSelection;
       }
 
       yield* Effect.gen(function* () {
