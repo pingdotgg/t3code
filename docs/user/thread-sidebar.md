@@ -91,6 +91,13 @@ offline environments and older servers keep their previous values. If connected
 environments disagree, **Apply to all** copies your current settings to those named
 in the warning. Changing a rule does not reopen already settled threads.
 
+## Returning to a file
+
+When you switch between threads or files on web or desktop, each open text or Markdown file
+keeps its reading position. Toggling a Markdown file between rendered and source keeps the same
+place in the document. Positions belong to the current client session and are not shared across
+devices.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your

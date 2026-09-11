@@ -1,7 +1,10 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { remarkSourceLineAnchors } from "~/markdown-source-line-anchors";
 import { resolvePathLinkTarget } from "~/terminal-links";
+
+const FILE_MARKDOWN_REMARK_PLUGINS = [remarkSourceLineAnchors];
 
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
@@ -28,6 +31,7 @@ export function FileMarkdownPreview(props: {
       imageBaseDir={imageBaseDir}
       threadRef={props.threadRef}
       className="mx-auto max-w-4xl px-6 py-5"
+      extraRemarkPlugins={FILE_MARKDOWN_REMARK_PLUGINS}
       onTaskListChange={props.onTaskListChange}
     />
   );
