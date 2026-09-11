@@ -121,23 +121,33 @@ export function selectCliRuntimeExternalDependencies(
 export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
   const specifiers = new Set<string>();
   // `import x from`, `import "side-effect"`, and `export ... from` all load the
-  // module at evaluation time.
-  const staticImport = /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
-  const sideEffectImport = /^import\s+["']([^"']+)["']/gm;
-  const reExport = /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm;
+  // module at evaluation time. Dynamic `import()` is deferred, which is the
+  // only form under which the Bun-only entry points are acceptable: they sit
+  // behind a runtime check Node never passes. Statically imported they would
+  // fail at evaluation like any other file-backed package.
+  const evaluatedPatterns = [
+    /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
+    /^import\s+["']([^"']+)["']/gm,
+    /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
+  ];
   const dynamicImport = /\bimport\(\s*["']([^"']+)["']\s*[,)]/g;
-  for (const pattern of [staticImport, sideEffectImport, reExport, dynamicImport]) {
+  const collect = (pattern: RegExp, allowBuildOnly: boolean) => {
     for (const match of source.matchAll(pattern)) {
       const specifier = match[1];
       if (specifier === undefined) continue;
       if (NodeModule.isBuiltin(specifier)) continue;
       if (specifier.startsWith("./") || specifier.startsWith("../")) continue;
-      if (CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => specifier.startsWith(prefix))) {
+      if (
+        allowBuildOnly &&
+        CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => specifier.startsWith(prefix))
+      ) {
         continue;
       }
       specifiers.add(specifier);
     }
-  }
+  };
+  for (const pattern of evaluatedPatterns) collect(pattern, false);
+  collect(dynamicImport, true);
   return [...specifiers].sort();
 }
 

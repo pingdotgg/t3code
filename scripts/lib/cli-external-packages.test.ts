@@ -313,9 +313,14 @@ describe("findEsmImportsOfExternalPackages", () => {
     ]);
   });
 
-  it("ignores the bun-only entry points Node never evaluates", () => {
-    const source = 'const bun = () => import("@effect/platform-bun/BunServices");';
-    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
+  it("ignores the bun-only entry points only behind a deferred import()", () => {
+    const deferred = 'const bun = () => import("@effect/platform-bun/BunServices");';
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(deferred), []);
+
+    const evaluated = 'import { layer } from "@effect/platform-bun/BunServices";';
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(evaluated), [
+      "@effect/platform-bun/BunServices",
+    ]);
   });
 
   it("does not mistake createRequire calls for imports", () => {
