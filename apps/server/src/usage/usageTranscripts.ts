@@ -30,11 +30,11 @@ const EMPTY_TOTALS: UsageTokenTotals = {
   reasoningTokens: 0,
 };
 
-function int(value: unknown): number {
+export function int(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-function parseTimestampMs(value: unknown): number | null {
+export function parseTimestampMs(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
@@ -492,7 +492,6 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   return results;
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* GitHub Copilot                                                             */
 /* -------------------------------------------------------------------------- */
@@ -565,4 +564,3 @@ export function parseCopilotLine(line: string): UsageRecord | null {
 }
 
 export { EMPTY_TOTALS };
-

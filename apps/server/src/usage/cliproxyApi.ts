@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
+  type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
@@ -15,7 +16,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import { codexPlanLabel } from "../provider/Layers/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/Layers/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/Layers/claudeUsageLimits.ts";
-import { makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
+import { clampPercent, makeUnavailableUsageLimits } from "../provider/providerUsageLimits.ts";
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -29,6 +30,11 @@ const AuthFile = Schema.Struct({
       chatgpt_plan_type: Schema.optional(Schema.String),
     }),
   ),
+  windows: Schema.optional(Schema.Unknown),
+  rate_limits: Schema.optional(Schema.Unknown),
+  rateLimits: Schema.optional(Schema.Unknown),
+  quota: Schema.optional(Schema.Unknown),
+  usage: Schema.optional(Schema.Unknown),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
 const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
@@ -95,6 +101,157 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+export function resolveHubDriver(provider: string): ProviderDriverKind | null {
+  const p = provider.trim().toLowerCase();
+  if (p === "codex" || p === "openai" || p === "chatgpt") return ProviderDriverKind.make("codex");
+  if (p === "claude" || p === "anthropic") return ProviderDriverKind.make("claudeAgent");
+  if (p === "copilot" || p === "github") return ProviderDriverKind.make("copilot");
+  if (p === "antigravity" || p === "gemini" || p === "google")
+    return ProviderDriverKind.make("antigravity");
+  return null;
+}
+
+function extractGenericWindowRecords(data: unknown): ReadonlyArray<Record<string, unknown>> {
+  if (!data || typeof data !== "object") return [];
+  if (Array.isArray(data)) {
+    return data.filter(
+      (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+    );
+  }
+  const obj = data as Record<string, unknown>;
+  if (Array.isArray(obj["windows"])) return extractGenericWindowRecords(obj["windows"]);
+  if (Array.isArray(obj["rate_limits"])) return extractGenericWindowRecords(obj["rate_limits"]);
+  if (Array.isArray(obj["rateLimits"])) return extractGenericWindowRecords(obj["rateLimits"]);
+
+  if (
+    typeof obj["used_percent"] === "number" ||
+    typeof obj["utilization"] === "number" ||
+    typeof obj["percent"] === "number" ||
+    (typeof obj["used"] === "number" && typeof obj["limit"] === "number" && obj["limit"] > 0)
+  ) {
+    return [obj];
+  }
+
+  if (obj["windows"] && typeof obj["windows"] === "object") {
+    return extractGenericWindowRecords(obj["windows"]);
+  }
+  if (obj["rate_limits"] && typeof obj["rate_limits"] === "object") {
+    return extractGenericWindowRecords(obj["rate_limits"]);
+  }
+  if (obj["rateLimits"] && typeof obj["rateLimits"] === "object") {
+    return extractGenericWindowRecords(obj["rateLimits"]);
+  }
+  if (obj["quota"] && typeof obj["quota"] === "object") {
+    return extractGenericWindowRecords(obj["quota"]);
+  }
+
+  const items: Array<Record<string, unknown>> = [];
+  for (const [key, val] of Object.entries(obj)) {
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      items.push({ id: key, ...(val as Record<string, unknown>) });
+    }
+  }
+  return items;
+}
+
+function parseGenericWindows(data: unknown): ReadonlyArray<ServerProviderUsageWindow> {
+  const list = extractGenericWindowRecords(data);
+  const result: ServerProviderUsageWindow[] = [];
+  for (const record of list) {
+    let rawPercent: number | null = null;
+    if (typeof record["used_percent"] === "number") {
+      rawPercent = record["used_percent"];
+    } else if (typeof record["utilization"] === "number") {
+      rawPercent = record["utilization"];
+    } else if (typeof record["percent"] === "number") {
+      rawPercent = record["percent"];
+    } else if (
+      typeof record["used"] === "number" &&
+      typeof record["limit"] === "number" &&
+      record["limit"] > 0
+    ) {
+      rawPercent = (record["used"] / record["limit"]) * 100;
+    } else if (
+      typeof record["remaining"] === "number" &&
+      typeof record["limit"] === "number" &&
+      record["limit"] > 0
+    ) {
+      rawPercent = ((record["limit"] - record["remaining"]) / record["limit"]) * 100;
+    } else if (
+      typeof record["ai_credits_used"] === "number" &&
+      typeof record["ai_credits_limit"] === "number" &&
+      record["ai_credits_limit"] > 0
+    ) {
+      rawPercent = (record["ai_credits_used"] / record["ai_credits_limit"]) * 100;
+    } else if (
+      typeof record["used_requests"] === "number" &&
+      typeof record["max_requests"] === "number" &&
+      record["max_requests"] > 0
+    ) {
+      rawPercent = (record["used_requests"] / record["max_requests"]) * 100;
+    }
+    if (rawPercent === null || Number.isNaN(rawPercent)) continue;
+    const usedPercent = clampPercent(Math.round(rawPercent));
+
+    const id = String(
+      record["id"] ?? record["kind"] ?? record["name"] ?? `window_${result.length}`,
+    );
+    const label = String(record["label"] ?? record["name"] ?? record["id"] ?? "Quota window");
+    const resetsAt =
+      typeof record["resets_at"] === "string"
+        ? record["resets_at"]
+        : typeof record["resetsAt"] === "string"
+          ? record["resetsAt"]
+          : typeof record["reset_at"] === "number"
+            ? DateTime.formatIso(
+                DateTime.makeUnsafe(
+                  record["reset_at"] > 1e11 ? record["reset_at"] : record["reset_at"] * 1000,
+                ),
+              )
+            : typeof record["resetAt"] === "number"
+              ? DateTime.formatIso(
+                  DateTime.makeUnsafe(
+                    record["resetAt"] > 1e11 ? record["resetAt"] : record["resetAt"] * 1000,
+                  ),
+                )
+              : undefined;
+    const windowDurationMins =
+      typeof record["limit_window_seconds"] === "number"
+        ? record["limit_window_seconds"] / 60
+        : typeof record["window_seconds"] === "number"
+          ? record["window_seconds"] / 60
+          : typeof record["window_duration_mins"] === "number"
+            ? record["window_duration_mins"]
+            : typeof record["windowDurationMins"] === "number"
+              ? record["windowDurationMins"]
+              : undefined;
+    const rawKind = String(record["kind"] ?? id).toLowerCase();
+    const kind =
+      rawKind.includes("session") ||
+      rawKind.includes("primary") ||
+      rawKind.includes("5_hour") ||
+      rawKind.includes("five_hour")
+        ? ("session" as const)
+        : rawKind.includes("week") ||
+            rawKind.includes("secondary") ||
+            rawKind.includes("7_day") ||
+            rawKind.includes("seven_day")
+          ? ("weekly" as const)
+          : rawKind.includes("month")
+            ? ("monthly" as const)
+            : ("other" as const);
+    result.push({
+      id,
+      kind,
+      label,
+      usedPercent,
+      resetsAt,
+      ...(windowDurationMins !== undefined ? { windowDurationMins } : {}),
+    });
+  }
+  return result;
+}
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
@@ -201,13 +358,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const driver = resolveHubDriver(account.provider) ?? ProviderDriverKind.make("codex");
     const base = {
       id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      driver,
       ...(account.email ? { email: account.email } : {}),
     };
     const read = Effect.gen(function* () {
-      if (account.provider === "claude") {
+      if (driver === "claudeAgent") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
@@ -237,47 +395,109 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }).limits,
         };
       }
-      const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
-      const usage = yield* decodeCodexUsage(body);
-      const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
-        window
-          ? {
-              usedPercent: window.used_percent,
-              resetsAt: window.reset_at ?? null,
-              ...(window.limit_window_seconds === undefined
-                ? {}
-                : { windowDurationMins: window.limit_window_seconds / 60 }),
-            }
-          : null;
-      // A credits outage must not hide successfully fetched quota windows.
-      const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
-      const next = available?.[0];
+      if (driver === "codex") {
+        const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
+        const usage = yield* decodeCodexUsage(body);
+        const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
+          window
+            ? {
+                usedPercent: window.used_percent,
+                resetsAt: window.reset_at ?? null,
+                ...(window.limit_window_seconds === undefined
+                  ? {}
+                  : { windowDurationMins: window.limit_window_seconds / 60 }),
+              }
+            : null;
+        // A credits outage must not hide successfully fetched quota windows.
+        const available = yield* credits(config, account).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const next = available?.[0];
+        return {
+          ...base,
+          plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
+          usageLimits: {
+            ...codexRateLimitsToLimits({
+              checkedAt,
+              snapshot: {
+                planType: usage.plan_type ?? null,
+                primary: toWindow(usage.rate_limit?.primary_window),
+                secondary: toWindow(usage.rate_limit?.secondary_window),
+              },
+            }),
+            ...(available
+              ? {
+                  resetCredits: {
+                    availableCount: available.length,
+                    ...(next
+                      ? {
+                          nextCreditId: next.id,
+                          nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(next.expires_at)),
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        };
+      }
+      if (driver === "copilot") {
+        const windows = parseGenericWindows(
+          account.windows ??
+            account.rate_limits ??
+            account.rateLimits ??
+            account.quota ??
+            account.usage,
+        );
+        return {
+          ...base,
+          plan: "GitHub Copilot",
+          usageLimits: {
+            checkedAt,
+            windows,
+            ...(windows.length === 0
+              ? {
+                  unavailable: {
+                    reason: "probeFailed" as const,
+                    message: "GitHub Copilot rate limits were not reported for this account.",
+                  },
+                }
+              : {}),
+          },
+        };
+      }
+      if (driver === "antigravity") {
+        const windows = parseGenericWindows(
+          account.windows ??
+            account.rate_limits ??
+            account.rateLimits ??
+            account.quota ??
+            account.usage,
+        );
+        return {
+          ...base,
+          plan: "Google Antigravity",
+          usageLimits: {
+            checkedAt,
+            windows,
+            ...(windows.length === 0
+              ? {
+                  unavailable: {
+                    reason: "probeFailed" as const,
+                    message: "Google Antigravity rate limits were not reported for this account.",
+                  },
+                }
+              : {}),
+          },
+        };
+      }
       return {
         ...base,
-        plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
-        usageLimits: {
-          ...codexRateLimitsToLimits({
-            checkedAt,
-            snapshot: {
-              planType: usage.plan_type ?? null,
-              primary: toWindow(usage.rate_limit?.primary_window),
-              secondary: toWindow(usage.rate_limit?.secondary_window),
-            },
-          }),
-          ...(available
-            ? {
-                resetCredits: {
-                  availableCount: available.length,
-                  ...(next
-                    ? {
-                        nextCreditId: next.id,
-                        nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(next.expires_at)),
-                      }
-                    : {}),
-                },
-              }
-            : {}),
-        },
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: `Provider ${account.provider} is not supported.`,
+        }),
       };
     });
     return yield* read.pipe(
@@ -302,8 +522,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     );
     return yield* Effect.forEach(
       accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
+        (account) => !account.disabled && resolveHubDriver(account.provider) !== null,
       ),
       (account) => readAccount(config, account),
       { concurrency: 4 },

@@ -277,10 +277,27 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           .pipe(Effect.provideService(Scope.Scope, processScope));
       }).pipe(Effect.scoped);
 
+      const checkAuth = Effect.gen(function* () {
+        const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+        const exists = yield* fileSystem.exists(tokenPath).pipe(Effect.orElseSucceed(() => false));
+        if (exists) {
+          return {
+            status: "authenticated" as const,
+            type: auth.authMethod,
+            label: antigravityAuthLabel(auth.authMethod),
+          };
+        }
+        return {
+          status: "unknown" as const,
+          type: auth.authMethod,
+        };
+      });
+
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
+        checkAuth,
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

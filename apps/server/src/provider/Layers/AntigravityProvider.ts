@@ -29,6 +29,7 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -36,6 +37,7 @@ const HEALTH_CHECK_TIMEOUT = "90 seconds";
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
+const UNSUPPORTED_LIMITS_MESSAGE = "Google Antigravity does not report subscription quota windows.";
 
 type SessionSetupResult = Pick<
   AcpSessionRuntimeStartResult["sessionSetupResult"],
@@ -126,6 +128,7 @@ interface AntigravityProviderOptions {
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
+  readonly checkAuth?: Effect.Effect<ServerProvider["auth"]>;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -150,6 +153,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         message: settings.enabled
           ? "Checking Antigravity availability."
           : "Antigravity is disabled in T3 Code settings.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: UNSUPPORTED_LIMITS_MESSAGE,
+        }),
       },
     }),
     setup: { canAuthenticate: true, canInstall: true },
@@ -192,26 +200,51 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const detectedAuth = options.checkAuth
+      ? yield* options.checkAuth.pipe(Effect.orElseSucceed(() => undefined))
+      : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
-      const authenticated = draft.auth.status === "authenticated";
+      const nextAuth =
+        draft.auth.status === "unknown" && detectedAuth && detectedAuth.status === "authenticated"
+          ? detectedAuth
+          : draft.auth;
+      const authenticated = nextAuth.status === "authenticated";
       const message =
         errorMessage ??
         (authenticated
           ? undefined
-          : draft.auth.status === "unauthenticated"
+          : nextAuth.status === "unauthenticated"
             ? SIGN_IN_MESSAGE
             : AUTH_UNCHECKED_MESSAGE);
+      const usageLimits =
+        missingInstallation || errorMessage
+          ? makeUnavailableUsageLimits({
+              checkedAt: updatedAt,
+              reason: "probeFailed",
+              message:
+                errorMessage ??
+                "Antigravity is not installed or its executable could not be found.",
+            })
+          : draft.usageLimits && !draft.usageLimits.unavailable
+            ? draft.usageLimits
+            : makeUnavailableUsageLimits({
+                checkedAt: updatedAt,
+                reason: "unsupported",
+                message: UNSUPPORTED_LIMITS_MESSAGE,
+              });
       return {
         ...state,
         draft: {
           ...draft,
+          auth: nextAuth,
           installed: !missingInstallation,
           version: initialized?.agentInfo?.version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
+          usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
@@ -287,6 +320,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult),
           supportsTextGeneration,
+          usageLimits:
+            draft.usageLimits && !draft.usageLimits.unavailable
+              ? draft.usageLimits
+              : makeUnavailableUsageLimits({
+                  checkedAt: updatedAt,
+                  reason: "unsupported",
+                  message: UNSUPPORTED_LIMITS_MESSAGE,
+                }),
           ...(cwd
             ? {
                 workspaceSnapshots: [
@@ -367,6 +408,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             skills: [],
             workspaceSnapshots: [],
             supportsTextGeneration: false,
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt: updatedAt,
+              reason: "unsupported",
+              message: UNSUPPORTED_LIMITS_MESSAGE,
+            }),
           },
         }) satisfies AntigravityProviderState,
     );

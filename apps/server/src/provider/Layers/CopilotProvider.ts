@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off globalDateInEffect:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   type CopilotSettings,
   type ModelCapabilities,
@@ -5,6 +9,7 @@ import {
   ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -36,6 +41,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { makeUsageLimits, makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import { makeCopilotAcpRuntime } from "../acp/CopilotAcpSupport.ts";
 
 const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
@@ -170,6 +176,85 @@ export function resolveCopilotAcpConfigUpdates(
   return updates;
 }
 
+function readLocalCopilotAuth(processEnv?: Record<string, string | undefined>): {
+  status: "authenticated" | "unknown";
+  label?: string;
+  email?: string;
+  token?: string;
+} {
+  try {
+    const copilotHome =
+      processEnv?.["COPILOT_HOME"] ??
+      process.env["COPILOT_HOME"] ??
+      NodePath.join(NodeOS.homedir(), ".copilot");
+    const configPath = NodePath.join(copilotHome, "config.json");
+    if (NodeFS.existsSync(configPath)) {
+      const content = NodeFS.readFileSync(configPath, "utf-8");
+      const cleaned = content.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, "");
+      const raw = JSON.parse(cleaned);
+      const login = raw?.lastLoggedInUser?.login;
+      const tokens = raw?.copilotTokens ?? {};
+      const token =
+        (typeof login === "string" && tokens[`https://github.com:${login}`]) ||
+        (typeof tokens === "object" && tokens !== null ? Object.values(tokens)[0] : undefined);
+      if (typeof login === "string" && login.length > 0) {
+        return {
+          status: "authenticated",
+          label: `GitHub (${login})`,
+          email: login,
+          ...(typeof token === "string" ? { token } : {}),
+        };
+      }
+    }
+  } catch {
+    // Ignore error reading local config
+  }
+  return { status: "unknown" };
+}
+
+function fetchCopilotRateLimitWindows(
+  token: string | undefined,
+): Effect.Effect<ReadonlyArray<ServerProviderUsageWindow>, never, never> {
+  const empty: ReadonlyArray<ServerProviderUsageWindow> = [];
+  if (!token) {
+    return Effect.succeed(empty);
+  }
+  return Effect.tryPromise(async () => {
+    const response = await fetch("https://api.github.com/rate_limit", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "T3Code",
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (!response.ok) return empty;
+    const data = (await response.json()) as {
+      rate?: { limit: number; remaining: number; reset: number };
+    };
+    if (!data?.rate || typeof data.rate.limit !== "number" || data.rate.limit <= 0) return empty;
+    const { limit, remaining, reset } = data.rate;
+    const used = Math.max(0, limit - remaining);
+    const usedPercent = Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+    const windows: ReadonlyArray<ServerProviderUsageWindow> = [
+      {
+        id: "github-api-quota",
+        kind: "session",
+        label: "GitHub API Quota",
+        usedPercent,
+        resetsAt: new Date(reset * 1000).toISOString(),
+        windowDurationMins: 60,
+      },
+    ];
+    return windows;
+  }).pipe(
+    Effect.orElseSucceed(() => empty),
+    Effect.timeoutOrElse({
+      duration: "3 seconds",
+      orElse: () => Effect.succeed(empty),
+    }),
+  );
+}
+
 export function buildInitialCopilotProviderSnapshot(
   copilotSettings: CopilotSettings,
 ): Effect.Effect<ServerProviderDraft> {
@@ -189,6 +274,11 @@ export function buildInitialCopilotProviderSnapshot(
           status: "warning",
           auth: { status: "unknown" },
           message: "GitHub Copilot is disabled in T3 Code settings.",
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "GitHub Copilot is disabled in T3 Code settings.",
+          }),
         },
       });
     }
@@ -204,6 +294,11 @@ export function buildInitialCopilotProviderSnapshot(
         status: "warning",
         auth: { status: "unknown" },
         message: "Checking GitHub Copilot CLI availability...",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Checking GitHub Copilot CLI availability...",
+        }),
       },
     });
   });
@@ -303,6 +398,11 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         status: "warning",
         auth: { status: "unknown" },
         message: "GitHub Copilot is disabled in T3 Code settings.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "GitHub Copilot is disabled in T3 Code settings.",
+        }),
       },
     });
   }
@@ -330,6 +430,13 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         message: isCommandMissingCause(error)
           ? "GitHub Copilot CLI (`copilot`) is not installed or not on PATH."
           : "Failed to execute GitHub Copilot CLI health check.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: isCommandMissingCause(error)
+            ? "GitHub Copilot CLI (`copilot`) is not installed or not on PATH."
+            : "Failed to execute GitHub Copilot CLI health check.",
+        }),
       },
     });
   }
@@ -346,6 +453,12 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         status: "error",
         auth: { status: "unknown" },
         message: "GitHub Copilot CLI is installed but timed out while running `copilot --version`.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message:
+            "GitHub Copilot CLI is installed but timed out while running `copilot --version`.",
+        }),
       },
     });
   }
@@ -369,6 +482,11 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         status: "error",
         auth: { status: "unknown" },
         message: "GitHub Copilot CLI is installed but failed to run.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "GitHub Copilot CLI is installed but failed to run.",
+        }),
       },
     });
   }
@@ -393,6 +511,12 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         auth: { status: "unknown" },
         message:
           "GitHub Copilot CLI is installed but ACP startup failed. Check server logs for details.",
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message:
+            "GitHub Copilot CLI is installed but ACP startup failed. Check server logs for details.",
+        }),
       },
     });
   }
@@ -411,6 +535,11 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
         status: "error",
         auth: { status: "unknown" },
         message: `GitHub Copilot CLI is installed but ACP startup timed out after ${COPILOT_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: `GitHub Copilot CLI is installed but ACP startup timed out after ${COPILOT_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
+        }),
       },
     });
   }
@@ -419,6 +548,29 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     discoveredModels.length > 0
       ? copilotModelsFromSettings(copilotSettings.customModels, discoveredModels)
       : fallbackModels;
+
+  const localAuth = readLocalCopilotAuth(environment);
+  const auth: ServerProvider["auth"] =
+    localAuth.status === "authenticated"
+      ? {
+          status: "authenticated",
+          type: "oauth-personal",
+          label: localAuth.label ?? "GitHub Copilot",
+          email: localAuth.email,
+        }
+      : { status: "unknown" };
+  const windows =
+    auth.status === "authenticated" && localAuth.token
+      ? yield* fetchCopilotRateLimitWindows(localAuth.token)
+      : [];
+  const usageLimits =
+    auth.status === "authenticated"
+      ? makeUsageLimits({ checkedAt, windows })
+      : makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "GitHub Copilot is not authenticated.",
+        });
 
   return buildServerProvider({
     presentation: COPILOT_PRESENTATION,
@@ -429,7 +581,8 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth,
+      usageLimits,
     },
   });
 });

@@ -20,6 +20,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   initialCodexScanState,
@@ -106,12 +107,53 @@ export async function listTranscriptFiles(
   sinceMs: number,
   options?: { readonly fileName?: string; readonly provider?: UsageProviderKind },
 ): Promise<readonly TranscriptFile[]> {
+  if (options?.provider === "antigravity") {
+    const found: TranscriptFile[] = [];
+    try {
+      const entries = await NodeFSP.readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith(".db")) {
+          const dbPath = NodePath.join(root, entry.name);
+          try {
+            const stats = await NodeFSP.stat(dbPath);
+            let effectiveMtimeMs = stats.mtimeMs;
+            let effectiveSize = stats.size;
+            try {
+              const walStats = await NodeFSP.stat(`${dbPath}-wal`);
+              effectiveMtimeMs = Math.max(effectiveMtimeMs, walStats.mtimeMs);
+              effectiveSize += walStats.size;
+            } catch {
+              // WAL file may not exist
+            }
+            if (effectiveMtimeMs >= sinceMs) {
+              found.push({ path: dbPath, size: effectiveSize, mtimeMs: effectiveMtimeMs });
+            }
+          } catch {
+            // Ignore stat errors
+          }
+        }
+      }
+      return found;
+    } catch {
+      return [];
+    }
+  }
+
   if (options?.provider === "copilot") {
     const dbPath = NodePath.join(root, "session-store.db");
     try {
       const stats = await NodeFSP.stat(dbPath);
-      if (stats.mtimeMs >= sinceMs) {
-        return [{ path: dbPath, size: stats.size, mtimeMs: stats.mtimeMs }];
+      let effectiveMtimeMs = stats.mtimeMs;
+      let effectiveSize = stats.size;
+      try {
+        const walStats = await NodeFSP.stat(`${dbPath}-wal`);
+        effectiveMtimeMs = Math.max(effectiveMtimeMs, walStats.mtimeMs);
+        effectiveSize += walStats.size;
+      } catch {
+        // WAL file may not exist if never written or fully checkpointed
+      }
+      if (effectiveMtimeMs >= sinceMs) {
+        return [{ path: dbPath, size: effectiveSize, mtimeMs: effectiveMtimeMs }];
       }
       return [];
     } catch {
@@ -146,7 +188,7 @@ export async function listTranscriptFiles(
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
       } catch {
-        // Vanished between readdir and stat.
+        // Ignore stat errors for deleted or locked files
       }
     }
   };
@@ -156,16 +198,16 @@ export async function listTranscriptFiles(
 }
 
 /**
- * Filesystem identity of a directory, as `device:inode`.
+ * Returns a stable filesystem identifier for `dir` when available.
  *
- * Used to tell "two servers reading the same transcript directory" apart from
- * "two machines whose hostname and home path happen to match". Returns an empty
- * string when the directory cannot be stat'd.
+ * Preserves the existing `UsageSourceFingerprint.volumeId` semantics: on POSIX
+ * systems this is the device number (`stat.dev`), distinguishing two physical
+ * volumes that mount at identical absolute paths.
  */
 export async function readDirectoryVolumeId(path: string): Promise<string> {
   try {
     const stats = await NodeFSP.stat(path);
-    return `${stats.dev}:${stats.ino}`;
+    return String(stats.dev);
   } catch {
     return "";
   }
@@ -194,8 +236,7 @@ async function guardMatches(
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
  *
- * The distinction matters to the caller's cache: a genuinely empty transcript
- * is a stable fact worth memoising, while a transient read failure memoised
+ * Callers must not cache `null`: a transient EBUSY or ENOENT on an active file
  * under the same `(size, mtime)` key would silently drop that file's usage
  * until the file next changes.
  *
@@ -212,6 +253,22 @@ export async function readTranscriptRecords(
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
 ): Promise<TranscriptParseResult | null> {
+  if (provider === "antigravity" && filePath.endsWith(".db")) {
+    const dbRecords = readAntigravityDbRecords(filePath);
+    if (dbRecords === null) return null;
+    return {
+      records: dbRecords,
+      tailRecords: [],
+      position: {
+        resumeOffset: 0,
+        guardLength: 0,
+        guardHash: 0,
+        codexState: null,
+      },
+      resumed: false,
+    };
+  }
+
   if (provider === "copilot" && filePath.endsWith(".db")) {
     const dbRecords = readCopilotDbRecords(filePath);
     if (dbRecords === null) return null;
@@ -400,6 +457,138 @@ export function readCopilotDbRecords(filePath: string): readonly UsageRecord[] |
           },
           reportedCostUsd: null,
           dedupeKey: `copilot:${row["session_id"]}:${row["id"]}`,
+        });
+      }
+      return records;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+function readVarint(buf: Buffer, offset: number): [value: number, nextOffset: number] {
+  let res = 0;
+  let shift = 0;
+  while (offset < buf.length) {
+    const b = buf[offset++];
+    if (b === undefined) break;
+    res |= (b & 0x7f) << shift;
+    shift += 7;
+    if (!(b & 0x80)) break;
+  }
+  return [res, offset];
+}
+
+interface AntigravityProtoUsage {
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cachedTokens: number;
+  readonly timestampSeconds: number;
+}
+
+export function parseAntigravityProto(raw: Uint8Array | Buffer): AntigravityProtoUsage {
+  const buf = Buffer.from(raw);
+  let model = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedTokens = 0;
+  let timestampSeconds = 0;
+
+  function parseFields(
+    b: Buffer,
+    onField: (tag: number, wire: number, val: number, sub: Buffer | null) => void,
+  ) {
+    let i = 0;
+    while (i < b.length) {
+      const [key, nextI] = readVarint(b, i);
+      i = nextI;
+      const tag = key >> 3;
+      const wire = key & 7;
+      if (wire === 0) {
+        const [val, afterVal] = readVarint(b, i);
+        i = afterVal;
+        onField(tag, wire, val, null);
+      } else if (wire === 2) {
+        const [len, afterLen] = readVarint(b, i);
+        i = afterLen;
+        const sub = b.subarray(i, i + len);
+        i += len;
+        onField(tag, wire, 0, sub);
+      } else if (wire === 1) {
+        i += 8;
+      } else if (wire === 5) {
+        i += 4;
+      } else {
+        break;
+      }
+    }
+  }
+
+  parseFields(buf, (tag, _wire, _val, sub) => {
+    if (tag === 1 && sub) {
+      parseFields(sub, (tag2, _wire2, _val2, sub2) => {
+        if (tag2 === 19 && sub2) {
+          model = sub2.toString("utf8");
+        } else if (tag2 === 4 && sub2) {
+          parseFields(sub2, (tag3, _wire3, val3) => {
+            if (tag3 === 2) inputTokens = val3;
+            else if (tag3 === 3) outputTokens = val3;
+            else if (tag3 === 9) cachedTokens = val3;
+          });
+        } else if (tag2 === 9 && sub2) {
+          parseFields(sub2, (tag3, _wire3, _val3, sub3) => {
+            if (tag3 === 4 && sub3) {
+              parseFields(sub3, (tag4, _wire4, val4) => {
+                if (tag4 === 1) timestampSeconds = val4;
+              });
+            }
+          });
+        }
+      });
+    }
+  });
+
+  return { model, inputTokens, outputTokens, cachedTokens, timestampSeconds };
+}
+
+/**
+ * Reads usage records directly from Antigravity conversation SQLite databases (`*.db`).
+ */
+export function readAntigravityDbRecords(filePath: string): readonly UsageRecord[] | null {
+  try {
+    const db = new NodeSqlite.DatabaseSync(filePath, { readOnly: true });
+    try {
+      const stmt = db.prepare(`
+        SELECT idx, data FROM gen_metadata ORDER BY idx ASC
+      `);
+      const rows = stmt.all() as unknown as readonly { idx: number; data: Uint8Array }[];
+      const sessionId = NodePath.basename(filePath, ".db");
+      const records: UsageRecord[] = [];
+      for (const row of rows) {
+        const proto = parseAntigravityProto(row.data);
+        if (proto.inputTokens === 0 && proto.outputTokens === 0) continue;
+        const timestampMs =
+          proto.timestampSeconds > 0
+            ? proto.timestampSeconds * 1000
+            : DateTime.toEpochMillis(DateTime.nowUnsafe());
+        const uncachedInputTokens = Math.max(0, proto.inputTokens - proto.cachedTokens);
+        records.push({
+          provider: "antigravity",
+          timestampMs,
+          model: proto.model || "gemini-3.8-flash",
+          sessionId,
+          totals: {
+            uncachedInputTokens,
+            cachedInputTokens: proto.cachedTokens,
+            cacheCreationTokens: 0,
+            outputTokens: proto.outputTokens,
+            reasoningTokens: 0,
+          },
+          reportedCostUsd: null,
+          dedupeKey: `antigravity:${sessionId}:${row.idx}`,
         });
       }
       return records;

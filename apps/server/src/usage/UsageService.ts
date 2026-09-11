@@ -265,7 +265,11 @@ export const make = Effect.gen(function* () {
         ? path.resolve(expandHomePath(copilotHomeEnv))
         : path.join(NodeOS.homedir(), ".copilot");
 
-    return [
+    const result: Array<{
+      readonly provider: UsageProviderKind;
+      readonly dir: string;
+      readonly fileName?: string;
+    }> = [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
       {
@@ -275,6 +279,37 @@ export const make = Effect.gen(function* () {
       },
       { provider: "copilot" as const, dir: copilotDir },
     ];
+
+    const antigravityBases = new Set<string>();
+    const antigravityHomeEnv = hostEnvironment["ANTIGRAVITY_HOME"]?.trim() ?? "";
+    if (antigravityHomeEnv.length > 0) {
+      antigravityBases.add(path.resolve(expandHomePath(antigravityHomeEnv)));
+    }
+    antigravityBases.add(path.join(config.stateDir, "providers", "antigravity"));
+    antigravityBases.add(
+      path.join(NodeOS.homedir(), ".t3", "userdata", "providers", "antigravity"),
+    );
+
+    for (const antigravityBase of antigravityBases) {
+      const exists = yield* fileSystem
+        .exists(antigravityBase)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!exists) continue;
+      const instances = yield* fileSystem
+        .readDirectory(antigravityBase)
+        .pipe(Effect.catchCause(() => Effect.succeed([])));
+      for (const instance of instances) {
+        const convDir = path.join(antigravityBase, instance, "antigravity-acp", "conversations");
+        const convExists = yield* fileSystem
+          .exists(convDir)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        if (convExists && !result.some((r) => r.dir === convDir)) {
+          result.push({ provider: "antigravity" as const, dir: convDir });
+        }
+      }
+    }
+
+    return result;
   });
 
   /**
@@ -404,7 +439,7 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, { fileName, provider }),
+        listTranscriptFiles(dir, windowStartMs, { ...(fileName ? { fileName } : {}), provider }),
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {

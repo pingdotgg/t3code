@@ -47,7 +47,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<Record<string, unknown>>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -295,6 +295,135 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
         1,
       );
+    }),
+  );
+
+  it.effect("reads copilot and antigravity accounts with or without windows", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "copilot.json",
+            auth_index: "copilot-idx",
+            provider: "copilot",
+            email: "copilot@example.com",
+            windows: [
+              {
+                id: "copilot_window",
+                label: "Copilot Quota",
+                used_percent: 45,
+                reset_at: 1789046800,
+              },
+            ],
+          },
+          {
+            id: "antigravity.json",
+            auth_index: "anti-idx",
+            provider: "antigravity",
+            email: "anti@example.com",
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toMatchObject({
+        id: "copilot.json",
+        driver: "copilot",
+        email: "copilot@example.com",
+        plan: "GitHub Copilot",
+        usageLimits: {
+          windows: [
+            {
+              id: "copilot_window",
+              label: "Copilot Quota",
+              usedPercent: 45,
+            },
+          ],
+        },
+      });
+      expect(result[1]).toMatchObject({
+        id: "antigravity.json",
+        driver: "antigravity",
+        email: "anti@example.com",
+        plan: "Google Antigravity",
+        usageLimits: {
+          windows: [],
+          unavailable: {
+            reason: "probeFailed",
+          },
+        },
+      });
+    }),
+  );
+
+  it.effect("parses dictionary windows and ratio limits for copilot and antigravity", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          {
+            id: "copilot-dict.json",
+            auth_index: "copilot-dict-idx",
+            provider: "copilot",
+            email: "copilot-user@github.com",
+            rate_limits: {
+              session_window: {
+                label: "Session Limit",
+                used: 30,
+                limit: 100,
+              },
+              weekly_credits: {
+                label: "Weekly Premium AI Credits",
+                ai_credits_used: 15,
+                ai_credits_limit: 30,
+              },
+            },
+          },
+          {
+            id: "antigravity-quota.json",
+            auth_index: "anti-quota-idx",
+            provider: "antigravity",
+            email: "anti-user@google.com",
+            quota: {
+              monthly_requests: {
+                label: "Monthly Quota",
+                used_requests: 80,
+                max_requests: 100,
+                reset_at: 1789046800,
+              },
+            },
+          },
+        ],
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result).toHaveLength(2);
+
+      const copilotAccount = result[0];
+      expect(copilotAccount?.driver).toBe("copilot");
+      expect(copilotAccount?.usageLimits.windows).toHaveLength(2);
+      expect(copilotAccount?.usageLimits.windows[0]).toMatchObject({
+        id: "session_window",
+        label: "Session Limit",
+        kind: "session",
+        usedPercent: 30,
+      });
+      expect(copilotAccount?.usageLimits.windows[1]).toMatchObject({
+        id: "weekly_credits",
+        label: "Weekly Premium AI Credits",
+        kind: "weekly",
+        usedPercent: 50,
+      });
+
+      const antiAccount = result[1];
+      expect(antiAccount?.driver).toBe("antigravity");
+      expect(antiAccount?.usageLimits.windows).toHaveLength(1);
+      expect(antiAccount?.usageLimits.windows[0]).toMatchObject({
+        id: "monthly_requests",
+        label: "Monthly Quota",
+        kind: "monthly",
+        usedPercent: 80,
+      });
     }),
   );
 
