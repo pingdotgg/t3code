@@ -69,6 +69,39 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("separates standalone GitHub images from surrounding prose", () => {
+    const beforeOne =
+      '<img width="650" height="356" alt="before one" src="https://github.com/user-attachments/assets/before-one" />';
+    const beforeTwo =
+      '<img width="647" height="274" alt="before two" src="https://github.com/user-attachments/assets/before-two" />';
+    const afterOne =
+      '<img width="647" height="444" alt="after one" src="https://github.com/user-attachments/assets/after-one" />';
+    const afterTwo =
+      '<img width="655" height="382" alt="after two" src="https://github.com/user-attachments/assets/after-two" />';
+
+    expect(
+      splitPullRequestBody(
+        `Before:\n${beforeOne}\n${beforeTwo}\n\nAfter:\n${afterOne}\n${afterTwo}`,
+      ),
+    ).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "Before:" },
+      { id: "markdown:1", kind: "markdown", text: beforeOne },
+      { id: "markdown:2", kind: "markdown", text: beforeTwo },
+      { id: "markdown:3", kind: "markdown", text: "After:" },
+      { id: "markdown:4", kind: "markdown", text: afterOne },
+      { id: "markdown:5", kind: "markdown", text: afterTwo },
+    ]);
+  });
+
+  it("keeps raw images inline when they share a line with other content", () => {
+    const body =
+      'Status <img alt="passing" src="https://example.com/passing.svg" /> <img alt="coverage" src="https://example.com/coverage.svg" />';
+
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body },
+    ]);
+  });
+
   it("leaves an ordinary link alone, whether it is bare or written as markdown", () => {
     const body = "https://example.com/page\n\n[the docs](https://example.com/docs)";
     expect(splitPullRequestBody(body)).toEqual([

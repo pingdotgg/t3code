@@ -36,6 +36,7 @@ const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)[
 /** Only a tag that owns its line is an embed; inline, it is prose the renderer should keep. */
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
+const STANDALONE_IMAGE_TAG_PATTERN = /^\s*<img\b[^>]*\/?>\s*$/iu;
 
 /** Anything else — `javascript:`, `data:`, a relative path — is not an upload to link out to. */
 function isWebUrl(url: string): boolean {
@@ -103,6 +104,13 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
     }
     if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
       markdown.push(line);
+      continue;
+    }
+
+    if (STANDALONE_IMAGE_TAG_PATTERN.test(line)) {
+      flushMarkdown();
+      markdown.push(line);
+      flushMarkdown();
       continue;
     }
 
