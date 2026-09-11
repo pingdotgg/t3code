@@ -53,26 +53,32 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
-    const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
-    for (const [questionId, attachments] of Object.entries(command.attachmentsByQuestionId)) {
-      const claimed = yield* AttachmentClaims.claimPendingAttachments({
-        threadId: command.threadId,
-        attachments,
-      });
-      Object.defineProperty(attachmentsByQuestionId, questionId, {
-        value: claimed.attachments,
-        enumerable: true,
-      });
-    }
-    const answers = yield* appendUserInputAttachmentPaths({
-      answers: command.answers ?? {},
-      attachmentsByQuestionId,
-      attachmentsDir: config.attachmentsDir,
-    }).pipe(
-      Effect.mapError(
-        (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
-      ),
-    );
+    const incomingByQuestionId = command.attachmentsByQuestionId;
+    const claimedPaths: string[] = [];
+    const { answers, attachmentsByQuestionId } = yield* Effect.gen(function* () {
+      const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
+      for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
+        const claimed = yield* AttachmentClaims.claimPendingAttachments({
+          threadId: command.threadId,
+          attachments,
+        });
+        claimedPaths.push(...claimed.claimedPaths);
+        Object.defineProperty(attachmentsByQuestionId, questionId, {
+          value: claimed.attachments,
+          enumerable: true,
+        });
+      }
+      const answers = yield* appendUserInputAttachmentPaths({
+        answers: command.answers ?? {},
+        attachmentsByQuestionId,
+        attachmentsDir: config.attachmentsDir,
+      }).pipe(
+        Effect.mapError(
+          (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
+        ),
+      );
+      return { answers, attachmentsByQuestionId };
+    }).pipe(Effect.tapError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
     return yield* threads.dispatch({ ...command, answers, attachmentsByQuestionId });
   }
   if (
