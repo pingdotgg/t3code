@@ -22,7 +22,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
-import type { SettingsScopeSearch } from "./settingsScope";
+import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
   ALL_PROJECTS_VALUE,
@@ -125,12 +125,24 @@ function ScopeMenu({
   );
 }
 
-function EnvironmentScopeMenu({ value, environments, onChange }: SettingsScopeBreadcrumbProps) {
-  const selected = environments.find((environment) => environment.environmentId === value.machine);
+function EnvironmentScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+}: SettingsScopeBreadcrumbProps) {
+  const resolved = resolveSettingsScope(value, groups, environments);
+  const environmentValue = environmentAxisValue(
+    value,
+    resolved.kind === "checkout" ? resolved.environmentId : null,
+  );
+  const selected = environments.find(
+    (environment) => environment.environmentId === environmentValue,
+  );
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
-      narrowed={value.machine !== undefined}
+      narrowed={environmentValue !== ALL_ENVIRONMENTS_VALUE}
       icon={
         selected ? (
           <EnvironmentMachineIcon
@@ -143,13 +155,13 @@ function EnvironmentScopeMenu({ value, environments, onChange }: SettingsScopeBr
       label={
         selected
           ? settingsScopeEnvironmentLabel(selected, environments)
-          : value.machine
+          : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
             : "All environments"
       }
     >
       <MenuRadioGroup
-        value={environmentAxisValue(value)}
+        value={environmentValue}
         onValueChange={(next) => {
           if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
         }}
