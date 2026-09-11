@@ -180,7 +180,8 @@ class FixtureTests(unittest.TestCase):
                 "ui-proof", "capture", "--revision", revision,
                 "--screenshot", str(screenshot), "--recording", str(recording),
             )
-            paths.extend((screenshot, recording))
+            if (revision, screenshot, recording) != smoke:
+                paths.extend((screenshot, recording))
         derivative = evidence / "comparison.gif"
         derivative.write_bytes(b"GIF89a" + b"fixture derivative")
         paths.append(derivative)
@@ -293,6 +294,20 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(duplicate.returncode, 1)
         self.assertIn("already exists", duplicate.stderr)
         self.assertEqual(len(fixture.read_state(self.root)["prs"]), 1)
+
+    def test_pr_create_defaults_base_and_head_like_gh(self):
+        fixture.setup("existing_pr", self.root)
+        duplicate = self.command("gh", "pr", "create", "--title", "Duplicate", check=False)
+        self.assertEqual(duplicate.returncode, 1)
+        self.assertIn("already exists", duplicate.stderr)
+
+    def test_attachment_commands_report_missing_argument(self):
+        fixture.setup("new_pr", self.root)
+        for action in ("upload", "fetch"):
+            missing = self.command("gh", "fixture", "attachment", action, check=False)
+            self.assertEqual(missing.returncode, 1)
+            self.assertIn("requires", missing.stderr)
+            self.assertNotIn("Traceback", missing.stderr)
 
     def test_pr_create_accepts_inline_body(self):
         fixture.setup("new_pr", self.root)

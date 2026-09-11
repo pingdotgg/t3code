@@ -216,6 +216,8 @@ def service_transaction(root, args):
             print("gh fixture attachment upload PATH\n  Store PATH and return its immutable reviewer URL.\ngh fixture attachment fetch URL --output PATH\n  Retrieve an uploaded URL; a zero exit verifies accessible bytes.")
             return
         if args[:3] == ["fixture", "attachment", "upload"]:
+            if len(args) < 4:
+                raise RuntimeError("attachment upload requires PATH")
             source = Path(args[3]).resolve()
             if state["uploadFailure"]:
                 error = "simulated attachment service unavailable"
@@ -232,6 +234,8 @@ def service_transaction(root, args):
             print(url)
             return
         if args[:3] == ["fixture", "attachment", "fetch"]:
+            if len(args) < 4:
+                raise RuntimeError("attachment fetch requires URL")
             url, output = args[3], opt(args, "--output")
             item = state["attachments"].get(url)
             if not item or not output:
@@ -260,13 +264,15 @@ def service_transaction(root, args):
                 print(json.dumps(prs))
             return
         if args[:2] == ["pr", "create"]:
-            branch = opt(args, "--head", "").split(":")[-1]
-            if any(p["headRefName"] == branch and p["baseRefName"] == opt(args, "--base") for p in state["prs"]):
+            # Real gh defaults to the current branch and the repository default branch.
+            branch = (opt(args, "--head") or git(repo, "branch", "--show-current")).split(":")[-1]
+            base = opt(args, "--base", "main")
+            if any(p["headRefName"] == branch and p["baseRefName"] == base for p in state["prs"]):
                 raise RuntimeError("a pull request already exists for this base and head")
             oid = run("git", "--git-dir", str(root / "remote.git"), "rev-parse", f"refs/heads/{branch}")
             number = 17 if not state["prs"] else max(p["number"] for p in state["prs"]) + 1
             pr = {"number": number, "url": f"https://fixture.invalid/acme/widget/pull/{number}",
-                  "baseRefName": opt(args, "--base"), "headRefName": branch, "headRefOid": oid,
+                  "baseRefName": base, "headRefName": branch, "headRefOid": oid,
                   "title": opt(args, "--title"), "body": body_option(args),
                   "isDraft": "--draft" in args}
             state["prs"].append(pr)
@@ -470,9 +476,12 @@ def check(name, root, report_path):
         capture_revisions = [o["args"]["revision"] for o in captures]
         if not {state["baseHead"], state["initialHead"]} <= set(capture_revisions):
             errors.append("comparable base and candidate client captures were not completed")
+        # The last capture of each revision is its comparable one; earlier smoke
+        # and retry captures need not be published.
+        comparable = {o["args"]["revision"]: o for o in captures}
         captured_paths = {
-            path for operation in captures
-            for path in (operation["args"]["screenshot"], operation["args"]["recording"])
+            path for revision in (state["baseHead"], state["initialHead"]) if revision in comparable
+            for path in (comparable[revision]["args"]["screenshot"], comparable[revision]["args"]["recording"])
         }
         captured_names = {Path(path).name for path in captured_paths}
         suffixes = [Path(path).suffix for path in captured_paths]
