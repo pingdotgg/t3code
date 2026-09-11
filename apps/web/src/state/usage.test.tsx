@@ -1,14 +1,40 @@
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { serverEnvironment } from "./server";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useUsage, type EnvironmentUsageStatus, type UsageView } from "./usage";
 
-const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
+function deferred() {
+  let resolve = () => {};
+  let reject = (_reason?: unknown) => {};
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = () => resolvePromise();
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+const testState = vi.hoisted(() => ({
+  environments: [] as EnvironmentUsageStatus[],
+  windowLabel: "",
+  runAtomCommand: vi.fn(),
+  refreshUsage: vi.fn(),
+  refreshAtom: vi.fn(),
+  readSummary: vi.fn(),
+}));
+vi.mock("@t3tools/client-runtime/state/usage", () => ({ refreshUsage: testState.refreshUsage }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { refresh: testState.refreshAtom, get: testState.readSummary },
+}));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
-  useAtomValue: () => testState.environments,
+  useAtomValue: (atom: { readonly label?: readonly [string, string] }) => {
+    testState.windowLabel = atom.label?.[0] ?? "";
+    return testState.environments;
+  },
 }));
 
 const input = {
@@ -30,6 +56,11 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
             ...input,
             contractVersion: USAGE_CONTRACT_VERSION,
             readAt: "2026-09-04T12:00:00Z",
+            coverage: {
+              availableThroughDay: input.untilDay,
+              availableThroughTime: null,
+              generatedAt: "2026-09-05T00:00:00Z",
+            },
             buckets: [
               {
                 day: input.sinceDay,
@@ -75,8 +106,16 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
 let renderer: ReactTestRenderer | undefined;
 let latest: UsageView;
 
-function Probe({ selected }: { selected: ReadonlySet<EnvironmentId> | null }) {
-  const usage = useUsage(input, selected);
+function Probe({
+  selected,
+  refreshThreads = false,
+  windowInput = input,
+}: {
+  selected: ReadonlySet<EnvironmentId> | null;
+  refreshThreads?: boolean;
+  windowInput?: typeof input;
+}) {
+  const usage = useUsage(windowInput, undefined, refreshThreads, selected);
   useLayoutEffect(() => {
     latest = usage;
   }, [usage]);
@@ -90,6 +129,13 @@ async function select(...ids: string[]) {
 }
 
 beforeEach(async () => {
+  testState.runAtomCommand.mockReset();
+  testState.refreshUsage.mockReset().mockResolvedValue(undefined);
+  testState.refreshAtom.mockReset();
+  testState.readSummary
+    .mockReset()
+    .mockImplementation(() => AsyncResult.success(testState.environments[0]?.summary));
+
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.environments = [environment("a", 10), environment("b", 20), environment("slow", null)];
   await act(() => {
@@ -164,3 +210,118 @@ describe("usage environment selection", () => {
     expect(latest.isPartial).toBe(false);
   });
 });
+
+describe("thread breakdown refresh", () => {
+  it.each([9, USAGE_CONTRACT_VERSION])(
+    "waits for summary publication before refreshing contract-%i thread rows",
+    async (contractVersion) => {
+      testState.environments = testState.environments.map((entry) => ({
+        ...entry,
+        summary: entry.summary === null ? null : { ...entry.summary, contractVersion },
+      }));
+      const summary = deferred();
+      testState.refreshUsage.mockReturnValue(summary.promise);
+      await act(() => {
+        renderer?.update(
+          <Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />,
+        );
+      });
+      const refreshing = latest.refresh();
+      expect(testState.refreshAtom).not.toHaveBeenCalled();
+      await act(async () => {
+        summary.resolve();
+        await refreshing;
+      });
+      expect(testState.refreshAtom).toHaveBeenCalledOnce();
+    },
+  );
+});
+
+describe("snapshot refresh scope", () => {
+  it("keeps a failed refresh scoped to its selected environments", async () => {
+    await select("a");
+    const gate = deferred();
+    testState.refreshUsage.mockReturnValueOnce(gate.promise);
+    let refreshing: Promise<void>;
+    await act(() => {
+      refreshing = latest.refresh();
+    });
+    expect(latest.isRefreshing).toBe(true);
+    await select("b");
+    expect(latest.isRefreshing).toBe(false);
+    await act(async () => {
+      gate.reject(new Error("offline"));
+      await refreshing;
+    });
+    expect(latest.refreshError).toBeNull();
+    await select("a");
+    expect(latest.isRefreshing).toBe(false);
+    expect(latest.refreshError).toBeNull();
+  });
+  it("retains saved totals and reports a failed refresh in the current view", async () => {
+    await select("a");
+    testState.refreshUsage.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => {
+      await latest.refresh();
+    });
+    expect(latest.merged.costUsd).toBe(10);
+    expect(latest.isRefreshing).toBe(false);
+    expect(latest.refreshError).toBe("Refresh failed. Showing the last successful usage snapshot.");
+  });
+});
+
+it("refreshes thread keys with the new window and newly published providers", async () => {
+  await act(() =>
+    renderer?.update(<Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />),
+  );
+  const nextInput = {
+    ...input,
+    sinceDay: UsageDay.make("2026-09-05"),
+    untilDay: UsageDay.make("2026-09-06"),
+  };
+  const changed = environment("a", 50).summary!;
+  testState.readSummary.mockReturnValue(
+    AsyncResult.success({
+      ...changed,
+      ...nextInput,
+      buckets: changed.buckets.map((bucket) => ({ ...bucket, provider: "claude" })),
+      sources: changed.sources.map((source) => ({
+        ...source,
+        fingerprint: { ...source.fingerprint, provider: "claude" },
+      })),
+    }),
+  );
+  const query = vi.spyOn(serverEnvironment, "usageThreadBreakdown");
+  try {
+    await latest.refresh(nextInput);
+    expect(query).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("a"),
+      input: expect.objectContaining({ ...nextInput, providers: ["claude"] }),
+    });
+  } finally {
+    query.mockRestore();
+  }
+});
+
+it.each([false, true])(
+  "settles a next-window refresh before React commits, failure=%s",
+  async (fails) => {
+    const selected = new Set([EnvironmentId.make("a")]);
+    await select("a");
+    const nextInput = {
+      ...input,
+      sinceDay: UsageDay.make("2026-09-05"),
+      untilDay: UsageDay.make("2026-09-06"),
+    };
+    if (fails) testState.refreshUsage.mockRejectedValueOnce(new Error("offline"));
+    else testState.refreshUsage.mockResolvedValueOnce(undefined);
+    await act(async () => {
+      renderer?.update(<Probe selected={selected} windowInput={nextInput} />);
+      await latest.refresh(nextInput);
+    });
+    expect(latest.isRefreshing).toBe(false);
+    expect(latest.refreshError).toBe(
+      fails ? "Refresh failed. Showing the last successful usage snapshot." : null,
+    );
+  },
+);
