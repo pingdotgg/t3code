@@ -66,7 +66,9 @@ const WORKSPACE_ROOT = "/tmp/project-from-server";
 const CLAUDE_SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const encodeTranscriptRecord = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeThread = (source: "codex" | "claudeAgent"): AgentSessionScanner.AgentSessionThread => ({
+const makeThread = (
+  source: "codex" | "claudeAgent" | "muse",
+): AgentSessionScanner.AgentSessionThread => ({
   source,
   providerInstanceId: ProviderInstanceId.make(source),
   providerSessionId: source === "codex" ? "codex-session" : CLAUDE_SESSION_ID,
@@ -859,7 +861,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       }),
   );
 
-  for (const source of ["codex", "claudeAgent"] as const) {
+  for (const source of ["codex", "claudeAgent", "muse"] as const) {
     it.effect(`resumes imported ${source} history only after the first prompt`, () =>
       Effect.gen(function* () {
         const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -878,7 +880,9 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         const resumeCursor =
           source === "codex"
             ? { threadId: sourceThread.providerSessionId }
-            : { threadId, resume: sourceThread.providerSessionId };
+            : source === "muse"
+              ? { sessionId: sourceThread.providerSessionId }
+              : { threadId, resume: sourceThread.providerSessionId };
         const provider = ProviderDriverKind.make(source);
         const harness = yield* makeTestProviderAdapterHarness({ provider });
         const importSettled = yield* Deferred.make<void>();

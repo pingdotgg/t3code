@@ -574,7 +574,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolPresentation.toolSource) {
     entry.toolSource = toolPresentation.toolSource;
   }
-  if (itemType === "mcp_tool_call") {
+  if (itemType === "mcp_tool_call" || itemType === "dynamic_tool_call") {
     const data = asRecord(payload?.data);
     const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
     if (toolData !== undefined) {

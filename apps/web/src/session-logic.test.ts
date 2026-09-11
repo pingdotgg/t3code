@@ -7,7 +7,11 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  resolveWorkEntryToolPresentation,
+  summarizeToolGroup,
+  workLogEntryIsToolLike,
+} from "@t3tools/client-runtime/work-log/presentation";
 
 import {
   createMessageAttachmentPreviewProjector,
@@ -450,6 +454,34 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("renders projected Muse reminder children as updates instead of tool use", () => {
+    const activities = ["first", "second"].flatMap((itemId) =>
+      ["started", "completed"].map((phase) =>
+        makeActivity({
+          id: `${itemId}-${phase}`,
+          kind: `tool.${phase}`,
+          summary: phase === "started" ? "reminderChild started" : "reminderChild",
+          payload: {
+            itemType: "dynamic_tool_call",
+            toolCallId: itemId,
+            status: phase === "started" ? "inProgress" : "completed",
+            title: "reminderChild",
+            detail: "Reminder child session",
+            data: { item: { kind: "reminderChild" } },
+          },
+        }),
+      ),
+    );
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.detail)).toEqual([
+      "Reminder child session",
+      "Reminder child session",
+    ]);
+    expect(entries.every((entry) => !workLogEntryIsToolLike(entry))).toBe(true);
+    expect(summarizeToolGroup(entries)).toBe("Received 2 updates");
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

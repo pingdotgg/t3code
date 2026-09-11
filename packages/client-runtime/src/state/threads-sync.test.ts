@@ -140,7 +140,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
-  readonly loadCached?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+  readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
@@ -695,6 +695,34 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+    }),
+  );
+
+  it.effect("refetches the HTTP snapshot when the persisted cache version is rejected", () =>
+    Effect.gen(function* () {
+      const httpThread: OrchestrationThread = { ...BASE_THREAD, title: "Refetched thread" };
+      const harness = yield* makeHarness({
+        loadCached: Effect.fail(
+          new Persistence.ConnectionPersistenceError({
+            operation: "load-thread",
+            message: "Unsupported thread snapshot cache version",
+          }),
+        ),
+        httpSnapshot: Option.some({ snapshotSequence: 10, thread: httpThread }),
+      });
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 11));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title",
+      );
+
+      expect(Option.getOrThrow(state.data).title).toBe("Live title");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(10);
     }),
   );
 
