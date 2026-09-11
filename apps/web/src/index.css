@@ -1837,6 +1837,21 @@ code {
   margin: 0 auto;
 }
 
+/* The expanded overlay is portaled outside `.chat-markdown`, so it needs its
+   own rules. The container gets the diagram's natural width inline (capped by
+   max-w-[92vw]) and scrolls, giving large diagrams a bigger canvas than the
+   chat column. */
+.chat-markdown-mermaid-dialog {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.chat-markdown-mermaid-dialog svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
