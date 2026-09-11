@@ -35,7 +35,7 @@ import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
@@ -69,6 +69,34 @@ const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
+
+it.effect("decodes an idle-guarded Codex session stop without changing legacy stops", () =>
+  Effect.gen(function* () {
+    const guarded = yield* decodeClientOrchestrationCommand({
+      type: "thread.session.stop",
+      commandId: "cmd-guarded-stop",
+      threadId: "thread-1",
+      createdAt: "2026-09-11T00:00:00.000Z",
+      onlyIfIdle: true,
+      snapshotSequence: 42,
+      expectedProviderName: ProviderDriverKind.make("codex"),
+    });
+    assert.strictEqual(guarded.type, "thread.session.stop");
+    if (guarded.type === "thread.session.stop") {
+      assert.strictEqual(guarded.onlyIfIdle, true);
+      assert.strictEqual(guarded.snapshotSequence, 42);
+      assert.strictEqual(guarded.expectedProviderName, "codex");
+    }
+
+    const legacy = yield* decodeClientOrchestrationCommand({
+      type: "thread.session.stop",
+      commandId: "cmd-legacy-stop",
+      threadId: "thread-1",
+      createdAt: "2026-09-11T00:00:00.000Z",
+    });
+    assert.strictEqual(legacy.type, "thread.session.stop");
+  }),
+);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {

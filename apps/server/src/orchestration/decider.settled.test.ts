@@ -3,8 +3,10 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -848,6 +850,127 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(unconditionalEvents.map((event) => event.type)).toEqual([
         "thread.session-stop-requested",
       ]);
+    }),
+  );
+
+  it.effect("allows a guarded stop for an idle Codex session", () =>
+    Effect.gen(function* () {
+      const stopped = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-idle-codex"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfIdle: true,
+          snapshotSequence: 0,
+          expectedProviderName: ProviderDriverKind.make("codex"),
+        },
+        readModel: makeReadModel("settled", null, {
+          ...makeSession("ready"),
+          providerName: "codex",
+        }),
+      });
+
+      const stoppedEvents = Array.isArray(stopped) ? stopped : [stopped];
+      expect(stoppedEvents.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+    }),
+  );
+
+  it.effect("rejects a guarded stop while the Codex session is running", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-running-codex"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfIdle: true,
+          snapshotSequence: 0,
+          expectedProviderName: ProviderDriverKind.make("codex"),
+        },
+        readModel: makeReadModel("settled", null, {
+          ...makeSession("running"),
+          providerName: "codex",
+        }),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("rejects guarded stops for the wrong provider or an active turn", () =>
+    Effect.gen(function* () {
+      const command = {
+        type: "thread.session.stop" as const,
+        commandId: CommandId.make("cmd-stop-unsafe-session"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: NOW,
+        onlyIfIdle: true,
+        snapshotSequence: 0,
+        expectedProviderName: ProviderDriverKind.make("codex"),
+      };
+      const unsafeSessions: ReadonlyArray<OrchestrationSession> = [
+        { ...makeSession("ready"), providerName: "claudeAgent" },
+        {
+          ...makeSession("ready"),
+          providerName: "codex",
+          activeTurnId: TurnId.make("turn-1"),
+        },
+      ];
+
+      for (const [index, session] of unsafeSessions.entries()) {
+        const error = yield* decideOrchestrationCommand({
+          command: { ...command, commandId: CommandId.make(`cmd-stop-unsafe-${index}`) },
+          readModel: makeReadModel("settled", null, session),
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }
+    }),
+  );
+
+  it.effect("does not expose guarded stops for non-Codex sessions", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-guarded-claude"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfIdle: true,
+          snapshotSequence: 0,
+          expectedProviderName: ProviderDriverKind.make("claudeAgent"),
+        },
+        readModel: makeReadModel("settled", null, {
+          ...makeSession("ready"),
+          providerName: "claudeAgent",
+        }),
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("allows every non-working Codex session state", () =>
+    Effect.gen(function* () {
+      for (const status of ["ready", "idle", "interrupted", "error"] as const) {
+        const result = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.stop",
+            commandId: CommandId.make(`cmd-stop-${status}`),
+            threadId: ThreadId.make("thread-1"),
+            createdAt: NOW,
+            onlyIfIdle: true,
+            snapshotSequence: 0,
+            expectedProviderName: ProviderDriverKind.make("codex"),
+          },
+          readModel: makeReadModel("settled", null, {
+            ...makeSession(status),
+            providerName: "codex",
+          }),
+        });
+        const events = Array.isArray(result) ? result : [result];
+        expect(events.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+      }
     }),
   );
 });

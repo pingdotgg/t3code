@@ -173,6 +173,7 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly startReactor?: boolean;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
@@ -191,6 +192,11 @@ describe("ProviderCommandReactor", () => {
     createdBaseDirs.add(baseDir);
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    const backgroundLivenessLayer = Layer.succeed(
+      ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+      backgroundLiveness,
+    );
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     const tryHandlePromptCommand = vi.fn<ProviderAuthService["Service"]["tryHandlePromptCommand"]>(
       input?.tryHandlePromptCommandEffect ?? (() => Effect.succeed(false)),
@@ -400,7 +406,7 @@ describe("ProviderCommandReactor", () => {
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(backgroundLivenessLayer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
@@ -409,7 +415,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
-      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(backgroundLivenessLayer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
@@ -488,6 +494,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(backgroundLivenessLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -579,14 +586,18 @@ describe("ProviderCommandReactor", () => {
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(
-      reactor
-        .start()
-        .pipe(
-          Scope.provide(scope),
-          Effect.provideService(ServerActivation, input?.serverActivation),
-        ),
-    );
+    const start = () =>
+      Effect.runPromise(
+        reactor
+          .start()
+          .pipe(
+            Scope.provide(scope!),
+            Effect.provideService(ServerActivation, input?.serverActivation),
+          ),
+      );
+    if (input?.startReactor !== false) {
+      await start();
+    }
     const drain = () => Effect.runPromise(reactor.drain);
 
     return {
@@ -620,6 +631,8 @@ describe("ProviderCommandReactor", () => {
       generateThreadTitle,
       runtimeSessions,
       stateDir,
+      backgroundLiveness,
+      start,
       drain,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
@@ -4127,6 +4140,56 @@ describe("ProviderCommandReactor", () => {
       expect(thread.session?.threadId).toBe("thread-1");
       expect(thread.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
       expect(thread.session?.activeTurnId).toBeNull();
+    }),
+  );
+
+  effectIt.effect("skips a guarded stop when background work appears before execution", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness({ startReactor: false }));
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-guarded-stop"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      const snapshotSequence = yield* harness.engine.latestSequence;
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-guarded-stop-before-background"),
+        threadId,
+        createdAt: now,
+        onlyIfIdle: true,
+        snapshotSequence,
+        expectedProviderName: ProviderDriverKind.make("codex"),
+      });
+      harness.backgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId: "guarded-stop-background-task",
+        taskType: "subagent",
+        status: undefined,
+        kind: "started",
+      });
+
+      yield* Effect.promise(() => harness.start());
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      const thread = yield* harness.snapshotQuery
+        .getThreadShellById(threadId)
+        .pipe(Effect.map(Option.getOrThrow));
+      expect(thread.session?.status).toBe("ready");
     }),
   );
 
