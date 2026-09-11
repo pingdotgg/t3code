@@ -599,7 +599,7 @@ export function PreviewView({
         // instead of holding the composer for an attachment that never lands.
         // The stored copy drops the screenshot on failure, otherwise the prompt
         // would tell the agent a crop is attached when none was sent.
-        const capture = await capturePreviewAnnotationScreenshot(picked);
+        const capture = capturePreviewAnnotationScreenshot(picked);
         // Main reports a crop that failed or timed out on its side; the local
         // conversion can fail too. Either way the user should hear about it.
         const cropDropped = screenshotFailed || capture.status === "failed";

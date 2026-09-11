@@ -342,7 +342,7 @@ describe("PreviewView navigation", () => {
     mocks.closePictureInPicture.mockClear();
     mocks.pickElement.mockReset();
     mocks.capturePreviewAnnotationScreenshot.mockReset();
-    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "none" });
+    mocks.capturePreviewAnnotationScreenshot.mockReturnValue({ status: "none" });
     mocks.addPreviewAnnotation.mockClear();
     vi.mocked(toastManager.add).mockClear();
     mocks.addImage.mockClear();
@@ -601,7 +601,7 @@ describe("PreviewView navigation", () => {
     };
     const onSendAnnotation = vi.fn();
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    mocks.capturePreviewAnnotationScreenshot.mockResolvedValue({ status: "failed" });
+    mocks.capturePreviewAnnotationScreenshot.mockReturnValue({ status: "failed" });
 
     renderToStaticMarkup(
       <PreviewView
