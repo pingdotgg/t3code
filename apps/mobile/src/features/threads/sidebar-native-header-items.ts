@@ -5,6 +5,7 @@ import type {
 
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { createNativeNavigationHistoryItems } from "../navigation/native-navigation-history-items";
 
 type NativeHeaderMenuItems = NativeStackHeaderItemMenu["menu"]["items"];
 type NativeHeaderIcon = NonNullable<Extract<NativeStackHeaderItem, { type: "button" }>["icon"]>;
@@ -32,16 +33,26 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 }
 
 /**
- * Right-side UINavigationBar items for the sidebar column: the thread list
- * filter/sort menu plus the settings button, sharing one glass capsule —
- * the Messages-style grouped header buttons.
+ * Right-side UINavigationBar items for the sidebar column: navigation history,
+ * the thread-list menu, and settings, sharing one Messages-style glass group.
  */
 export function createSidebarHeaderItems(input: {
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
+  readonly onBack: () => void;
+  readonly onForward: () => void;
   readonly onOpenSettings: () => void;
 }): NativeStackHeaderItem[] {
   return [
+    ...createNativeNavigationHistoryItems({
+      canGoBack: input.canGoBack,
+      canGoForward: input.canGoForward,
+      identifierPrefix: "sidebar-navigation",
+      onBack: input.onBack,
+      onForward: input.onForward,
+    }),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

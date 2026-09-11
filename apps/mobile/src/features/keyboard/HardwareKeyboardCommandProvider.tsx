@@ -1,4 +1,4 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   useCallback,
@@ -17,12 +17,15 @@ import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import {
   dispatchHardwareKeyboardCommand,
+  getHardwareBackFallbackPath,
   getHardwareKeyboardCommandRegistrationVersion,
   getRegisteredHardwareKeyboardCommands,
+  hasHardwareBackTarget,
   parseActiveThreadPath,
   subscribeToHardwareKeyboardCommandRegistrations,
   type HardwareKeyboardCommand,
 } from "./hardwareKeyboardCommands";
+import { useMobileNavigationHistory } from "../navigation/MobileNavigationHistoryProvider";
 
 const EMPTY_COPY_FEEDBACK: GitActionProgress = {
   phase: "idle",
@@ -36,6 +39,7 @@ export function HardwareKeyboardCommandProvider({
   pathname,
 }: PropsWithChildren<{ readonly pathname: string }>) {
   const navigation = useNavigation();
+  const navigationHistory = useMobileNavigationHistory();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
   const activeThread = useThreadShell(activeThreadRef);
   const copyTarget = useMemo(
@@ -86,7 +90,8 @@ export function HardwareKeyboardCommandProvider({
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
-    if (pathname !== "/" || navigation.canGoBack()) commands.add("back");
+    if (hasHardwareBackTarget(pathname, navigationHistory.canGoBack)) commands.add("back");
+    if (navigationHistory.canGoForward) commands.add("forward");
     if (activeThreadRef !== null) {
       commands.add("files");
       commands.add("terminal");
@@ -94,7 +99,13 @@ export function HardwareKeyboardCommandProvider({
       if (pathname.split("/")[4] !== "terminal") commands.add("copyThreadReference");
     }
     return [...commands];
-  }, [pathname, registrationVersion, navigation]);
+  }, [
+    activeThreadRef,
+    navigationHistory.canGoBack,
+    navigationHistory.canGoForward,
+    pathname,
+    registrationVersion,
+  ]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
@@ -129,11 +140,16 @@ export function HardwareKeyboardCommandProvider({
         return;
       }
       if (command === "back") {
-        if (navigation.canGoBack()) {
-          navigation.goBack();
+        if (navigationHistory.canGoBack) {
+          navigationHistory.back();
         } else {
-          navigation.dispatch(StackActions.replace("Home"));
+          const fallbackPath = getHardwareBackFallbackPath(pathname);
+          if (fallbackPath) navigationHistory.replace(fallbackPath);
         }
+        return;
+      }
+      if (command === "forward") {
+        navigationHistory.forward();
         return;
       }
 
@@ -149,7 +165,7 @@ export function HardwareKeyboardCommandProvider({
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback],
+    [copyTarget, navigation, navigationHistory, pathname, showCopyFeedback],
   );
 
   return (
