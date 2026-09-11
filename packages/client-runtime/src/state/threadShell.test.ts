@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { applyShellStreamEvent } from "./shellReducer.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -46,6 +47,61 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("preserves ordered reference arrays when a middle thread changes", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const snapshot = {
+      ...v2ShellSnapshot,
+      threads: ["a", "b", "c"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) })),
+    };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const dispose = registry.mount(threads.threadRefsAtom);
+    const before = registry.get(threads.threadRefsAtom);
+    registry.set(
+      snapshotAtom(environmentId),
+      applyShellStreamEvent(snapshot, {
+        kind: "thread.updated",
+        location: "active",
+        sequence: 1,
+        thread: { ...snapshot.threads[1]!, title: "Updated" },
+      }),
+    );
+    expect(registry.get(threads.threadRefsAtom)).toBe(before);
+    dispose();
+    registry.dispose();
+  });
+
+  it("keeps navigation stable on hidden subagent updates and retains user forks", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const child = {
+      ...root,
+      id: ThreadId.make("child"),
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const fork = {
+      ...child,
+      id: ThreadId.make("fork"),
+      lineage: { ...child.lineage, relationshipToParent: "fork" as const },
+    };
+    const snapshot = { ...v2ShellSnapshot, threads: [root, child, fork] };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const dispose = registry.mount(threads.navigationThreadShellsAtom);
+    const before = registry.get(threads.navigationThreadShellsAtom);
+    expect(before.map((thread) => thread.id)).toEqual([root.id, fork.id]);
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [root, { ...child, title: "Child streaming" }, fork],
+    });
+    expect(registry.get(threads.navigationThreadShellsAtom)).toBe(before);
+    expect(registry.get(threads.threadShellsAtom)).toHaveLength(3);
+    dispose();
+    registry.dispose();
+  });
+
   it("shares point and list values without retaining an atom for every listed thread", () => {
     const harness = makeHarness();
     const snapshot = {
