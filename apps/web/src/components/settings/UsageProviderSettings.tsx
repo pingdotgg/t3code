@@ -38,7 +38,7 @@ export function UsageProviderSettings({
       <SettingsSection {...searchableSetting("usage-providers")} hideTitle variant="plain">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div className="space-y-2">
-            <h2 className="text-base font-semibold">Usage providers</h2>
+            <p className="text-base font-semibold">Usage providers</p>
             <p className="text-sm text-muted-foreground">
               Track account quotas from your CLIProxyAPI hubs in Limits.
             </p>

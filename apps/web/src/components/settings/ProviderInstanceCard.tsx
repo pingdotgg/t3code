@@ -56,7 +56,6 @@ import {
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
   getProviderVersionLabel,
-  type ProviderStatusKey,
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -449,15 +448,12 @@ export function ProviderInstanceCard({
 }: ProviderInstanceCardProps) {
   const statusDescriptionId = useId();
   const enabled = resolveProviderInstanceEnabled(instance);
-  // A locally disabled provider reads "Disabled" with a muted dot even if its
-  // last server status is stale. Enabled providers use the server status.
-  const statusKey: ProviderStatusKey = enabled
-    ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
-    : "disabled";
-  const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
+  // Local disabling takes precedence while the server status catches up.
   const summary = enabled
     ? getProviderSummary(liveProvider, { includeAuthLabel: mode !== "list" })
-    : { headline: "Disabled", detail: null };
+    : { status: "disabled" as const, headline: "Disabled", detail: null };
+  const statusKey = summary.status;
+  const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =

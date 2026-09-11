@@ -1,8 +1,8 @@
 import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
 
 /**
- * Visual treatment for each server-reported provider status. Centralized so
- * the default-driver card and per-instance cards share the same language.
+ * Visual treatment for the resolved installation, authentication, and runtime
+ * status. Cards use the same result for their headline and status dot.
  */
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
@@ -22,7 +22,7 @@ export const PROVIDER_STATUS_STYLES = {
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
 /**
- * Derive the headline + detail copy shown under a provider's name in the
+ * Derive the status and copy shown under a provider's name in the
  * settings page. Prefers `provider.message` for server-supplied detail and
  * falls back to generic phrasing when the server has not yet reported any
  * state — which happens before the first probe or when an instance names a
@@ -32,15 +32,17 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 export function getProviderSummary(
   provider: ServerProvider | undefined,
   options?: { readonly includeAuthLabel?: boolean },
-) {
+): { status: ProviderStatusKey; headline: string; detail: string | null } {
   if (!provider) {
     return {
+      status: "warning",
       headline: "Checking provider status",
       detail: "Waiting for the server to report installation and authentication details.",
     };
   }
   if (!provider.enabled || provider.status === "disabled") {
     return {
+      status: "disabled",
       headline: "Disabled",
       detail:
         provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
@@ -48,18 +50,21 @@ export function getProviderSummary(
   }
   if (!provider.installed) {
     return {
+      status: "error",
       headline: "Not found",
       detail: provider.message ?? "CLI not detected on PATH.",
     };
   }
   if (provider.auth.status === "unauthenticated") {
     return {
+      status: "warning",
       headline: "Not authenticated",
       detail: provider.message ?? null,
     };
   }
   if (provider.status === "warning") {
     return {
+      status: "warning",
       headline: "Needs attention",
       detail:
         provider.message ?? "The provider is installed, but the server could not fully verify it.",
@@ -67,6 +72,7 @@ export function getProviderSummary(
   }
   if (provider.status === "error") {
     return {
+      status: "error",
       headline: "Unavailable",
       detail: provider.message ?? "The provider failed its startup checks.",
     };
@@ -74,6 +80,7 @@ export function getProviderSummary(
   if (provider.auth.status === "authenticated") {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
+      status: "ready",
       headline:
         authLabel && options?.includeAuthLabel !== false
           ? `Authenticated · ${authLabel}`
@@ -82,6 +89,7 @@ export function getProviderSummary(
     };
   }
   return {
+    status: "ready",
     headline: "Available",
     detail: provider.message ?? null,
   };

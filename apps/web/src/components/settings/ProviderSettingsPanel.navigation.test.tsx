@@ -247,4 +247,45 @@ describe("provider account navigation", () => {
       expect(textContent(editorStatus)).toContain("Authenticated as");
     },
   );
+
+  it.each([
+    {
+      installed: false,
+      auth: { status: "authenticated" },
+      headline: "Not found",
+      dot: "bg-destructive",
+    },
+    {
+      installed: true,
+      auth: { status: "unauthenticated" },
+      headline: "Not authenticated",
+      dot: "bg-warning",
+    },
+  ] as const)(
+    "shows $headline with a non-ready dot despite a ready server status",
+    async ({ installed, auth, headline, dot }) => {
+      state.providers = [
+        {
+          instanceId: claudeId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          installed,
+          version: null,
+          status: "ready",
+          auth,
+          checkedAt: "2026-09-10T12:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ];
+      await mountPanel();
+      const row = buttonByLabel("Select Claude account Default");
+      expect(textContent(row)).toContain(headline);
+      const statusDot = row
+        .findAllByType("span")
+        .find((node) => node.props["aria-hidden"] === true);
+      expect(statusDot?.props.className).toContain(dot);
+    },
+  );
 });
