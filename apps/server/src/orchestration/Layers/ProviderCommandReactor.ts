@@ -1616,6 +1616,16 @@ const make = Effect.gen(function* () {
             request.value.payload.responseMode === "message"
           )
         ) {
+          // Legacy activities have no sequence, so their durable lookup orders
+          // by timestamp even when the client or server clock has moved back.
+          const resolvedAt = DateTime.formatIso(
+            DateTime.makeUnsafe(
+              Math.max(
+                DateTime.toEpochMillis(yield* DateTime.now),
+                DateTime.toEpochMillis(DateTime.makeUnsafe(request.value.createdAt)) + 1,
+              ),
+            ),
+          );
           yield* orchestrationEngine.dispatch({
             type: "thread.activity.append",
             commandId: yield* serverCommandId("orphaned-user-input-resolved"),
@@ -1627,9 +1637,9 @@ const make = Effect.gen(function* () {
               summary: "User input dismissed because the provider session ended",
               payload: { requestId: event.payload.requestId },
               turnId: request.value.turnId,
-              createdAt: event.payload.createdAt,
+              createdAt: resolvedAt,
             },
-            createdAt: event.payload.createdAt,
+            createdAt: resolvedAt,
           });
         }
         return;

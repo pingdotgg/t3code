@@ -3847,7 +3847,7 @@ describe("ProviderCommandReactor", () => {
           );
           const threadId = ThreadId.make("thread-1");
           const requestId = asApprovalRequestId("orphaned-question");
-          const createdAt = "2026-01-01T00:00:01.000Z";
+          const createdAt = "2099-01-01T00:00:01.000Z";
           if (status !== "missing") {
             yield* harness.engine.dispatch({
               type: "thread.session.set",
@@ -3939,6 +3939,16 @@ describe("ProviderCommandReactor", () => {
             turnId: "old-turn",
             payload: { requestId },
           });
+          if (status !== "running") {
+            expect(Option.getOrThrow(latest).createdAt > createdAt).toBe(true);
+          }
+          const events = yield* harness.engine.readEvents(0).pipe(Stream.runCollect);
+          const resolutions = events.filter(
+            (event) =>
+              event.type === "thread.activity-appended" &&
+              event.payload.activity.kind === "user-input.resolved",
+          );
+          expect(resolutions).toHaveLength(status === "running" ? 0 : 1);
           const shell = yield* harness.snapshotQuery.getThreadShellById(threadId);
           expect(Option.getOrThrow(shell).hasPendingUserInput).toBe(status === "running");
           expect(harness.respondToUserInput).toHaveBeenCalledTimes(status === "running" ? 2 : 0);
