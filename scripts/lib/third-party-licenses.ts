@@ -268,16 +268,36 @@ async function resolveDependencyPackage(
       if (code !== "MODULE_NOT_FOUND" && code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
     }
   }
+
+  let current = NodePath.dirname(fromPackageJsonPath);
+  const root = NodePath.parse(current).root;
+  while (true) {
+    const packageRoot = NodePath.join(current, "node_modules", dependencyName);
+    try {
+      const packageJson = await readPackageJson(NodePath.join(packageRoot, "package.json"));
+      if (packageJson.name === dependencyName) {
+        return { packageJson, packageRoot: await NodeFSP.realpath(packageRoot) };
+      }
+    } catch (error) {
+      const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    }
+    if (current === root) break;
+    current = NodePath.dirname(current);
+  }
   return null;
 }
 
-function dependencyNames(packageJson: PackageJson): ReadonlyArray<string> {
+function dependencies(
+  packageJson: PackageJson,
+): ReadonlyArray<{ readonly name: string; readonly optional: boolean }> {
+  const optional = new Set(Object.keys(packageJson.optionalDependencies ?? {}));
   return [
-    ...new Set([
-      ...Object.keys(packageJson.dependencies ?? {}),
-      ...Object.keys(packageJson.optionalDependencies ?? {}),
-    ]),
-  ].sort((left, right) => left.localeCompare(right));
+    ...Object.keys(packageJson.dependencies ?? {})
+      .filter((name) => !optional.has(name))
+      .map((name) => ({ name, optional: false })),
+    ...[...optional].map((name) => ({ name, optional: true })),
+  ].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function collectProductionDependencyPackages(
@@ -290,9 +310,14 @@ async function collectProductionDependencyPackages(
 
   const visitManifest = async (packageJsonPath: string, bundle: string): Promise<void> => {
     const packageJson = await readPackageJson(packageJsonPath);
-    for (const dependencyName of dependencyNames(packageJson)) {
+    for (const { name: dependencyName, optional } of dependencies(packageJson)) {
       const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
-      if (!resolved) continue;
+      if (!resolved) {
+        if (optional) continue;
+        throw new Error(
+          `Unable to resolve production dependency "${dependencyName}" declared by ${packageJsonPath} for bundle "${bundle}".`,
+        );
+      }
       const visitKey = `${bundle}:${resolved.packageRoot}`;
       if (visited.has(visitKey)) continue;
       visited.add(visitKey);
@@ -704,6 +729,7 @@ export function thirdPartyLicensesPlugin(options: ThirdPartyLicensesPluginOption
         }
         manifestPromise ??= generateThirdPartyLicenseManifest({
           packageManifests: options.packageManifests,
+          bundleName: options.bundleName,
           ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
         }).catch((error: unknown) => {
           manifestPromise = null;

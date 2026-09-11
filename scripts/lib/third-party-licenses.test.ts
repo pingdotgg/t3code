@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { generateThirdPartyLicenseManifest } from "./third-party-licenses.js";
+import {
+  generateThirdPartyLicenseManifest,
+  THIRD_PARTY_LICENSES_FILE_NAME,
+  thirdPartyLicensesPlugin,
+} from "./third-party-licenses.js";
 
 const tempDirectories: string[] = [];
 
@@ -98,6 +102,114 @@ describe("third-party license generation", () => {
         },
       ],
     });
+  });
+
+  it("finds packages whose exports hide both their manifest and entry point", async () => {
+    const fixture = await createFixture();
+    await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {
+      name: "demo-dependency",
+      version: "1.2.3",
+      license: "MIT",
+      exports: {},
+      repository: "example/demo-dependency",
+    });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
+  });
+
+  it("fails when a required production dependency cannot be resolved", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "missing-dependency": "1.0.0" },
+    });
+
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      }),
+    ).rejects.toThrow('Unable to resolve production dependency "missing-dependency"');
+  });
+
+  it("allows unresolved optional dependencies", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-dependency": "1.2.3" },
+      optionalDependencies: { "platform-only-dependency": "1.0.0" },
+    });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
+  });
+
+  it("includes custom notices selected by the dev server bundle", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.configFile, {
+      customNotices: [
+        {
+          name: "desktop-only-asset",
+          license: "CC-BY-4.0",
+          noticeFile: "asset-notice.txt",
+          bundles: ["assets"],
+          includeInBundles: ["desktop"],
+        },
+      ],
+      packageOverrides: [],
+    });
+
+    const plugin = thirdPartyLicensesPlugin({
+      bundleName: "desktop",
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+    let middleware:
+      | ((
+          request: { readonly url: string },
+          response: {
+            statusCode: number;
+            setHeader(name: string, value: string): void;
+            end(body: string): void;
+          },
+          next: (error?: Error) => void,
+        ) => void)
+      | undefined;
+    if (typeof plugin.configureServer !== "function") {
+      throw new Error("Expected the license plugin to define a configureServer hook.");
+    }
+    plugin.configureServer({
+      middlewares: {
+        use(handler: typeof middleware) {
+          middleware = handler;
+        },
+      },
+    } as never);
+    if (!middleware) throw new Error("Expected the license plugin to register middleware.");
+
+    const responseBody = await new Promise<string>((resolve, reject) => {
+      middleware!(
+        { url: `/${THIRD_PARTY_LICENSES_FILE_NAME}` },
+        {
+          statusCode: 0,
+          setHeader() {},
+          end: resolve,
+        },
+        (error) => reject(error ?? new Error("License middleware skipped the request.")),
+      );
+    });
+    const manifest = JSON.parse(responseBody) as { entries: ReadonlyArray<{ name: string }> };
+
+    expect(manifest.entries.some((entry) => entry.name === "desktop-only-asset")).toBe(true);
   });
 
   it("fails when a production package has no distributable notice text", async () => {
