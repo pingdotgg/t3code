@@ -21,6 +21,19 @@ const citation: AssistantCitation = {
 };
 
 describe("splitPromptIntoComposerSegments", () => {
+  it("preserves the exact skill source in an inline chip", () => {
+    const source = "[$code-review](/personal/My%20Skills/code-review/SKILL.md)";
+    expect(splitPromptIntoComposerSegments(`Use ${source} now`)).toEqual([
+      { type: "text", text: "Use " },
+      {
+        type: "skill",
+        name: "code-review",
+        source,
+        path: "/personal/My Skills/code-review/SKILL.md",
+      },
+      { type: "text", text: " now" },
+    ]);
+  });
   it("splits mention tokens followed by whitespace into mention segments", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md please")).toEqual([
       { type: "text", text: "Inspect " },

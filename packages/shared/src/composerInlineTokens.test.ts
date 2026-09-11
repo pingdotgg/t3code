@@ -1,6 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  collectSkillReferences,
+  serializeSkillReference,
+} from "./composerInlineTokens.ts";
+
+describe("explicit skill references", () => {
+  it("does not invoke references quoted as code examples", () => {
+    const ref = "[$review](/personal/review/SKILL.md)";
+    expect(collectSkillReferences(`Example: \`${ref}\`\n\n\`\`\`md\n${ref}\n\`\`\``)).toEqual([]);
+  });
+  it.each([
+    "/home/Matt/My Skills (personal)/review?#雪/SKILL.md",
+    "C:\\Users\\Matt\\My Skills (personal)\\review\\SKILL.md",
+    "\\\\server\\skills\\review\\SKILL.md",
+  ])("preserves the selected source through serialization: %s", (path) => {
+    const skill = { name: "code-review", path };
+    const reference = serializeSkillReference(skill);
+    expect(collectSkillReferences(`Use ${reference}, then ${reference}.`)).toEqual([skill]);
+  });
+
+  it("keeps different same-name sources in the same prompt", () => {
+    const skills = [
+      { name: "code-review", path: "/plugins/review/SKILL.md" },
+      { name: "code-review", path: "/personal/review/SKILL.md" },
+    ];
+    expect(collectSkillReferences(skills.map(serializeSkillReference).join(" and "))).toEqual(
+      skills,
+    );
+  });
+
+  it("leaves bare names, external links, and malformed references as text", () => {
+    expect(
+      collectSkillReferences(
+        "$code-review [$review](https://example.com/SKILL.md) [$review](%zz) [$review](relative/SKILL.md)",
+      ),
+    ).toEqual([]);
+  });
+});
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {

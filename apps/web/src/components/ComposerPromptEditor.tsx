@@ -129,6 +129,7 @@ type SerializedComposerSkillNode = Spread<
     skillName: string;
     skillLabel?: string;
     skillDescription?: string;
+    skillSource?: string;
     type: "composer-skill";
     version: 1;
   },
@@ -253,15 +254,16 @@ type ComposerSkillMetadata = {
 function skillMetadataByName(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ReadonlyMap<string, ComposerSkillMetadata> {
-  return new Map(
-    skills.map((skill) => [
-      skill.name,
-      {
-        label: formatProviderSkillDisplayName(skill),
-        description: resolveSkillDescription(skill),
-      },
-    ]),
-  );
+  const metadata = new Map<string, ComposerSkillMetadata>();
+  for (const skill of skills) {
+    const value = {
+      label: formatProviderSkillDisplayName(skill),
+      description: resolveSkillDescription(skill),
+    };
+    if (!metadata.has(skill.name)) metadata.set(skill.name, value);
+    metadata.set(skill.path, value);
+  }
+  return metadata;
 }
 
 function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: string | null }) {
@@ -299,6 +301,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   __skillName: string;
   __skillLabel: string;
   __skillDescription: string | null;
+  __skillSource: string;
 
   static override getType(): string {
     return "composer-skill";
@@ -309,6 +312,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
       node.__skillName,
       node.__skillLabel,
       node.__skillDescription,
+      node.__skillSource,
       node.__key,
     );
   }
@@ -318,6 +322,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
       serializedNode.skillName,
       serializedNode.skillLabel ?? serializedNode.skillName,
       serializedNode.skillDescription ?? null,
+      serializedNode.skillSource,
     ).updateFromJSON(serializedNode);
   }
 
@@ -325,6 +330,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     skillName: string,
     skillLabel: string,
     skillDescription: string | null,
+    skillSource?: string,
     key?: NodeKey,
   ) {
     super(key);
@@ -332,6 +338,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     this.__skillName = normalizedSkillName;
     this.__skillLabel = skillLabel;
     this.__skillDescription = skillDescription;
+    this.__skillSource = skillSource ?? `$${normalizedSkillName}`;
   }
 
   override exportJSON(): SerializedComposerSkillNode {
@@ -339,6 +346,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
       ...super.exportJSON(),
       skillName: this.__skillName,
       skillLabel: this.__skillLabel,
+      skillSource: this.__skillSource,
       ...(this.__skillDescription ? { skillDescription: this.__skillDescription } : {}),
       type: "composer-skill",
       version: 1,
@@ -356,7 +364,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   }
 
   override getTextContent(): string {
-    return `$${this.__skillName}`;
+    return this.__skillSource;
   }
 
   override isInline(): true {
@@ -377,8 +385,11 @@ function $createComposerSkillNode(
   skillName: string,
   skillLabel: string,
   skillDescription: string | null,
+  skillSource?: string,
 ): ComposerSkillNode {
-  return $applyNodeReplacement(new ComposerSkillNode(skillName, skillLabel, skillDescription));
+  return $applyNodeReplacement(
+    new ComposerSkillNode(skillName, skillLabel, skillDescription, skillSource),
+  );
 }
 
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
@@ -861,12 +872,13 @@ function $setComposerEditorPrompt(
       continue;
     }
     if (segment.type === "skill") {
-      const metadata = skillMetadata.get(segment.name);
+      const metadata = skillMetadata.get(segment.path ?? segment.name);
       paragraph.append(
         $createComposerSkillNode(
           segment.name,
           metadata?.label ?? formatProviderSkillDisplayName({ name: segment.name }),
           metadata?.description ?? null,
+          segment.source,
         ),
       );
       continue;

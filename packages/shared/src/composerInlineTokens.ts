@@ -9,6 +9,7 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -16,6 +17,56 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+}
+
+export function serializeSkillReference(skill: { name: string; path: string }): string {
+  const path = encodeURI(skill.path).replace(
+    /[()?#]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `[$${skill.name}](${path})`;
+}
+
+/** Explicit source references survive draft storage and transport as Markdown. */
+export function collectSkillReferences(
+  text: string,
+): ReadonlyArray<{ name: string; path: string }> {
+  const references = new Map<string, { name: string; path: string }>();
+  for (const token of collectSkillReferenceTokens(text)) {
+    if (token.path)
+      references.set(JSON.stringify([token.value, token.path]), {
+        name: token.value,
+        path: token.path,
+      });
+  }
+  return [...references.values()];
+}
+
+function collectSkillReferenceTokens(
+  text: string,
+): Extract<ComposerInlineToken, { type: "skill" }>[] {
+  if (!text.includes("[$")) return [];
+  const tokens: Extract<ComposerInlineToken, { type: "skill" }>[] = [];
+  const codeRanges = [...text.matchAll(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g)];
+  const pattern = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^\s)]+)\)/g;
+  for (const match of text.matchAll(pattern)) {
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    if (codeRanges.some((range) => start >= range.index && start < range.index + range[0].length))
+      continue;
+    const name = match[2];
+    const encodedPath = match[3];
+    if (!name || !encodedPath) continue;
+    let path: string;
+    try {
+      path = decodeURIComponent(encodedPath);
+    } catch {
+      continue;
+    }
+    if (!/^(?:\/|[a-zA-Z]:[\\/]|\\\\)/.test(path) || !/[\\/]SKILL\.md$/i.test(path)) continue;
+    const end = (match.index ?? 0) + match[0].length;
+    tokens.push({ type: "skill", value: name, path, source: text.slice(start, end), start, end });
+  }
+  return tokens;
 }
 
 /**
@@ -106,7 +157,7 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  const matches = [...collectMentionTokens(text), ...collectSkillReferenceTokens(text)];
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

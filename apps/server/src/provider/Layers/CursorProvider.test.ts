@@ -388,6 +388,13 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
           },
+          {
+            name: "review",
+            description: "user review",
+            path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
         ]);
         expect(
           (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
@@ -446,6 +453,9 @@ describe("Cursor skills", () => {
     ));
 
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
+    const explicit = "Use [$review](/personal/review/SKILL.md)\n\nInstructions: use $review next";
+    expect(hasCursorSkillMention(explicit)).toBe(false);
+    expect(rewriteCursorSkillMentions(explicit, new Set(["review"]))).toBe(explicit);
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
     expect(hasCursorSkillMention("please $review this")).toBe(true);
     expect(

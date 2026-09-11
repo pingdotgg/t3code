@@ -3,6 +3,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import { serializeSkillReference } from "@t3tools/shared/composerInlineTokens";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -29,16 +30,19 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
-export function dedupeProviderSkillsByName(
+export function dedupeProviderSkillsBySource(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
-  const seenNames = new Set<string>();
+  const seenSources = new Set<string>();
   return skills.filter((skill) => {
-    const normalizedName = skill.name.trim().toLowerCase();
-    if (seenNames.has(normalizedName)) {
+    const sourceKey = JSON.stringify([
+      skill.name.trim().toLowerCase(),
+      normalizePathSeparators(skill.path),
+    ]);
+    if (seenSources.has(sourceKey)) {
       return false;
     }
-    seenNames.add(normalizedName);
+    seenSources.add(sourceKey);
     return true;
   });
 }
@@ -48,7 +52,7 @@ export function dedupeProviderSkillsByName(
  * provider's settings will not run, and one the provider reserves for the
  * agent (Claude Code's `user-invocable: false`) rejects a user invocation.
  * Everything else, including skills the agent may not start on its own, is
- * fair game: the server dispatches the pick in the provider's native form.
+ * fair game: the server attaches the explicitly selected file before dispatch.
  */
 export function isProviderSkillUserInvocable(
   skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,
@@ -61,8 +65,27 @@ export function getProviderSkillsForSlashMenu(
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
+    ? dedupeProviderSkillsBySource(skills.filter(isProviderSkillUserInvocable))
     : [];
+}
+
+export function formatProviderSkillReference(skill: ServerProviderSkill): string {
+  return serializeSkillReference(skill);
+}
+
+export function formatProviderSkillMenuDescription(
+  skill: ServerProviderSkill,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  const description = skill.shortDescription ?? skill.description ?? "";
+  const hasCollision = skills.some(
+    (other) =>
+      other.enabled &&
+      other.userInvocable !== false &&
+      other.name.trim().toLowerCase() === skill.name.trim().toLowerCase() &&
+      other.path !== skill.path,
+  );
+  return hasCollision ? `${skill.path}${description ? ` · ${description}` : ""}` : description;
 }
 
 export function getProviderSlashCommandsForSlashMenu(

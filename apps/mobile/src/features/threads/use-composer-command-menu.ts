@@ -12,8 +12,10 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsBySource,
   getProviderSkillsForSlashMenu,
+  formatProviderSkillReference,
+  formatProviderSkillMenuDescription,
   isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -130,7 +132,7 @@ export function resolveComposerCommandSelection(input: {
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
   } else if (item.type === "skill") {
-    replacement = `$${item.skill.name} `;
+    replacement = `${formatProviderSkillReference(item.skill)} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
@@ -289,29 +291,31 @@ export function useComposerCommandMenu({
       const skillItems = getProviderSkillsForSlashMenu(skills, true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${JSON.stringify([skill.name, skill.path])}`,
           type: "skill" as const,
           skill,
           label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
 
       return [...commandItems, ...skillItems];
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+      const enabledSkills = dedupeProviderSkillsBySource(
+        skills.filter(isProviderSkillUserInvocable),
+      );
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });
 
       if (!normalizedQuery) {
         return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${JSON.stringify([skill.name, skill.path])}`,
           type: "skill" as const,
           skill,
           label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
       }
 
@@ -374,11 +378,11 @@ export function useComposerCommandMenu({
       }
 
       return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
+        id: `skill:${JSON.stringify([skill.name, skill.path])}`,
         type: "skill" as const,
         skill,
         label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
+        description: formatProviderSkillMenuDescription(skill, skills),
       }));
     }
 

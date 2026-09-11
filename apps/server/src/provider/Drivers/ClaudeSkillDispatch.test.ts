@@ -5,6 +5,14 @@ import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
+  it("does not re-resolve attached source instructions by name", () => {
+    expect(
+      planClaudeSkillDispatch(
+        "Use [$review](/personal/review/SKILL.md)\n\nInstructions: run $implement next",
+        SKILLS,
+      ),
+    ).toBeUndefined();
+  });
   it("leaves a prompt without a known skill untouched", () => {
     expect(planClaudeSkillDispatch("fix the build", SKILLS)).toBeUndefined();
     // Not a discovered skill, so it stays prose rather than becoming a command.

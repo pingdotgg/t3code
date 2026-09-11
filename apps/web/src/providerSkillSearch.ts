@@ -1,6 +1,6 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsBySource,
   formatProviderSkillDisplayName,
   isProviderSkillUserInvocable,
 } from "@t3tools/client-runtime/providerSkills";
@@ -74,7 +74,7 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+  const enabledSkills = dedupeProviderSkillsBySource(skills.filter(isProviderSkillUserInvocable));
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
   if (!normalizedQuery) {

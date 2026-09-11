@@ -299,11 +299,8 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
  * Enumerate Claude Code skills from the user config dir and the workspace
  * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed
  * skill entries are skipped so a broken skill never degrades the provider
- * snapshot. Roots are listed highest precedence first and the first hit for a
- * name wins, matching Claude Code: verified against the CLI with the same
- * skill name in both scopes, the user copy is the one that runs. Reporting the
- * project copy instead would attach its invocation metadata to a command
- * Claude Code resolves elsewhere.
+ * snapshot. Keep distinct files so explicit picks can bind a source, even
+ * when native name-based invocation would shadow it.
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -320,7 +317,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
     const entries = yield* fileSystem
       .readDirectory(root.directory)
@@ -354,9 +351,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // First root wins, so a later root never displaces a higher-precedence
-      // skill of the same name.
-      if (skillsByName.has(name)) {
+      // Repeated roots can report the same file more than once.
+      if (skillsByPath.has(skillPath)) {
         continue;
       }
 
@@ -364,7 +360,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
-      skillsByName.set(name, {
+      skillsByPath.set(skillPath, {
         name,
         path: skillPath,
         enabled: override?.enabled ?? true,
@@ -380,5 +376,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

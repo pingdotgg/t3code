@@ -33,6 +33,12 @@ const citation: AssistantCitation = {
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
 
 describe("formatAssistantCitationForComposer", () => {
+  it("maps cursor positions across a source-bound skill chip without losing its path", () => {
+    const source = "[$code-review](/personal/My%20Skills/code-review/SKILL.md)";
+    const prompt = `Use ${source} now`;
+    expect(expandCollapsedComposerCursor(prompt, 5)).toBe(4 + source.length);
+    expect(collapseExpandedComposerCursor(prompt, 4 + source.length)).toBe(5);
+  });
   it.each([undefined, "", " \n\t "])(
     "keeps citation-only insertion for a blank comment %j",
     (comment) => {

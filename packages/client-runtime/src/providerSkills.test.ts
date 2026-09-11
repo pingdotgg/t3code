@@ -2,7 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsBySource,
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
@@ -52,7 +52,17 @@ describe("formatProviderSkillDisplayName", () => {
   });
 });
 
-describe("dedupeProviderSkillsByName", () => {
+describe("dedupeProviderSkillsBySource", () => {
+  it("keeps distinct skill sources but collapses repeated entries for the same source", () => {
+    const plugin = { name: "code-review", path: "/plugins/code-review/SKILL.md", enabled: true };
+    const personal = {
+      name: "code-review",
+      path: "/.agents/skills/code-review/SKILL.md",
+      enabled: true,
+    };
+    expect(dedupeProviderSkillsBySource([plugin, personal, plugin])).toEqual([plugin, personal]);
+    expect(dedupeProviderSkillsBySource([personal, plugin])).toEqual([personal, plugin]);
+  });
   it("keeps the first resolved skill and preserves unrelated skill order", () => {
     const firstSkill = {
       name: "branch-audit",
@@ -66,11 +76,11 @@ describe("dedupeProviderSkillsByName", () => {
     };
     const duplicateSkill = {
       name: "Branch-Audit",
-      path: "/Users/matt/.agents/skills/branch-audit/SKILL.md",
+      path: "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       enabled: true,
     };
 
-    expect(dedupeProviderSkillsByName([firstSkill, otherSkill, duplicateSkill])).toEqual([
+    expect(dedupeProviderSkillsBySource([firstSkill, otherSkill, duplicateSkill])).toEqual([
       firstSkill,
       otherSkill,
     ]);
@@ -89,7 +99,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ]);
   });
 
-  it("shows one row when enabled skills share a name", () => {
+  it("shows distinct sources when enabled skills share a name", () => {
     const skills = [
       {
         name: "babysit-pr",
@@ -111,6 +121,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
       "babysit-pr",
       "browser",
+      "babysit-pr",
     ]);
   });
 

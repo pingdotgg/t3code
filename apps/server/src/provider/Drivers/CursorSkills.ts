@@ -1,3 +1,4 @@
+import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
 /**
  * CursorSkills — workspace-aware discovery and native invocation for Cursor.
  *
@@ -229,7 +230,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   ];
   const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
@@ -240,11 +241,11 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget });
     for (const skill of skills) {
-      if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+      if (!skillsByPath.has(skill.path)) skillsByPath.set(skill.path, skill);
     }
   }
   return {
-    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    skills: [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name)),
     failureReason: budget.exhausted
       ? ("scan-budget-exhausted" as const)
       : budget.incomplete
@@ -274,8 +275,9 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   return inspection.skills;
 });
 
-/** Cursor invokes Agent Skills with `/name`; T3 composers insert `$name`. */
+/** Preserve native invocation for legacy drafts and manually typed `$name` mentions. */
 export function hasCursorSkillMention(prompt: string): boolean {
+  if (collectSkillReferences(prompt).length > 0) return false;
   return HAS_SKILL_MENTION_PATTERN.test(prompt);
 }
 
@@ -283,6 +285,7 @@ export function rewriteCursorSkillMentions(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): string {
+  if (collectSkillReferences(prompt).length > 0) return prompt;
   return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
     skillNames.has(name) ? `${prefix}/${name}` : match,
   );

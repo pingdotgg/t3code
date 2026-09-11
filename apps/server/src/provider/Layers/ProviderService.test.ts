@@ -1,3 +1,4 @@
+import { serializeSkillReference } from "@t3tools/shared/composerInlineTokens";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -985,6 +986,44 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+for (const driver of ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"]) {
+  const driverKind = ProviderDriverKind.make(driver);
+  const instanceId = ProviderInstanceId.make(`skill-test-${driver}`);
+  const fake = makeFakeCodexAdapter(driverKind);
+  const setup = makeProviderServiceLayer({
+    registry: makeStaticInstanceRegistry([[instanceId, fake.adapter]]),
+  });
+  setup.layer(`explicit skill dispatch: ${driver}`, (it) => {
+    it.effect("delivers the chosen source's instructions to the adapter", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const directory = fixtureCwd(`skill-${driver}`);
+        const skillPath = NodePath.join(directory, "SKILL.md");
+        NodeFS.writeFileSync(
+          skillPath,
+          "MATT_STANDARDS_AND_SPEC: review the diff against the spec.",
+        );
+        const threadId = asThreadId(`skill-${driver}`);
+        yield* provider.startSession(threadId, {
+          provider: driverKind,
+          providerInstanceId: instanceId,
+          threadId,
+          runtimeMode: "full-access",
+          cwd: directory,
+        });
+        yield* provider.sendTurn({
+          threadId,
+          input: `Use ${serializeSkillReference({ name: "code-review", path: skillPath })} now.`,
+        });
+        const sent = fake.sendTurn.mock.calls.at(-1)?.[0].input ?? "";
+        assert.include(sent, "MATT_STANDARDS_AND_SPEC");
+        assert.include(sent, encodeJson(skillPath));
+        assert.include(sent, encodeJson(directory));
+      }),
+    );
+  });
+}
 
 const routing = makeProviderServiceLayer();
 

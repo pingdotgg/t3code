@@ -34,6 +34,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { expandSkillReferencesForProvider } from "../skillReferences.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -1545,11 +1546,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
     const inputTextWithCitations =
       parsed.input === undefined ? undefined : expandAssistantCitationsForProvider(parsed.input);
-    if (inputTextWithCitations !== parsed.input) {
+    const inputTextWithSkills =
+      inputTextWithCitations === undefined
+        ? undefined
+        : yield* expandSkillReferencesForProvider(inputTextWithCitations).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+          );
+    if (inputTextWithSkills !== parsed.input) {
       yield* decodeInputOrValidationError({
         operation: "ProviderService.sendTurn",
         schema: ProviderSendTurnInput.fields.input,
-        payload: inputTextWithCitations,
+        payload: inputTextWithSkills,
       });
     }
 
@@ -1559,7 +1567,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // sends generic files as file parts, the others send images only and rely
     // on the path line for everything else. Unresolvable ids are skipped here
     // and surface as adapter errors when the file is read.
-    let inputTextWithAttachmentContext = inputTextWithCitations;
+    let inputTextWithAttachmentContext = inputTextWithSkills;
     const appendAttachmentContext = (context: string | undefined) => {
       if (context === undefined) return;
       const candidate = inputTextWithAttachmentContext

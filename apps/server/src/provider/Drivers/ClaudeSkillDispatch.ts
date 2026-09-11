@@ -2,8 +2,9 @@
  * ClaudeSkillDispatch — turns `$skill` mentions in a composer prompt into the
  * slash invocation Claude Code actually runs.
  *
- * The composer inserts `$name` for every provider. Codex parses that natively;
- * Claude Code does not, and treats it as prose. Claude Code's only user-side
+ * Legacy drafts and manually typed `$name` mentions need native dispatch.
+ * Source-bound composer picks are expanded by ProviderService instead.
+ * Claude Code treats bare `$name` as prose. Claude Code's only user-side
  * invocation is a text block whose first character is `/`: the harness
  * expands `/name args` into the SKILL.md body, and every character after the
  * name (newlines included) arrives as `ARGUMENTS`. Verified against the CLI in
@@ -29,6 +30,8 @@
  * (`packages/shared/src/composerInlineTokens.ts`), so a rendered chip and a
  * dispatched skill are always the same set.
  */
+import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
+
 const SKILL_MENTION_PATTERN =
   /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
@@ -50,6 +53,9 @@ export function planClaudeSkillDispatch(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): ClaudeSkillDispatch | undefined {
+  // Explicit sources have already been attached by ProviderService. Their
+  // instruction bodies are not additional native slash invocations.
+  if (collectSkillReferences(prompt).length > 0) return undefined;
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     if (!skillNames.has(name)) return [];

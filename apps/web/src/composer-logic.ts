@@ -82,7 +82,7 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       continue;
     }
     if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+      const expandedLength = segment.source?.length ?? segment.name.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -162,7 +162,7 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
       continue;
     }
     if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+      const expandedLength = segment.source?.length ?? segment.name.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
