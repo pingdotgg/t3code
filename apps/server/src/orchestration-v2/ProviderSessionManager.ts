@@ -12,6 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -115,6 +116,8 @@ export class ProviderSessionReleaseError extends Schema.TaggedError<ProviderSess
     return `Failed to release provider session ${this.providerSessionId}.`;
   }
 }
+
+const isProviderSessionReleaseError = Schema.is(ProviderSessionReleaseError);
 
 export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSessionActivityError>()(
   "ProviderSessionActivityError",
@@ -344,8 +347,30 @@ export const layerWithOptions = (
       });
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      // Keep ownership after removal from the live map until cleanup actually finishes.
+      const releasing = new Map<
+        string,
+        {
+          readonly entry: LiveSessionEntry;
+          readonly threadIds: ReadonlySet<ThreadId>;
+          readonly mcpCredentialIdByThread: Map<ThreadId, string>;
+          readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
+        }
+      >();
+      const findPendingRelease = (
+        providerSessionId: ProviderSessionId,
+        threadId: ThreadId,
+        existing: LiveSessionEntry | undefined,
+      ) =>
+        Array.from(releasing.values()).find(
+          (release) =>
+            release.entry.runtime.providerSessionId === providerSessionId ||
+            (release.threadIds.has(threadId) && !existing?.attachedThreadIds.has(threadId)),
+        );
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
+      const threadLifecycle = yield* makeKeyedSerialExecutor<ThreadId>();
+      const releaseStatus = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
@@ -693,148 +718,205 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        readonly detachedThreadId?: ThreadId;
+        readonly alreadyLocked?: boolean;
       }) =>
-        Effect.acquireUseRelease(
-          Ref.modify(sessions, (current) => {
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
-            const existing = current.get(key);
-            if (existing === undefined) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            if (
-              input.onlyIfIdleGeneration !== undefined &&
-              (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-            ) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(key);
-            return [Option.some(existing), updated] as const;
-          }),
-          (entry) =>
-            Option.match(entry, {
-              onNone: () => Effect.void,
-              onSome: (entry) =>
-                Effect.gen(function* () {
-                  if (input.cancelIdleFiber !== false) {
-                    yield* cancelIdleFiber(entry.idleFiber);
-                  }
-                  if (input.gracefulSubscribers === true) {
-                    yield* endSubscribers(entry);
-                  } else if (input.reason === "server_shutdown") {
-                    yield* closeSubscribers(entry);
-                  } else {
-                    yield* failSubscribers(
-                      entry,
-                      input.detail ?? `Provider session released: ${input.reason}.`,
-                    );
-                  }
-                  // Scope close can wedge on a misbehaving adapter finalizer
-                  // (e.g. a provider process that never yields its message
-                  // stream). Time-box it so release still persists released
-                  // events and leaves a diagnosable trail instead of silently
-                  // parking the session as "ready" forever.
-                  const closeFiber = yield* Scope.close(entry.scope, Exit.void).pipe(
-                    Effect.exit,
-                    Effect.forkDetach({ startImmediately: true }),
-                  );
-                  const closeExit = yield* Fiber.join(closeFiber).pipe(
-                    Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                  );
-                  if (Option.isNone(closeExit)) {
-                    yield* Effect.logWarning(
-                      "orchestration-v2.provider-session-scope-close-timeout",
-                      {
-                        providerSessionId: input.providerSessionId,
-                        reason: input.reason,
-                        timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+            const selected = yield* Ref.modify(sessions, (current) => {
+              const pending = releasing.get(key);
+              if (pending !== undefined) {
+                return [Option.some({ release: pending, start: false }), current] as const;
+              }
+              const existing = current.get(key);
+              if (existing === undefined) {
+                return [Option.none(), current] as const;
+              }
+              if (
+                input.onlyIfIdleGeneration !== undefined &&
+                (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+              ) {
+                return [Option.none(), current] as const;
+              }
+              const release = {
+                entry:
+                  input.detachedThreadId === undefined
+                    ? existing
+                    : {
+                        ...existing,
+                        attachedThreadIds: new Set([
+                          ...existing.attachedThreadIds,
+                          input.detachedThreadId,
+                        ]),
                       },
-                    );
-                    yield* Fiber.join(closeFiber).pipe(
-                      Effect.flatMap((exit) =>
-                        Exit.isFailure(exit)
-                          ? Effect.logWarning(
-                              "orchestration-v2.provider-session-scope-close-failed",
-                              {
-                                providerSessionId: input.providerSessionId,
-                                reason: input.reason,
-                                cause: exit.cause,
-                              },
-                            )
-                          : Effect.logInfo(
-                              "orchestration-v2.provider-session-scope-close-completed-late",
-                              {
-                                providerSessionId: input.providerSessionId,
-                                reason: input.reason,
-                              },
-                            ),
+                threadIds: new Set([
+                  ...existing.attachedThreadIds,
+                  ...existing.mcpCredentialIdByThread.keys(),
+                  ...(input.detachedThreadId === undefined ? [] : [input.detachedThreadId]),
+                ]),
+                mcpCredentialIdByThread: new Map(existing.mcpCredentialIdByThread),
+                done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+              };
+              releasing.set(key, release);
+              const updated = new Map(current);
+              updated.delete(key);
+              return [Option.some({ release, start: true }), updated] as const;
+            });
+            if (Option.isNone(selected)) return;
+            const { release, start } = selected.value;
+            if (start) {
+              const releaseCredentials = Effect.gen(function* () {
+                // Scope cleanup has settled. Stop claiming these credentials before
+                // checking peers, even if persisting the released status later fails.
+                const credentials = [...release.mcpCredentialIdByThread];
+                release.mcpCredentialIdByThread.clear();
+                const current = yield* Ref.get(sessions);
+                yield* Effect.forEach(
+                  credentials,
+                  ([threadId, mcpCredentialId]) => {
+                    const heldElsewhere =
+                      isMcpCredentialReserved(threadId, mcpCredentialId) ||
+                      Array.from(current.values()).some(
+                        (other) =>
+                          other.attachedThreadIds.has(threadId) ||
+                          other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId,
+                      ) ||
+                      Array.from(releasing.values()).some(
+                        (other) => other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId,
+                      );
+                    return heldElsewhere ? Effect.void : clearMcpSession(threadId, mcpCredentialId);
+                  },
+                  { discard: true },
+                );
+              });
+              const closeScope = Effect.gen(function* () {
+                const entry = release.entry;
+                if (input.cancelIdleFiber !== false) {
+                  yield* cancelIdleFiber(entry.idleFiber);
+                }
+                if (input.gracefulSubscribers === true) {
+                  yield* endSubscribers(entry);
+                } else if (input.reason === "server_shutdown") {
+                  yield* closeSubscribers(entry);
+                } else {
+                  yield* failSubscribers(
+                    entry,
+                    input.detail ?? `Provider session released: ${input.reason}.`,
+                  );
+                }
+                yield* Scope.close(entry.scope, Exit.void);
+              }).pipe(Effect.ensuring(releaseCredentials));
+              // Drain in-flight opens, then release their locks before closing the scope.
+              const waitForOpens =
+                input.alreadyLocked === true
+                  ? Effect.void
+                  : Array.from(release.threadIds)
+                      .sort()
+                      .reduceRight(
+                        (effect, threadId) => threadLifecycle.withLock(threadId, effect),
+                        sessionOpen.withLock(input.providerSessionId, Effect.void),
+                      );
+              const completeRelease = (exit: Exit.Exit<void, ProviderSessionReleaseError>) =>
+                releaseStatus.withLock(
+                  input.providerSessionId,
+                  Effect.gen(function* () {
+                    const reportExit = yield* Effect.gen(function* () {
+                      if (Exit.isFailure(exit)) {
+                        yield* Effect.logWarning("orchestration-v2.driver-session.cleanup-failed", {
+                          providerSessionId: input.providerSessionId,
+                          reason: input.reason,
+                          cause: exit.cause,
+                        });
+                      }
+                      yield* writeReleasedSessionEvents({
+                        entry: release.entry,
+                        reason: Exit.isFailure(exit) ? "runtime_error" : input.reason,
+                        ...(Exit.isFailure(exit)
+                          ? { detail: "Provider session cleanup failed." }
+                          : input.detail === undefined
+                            ? {}
+                            : { detail: input.detail }),
+                      });
+                      yield* writeReleasedRuntimeRequestEvents({
+                        entry: release.entry,
+                        reason: Exit.isFailure(exit) ? "runtime_error" : input.reason,
+                      }).pipe(release.entry.requestEventPermit.withPermits(1));
+                    }).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderSessionReleaseError({
+                            providerSessionId: input.providerSessionId,
+                            reason: input.reason,
+                            cause,
+                          }),
                       ),
-                      Effect.forkDetach,
+                      Effect.exit,
                     );
-                  }
-                  yield* writeReleasedSessionEvents({
-                    entry,
-                    reason: input.reason,
-                    ...(input.detail === undefined ? {} : { detail: input.detail }),
-                  });
-                  yield* writeReleasedRuntimeRequestEvents({
-                    entry,
-                    reason: input.reason,
-                  }).pipe(entry.requestEventPermit.withPermits(1));
-                  if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
-                    return yield* Effect.failCause(closeExit.value.cause);
-                  }
-                }),
-            }),
-          (entry) =>
-            Option.match(entry, {
-              onNone: () => Effect.void,
-              onSome: (entry) =>
-                // Revoke every credential this session recorded, including for
-                // threads that detached without re-attaching: the provider
-                // process is gone, so nothing holds them anymore. Skip threads
-                // a live replacement session took over, since credential reuse
-                // means the replacement may hold this very credential.
-                Ref.get(sessions).pipe(
-                  Effect.flatMap((current) =>
-                    Effect.forEach(
-                      entry.mcpCredentialIdByThread,
-                      ([threadId, mcpCredentialId]) => {
-                        // Id-sensitive: a stale record for the same thread but
-                        // a DIFFERENT credential (left behind by an old session
-                        // the thread rotated away from) must not veto revoking
-                        // this session's own credential, or it leaks forever.
-                        // A reservation means an in-flight open is configuring
-                        // a provider process with this credential right now;
-                        // revoking it here would strand that process (eager
-                        // adapters cannot pick up a rotated token).
-                        const heldElsewhere =
-                          isMcpCredentialReserved(threadId, mcpCredentialId) ||
-                          Array.from(current.values()).some(
-                            (other) =>
-                              other !== entry &&
-                              (other.attachedThreadIds.has(threadId) ||
-                                other.mcpCredentialIdByThread.get(threadId) === mcpCredentialId),
-                          );
-                        return heldElsewhere
-                          ? Effect.void
-                          : clearMcpSession(threadId, mcpCredentialId);
-                      },
-                      { discard: true },
-                    ),
+                    const completed = Exit.isFailure(exit) ? exit : reportExit;
+                    if (Exit.isSuccess(exit)) releasing.delete(key);
+                    yield* Deferred.done(release.done, completed);
+                  }),
+                );
+              yield* waitForOpens.pipe(
+                Effect.andThen(closeScope),
+                Effect.catchCause((cause) =>
+                  Effect.fail(
+                    new ProviderSessionReleaseError({
+                      providerSessionId: input.providerSessionId,
+                      reason: input.reason,
+                      cause,
+                    }),
                   ),
                 ),
-            }),
+                Effect.onExit(completeRelease),
+                Effect.forkDetach({ startImmediately: true }),
+              );
+            }
+            const result = yield* restore(
+              Deferred.await(release.done).pipe(
+                Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+              ),
+            );
+            if (Option.isNone(result)) {
+              const detail =
+                "Provider session cleanup did not finish within 30 seconds. Replacement sessions are blocked until cleanup completes.";
+              yield* releaseStatus.withLock(
+                input.providerSessionId,
+                Effect.gen(function* () {
+                  if (yield* Deferred.isDone(release.done)) return;
+                  yield* writeReleasedSessionEvents({
+                    entry: release.entry,
+                    reason: "runtime_error",
+                    detail,
+                  });
+                  yield* writeReleasedRuntimeRequestEvents({
+                    entry: release.entry,
+                    reason: input.reason,
+                  }).pipe(release.entry.requestEventPermit.withPermits(1));
+                }),
+              );
+              if (yield* Deferred.isDone(release.done)) return yield* Deferred.await(release.done);
+              return yield* new ProviderSessionReleaseError({
+                providerSessionId: input.providerSessionId,
+                reason: input.reason,
+              });
+            }
+          }),
         ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
+          Effect.catchCause((cause) => {
+            const error = Cause.findErrorOption(cause);
+            if (Option.isSome(error) && isProviderSessionReleaseError(error.value)) {
+              return Effect.fail(error.value);
+            }
+            return Effect.fail(
               new ProviderSessionReleaseError({
                 providerSessionId: input.providerSessionId,
                 reason: input.reason,
                 cause,
               }),
-            ),
-          ),
+            );
+          }),
         );
 
       // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal
@@ -1087,16 +1169,24 @@ export const layerWithOptions = (
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
-                yield* Ref.update(sessions, (current) => {
+                const recorded = yield* Ref.modify(sessions, (current) => {
                   const key = sessionKey(input.providerSessionId);
                   const entry = current.get(key);
-                  if (entry === undefined) return current;
+                  if (entry === undefined) return [false, current] as const;
                   const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
                   mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
                   const updated = new Map(current);
                   updated.set(key, { ...entry, mcpCredentialIdByThread });
-                  return updated;
+                  return [true, updated] as const;
                 });
+                if (!recorded) {
+                  // The provider is closing and cannot own this attachment. The
+                  // error cleanup below revokes a freshly minted credential.
+                  return yield* new ProviderSessionActivityError({
+                    providerSessionId: input.providerSessionId,
+                    cause: "Provider session closed while attaching the thread.",
+                  });
+                }
               }
               const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
               if (entry !== undefined) {
@@ -1521,8 +1611,8 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
-        open: (input) =>
-          sessionOpen.withLock(
+        open: (input) => {
+          const open = sessionOpen.withLock(
             input.providerSessionId,
             Effect.gen(function* () {
               const cwd = input.runtimePolicy.cwd;
@@ -1540,6 +1630,14 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
+              const pending = findPendingRelease(input.providerSessionId, input.threadId, existing);
+              if (pending !== undefined) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: `Provider session ${pending.entry.runtime.providerSessionId} has not finished cleanup.`,
+                });
+              }
               if (existing !== undefined) {
                 if (
                   !existing.attachedThreadIds.has(input.threadId) &&
@@ -1680,6 +1778,7 @@ export const layerWithOptions = (
                     providerSessionId: input.providerSessionId,
                     reason: "runtime_error",
                     detail: "Failed to persist the provider-session attachment.",
+                    alreadyLocked: true,
                   }).pipe(Effect.ignore),
                 ),
               );
@@ -1687,7 +1786,22 @@ export const layerWithOptions = (
               yield* scheduleIdleRelease(input.providerSessionId);
               return exposedRuntime;
             }),
-          ),
+          );
+          return Effect.gen(function* () {
+            // Reusing an attached live session starts no new provider work.
+            const existing = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            if (
+              findPendingRelease(input.providerSessionId, input.threadId, existing) !== undefined
+            ) {
+              return yield* new ProviderSessionOpenError({
+                instanceId: input.modelSelection.instanceId,
+                providerSessionId: input.providerSessionId,
+                cause: "A previous provider session has not finished cleanup.",
+              });
+            }
+            return yield* threadLifecycle.withLock(input.threadId, open);
+          });
+        },
         get: (providerSessionId) =>
           Effect.gen(function* () {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
@@ -1717,9 +1831,10 @@ export const layerWithOptions = (
           ),
         closeInstance: (instanceId) =>
           Effect.gen(function* () {
-            const active = [...(yield* Ref.get(sessions)).values()].filter(
-              (entry) => entry.runtime.instanceId === instanceId,
-            );
+            const active = [
+              ...(yield* Ref.get(sessions)).values(),
+              ...Array.from(releasing.values(), (release) => release.entry),
+            ].filter((entry) => entry.runtime.instanceId === instanceId);
             const outcomes = yield* Effect.forEach(
               active,
               (entry) =>
@@ -1749,6 +1864,15 @@ export const layerWithOptions = (
         detach: (input) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
+            if (releasing.has(key)) {
+              if (input.revokeMcpCredential === true) {
+                yield* clearMcpSession(input.threadId);
+              }
+              return yield* releaseEntry({
+                providerSessionId: input.providerSessionId,
+                reason: "manual_shutdown",
+              });
+            }
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             if (currentEntry?.supportsMultipleProviderThreads === true) {
               const projection = yield* Effect.option(
@@ -1845,6 +1969,7 @@ export const layerWithOptions = (
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
+                detachedThreadId: input.threadId,
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
               });
               return;
