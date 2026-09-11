@@ -100,6 +100,71 @@ struct MarkdownSelectionCopyTests {
         #expect(try copy(prose(#"\---"#)) == #"\---"#)
     }
 
+    @Test func multiBlockListCopyRetainsParagraphsHeadingsAndCode() throws {
+        let source = """
+        - first
+
+          second paragraph
+
+          ## Heading
+
+          ```swift
+          let value = 1
+          print(value)
+          ```
+        """
+        let text = try prose(source)
+        #expect(try copy(text) == source)
+        let copied = try copy(text)
+        let document = try #require(MarkdownRenderCache.shared.documentImmediately(for: MarkdownContentRevision(copied)))
+        guard case let .unorderedList(items) = document.blocks.first else {
+            Issue.record("Copied content should remain a list")
+            return
+        }
+        #expect(document.blocks.count == 1)
+        #expect(items.count == 1)
+        #expect(items[0].blocks.count == 4)
+        #expect(try copy(text, selecting: "second paragraph") == "  second paragraph")
+    }
+
+    @Test func orderedListContinuationUsesMarkerWidthAtEachLevel() throws {
+        let source = """
+        10. Parent
+
+            another paragraph
+            - Nested
+
+              nested continuation
+
+              ```swift
+              value()
+              ```
+        11. Last
+        """
+        #expect(try copy(prose(source)) == source)
+    }
+
+    @Test func emptyCodeCardSurvivesRenderingAndCopy() throws {
+        let source = "Before\n\n```swift\n```\n\nAfter"
+        let text = try prose(source)
+        var cardRange: NSRange?
+        text.enumerateAttribute(.markdownCodeCard, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            if let card = value as? MarkdownCodeCard {
+                #expect(card.code.isEmpty)
+                #expect(card.language == "swift")
+                cardRange = range
+            }
+        }
+        #expect(try #require(cardRange).length > 0)
+        #expect(try copy(text) == "Before\n\n```swift\n\n```\n\nAfter")
+        let view = MarkdownSelectionTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 500), textContainer: nil)
+        view.attributedText = text
+        view.layoutIfNeeded()
+        let header = try #require(view.subviews.first { $0.subviews.contains { ($0 as? UIButton)?.accessibilityLabel == "Copy code block" } })
+        #expect(header.frame.height == MarkdownCodeCard.headerHeight)
+        #expect(header.frame.width > 0)
+    }
+
     @Test func unicodeAndEmptySelectionsAreHandled() throws {
         let text = try prose("Hello **café 👩🏽‍💻 日本語** goodbye.")
         #expect(try copy(text, selecting: "👩🏽‍💻 日本") == "**👩🏽‍💻 日本**")

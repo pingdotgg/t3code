@@ -12,16 +12,22 @@ final class MarkdownCopyBlock: NSObject {
     enum Kind {
         case paragraph
         case heading(Int)
-        case listItem(marker: String, depth: Int)
         case code(language: String?)
     }
 
     let kind: Kind
     let separator: String
 
-    init(_ kind: Kind, separator: String = "\n\n") {
+    let prefix: String
+    let continuationIndent: String
+    let isEmptyCode: Bool
+
+    init(_ kind: Kind, separator: String = "\n\n", prefix: String = "", continuationIndent: String = "", isEmptyCode: Bool = false) {
         self.kind = kind
         self.separator = separator
+        self.prefix = prefix
+        self.continuationIndent = continuationIndent
+        self.isEmptyCode = isEmptyCode
     }
 }
 
@@ -53,21 +59,18 @@ enum MarkdownSelectionCopy {
             guard let block = value as? MarkdownCopyBlock else { return }
             let fragment = selected.attributedSubstring(from: blockRange)
             let spans = spans(in: fragment)
-            guard !spans.isEmpty else { return }
+            guard !spans.isEmpty || block.isEmptyCode else { return }
             let body: String
             switch block.kind {
             case .paragraph:
                 body = render(spans)
             case let .heading(level):
                 body = String(repeating: "#", count: max(1, min(6, level))) + " " + render(spans)
-            case let .listItem(marker, depth):
-                let indent = String(repeating: "  ", count: max(0, depth))
-                body = indent + marker + " " + render(spans).replacingOccurrences(of: "\n", with: "\n" + indent + "  ")
             case let .code(language):
                 body = fencedCode(spans.map(\.text).joined(), language: language)
             }
             if !result.isEmpty { result += block.separator }
-            result += body
+            result += block.prefix + body.replacingOccurrences(of: "\n", with: "\n" + block.continuationIndent)
         }
         return result.isEmpty ? nil : result
     }

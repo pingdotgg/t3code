@@ -1167,37 +1167,44 @@ enum MarkdownContinuousSelection {
         var spacingBefore: CGFloat = 12
         var lineSpacing: CGFloat = 4
         var copyKind: MarkdownCopyBlock.Kind = .paragraph
+        var copyPrefix = ""
+        var copyContinuationIndent = ""
+        var copySeparator = "\n\n"
         var codeCard: MarkdownCodeCard?
     }
 
     private static func paragraphs(
         _ blocks: [MarkdownRenderedBlock],
         indent: CGFloat = 0,
-        spacing: CGFloat = 12
+        spacing: CGFloat = 12,
+        copyIndent: String = ""
     ) -> [Paragraph] {
         var result: [Paragraph] = []
         for block in blocks {
             switch block {
             case let .paragraph(inline):
                 result.append(Paragraph(
-                    inline: inline, indent: indent, firstLineIndent: indent, spacingBefore: spacing
+                    inline: inline, indent: indent, firstLineIndent: indent, spacingBefore: spacing,
+                    copyPrefix: copyIndent, copyContinuationIndent: copyIndent
                 ))
             case let .heading(level, inline):
                 result.append(Paragraph(
                     inline: inline, indent: indent, firstLineIndent: indent,
-                    spacingBefore: spacing + (level <= 2 ? 3 : 1), lineSpacing: 0, copyKind: .heading(level)
+                    spacingBefore: spacing + (level <= 2 ? 3 : 1), lineSpacing: 0, copyKind: .heading(level),
+                    copyPrefix: copyIndent, copyContinuationIndent: copyIndent
                 ))
             case let .codeBlock(language, code, inline):
                 result.append(Paragraph(
                     inline: inline, indent: indent + MarkdownCodeCard.padding,
                     firstLineIndent: indent + MarkdownCodeCard.padding,
                     spacingBefore: spacing, lineSpacing: 3, copyKind: .code(language: language),
+                    copyPrefix: copyIndent, copyContinuationIndent: copyIndent,
                     codeCard: MarkdownCodeCard(code: code, language: language, indent: indent)
                 ))
             case let .unorderedList(items):
-                appendList(items, start: nil, indent: indent, spacing: spacing, to: &result)
+                appendList(items, start: nil, indent: indent, spacing: spacing, copyIndent: copyIndent, to: &result)
             case let .orderedList(start, items):
-                appendList(items, start: start, indent: indent, spacing: spacing, to: &result)
+                appendList(items, start: start, indent: indent, spacing: spacing, copyIndent: copyIndent, to: &result)
             default:
                 break
             }
@@ -1210,13 +1217,18 @@ enum MarkdownContinuousSelection {
         start: Int?,
         indent: CGFloat,
         spacing: CGFloat,
+        copyIndent: String,
         to result: inout [Paragraph]
     ) {
         for (index, item) in items.enumerated() {
-            var children = paragraphs(item.blocks, indent: indent + 32, spacing: 7)
+            let marker = start.map { "\($0 + index)." } ?? "-"
+            // Markdown continuation indentation depends on marker width, not display points.
+            let continuationIndent = copyIndent + String(repeating: " ", count: marker.count + 1)
+            var children = paragraphs(item.blocks, indent: indent + 32, spacing: 7, copyIndent: continuationIndent)
             guard !children.isEmpty else { continue }
             children[0].prefix = start.map { "\($0 + index).\t" } ?? "•\t"
-            children[0].copyKind = .listItem(marker: start.map { "\($0 + index)." } ?? "-", depth: Int(indent / 32))
+            children[0].copyPrefix = copyIndent + marker + " "
+            children[0].copySeparator = index == 0 && copyIndent.isEmpty ? "\n\n" : "\n"
             children[0].firstLineIndent = indent
             children[0].spacingBefore = index == 0 ? spacing : 8
             result.append(contentsOf: children)
@@ -1248,7 +1260,7 @@ enum MarkdownContinuousSelection {
                     .markdownCopyDecoration: true,
                 ]), at: 0)
             }
-            guard text.length > 0 else { continue }
+            guard text.length > 0 || paragraph.codeCard != nil else { continue }
             let style = NSMutableParagraphStyle()
             style.lineSpacing = paragraph.lineSpacing
             style.headIndent = paragraph.indent
@@ -1257,7 +1269,9 @@ enum MarkdownContinuousSelection {
             text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
             paragraph.codeCard?.decorate(text)
             text.addAttribute(.markdownCopyBlock, value: MarkdownCopyBlock(
-                paragraph.copyKind, separator: paragraph.spacingBefore < 12 ? "\n" : "\n\n"
+                paragraph.copyKind, separator: paragraph.copySeparator,
+                prefix: paragraph.copyPrefix, continuationIndent: paragraph.copyContinuationIndent,
+                isEmptyCode: paragraph.codeCard?.code.isEmpty == true
             ), range: NSRange(location: 0, length: text.length))
             if result.length > 0 {
                 var separatorAttributes = result.attributes(at: result.length - 1, effectiveRange: nil)
