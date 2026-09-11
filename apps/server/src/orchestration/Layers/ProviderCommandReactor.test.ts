@@ -19,6 +19,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  type OrchestrationThreadActivity,
   ProjectId,
   ThreadId,
   TurnId,
@@ -59,6 +60,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as UsageLimitReservations from "../UsageLimitReservations.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabelFromInstanceHint,
@@ -174,9 +176,11 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
+    readonly afterActivityAppend?: (kind: string) => Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
+    readonly listSessionsEffect?: ProviderServiceShape["listSessions"];
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -360,7 +364,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      listSessions: () => Effect.succeed(runtimeSessions),
+      listSessions: input?.listSessionsEffect ?? (() => Effect.succeed(runtimeSessions)),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -445,7 +449,11 @@ describe("ProviderCommandReactor", () => {
             return (before?.() ?? Effect.void).pipe(
               Effect.andThen(engine.dispatch(command)),
               Effect.tap(() =>
-                isReplay ? (input?.afterTurnStartDispatch?.() ?? Effect.void) : Effect.void,
+                isReplay
+                  ? (input?.afterTurnStartDispatch?.() ?? Effect.void)
+                  : command.type === "thread.activity.append"
+                    ? (input?.afterActivityAppend?.(command.activity.kind) ?? Effect.void)
+                    : Effect.void,
               ),
             );
           },
@@ -460,6 +468,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(UsageLimitReservations.layer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -627,6 +636,65 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  effectIt.effect(
+    "records admission lookup failures and accepts the next turn without a leaked reservation",
+    () =>
+      Effect.gen(function* () {
+        let failLookup = true;
+        const failureChecked = yield* Deferred.make<void>();
+        const retryChecked = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            listSessionsEffect: () =>
+              (failLookup
+                ? Effect.die(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "listSessions",
+                      detail: "Runtime temporarily unavailable",
+                    }),
+                  )
+                : Effect.succeed([])
+              ).pipe(
+                Effect.ensuring(
+                  Deferred.succeed(failLookup ? failureChecked : retryChecked, undefined),
+                ),
+              ),
+          }),
+        );
+        const send = (suffix: string) =>
+          harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-admission-${suffix}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`message-admission-${suffix}`),
+              role: "user",
+              text: "Continue this task",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          });
+        yield* send("failure");
+        yield* Deferred.await(failureChecked);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        const snapshot = yield* Effect.promise(harness.readModel);
+        const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        expect(
+          thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+        ).toBe(true);
+        expect(thread?.session?.status).toBe("error");
+        failLookup = false;
+        yield* send("retry");
+        yield* Deferred.await(retryChecked);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      }),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
@@ -4173,6 +4241,297 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.settledOverride).toBe("settled");
       expect(thread?.session?.status).toBe("stopped");
       expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
+    }),
+  );
+  effectIt.effect.each([249_999, 250_000, 250_001])(
+    "enforces persisted context usage of %i tokens before provider work",
+    (usedTokens) =>
+      Effect.gen(function* () {
+        const decision = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            startSessionEffect: (session) =>
+              Deferred.succeed(decision, undefined).pipe(Effect.as(session)),
+            afterActivityAppend: (kind) =>
+              kind === "provider.turn.start.failed"
+                ? Deferred.succeed(decision, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("context-admission-activity"),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("context-admission-activity"),
+            kind: "context-window.updated",
+            tone: "info",
+            summary: "Context updated",
+            payload: { usedTokens, maxTokens: 400_000 },
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("context-admission-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("context-admission-message"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Deferred.await(decision);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(usedTokens < 250_000 ? 1 : 0);
+        if (usedTokens >= 250_000) {
+          const snapshot = yield* Effect.promise(harness.readModel);
+          const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+          expect(
+            thread?.activities.some(
+              (activity) => activity.summary === "T3 usage limit stopped provider work",
+            ),
+          ).toBe(true);
+        }
+      }),
+  );
+
+  effectIt.effect("admits provider work after context compaction lowers usage", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          startSessionEffect: (session) =>
+            Deferred.succeed(started, undefined).pipe(Effect.as(session)),
+        }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("context-admission-before-compaction"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("context-admission-before-compaction"),
+          kind: "context-window.updated",
+          tone: "info",
+          summary: "Context updated",
+          payload: { usedTokens: 300_000, maxTokens: 400_000 },
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("context-admission-compacted"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("context-admission-compacted"),
+          kind: "context-compaction",
+          tone: "info",
+          summary: "Context compacted",
+          payload: { state: "compacted", beforeTokens: 300_000, afterTokens: 50_000 },
+          turnId: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("context-admission-after-compaction"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("context-admission-after-compaction"),
+          role: "user",
+          text: "Continue after compaction",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+      yield* Deferred.await(started);
+      yield* Effect.promise(harness.drain);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  effectIt.effect("queues a message sent while an over-limit thread compacts", () =>
+    Effect.gen(function* () {
+      const releaseCompaction = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({ compactThreadEffect: () => Deferred.await(releaseCompaction) }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-01-01T00:00:00.000Z";
+      const dispatchTurn = (id: string, text: string, createdAt: string) =>
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-${id}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`user-message-${id}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        });
+      const appendContextActivity = (
+        id: string,
+        activity: Pick<OrchestrationThreadActivity, "kind" | "summary" | "payload" | "createdAt">,
+      ) =>
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-${id}`),
+          threadId,
+          activity: {
+            id: EventId.make(id),
+            tone: "info",
+            turnId: null,
+            ...activity,
+          },
+          createdAt: activity.createdAt,
+        });
+
+      yield* dispatchTurn("before-over-limit", "hello", now);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-over-limit-queue"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* appendContextActivity("over-limit-queue-context", {
+        kind: "context-window.updated",
+        summary: "Context updated",
+        payload: { usedTokens: 300_000, maxTokens: 400_000 },
+        createdAt: now,
+      });
+      yield* dispatchTurn("over-limit-queue-compact", "/compact", "2026-01-01T00:00:01.000Z");
+      yield* Effect.promise(() => waitFor(() => harness.compactThread.mock.calls.length === 1));
+      yield* dispatchTurn(
+        "queued-over-limit",
+        "continue after compacting",
+        "2026-01-01T00:00:02.000Z",
+      );
+      yield* Effect.promise(harness.drain);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+
+      yield* appendContextActivity("over-limit-queue-compacted", {
+        kind: "context-compaction",
+        summary: "Context compacted",
+        payload: { state: "compacted", beforeTokens: 300_000, afterTokens: 50_000 },
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+      yield* Deferred.succeed(releaseCompaction, undefined);
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      expect(harness.sendTurn.mock.calls[1]?.[0]).toEqual(
+        expect.objectContaining({ input: "continue after compacting" }),
+      );
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(
+        thread?.activities.some(
+          (activity) => activity.summary === "T3 usage limit stopped provider work",
+        ),
+      ).toBe(false);
+    }),
+  );
+
+  effectIt.effect("lets /compact bypass the context usage limit", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-message-before-over-limit-compact"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-before-over-limit-compact"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-ready-over-limit"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-over-limit-context"),
+        threadId,
+        activity: {
+          id: EventId.make("over-limit-context"),
+          kind: "context-window.updated",
+          tone: "info",
+          summary: "Context updated",
+          payload: { usedTokens: 300_000, maxTokens: 400_000 },
+          turnId: null,
+          createdAt: now,
+        },
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-over-limit-compact"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-over-limit-compact"),
+          role: "user",
+          text: "/compact",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() => waitFor(() => harness.compactThread.mock.calls.length === 1));
+      yield* Effect.promise(harness.drain);
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(
+        thread?.activities.some(
+          (activity) => activity.summary === "T3 usage limit stopped provider work",
+        ),
+      ).toBe(false);
     }),
   );
 });

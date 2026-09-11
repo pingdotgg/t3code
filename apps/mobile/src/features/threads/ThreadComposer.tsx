@@ -36,7 +36,9 @@ import {
 } from "../../state/composer-attachment-uploads";
 import Animated, {
   FadeIn,
+  FadeInDown,
   FadeOut,
+  FadeOutDown,
   type LayoutAnimationFunction,
   ReduceMotion,
   useAnimatedStyle,
@@ -118,6 +120,9 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly hasCompactableConversation: boolean;
   readonly serverConfig: T3ServerConfig | null;
+  readonly contextLimitReached: boolean;
+  readonly isGeneratingHandover: boolean;
+  readonly onGenerateHandover?: () => void;
   readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -260,6 +265,38 @@ export function ComposerSurface(props: {
   );
 }
 
+const ComposerContextLimitPill = memo(function ComposerContextLimitPill(props: {
+  readonly isGenerating: boolean;
+  readonly onGenerate?: () => void;
+}) {
+  return (
+    <Animated.View
+      className="max-w-full flex-row items-center gap-2 rounded-full bg-card px-3 py-2 shadow-sm"
+      entering={FadeInDown.duration(180)}
+      exiting={FadeOutDown.duration(140)}
+    >
+      <View className="h-4 w-4 items-center justify-center rounded-full bg-amber-500">
+        <Text className="text-xs font-t3-bold leading-none text-white">!</Text>
+      </View>
+      <Text className="text-sm font-t3-bold leading-snug text-foreground">
+        Context limit reached
+      </Text>
+      {props.onGenerate ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.isGenerating}
+          onPress={props.onGenerate}
+          className="rounded-full bg-accent px-2.5 py-1 active:opacity-70"
+        >
+          <Text className="text-xs font-t3-bold text-white">
+            {props.isGenerating ? "Creating..." : "New draft"}
+          </Text>
+        </Pressable>
+      ) : null}
+    </Animated.View>
+  );
+});
+
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
     useAppearancePreferences();
@@ -385,7 +422,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   });
   const sendBlockedReason = props.sendBlockedReason ?? attachmentBlockReason;
   const canSend =
-    hasContent && !voiceInput.blocksSubmission && sendBlockedReason === null && !modelUnavailable;
+    hasContent &&
+    !voiceInput.blocksSubmission &&
+    sendBlockedReason === null &&
+    !props.contextLimitReached &&
+    !modelUnavailable;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -445,7 +486,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || props.contextLimitReached) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -477,6 +518,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
+    props.contextLimitReached,
     voiceInput.blocksSubmission,
   ]);
 
@@ -609,6 +651,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
+        {props.contextLimitReached ? (
+          <View
+            className="absolute inset-x-0 bottom-full items-center gap-2 pb-2"
+            pointerEvents="box-none"
+          >
+            <ComposerContextLimitPill
+              isGenerating={props.isGeneratingHandover}
+              onGenerate={props.onGenerateHandover}
+            />
+          </View>
+        ) : null}
         {modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildHandoverPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
@@ -212,6 +213,29 @@ describe("buildThreadTitlePrompt", () => {
       `Thread contents:\n[Earlier content truncated]\n\n${retainedContext}`,
     );
     expect(result.prompt.match(/\[Earlier content truncated\]/g)).toHaveLength(1);
+  });
+});
+
+describe("buildHandoverPrompt", () => {
+  it("asks for a continuation brief with the required state", () => {
+    const result = buildHandoverPrompt({
+      threadContents: "## User\n\nFix the worker.\n\n## Assistant\n\nTests passed.",
+    });
+
+    expect(result.prompt).toContain("unsent first message");
+    expect(result.prompt).toContain("Files changed");
+    expect(result.prompt).toContain("Verification");
+    expect(result.prompt).toContain("Fix the worker");
+  });
+
+  it("keeps the beginning and end of oversized threads", () => {
+    const result = buildHandoverPrompt({
+      threadContents: `ORIGINAL-GOAL\n${"middle ".repeat(30_000)}\nLATEST-STATE`,
+    });
+
+    expect(result.prompt).toContain("ORIGINAL-GOAL");
+    expect(result.prompt).toContain("[middle of thread omitted]");
+    expect(result.prompt).toContain("LATEST-STATE");
   });
 });
 

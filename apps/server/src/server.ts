@@ -35,6 +35,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as UsageLimitReservations from "./orchestration/UsageLimitReservations.ts";
 import * as CodexResetCredit from "./provider/Layers/codexResetCredit.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
@@ -412,7 +413,14 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(AntigravityInstallation.layer, CodexResetCredit.layer)),
+  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
+  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+);
+
+const ServerEnvironmentLayerLive = ServerEnvironment.providerRuntimeLayer.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
   Layer.provide(ServerSecretStore.layer),
 );
 
@@ -476,6 +484,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
+  Layer.provideMerge(UsageLimitReservations.layer),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
@@ -490,7 +499,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance
