@@ -238,6 +238,7 @@ interface PendingCompaction {
   readonly earlyEvents: ProviderRuntimeEvent[];
   compactedEventObserved: boolean;
   expectedTurnId: TurnId | undefined;
+  failureDetail?: string | undefined;
 }
 
 /**
@@ -979,11 +980,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           requestId: RuntimeRequestId.make(String(pending.requestId)),
         };
   const compactionTerminal = (event: ProviderRuntimeEvent): string | null =>
-    event.type === "turn.completed"
-      ? event.payload.state
-      : event.type === "runtime.error" || event.type === "turn.aborted"
-        ? event.type
-        : null;
+    event.type === "item.completed" &&
+    event.payload.itemType === "context_compaction" &&
+    event.payload.status === "declined"
+      ? "declined"
+      : event.type === "turn.completed"
+        ? event.payload.state
+        : event.type === "runtime.error" || event.type === "turn.aborted"
+          ? event.type
+          : null;
   const processFallbackCompactionEvent = (
     pending: PendingCompaction,
     event: ProviderRuntimeEvent,
@@ -1095,7 +1100,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
       }
       if (
-        isCompactedEvent(canonicalEvent) &&
+        (isCompactedEvent(canonicalEvent) ||
+          (canonicalEvent.type === "item.completed" &&
+            canonicalEvent.payload.itemType === "context_compaction" &&
+            canonicalEvent.payload.status === "declined")) &&
         timedOutNativeCompactions.delete(canonicalEvent.threadId)
       ) {
         yield* publishRuntimeEvent(canonicalEvent);
@@ -1113,6 +1121,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (pendingCompaction.native) {
         const compacted = isCompactedEvent(canonicalEvent);
         const terminal = compacted ? "completed" : compactionTerminal(canonicalEvent);
+        if (terminal !== null && terminal !== "completed") {
+          pendingCompaction.failureDetail =
+            canonicalEvent.type === "item.completed"
+              ? canonicalEvent.payload.detail?.trim()
+              : canonicalEvent.type === "runtime.error"
+                ? canonicalEvent.payload.message.trim()
+                : undefined;
+        }
         yield* publishRuntimeEvent(
           compacted ? withCompactionRequestId(canonicalEvent, pendingCompaction) : canonicalEvent,
         );
@@ -1854,7 +1870,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         return yield* new ProviderAdapterRequestError({
           provider: routed.adapter.provider,
           method: compaction.type === "native" ? "thread/compact" : "turn/start",
-          detail: `Context compaction ended with ${terminal}.`,
+          detail: pending.failureDetail || `Context compaction ended with ${terminal}.`,
         });
       }
       yield* analytics.record("provider.thread.compacted", {
@@ -2167,6 +2183,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.rollback_turns": input.numTurns,
       });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      // Rewind can fork a provider conversation into a new native session. Persist
+      // that cursor before acknowledging success so recovery resumes the fork.
+      const sessions = yield* routed.adapter.listSessions();
+      const session = sessions.find((candidate) => candidate.threadId === routed.threadId);
+      if (session) {
+        yield* upsertSessionBinding(
+          { ...session, providerInstanceId: routed.instanceId },
+          input.threadId,
+        );
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
         turns: input.numTurns,

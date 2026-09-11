@@ -101,6 +101,9 @@ export async function createMuseSdkHost(
       handshake.initialize({ clientInfo: { name: "t3_code", title: "T3 Code", version: "1" } }),
       interrupted,
     ]);
+    if (host.initializeResult.schema?.version !== 1) {
+      throw new Error("Muse SDK returned an unsupported protocol envelope version.");
+    }
     // The SDK's fingerprint warning permits additive optional schema changes.
     // Successful initialization, not fingerprint identity, determines readiness.
     return {

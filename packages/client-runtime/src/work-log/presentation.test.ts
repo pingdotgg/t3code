@@ -15,6 +15,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
+  workLogEntryIsToolLike,
 } from "./presentation.js";
 
 describe("workEntryIndicatesToolFailure", () => {
@@ -137,6 +138,44 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("summarizeToolGroup", () => {
+  it("keeps native Muse reminder activity visible without counting tool use", () => {
+    const reminders = ["first", "second"].map(
+      (itemId) =>
+        ({
+          label: "Reminder",
+          toolTitle: "Reminder",
+          tone: "tool",
+          itemType: "dynamic_tool_call",
+          toolCallId: itemId,
+          sourceActivityKind: "tool.completed",
+          toolLifecycleStatus: "completed",
+          detail: "Reminder child session",
+          toolData: { itemId, kind: "reminderChild", childSessionId: `${itemId}-child` },
+        }) satisfies WorkLogPresentationEntry,
+    );
+    expect(reminders.every((entry) => !workLogEntryIsToolLike(entry))).toBe(true);
+    expect(summarizeToolGroup(reminders)).toBe("Received 2 updates");
+    expect(toolGroupSummaryKind(reminders)).toBe("update");
+
+    const tool = {
+      label: "reminderChild",
+      toolTitle: "reminderChild",
+      tone: "tool",
+      itemType: "dynamic_tool_call",
+      toolData: { kind: "toolCall", tool: "reminderChild" },
+    } satisfies WorkLogPresentationEntry;
+    expect(workLogEntryIsToolLike(tool)).toBe(true);
+    expect(summarizeToolGroup([...reminders, tool])).toBe("Received 2 updates and used 1 tool");
+
+    const unfamiliar = {
+      ...tool,
+      label: "futureWorkflow",
+      toolData: { kind: "futureWorkflow", fallbackText: "Native activity" },
+    };
+    expect(workLogEntryIsToolLike(unfamiliar)).toBe(true);
+    expect(summarizeToolGroup([unfamiliar])).toBe("Used 1 tool");
+  });
+
   it.each(["command", "file-read", "file-change"])(
     "keeps %s approvals out of tool execution counts",
     (requestKind) => {

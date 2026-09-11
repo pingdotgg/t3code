@@ -4,6 +4,7 @@ import {
   MUSE_REASONING_EFFORT_OPTIONS,
   type ModelSelection,
   type MuseSettings,
+  type ServerProviderModel,
   TextGenerationError,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import { MUSE_DEFAULT_MODEL } from "../provider/Layers/MuseProvider.ts";
 import { createMuseSdkHost, type MuseSdkHost } from "../provider/museSdk.ts";
+import { resolveMuseReasoningEffort } from "../provider/museModelCatalog.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -68,9 +70,10 @@ const decodeApproval = Schema.decodeUnknownSync(ApprovalRequested);
 const decodeUserInput = Schema.decodeUnknownSync(UserInputRequested);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+// SDK 0.1.1 omits the CLI's `max` effort; generic commands can forward it unchanged.
 const SUPPORTED_EFFORTS = new Set<string>(
   MUSE_REASONING_EFFORT_OPTIONS.map((option) => option.id) satisfies ReadonlyArray<
-    NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>
+    NonNullable<SendUserTurnOptions<never>["reasoningEffort"]> | "max"
   >,
 );
 
@@ -81,6 +84,7 @@ async function generateMuseText(
   workspaceRoot: string,
   prompt: string,
   selection: ModelSelection,
+  reasoningEffort: string | undefined,
   signal: AbortSignal,
 ) {
   let sessionId: string | undefined;
@@ -182,13 +186,12 @@ async function generateMuseText(
       }),
     );
     sessionId = started.session.sessionId;
-    const selectedEffort = getModelSelectionStringOptionValue(selection, "reasoningEffort");
     const acknowledged = host.connection.command(
       "turn/start",
       {
         sessionId,
         input: [{ type: "text", text: prompt }],
-        reasoningEffort: selectedEffort ?? DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       },
       { commandId: turnId },
     );
@@ -202,6 +205,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   settings: MuseSettings,
   environment?: NodeJS.ProcessEnv,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
+  modelCatalog: Effect.Effect<ReadonlyArray<ServerProviderModel>> = Effect.succeed([]),
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const runMuseJson = Effect.fn("runMuseJson")(function* <S extends Schema.Top>(input: {
@@ -224,6 +228,12 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
         detail: `Muse does not support reasoning effort '${selectedEffort}'. Choose ${[...SUPPORTED_EFFORTS].join(", ")}.`,
       });
     }
+    const models = yield* modelCatalog;
+    const modelId = input.modelSelection.model.trim() || MUSE_DEFAULT_MODEL;
+    const reasoningEffort = resolveMuseReasoningEffort(
+      models.find((model) => model.slug === modelId)?.capabilities,
+      selectedEffort ?? DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+    );
     const jsonSchema = yield* encodeJson(toJsonSchemaObject(input.outputSchema)).pipe(
       Effect.mapError(
         (cause) => new TextGenerationError({ operation, detail: "Invalid output schema.", cause }),
@@ -253,6 +263,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
           cwd,
           `${input.prompt}\n\nReturn only a JSON object matching this schema, with no markdown fences. Do not use tools or ask questions.\n${jsonSchema}`,
           input.modelSelection,
+          reasoningEffort,
           signal,
         ),
       );

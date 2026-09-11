@@ -28,6 +28,7 @@ export const MuseItem = Schema.Struct({
   tool: Schema.optional(Schema.String),
   args: Schema.optional(Schema.String),
   visibleOutput: Schema.optional(Schema.String),
+  truncated: Schema.optional(Schema.Boolean),
   failureReason: Schema.optional(Schema.String),
   fallbackText: Schema.optional(Schema.String),
   commandText: Schema.optional(Schema.String),
@@ -43,6 +44,7 @@ export const MuseItem = Schema.Struct({
   ),
   usage: Schema.optional(MuseUsage),
   outcome: Schema.optional(Schema.String),
+  trigger: Schema.optional(Schema.String),
   reason: Schema.optional(Schema.String),
 });
 export type MuseItem = typeof MuseItem.Type;
@@ -80,6 +82,8 @@ export const MuseTurnStartResult = Schema.Struct({ turnId: NonEmptyString });
 
 export const MuseApproval = Schema.Struct({
   approvalId: NonEmptyString,
+  protectedWrite: Schema.optional(Schema.Boolean),
+  judgeEscalated: Schema.optional(Schema.Boolean),
   sessionId: NonEmptyString,
   turnId: Schema.optional(Schema.String),
   itemId: Schema.optional(Schema.String),
@@ -157,6 +161,13 @@ export const MuseTurnCompleted = Schema.Struct({
   error: Schema.optional(Schema.Struct({ message: Schema.String })),
   usage: Schema.optional(MuseUsage),
 });
+export const MuseTurnRetryScheduled = Schema.Struct({
+  turnId: NonEmptyString,
+  nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
+  maxAttempts: Schema.Int.check(Schema.isGreaterThan(0)),
+  reason: NonEmptyString,
+  retryDelayMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+});
 export const MuseCompactResult = Schema.Struct({
   status: Schema.String,
   reason: Schema.optional(Schema.String),
@@ -192,7 +203,9 @@ export function museItemType(item: MuseItem): CanonicalItemType {
       return "dynamic_tool_call";
     }
     default:
-      return "unknown";
+      // Generic tool activity is rendered by every client; canonical "unknown"
+      // items are filtered out of the work log before they reach a client.
+      return "dynamic_tool_call";
   }
 }
 

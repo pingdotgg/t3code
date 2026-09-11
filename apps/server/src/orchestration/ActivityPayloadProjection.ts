@@ -454,7 +454,12 @@ export function projectActivityPayload(
 
   const projectedData: Record<string, unknown> = { ...questionInput };
   const item = projectCommandData(data);
-  if (item) {
+  const itemKind =
+    payload.itemType === "dynamic_tool_call" ? asTrimmedString(asRecord(data.item)?.kind) : null;
+  if (itemKind) {
+    // Native kinds distinguish provider activity from model-invoked tools.
+    projectedData.item = { ...item, kind: itemKind };
+  } else if (item) {
     projectedData.item = item;
   }
   const command = projectCommandValue(data);

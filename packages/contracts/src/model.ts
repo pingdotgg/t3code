@@ -173,6 +173,7 @@ export const MUSE_REASONING_EFFORT_OPTIONS = [
   { id: "medium", label: "Medium", isDefault: true },
   { id: "high", label: "High" },
   { id: "xhigh", label: "Extra High" },
+  { id: "max", label: "Max" },
   { id: "ultra", label: "Ultra" },
 ] as const satisfies ReadonlyArray<ProviderOptionChoice>;
 

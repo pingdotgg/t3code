@@ -1,10 +1,9 @@
 /**
  * AgentSessionScanner - discovery of projects a user already works on.
  *
- * Claude Code and Codex both keep a per-session transcript on disk, and each
- * transcript records the directory the session ran in. Reading those `cwd`
- * values gives us the set of directories worth offering as projects during
- * onboarding, without asking the user to browse the filesystem.
+ * Claude Code and Codex transcripts record the directory each session ran in.
+ * Muse exposes the same metadata and visible history through its read-only SDK.
+ * These directories become project suggestions during onboarding.
  *
  * The scan is read-only and best-effort: an unreadable home, a malformed
  * transcript, or a directory that has since been deleted is skipped rather
@@ -52,6 +51,8 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { createMuseSdkHost } from "../provider/museSdk.ts";
+import { makeMuseSessionImport, museImportInstances } from "./MuseSessionImport.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -145,7 +146,7 @@ const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
 type DecodedTranscriptRecord = typeof TranscriptRecord.Type;
 
 interface AgentSessionTranscriptMetadata {
-  readonly source: AgentSessionSource;
+  readonly source: Exclude<AgentSessionSource, "muse">;
   readonly providerInstanceId: ProviderInstanceId;
   readonly fallbackSessionId: string;
   readonly lastActiveAtMs: number;
@@ -183,7 +184,7 @@ export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
     /**
-     * Discover every directory the configured Claude and Codex homes have run
+     * Discover every directory the configured Claude, Codex, and Muse homes have run
      * a session in. Candidates are returned newest-first; the client decides
      * which ones to import and how far back to look. Fails with the contract
      * error directly — there is no server-local context worth wrapping.
@@ -208,6 +209,7 @@ interface RawCandidate {
   readonly transcripts: ReadonlyArray<{
     readonly filePath: string;
     readonly mtimeMs: number | null;
+    readonly museSessionId?: string;
   }>;
 }
 
@@ -616,7 +618,9 @@ function sameTranscriptIdentity(
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
+export const makeWithMuseHost = Effect.fn("AgentSessionScanner.make")(function* (
+  createMuseHost: typeof createMuseSdkHost = createMuseSdkHost,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   // Different project imports can arrive concurrently from multiple clients.
   // Only one transcript may hold its selected-history budget at a time.
@@ -1193,6 +1197,73 @@ export const make = Effect.gen(function* () {
       truncated ||= metadataBudget.truncated;
     }
 
+    const museInstances = museImportInstances(settings, hostEnvironment);
+    if (museInstances.length > 0) {
+      const discovered = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reader = yield* makeMuseSessionImport(createMuseHost).pipe(
+            Effect.provideService(Path.Path, path),
+          );
+          const byOwnerAndCwd = new Map<
+            string,
+            RawCandidate & { transcripts: Array<RawCandidate["transcripts"][number]> }
+          >();
+          const seenFiles = new Set<string>();
+          const perInstanceLimit = Math.floor(MAX_TRANSCRIPTS_PER_SOURCE / museInstances.length);
+          for (const instance of museInstances) {
+            if (perInstanceLimit === 0) {
+              truncated = true;
+              break;
+            }
+            const listed = yield* reader
+              .list(instance, perInstanceLimit)
+              .pipe(Effect.orElseSucceed(() => null));
+            if (listed === null) continue;
+            truncated ||= listed.truncated;
+            for (const session of listed.sessions) {
+              const stats = yield* statOption(session.path);
+              if (Option.isNone(stats) || stats.value.type !== "File") continue;
+              const identity = yield* directoryIdentity(session.path, stats.value);
+              if (seenFiles.has(identity)) continue;
+              seenFiles.add(identity);
+              const cwd = session.workspaceRoot;
+              if (cwd === null) continue;
+              const mtimeMs = Option.match(stats.value.mtime, {
+                onNone: () => Date.parse(session.updatedAt),
+                onSome: (date) => date.getTime(),
+              });
+              const key = `${instance.instanceId}\0${cwd}`;
+              const transcript = {
+                filePath: session.path,
+                mtimeMs,
+                museSessionId: session.sessionId,
+              };
+              const group = byOwnerAndCwd.get(key);
+              if (group) {
+                group.transcripts.push(transcript);
+                byOwnerAndCwd.set(key, {
+                  ...group,
+                  threadCount: group.transcripts.length,
+                  lastActiveAtMs: Math.max(group.lastActiveAtMs ?? 0, mtimeMs),
+                });
+              } else {
+                byOwnerAndCwd.set(key, {
+                  cwd,
+                  source: "muse",
+                  providerInstanceId: instance.instanceId,
+                  threadCount: 1,
+                  lastActiveAtMs: mtimeMs,
+                  transcripts: [transcript],
+                });
+              }
+            }
+          }
+          return [...byOwnerAndCwd.values()];
+        }),
+      );
+      raw.push(...discovered);
+    }
+
     return { candidates: raw, truncated };
   });
 
@@ -1379,6 +1450,19 @@ export const make = Effect.gen(function* () {
     let bytesRemaining = MAX_IMPORT_BYTES;
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     let recordsRemaining = MAX_IMPORT_RECORDS;
+    const museReader = yield* makeMuseSessionImport(createMuseHost).pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    const museInstances = eligibleTranscripts.some(({ candidate }) => candidate.source === "muse")
+      ? museImportInstances(
+          yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) => new AgentSessionScanError({ operation: "read-settings", cause }),
+            ),
+          ),
+          hostEnvironment,
+        )
+      : [];
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
       Stream.mapEffect(({ candidate, transcript }) =>
         Effect.gen(function* () {
@@ -1420,6 +1504,60 @@ export const make = Effect.gen(function* () {
           // Reserve the whole file even if its read or parse fails.
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
+          if (candidate.source === "muse") {
+            const instance = museInstances.find(
+              (instance) => instance.instanceId === candidate.providerInstanceId,
+            );
+            if (!instance || !transcript.museSessionId)
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            const snapshot = yield* museReader
+              .read(instance, transcript.museSessionId, {
+                records: recordsRemaining,
+                historyBytes: MAX_IMPORT_HISTORY_BYTES,
+                messages: MAX_IMPORTED_MESSAGES,
+              })
+              .pipe(Effect.orElseSucceed(() => null));
+            if (snapshot === null)
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            recordsRemaining -= snapshot.recordCount;
+            const after = yield* statOption(transcript.filePath);
+            if (
+              Option.isNone(after) ||
+              !sameTranscriptIdentity(
+                identity,
+                transcriptIdentity(transcript.filePath, after.value),
+              ) ||
+              snapshot.session.path !== transcript.filePath ||
+              snapshot.session.workspaceRoot === null ||
+              (yield* directoryIdentity(snapshot.session.workspaceRoot)) !== rootIdentity
+            ) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            }
+            const source: AgentSessionImportSource = {
+              ...identity,
+              provider: "muse",
+              providerInstanceId: instance.instanceId,
+              providerSessionId: snapshot.session.sessionId,
+            };
+            const sessionKey = `${instance.instanceId}\0${snapshot.session.sessionId}`;
+            if (importedSessions.has(sessionKey))
+              return Option.some<AgentSessionRecentThread>({ _tag: "Duplicate", source });
+            importedSessions.add(sessionKey);
+            return Option.some<AgentSessionRecentThread>({
+              _tag: "Importable",
+              source,
+              thread: {
+                source: "muse",
+                providerInstanceId: instance.instanceId,
+                providerSessionId: snapshot.session.sessionId,
+                title: snapshot.title,
+                model: snapshot.session.modelId,
+                createdAt: snapshot.session.createdAt,
+                updatedAt: snapshot.session.updatedAt,
+                messages: snapshot.messages,
+              },
+            });
+          }
           const snapshot = yield* readTranscript(
             transcript.filePath,
             identity,
@@ -1492,4 +1630,5 @@ export const make = Effect.gen(function* () {
   return AgentSessionScanner.of({ scan, recentThreads });
 });
 
+export const make = makeWithMuseHost();
 export const layer = Layer.effect(AgentSessionScanner, make);

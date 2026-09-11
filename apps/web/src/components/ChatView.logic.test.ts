@@ -40,6 +40,7 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
+  getProviderSendBlockReason,
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
@@ -1396,6 +1397,40 @@ describe("resolveComposerProviderSelection", () => {
 
     expect(selection.selectedProviderEntry).toBeUndefined();
     expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+  });
+
+  it("does not continue a Muse thread in another instance after its instance is deleted", () => {
+    const missingInstanceId = ProviderInstanceId.make("muse_work");
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("muse")],
+      candidateInstanceIds: [missingInstanceId],
+      lockedProvider: ProviderDriverKind.make("muse"),
+      lockedInstanceId: missingInstanceId,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+  });
+
+  it("blocks unavailable Muse models even when the SDK cannot report authentication", () => {
+    const provider = entry("muse", "muse_work", {
+      status: "ready",
+      auth: { status: "unknown" },
+      models: [
+        { slug: "muse-spark-1.3", name: "Muse Spark 1.3", isCustom: false, capabilities: null },
+      ],
+    }).snapshot;
+
+    expect(getProviderSendBlockReason(provider, "muse-spark-retired")).toBe(
+      "That Muse Code model is no longer available. Choose another model.",
+    );
+    expect(getProviderSendBlockReason(provider, "muse-spark-1.3")).toBeNull();
+    expect(
+      getProviderSendBlockReason({ ...provider, status: "error", models: [] }, "muse-spark-1.3"),
+    ).toBeNull();
+    expect(getProviderSendBlockReason({ ...provider, installed: false }, "muse-spark-1.3")).toBe(
+      "Install Muse Code on this T3 server host before sending.",
+    );
   });
 
   it("does not treat the empty draft placeholder as a provider setup target", () => {

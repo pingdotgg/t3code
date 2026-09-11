@@ -17,17 +17,21 @@ function pending<A>() {
 function mockSpawn() {
   const startup = pending<SpawnedMspConnection>();
   const shutdown = pending<{ code: number; signal: null }>();
+  const closing = pending<void>();
   const initialize = vi.fn(() => startup.promise);
-  const close = vi.fn(() => shutdown.promise);
+  const close = vi.fn(() => {
+    closing.resolve();
+    return shutdown.promise;
+  });
   const handshake = { initialize, close } as unknown as MspHandshake;
   vi.mocked(spawnMspConnection).mockReturnValue(handshake);
   const ready = {
     connection: {},
-    initializeResult: { serverInfo: { version: "test" } },
+    initializeResult: { serverInfo: { version: "test" }, schema: { version: 1 } },
     exited: shutdown.promise,
     fingerprintWarning: { warning: "additive optional" },
   } as unknown as SpawnedMspConnection;
-  return { startup, shutdown, initialize, close, ready };
+  return { startup, shutdown, closing, initialize, close, ready };
 }
 
 afterEach(() => {
@@ -152,6 +156,33 @@ describe("Muse SDK host", () => {
     await host.close();
     expect(fake.close).toHaveBeenCalledOnce();
   });
+
+  it.each([undefined, 2])(
+    "rejects unsupported envelope version %s and awaits shutdown",
+    async (version) => {
+      const fake = mockSpawn();
+      const started = createMuseSdkHost({ binaryPath: "muse" });
+      let settled = false;
+      const outcome = started.catch((error: unknown) => {
+        settled = true;
+        return error;
+      });
+      fake.startup.resolve({
+        ...fake.ready,
+        initializeResult: {
+          ...fake.ready.initializeResult,
+          schema: { fingerprint: "test", version },
+        },
+      } as unknown as SpawnedMspConnection);
+      await fake.closing.promise;
+      expect(fake.close).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      fake.shutdown.resolve({ code: 0, signal: null });
+      expect(await outcome).toMatchObject({
+        message: "Muse SDK returned an unsupported protocol envelope version.",
+      });
+    },
+  );
 
   it("does not spawn when already aborted and closes a ready host on later abort", async () => {
     const aborted = new AbortController();

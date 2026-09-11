@@ -1,9 +1,8 @@
 import {
-  MUSE_REASONING_EFFORT_OPTIONS,
+  type CustomModelSetting,
   type MuseSettings,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -14,8 +13,10 @@ import { ChildProcess } from "effect/unstable/process";
 
 import { createMuseSdkHost, makeMuseEnvironment, type MuseSdkHost } from "../museSdk.ts";
 import { parseMuseVersion } from "../museMaintenance.ts";
+import { museModelCapabilities, readMuseModelEfforts } from "../museModelCatalog.ts";
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   providerModelsFromSettings,
@@ -30,25 +31,46 @@ const MUSE_PRESENTATION = {
 } as const;
 
 export const MUSE_DEFAULT_MODEL = "muse-spark-1.3-contributor";
-export const MUSE_MODEL_CAPABILITIES = createModelCapabilities({
-  optionDescriptors: [
-    {
-      id: "reasoningEffort",
-      label: "Reasoning",
-      type: "select",
-      currentValue: "medium",
-      options: MUSE_REASONING_EFFORT_OPTIONS,
-    },
-  ],
-});
+
+const MUSE_MODEL_NAMES = new Map([
+  ["muse-spark-1.3", "Muse Spark 1.3"],
+  ["muse-spark-1.3-contributor", "Muse Spark 1.3 Contributor"],
+  ["muse-spark-1.2", "Muse Spark 1.2"],
+  ["muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor"],
+]);
+
+function museModelName(modelId: string, displayLabel: string) {
+  const label = displayLabel.trim();
+  return label && label !== modelId ? label : (MUSE_MODEL_NAMES.get(modelId) ?? modelId);
+}
+
+function museModelsFromSettings(
+  models: ReadonlyArray<ServerProviderModel>,
+  customModels: ReadonlyArray<CustomModelSetting>,
+) {
+  return providerModelsFromSettings(
+    models,
+    customModels.map((entry) => {
+      const model = typeof entry === "string" ? { slug: entry } : entry;
+      return {
+        ...model,
+        capabilities: model.capabilities ?? museModelCapabilities(model.slug.trim()),
+      };
+    }),
+    museModelCapabilities(""),
+  );
+}
 
 const ModelCatalog = Schema.Struct({
   providerId: Schema.String,
+  profileId: Schema.optional(Schema.NullOr(Schema.String)),
+  source: Schema.optional(Schema.String),
   models: Schema.Array(
     Schema.Struct({
       modelId: Schema.NonEmptyString,
       displayLabel: Schema.String,
       providerId: Schema.String,
+      profileId: Schema.optional(Schema.NullOr(Schema.String)),
       isDefault: Schema.Boolean,
     }),
   ),
@@ -84,6 +106,10 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
   if (catalog.providerId !== "meta") {
     return yield* new MuseCatalogError({ detail: "Muse returned a catalog for another provider." });
   }
+  const efforts =
+    catalog.source === "providerCatalog" && catalog.profileId !== undefined
+      ? yield* readMuseModelEfforts(host.initializeResult.museHome, catalog.profileId)
+      : undefined;
   const seen = new Set<string>();
   return catalog.models.flatMap((model): ServerProviderModel[] => {
     if (model.providerId !== "meta" || seen.has(model.modelId)) return [];
@@ -91,10 +117,13 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
     return [
       {
         slug: model.modelId,
-        name: model.displayLabel.trim() || model.modelId,
+        name: museModelName(model.modelId, model.displayLabel),
         isCustom: false,
         isDefault: model.isDefault,
-        capabilities: MUSE_MODEL_CAPABILITIES,
+        capabilities: museModelCapabilities(
+          model.modelId,
+          model.profileId === catalog.profileId ? efforts?.get(model.modelId) : undefined,
+        ),
       },
     ];
   });
@@ -107,7 +136,8 @@ export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(func
     presentation: MUSE_PRESENTATION,
     enabled: settings.enabled,
     checkedAt: DateTime.formatIso(yield* DateTime.now),
-    models: providerModelsFromSettings([], settings.customModels, MUSE_MODEL_CAPABILITIES),
+    models: museModelsFromSettings([], settings.customModels),
+    slashCommands: settings.enabled ? [COMPACT_SLASH_COMMAND] : [],
     probe: {
       installed: false,
       version: null,
@@ -134,7 +164,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       presentation: MUSE_PRESENTATION,
       enabled: true,
       checkedAt,
-      models: providerModelsFromSettings(models, settings.customModels, MUSE_MODEL_CAPABILITIES),
+      models: museModelsFromSettings(models, settings.customModels),
+      slashCommands: [COMPACT_SLASH_COMMAND],
       probe,
     });
   const versionResult = yield* Effect.gen(function* () {

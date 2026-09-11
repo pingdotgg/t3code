@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
 import type { MuseSdkHost } from "../provider/museSdk.ts";
+import { museModelCapabilities } from "../provider/museModelCatalog.ts";
 import { makeMuseTextGeneration } from "./MuseTextGeneration.ts";
 
 const settings = Schema.decodeSync(MuseSettings)({ enabled: true });
@@ -30,6 +31,7 @@ const titleInput = {
 function fixture(
   onTurn?: (emit: (method: string, params: Record<string, unknown>) => void) => void,
   acknowledgeTurn = true,
+  modelCatalog?: Parameters<typeof makeMuseTextGeneration>[3],
 ) {
   let handler: NotificationHandler = () => {};
   let commandSequence = 0;
@@ -96,7 +98,7 @@ function fixture(
     exited: new Promise(() => {}),
   };
   const createHost = vi.fn(async () => host);
-  const make = makeMuseTextGeneration(settings, undefined, createHost);
+  const make = makeMuseTextGeneration(settings, undefined, createHost, modelCatalog);
   return {
     host,
     createHost,
@@ -127,11 +129,11 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
           modelSelection: createModelSelection(
             ProviderInstanceId.make("muse"),
             modelSelection.model,
-            [{ id: "reasoningEffort", value: "max" }],
+            [{ id: "reasoningEffort", value: "invalid-effort" }],
           ),
         })
         .pipe(Effect.flip);
-      expect(error.detail).toContain("does not support reasoning effort 'max'");
+      expect(error.detail).toContain("does not support reasoning effort 'invalid-effort'");
       expect(test.createHost).not.toHaveBeenCalled();
     }),
   );
@@ -165,6 +167,86 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
         { commandId: "turn-1" },
       );
       expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("forwards max effort unchanged for Muse Spark 1.3 text generation", () =>
+    Effect.gen(function* () {
+      const test = fixture(
+        finish('{"title":"Fix login form"}'),
+        true,
+        Effect.succeed([
+          {
+            slug: "muse-spark-1.3",
+            name: "Muse Spark 1.3",
+            isCustom: false,
+            capabilities: museModelCapabilities("muse-spark-1.3"),
+          },
+        ]),
+      );
+      const service = yield* test.make;
+      expect(
+        yield* service.generateThreadTitle({
+          ...titleInput,
+          modelSelection: createModelSelection(ProviderInstanceId.make("muse"), "muse-spark-1.3", [
+            { id: "reasoningEffort", value: "max" },
+          ]),
+        }),
+      ).toEqual({ title: "Fix login form" });
+      expect(test.host.connection.command).toHaveBeenCalledWith(
+        "session/start",
+        expect.objectContaining({ modelId: "muse-spark-1.3" }),
+      );
+      expect(test.host.connection.command).toHaveBeenCalledWith(
+        "turn/start",
+        expect.objectContaining({ reasoningEffort: "max" }),
+        { commandId: "turn-1" },
+      );
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("normalizes stale settings and the metadata default against model capabilities", () =>
+    Effect.gen(function* () {
+      for (const { saved, tiers, expected } of [
+        { saved: "ultra", tiers: ["medium", "xhigh"], expected: "medium" },
+        { saved: "max", tiers: ["medium", "xhigh"], expected: "medium" },
+        { saved: undefined, tiers: ["xhigh", "max"], expected: "xhigh" },
+        { saved: "high", tiers: [], expected: undefined },
+      ]) {
+        const test = fixture(
+          finish('{"title":"Fix login form"}'),
+          true,
+          Effect.succeed([
+            {
+              slug: modelSelection.model,
+              name: modelSelection.model,
+              isCustom: false,
+              capabilities: museModelCapabilities(
+                modelSelection.model,
+                tiers.map((tier) => ({ tier })),
+              ),
+            },
+          ]),
+        );
+        const service = yield* test.make;
+        expect(
+          yield* service.generateThreadTitle({
+            ...titleInput,
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("muse"),
+              modelSelection.model,
+              saved !== undefined ? [{ id: "reasoningEffort", value: saved }] : undefined,
+            ),
+          }),
+        ).toEqual({ title: "Fix login form" });
+        const turn = vi
+          .mocked(test.host.connection.command)
+          .mock.calls.find(([method]) => method === "turn/start");
+        expect(turn?.[1].reasoningEffort).toBe(expected);
+        expect(Object.hasOwn(turn?.[1] ?? {}, "reasoningEffort")).toBe(expected !== undefined);
+        expect(test.host.close).toHaveBeenCalledOnce();
+      }
     }),
   );
 

@@ -83,12 +83,6 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const adapter = yield* makeMuseAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnvironment,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
-      const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, processEnvironment);
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
@@ -152,6 +146,19 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
               cause,
             }),
         ),
+      );
+      const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
+      const adapter = yield* makeMuseAdapter(effectiveConfig, {
+        instanceId,
+        environment: processEnvironment,
+        modelCatalog,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      });
+      const textGeneration = yield* makeMuseTextGeneration(
+        effectiveConfig,
+        processEnvironment,
+        undefined,
+        modelCatalog,
       );
       return {
         instanceId,

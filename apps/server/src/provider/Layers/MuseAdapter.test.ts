@@ -1,7 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { createUuidV7Mint, type NotificationHandler, type ProcessExit } from "@muse-code/sdk";
+import {
+  Connection,
+  createUuidV7Mint,
+  type NotificationHandler,
+  type ProcessExit,
+} from "@muse-code/sdk";
 import {
   ApprovalRequestId,
+  EnvironmentId,
   MuseSettings,
   ProviderInstanceId,
   RuntimeTaskId,
@@ -10,6 +16,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -21,7 +28,9 @@ import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import type { MuseSdkHost } from "../museSdk.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { MuseSdkHost, MuseSdkHostOptions } from "../museSdk.ts";
+import { museModelCapabilities } from "../museModelCatalog.ts";
 import { makeMuseAdapter } from "./MuseAdapter.ts";
 
 function makeFakeHost() {
@@ -48,9 +57,12 @@ function makeFakeHost() {
     | Array<{ events: Array<Record<string, unknown>>; nextCursor: string | null }>
     | undefined;
   let rejectMethod: string | undefined;
-  let beforeTurnAck: (() => Promise<void>) | undefined;
+  let beforeTurnAck: ((commandId?: string) => Promise<void>) | undefined;
   let beforeSessionAck: (() => Promise<void>) | undefined;
   let deferTurnStarted = false;
+  let deferTurnInterrupted = false;
+  let onInterrupt = () => {};
+  let sessionResultId: string | undefined;
   let compactStatus = "accepted";
   const host: MuseSdkHost = {
     initializeResult: {
@@ -93,12 +105,15 @@ function makeFakeHost() {
       command: async (method, params, options) => {
         calls.push({ method, params });
         if (rejectMethod === method) throw new Error("Native command rejected.");
+        if (method === "session/fork") {
+          return { session: { sessionId: "forked-muse-session" } };
+        }
         if (method === "session/start" || method === "session/resume") {
           nativeSessionId = String(params.sessionId);
           await beforeSessionAck?.();
           return {
             session: {
-              sessionId: nativeSessionId,
+              sessionId: sessionResultId ?? nativeSessionId,
               modelId: params.modelId ?? "muse-spark-1.3-contributor",
               activeTurnId: activeTurnId ?? null,
             },
@@ -106,13 +121,16 @@ function makeFakeHost() {
           };
         }
         if (method === "turn/start") {
-          await beforeTurnAck?.();
+          await beforeTurnAck?.(options?.commandId);
           activeTurnId ??= options?.commandId;
           if (!deferTurnStarted) emit("turn/started", { turnId: activeTurnId });
           return { turnId: activeTurnId, disposition: "queued" };
         }
-        if (method === "turn/interrupt")
-          emit("turn/completed", { turnId: activeTurnId, terminal: "cancelled" });
+        if (method === "turn/interrupt") {
+          onInterrupt();
+          if (!deferTurnInterrupted)
+            emit("turn/completed", { turnId: activeTurnId, terminal: "cancelled" });
+        }
         if (method === "session/compact")
           return { status: compactStatus, reason: "no_compactable_history" };
         if (method === "approval/decide")
@@ -137,20 +155,29 @@ function makeFakeHost() {
     pageHistory: (pages: NonNullable<typeof historyPages>) => {
       historyPages = pages;
     },
-    reject: (method: string) => {
+    reject: (method?: string) => {
       rejectMethod = method;
     },
-    beforeTurn: (callback: () => Promise<void>) => {
+    beforeTurn: (callback: (commandId?: string) => Promise<void>) => {
       beforeTurnAck = callback;
     },
     beforeSession: (callback: () => Promise<void>) => {
       beforeSessionAck = callback;
     },
-    resumeTurn: (turnId: string) => {
+    resumeTurn: (turnId?: string) => {
       activeTurnId = turnId;
     },
     deferTurnStarted: () => {
       deferTurnStarted = true;
+    },
+    deferTurnInterrupted: () => {
+      deferTurnInterrupted = true;
+    },
+    onInterrupt: (callback: () => void) => {
+      onInterrupt = callback;
+    },
+    sessionResultId: (id: string) => {
+      sessionResultId = id;
     },
     compactStatus: (status: string) => {
       compactStatus = status;
@@ -177,8 +204,330 @@ const collectUntil = (
   adapter: { streamEvents: Stream.Stream<ProviderRuntimeEvent> },
   type: ProviderRuntimeEvent["type"],
 ) => Stream.runCollect(adapter.streamEvents.pipe(Stream.takeUntil((event) => event.type === type)));
+const requestIdFrom = (
+  events: ReadonlyArray<ProviderRuntimeEvent>,
+  type: "request.opened" | "user-input.requested",
+) => {
+  const event = events.find((event) => event.type === type);
+  assert.isDefined(event);
+  assert.isDefined(event.requestId);
+  return ApprovalRequestId.make(event.requestId);
+};
+const decodeMuseWireRequest = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.Union([Schema.String, Schema.Int]),
+      method: Schema.String,
+      params: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+  ),
+);
 
 describe("MuseAdapter", () => {
+  it.effect("retries unadmitted turn requests through the SDK without duplicating the turn", () =>
+    Effect.gen(function* () {
+      const frames: string[] = [];
+      let wake = () => {};
+      let ended = false;
+      const deliver = (frame: Record<string, unknown>) => {
+        frames.push(`${JSON.stringify(frame)}\n`);
+        wake();
+      };
+      const submissions: Record<string, unknown>[] = [];
+      const retries: string[] = [];
+      let admitted = 0;
+      const connection = new Connection({
+        incoming: (async function* () {
+          while (true) {
+            const frame = frames.shift();
+            if (frame !== undefined) yield frame;
+            else if (ended) return;
+            else
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+              });
+          }
+        })(),
+        write: async (chunk) => {
+          const request = decodeMuseWireRequest(chunk);
+          const response = { jsonrpc: "2.0", id: request.id };
+          if (request.method === "session/start") {
+            deliver({ ...response, result: { session: { sessionId: request.params.sessionId } } });
+            return;
+          }
+          assert.equal(request.method, "turn/start");
+          submissions.push(request.params);
+          if (submissions.length < 3) {
+            const first = submissions.length === 1;
+            deliver({
+              ...response,
+              error: {
+                code: first ? -32001 : -32031,
+                message: "No turn admitted",
+                data: { kind: first ? "overloaded" : "backpressured", retryable: true },
+              },
+            });
+            return;
+          }
+          admitted++;
+          deliver({
+            ...response,
+            result: {
+              commandId: request.params.commandId,
+              turnId: request.params.commandId,
+              disposition: "started",
+            },
+          });
+          deliver({
+            jsonrpc: "2.0",
+            method: "turn/started",
+            params: {
+              sessionId: request.params.sessionId,
+              turnId: request.params.commandId,
+            },
+          });
+        },
+        close: async (flushed) => {
+          await flushed;
+          ended = true;
+          wake();
+        },
+      });
+      const fake = makeFakeHost();
+      const host: MuseSdkHost = {
+        ...fake.host,
+        connection: {
+          command: (method, params, options) =>
+            connection.command(method, params, {
+              ...options,
+              retryDelay: async (_attempt, error) => {
+                retries.push(error.kind);
+              },
+            }),
+          request: connection.request.bind(connection),
+          mintCommandId: connection.mintCommandId.bind(connection),
+          onNotification: connection.onNotification.bind(connection),
+          onServerRequest: connection.onServerRequest.bind(connection),
+          onProtocolError: connection.onProtocolError.bind(connection),
+          closed: connection.closed,
+        },
+        close: async () => {
+          await connection.close();
+          await fake.host.close();
+        },
+      };
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => host });
+      const session = yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Submit once under load" });
+      assert.deepEqual(retries, ["overloaded", "backpressured"]);
+      assert.equal(submissions.length, 3);
+      assert.equal(admitted, 1);
+      assert.deepEqual(
+        submissions.map((params) => params.commandId),
+        [turn.turnId, turn.turnId, turn.turnId],
+      );
+      assert.deepEqual(submissions[1], submissions[0]);
+      assert.deepEqual(submissions[2], submissions[0]);
+      deliver({
+        jsonrpc: "2.0",
+        method: "turn/completed",
+        params: {
+          sessionId: (session.resumeCursor as { sessionId: string }).sessionId,
+          turnId: turn.turnId,
+          terminal: "completed",
+        },
+      });
+      const events = yield* collectUntil(adapter, "turn.completed");
+      assert.equal(events.filter((event) => event.type === "turn.started").length, 1);
+      assert.equal(events.filter((event) => event.type === "turn.completed").length, 1);
+      assert.isFalse(events.some((event) => event.type === "runtime.error"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "scopes device CLI access to the granted thread without changing provider permissions",
+    () =>
+      Effect.gen(function* () {
+        const deviceThreadId = ThreadId.make("muse-device-thread");
+        const otherThreadId = ThreadId.make("muse-other-thread");
+        const baseEnvironment = { PATH: "/provider/bin", KEEP: "provider-value" };
+        const spawned: MuseSdkHostOptions[] = [];
+        const adapter = yield* makeMuseAdapter(settings, {
+          environment: baseEnvironment,
+          createHost: async (options) => {
+            spawned.push(options);
+            return makeFakeHost().host;
+          },
+        });
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: deviceThreadId,
+          providerSessionId: "test-provider-session",
+          providerInstanceId: ProviderInstanceId.make("muse"),
+          endpoint: "http://localhost:1234/mcp",
+          authorizationHeader: "test-mcp-header-must-not-be-forwarded",
+          capabilities: new Set(["device"]),
+          agentDeviceEnvironment: {
+            PATH: "/device/shim",
+            PATH_SEPARATOR: ":",
+            AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
+          },
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(deviceThreadId)),
+        );
+        yield* adapter.startSession({ ...startInput, threadId: deviceThreadId });
+        yield* adapter.startSession({ ...startInput, threadId: otherThreadId });
+        assert.deepEqual(spawned[0]?.environment, {
+          PATH: "/device/shim:/provider/bin",
+          KEEP: "provider-value",
+          AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
+        });
+        assert.deepEqual(spawned[1]?.environment, baseEnvironment);
+        assert.deepEqual(baseEnvironment, { PATH: "/provider/bin", KEEP: "provider-value" });
+        assert.equal(spawned[0]?.runtimeMode, "approval-required");
+        assert.equal(spawned[1]?.runtimeMode, "approval-required");
+        McpProviderSession.clearMcpProviderSession(deviceThreadId);
+        yield* adapter.startSession({ ...startInput, threadId: deviceThreadId });
+        assert.deepEqual(spawned[2]?.environment, baseEnvironment);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rewinds by forking at a paged terminal boundary and releases the source host", () =>
+    Effect.gen(function* () {
+      const source = makeFakeHost();
+      const fork = makeFakeHost();
+      const firstTurnId = "first-turn";
+      source.pageHistory([
+        {
+          events: [
+            { method: "turn/completed", params: { turnId: firstTurnId, terminal: "completed" } },
+          ],
+          nextCursor: "next-page",
+        },
+        {
+          events: [
+            { method: "turn/completed", params: { turnId: "second-turn", terminal: "failed" } },
+          ],
+          nextCursor: null,
+        },
+      ]);
+      fork.history.push({
+        itemId: "retained-answer",
+        turnId: firstTurnId,
+        kind: "agentMessage",
+        status: "completed",
+        revision: 1,
+        text: "Retained answer",
+      });
+      let created = 0;
+      const adapter = yield* makeMuseAdapter(settings, {
+        createHost: async () => (created++ === 0 ? source.host : fork.host),
+      });
+      const initial = yield* adapter.startSession(startInput);
+      const snapshot = yield* adapter.rollbackThread(threadId, 1);
+      assert.deepEqual(source.calls.find((call) => call.method === "session/fork")?.params, {
+        sessionId: (initial.resumeCursor as { sessionId: string }).sessionId,
+        cutPoint: { lastTurnId: firstTurnId },
+        excludeItems: true,
+      });
+      assert.equal(source.closeCount, 1);
+      assert.equal(fork.closeCount, 0);
+      assert.deepEqual(
+        snapshot.turns.map((turn) => turn.id),
+        [firstTurnId],
+      );
+      const [session] = yield* adapter.listSessions();
+      assert.deepEqual(session?.resumeCursor, { sessionId: "forked-muse-session" });
+      assert.equal(
+        fork.calls.find((call) => call.method === "session/resume")?.params.sessionId,
+        "forked-muse-session",
+      );
+      const next = yield* adapter.sendTurn({
+        threadId,
+        input: "Continue from the retained answer",
+      });
+      assert.deepEqual(next.resumeCursor, session?.resumeCursor);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rewinds all turns into a fresh empty session and keeps the selected model", () =>
+    Effect.gen(function* () {
+      const source = makeFakeHost();
+      source.pageHistory([
+        {
+          events: [
+            { method: "turn/completed", params: { turnId: "only-turn", terminal: "completed" } },
+          ],
+          nextCursor: null,
+        },
+      ]);
+      const fresh = makeFakeHost();
+      let created = 0;
+      const adapter = yield* makeMuseAdapter(settings, {
+        createHost: async () => (created++ === 0 ? source.host : fresh.host),
+      });
+      const initial = yield* adapter.startSession({
+        ...startInput,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("muse"),
+          model: "muse-spark-1.3",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      });
+      const snapshot = yield* adapter.rollbackThread(threadId, 1);
+      assert.deepEqual(snapshot.turns, []);
+      assert.equal(
+        source.calls.some((call) => call.method === "session/fork"),
+        false,
+      );
+      assert.equal(source.closeCount, 1);
+      const [session] = yield* adapter.listSessions();
+      assert.notDeepEqual(session?.resumeCursor, initial.resumeCursor);
+      assert.equal(session?.model, "muse-spark-1.3");
+      assert.equal(
+        fresh.calls.find((call) => call.method === "session/start")?.params.modelId,
+        "muse-spark-1.3",
+      );
+      yield* adapter.sendTurn({ threadId, input: "Start again" });
+      assert.equal(
+        fresh.calls.find((call) => call.method === "turn/start")?.params.reasoningEffort,
+        "high",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "rejects rewind during an active turn and leaves the original session usable after a fork rejection",
+    () =>
+      Effect.gen(function* () {
+        const source = makeFakeHost();
+        const adapter = yield* makeMuseAdapter(settings, { createHost: async () => source.host });
+        const initial = yield* adapter.startSession(startInput);
+        const turn = yield* adapter.sendTurn({ threadId, input: "Work" });
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(adapter.rollbackThread(threadId, 1))));
+        assert.equal(
+          source.calls.some((call) => call.method === "session/fork"),
+          false,
+        );
+        yield* adapter.interruptTurn(threadId, turn.turnId);
+        source.pageHistory([
+          {
+            events: ["one", "two"].map((turnId) => ({
+              method: "turn/completed",
+              params: { turnId, terminal: "completed" },
+            })),
+            nextCursor: null,
+          },
+        ]);
+        source.reject("session/fork");
+        assert.isTrue(Exit.isFailure(yield* Effect.exit(adapter.rollbackThread(threadId, 1))));
+        assert.equal(source.closeCount, 0);
+        assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, initial.resumeCursor);
+        yield* adapter.sendTurn({ threadId, input: "Still usable" });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect(
     "streams each text/reasoning fragment once and waits for the native turn terminal",
     () =>
@@ -393,10 +742,10 @@ describe("MuseAdapter", () => {
         { decision: "acceptForSession", label: "Allow session" },
       ]);
       const unavailable = yield* Effect.result(
-        adapter.respondToRequest(threadId, ApprovalRequestId.make("approval"), "acceptAlways"),
+        adapter.respondToRequest(threadId, requestIdFrom(events, "request.opened"), "acceptAlways"),
       );
       assert.equal(unavailable._tag, "Failure");
-      yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("approval"), "accept");
+      yield* adapter.respondToRequest(threadId, requestIdFrom(events, "request.opened"), "accept");
       assert.deepEqual(fake.calls.find((call) => call.method === "approval/decide")?.params, {
         sessionId:
           (yield* adapter.listSessions())[0]!.resumeCursor && fake.calls[0]?.params.sessionId,
@@ -410,6 +759,204 @@ describe("MuseAdapter", () => {
         "accept",
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("reissues resumed pending requests with fresh IDs and rejects stale responses", () =>
+    Effect.gen(function* () {
+      const first = makeFakeHost();
+      const second = makeFakeHost();
+      const hosts = [first.host, second.host];
+      const adapter = yield* makeMuseAdapter(settings, {
+        createHost: async () => {
+          const host = hosts.shift();
+          if (!host) throw new Error("Unexpected host creation.");
+          return host;
+        },
+      });
+      const session = yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Ask before proceeding" });
+      const approval = {
+        approvalId: "pending-approval",
+        turnId: turn.turnId,
+        subject: { kind: "shell", command: "ls" },
+        currentRequirementId: { approvalId: "pending-approval", sourceIndex: 0 },
+        availableChoices: [
+          { choiceId: "once", label: "Allow once", decision: "approved", scope: "once" },
+        ],
+      };
+      const question = {
+        userInputId: "pending-question",
+        turnId: turn.turnId,
+        questions: [
+          {
+            id: "q",
+            header: "Continue",
+            question: "Continue?",
+            options: [{ label: "Yes" }],
+            selection: { mode: "single" },
+          },
+        ],
+      };
+      first.emit("approval/requested", approval);
+      first.emit("userInput/requested", question);
+      const opened = yield* collectUntil(adapter, "user-input.requested");
+      const oldApprovalId = requestIdFrom(opened, "request.opened");
+      const oldQuestionId = requestIdFrom(opened, "user-input.requested");
+      yield* adapter.stopSession(threadId);
+      const closed = yield* collectUntil(adapter, "session.exited");
+      assert.equal(
+        closed.find((event) => event.type === "request.resolved")?.requestId?.toString(),
+        oldApprovalId,
+      );
+      assert.equal(
+        closed.find((event) => event.type === "user-input.resolved")?.requestId?.toString(),
+        oldQuestionId,
+      );
+
+      second.resumeTurn(turn.turnId);
+      second.beforeSession(async () => {
+        second.emit("approval/requested", approval);
+        second.emit("userInput/requested", question);
+      });
+      yield* adapter.startSession({ ...startInput, resumeCursor: session.resumeCursor });
+      const reopened = yield* collectUntil(adapter, "user-input.requested");
+      const approvalId = requestIdFrom(reopened, "request.opened");
+      const questionId = requestIdFrom(reopened, "user-input.requested");
+      assert.notEqual(approvalId, oldApprovalId);
+      assert.notEqual(questionId, oldQuestionId);
+      const staleApproval = yield* adapter
+        .respondToRequest(threadId, oldApprovalId, "accept")
+        .pipe(Effect.result);
+      const staleQuestion = yield* adapter
+        .respondToUserInput(threadId, oldQuestionId, { q: "Yes" })
+        .pipe(Effect.result);
+      assert.equal(staleApproval._tag, "Failure");
+      assert.equal(staleQuestion._tag, "Failure");
+      assert.isFalse(
+        second.calls.some(
+          (call) => call.method === "approval/decide" || call.method === "userInput/answer",
+        ),
+      );
+
+      yield* adapter.respondToRequest(threadId, approvalId, "accept");
+      yield* adapter.respondToUserInput(threadId, questionId, { q: "Yes" });
+      const settled = yield* collectUntil(adapter, "user-input.resolved");
+      assert.equal(
+        settled.find((event) => event.type === "request.resolved")?.requestId?.toString(),
+        approvalId,
+      );
+      assert.equal(
+        settled.find((event) => event.type === "user-input.resolved")?.requestId?.toString(),
+        questionId,
+      );
+      assert.equal(
+        second.calls.find((call) => call.method === "approval/decide")?.params.approvalId,
+        approval.approvalId,
+      );
+      assert.equal(
+        second.calls.find((call) => call.method === "userInput/answer")?.params.userInputId,
+        question.userInputId,
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "rejects mismatched session identities before applying resume history or settings",
+    () =>
+      Effect.gen(function* () {
+        for (const resumeCursor of [undefined, { sessionId: "expected-session" }]) {
+          const fake = makeFakeHost();
+          fake.sessionResultId("wrong-session");
+          fake.resumeTurn("unexpected-turn");
+          fake.pageHistory([{ events: [], nextCursor: null }]);
+          const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+          const result = yield* adapter
+            .startSession({ ...startInput, ...(resumeCursor ? { resumeCursor } : {}) })
+            .pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") {
+            assert.equal(result.failure._tag, "ProviderAdapterRequestError");
+            assert.include(String(result.failure), "unexpected session identity");
+          }
+          assert.deepEqual(
+            fake.calls.map((call) => call.method),
+            [resumeCursor ? "session/resume" : "session/start"],
+          );
+          assert.equal(fake.closeCount, 1);
+          assert.isFalse(yield* adapter.hasSession(threadId));
+          const events = yield* collectUntil(adapter, "session.exited");
+          assert.isFalse(
+            events.some(
+              (event) => event.type === "turn.started" || event.type === "session.started",
+            ),
+          );
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "waits beyond the RPC deadline for acknowledged interruption and bounds host cleanup",
+    () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+          for (const nativeCompletes of [true, false]) {
+            const fake = makeFakeHost();
+            fake.deferTurnInterrupted();
+            let acknowledge = () => {};
+            const acknowledged = new Promise<void>((resolve) => {
+              acknowledge = resolve;
+            });
+            fake.onInterrupt(acknowledge);
+            const adapter = yield* makeMuseAdapter(settings, {
+              createHost: async () => fake.host,
+              requestTimeoutMs: 20,
+              interruptTimeoutMs: 100,
+            });
+            yield* adapter.startSession(startInput);
+            const turn = yield* adapter.sendTurn({ threadId, input: "Work" });
+            const stopping = yield* adapter
+              .interruptTurn(threadId, turn.turnId)
+              .pipe(Effect.result, Effect.forkChild);
+            yield* Effect.promise(() => acknowledged);
+            yield* Effect.promise(() => vi.advanceTimersByTimeAsync(21));
+            assert.equal(fake.closeCount, 0);
+            assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, turn.turnId);
+            if (nativeCompletes)
+              fake.emit("turn/completed", { turnId: turn.turnId, terminal: "cancelled" });
+            else yield* Effect.promise(() => vi.advanceTimersByTimeAsync(100));
+            assert.equal(
+              (yield* Fiber.join(stopping))._tag,
+              nativeCompletes ? "Success" : "Failure",
+            );
+            const events = yield* collectUntil(
+              adapter,
+              nativeCompletes ? "turn.completed" : "session.exited",
+            );
+            assert.equal(
+              events.find((event) => event.type === "turn.completed")?.payload.state,
+              nativeCompletes ? "interrupted" : "failed",
+            );
+            assert.equal(fake.closeCount, nativeCompletes ? 0 : 1);
+            assert.equal(
+              events.some((event) => event.type === "runtime.warning"),
+              !nativeCompletes,
+            );
+            assert.equal(
+              events.some((event) => event.type === "session.exited"),
+              !nativeCompletes,
+            );
+            if (!nativeCompletes)
+              assert.include(
+                events.find((event) => event.type === "session.exited")?.payload.reason,
+                "forcibly closed",
+              );
+            yield* adapter.stopSession(threadId);
+          }
+        } finally {
+          vi.useRealTimers();
+        }
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("restores a resumed native active turn and waits for its real terminal", () =>
@@ -528,7 +1075,7 @@ describe("MuseAdapter", () => {
         events.find((event) => event.type === "user-input.requested")?.turnId,
         "resumed-turn",
       );
-      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("resumed-question"), {
+      yield* adapter.respondToUserInput(threadId, requestIdFrom(events, "user-input.requested"), {
         q: "Yes",
       });
       assert.deepEqual(
@@ -561,11 +1108,14 @@ describe("MuseAdapter", () => {
             { choiceId: "deny-once", label: "Deny", decision: "denied", scope: "once" },
           ],
         });
-        const opened = (yield* collectUntil(adapter, "request.opened")).find(
-          (event) => event.type === "request.opened",
-        );
+        const events = yield* collectUntil(adapter, "request.opened");
+        const opened = events.find((event) => event.type === "request.opened");
         assert.deepEqual(opened?.payload.options, [{ decision: "decline", label: "Deny" }]);
-        yield* adapter.respondToRequest(threadId, ApprovalRequestId.make("approval"), "decline");
+        yield* adapter.respondToRequest(
+          threadId,
+          requestIdFrom(events, "request.opened"),
+          "decline",
+        );
         assert.equal(
           fake.calls.find((call) => call.method === "approval/decide")?.params.choiceId,
           "deny-once",
@@ -581,6 +1131,8 @@ describe("MuseAdapter", () => {
       const turn = yield* adapter.sendTurn({ threadId, input: "Edit" });
       const approval = {
         approvalId: "edit",
+        protectedWrite: false,
+        judgeEscalated: false,
         turnId: turn.turnId,
         subject: { kind: "fileAccess", access: "write", path: "src/app.ts" },
         currentRequirementId: { approvalId: "edit", sourceIndex: 0 },
@@ -611,6 +1163,92 @@ describe("MuseAdapter", () => {
       const shell = shellEvents.find((event) => event.type === "request.opened");
       assert.equal(shell?.payload.requestType, "command_execution_approval");
       assert.equal(fake.calls.filter((call) => call.method === "approval/decide").length, 1);
+      for (const [index, extra] of [
+        { protectedWrite: true },
+        { judgeEscalated: true },
+        { subject: { kind: "fileAccess", access: "write", path: "../outside.ts" } },
+        { subject: { kind: "fileAccess", access: "write" } },
+      ].entries()) {
+        const id = `guarded-edit-${index}`;
+        fake.emit("approval/requested", {
+          ...approval,
+          ...extra,
+          approvalId: id,
+          currentRequirementId: { approvalId: id, sourceIndex: 0 },
+        });
+        const guarded = yield* collectUntil(adapter, "request.opened");
+        assert.isTrue(requestIdFrom(guarded, "request.opened").endsWith(`:${id}`));
+      }
+      assert.equal(fake.calls.filter((call) => call.method === "approval/decide").length, 1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("does not reopen settled approvals or questions on late native notifications", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Work" });
+      const approval = {
+        approvalId: "settled-approval",
+        turnId: turn.turnId,
+        subject: { kind: "shell", command: "ls" },
+        currentRequirementId: { approvalId: "settled-approval", sourceIndex: 0 },
+        availableChoices: [
+          { choiceId: "once", label: "Allow once", decision: "approved", scope: "once" },
+        ],
+      };
+      fake.emit("approval/requested", approval);
+      const openedApproval = yield* collectUntil(adapter, "request.opened");
+      fake.emit("approval/resolved", { approvalId: approval.approvalId, decision: "approved" });
+      yield* collectUntil(adapter, "request.resolved");
+      fake.emit("approval/updated", {
+        ...approval,
+        turnId: undefined,
+        change: { kind: "policyPersistence", status: "succeeded" },
+      });
+      fake.emit("approval/requested", approval);
+      fake.emit("approval/updated", { ...approval, approvalId: "never-requested" });
+      const question = {
+        userInputId: "settled-question",
+        turnId: turn.turnId,
+        questions: [
+          {
+            id: "q",
+            header: "Choice",
+            question: "Continue?",
+            options: [],
+            selection: { mode: "single" },
+          },
+        ],
+      };
+      fake.emit("userInput/requested", question);
+      const opened = yield* collectUntil(adapter, "user-input.requested");
+      assert.isFalse(opened.some((event) => event.type === "request.opened"));
+      fake.emit("userInput/settled", {
+        userInputId: question.userInputId,
+        answers: [{ questionId: "q", freeText: "Yes" }],
+      });
+      yield* collectUntil(adapter, "user-input.resolved");
+      fake.emit("userInput/requested", question);
+      fake.emit("session/contextUsage", { usedTokens: 10 });
+      const late = yield* collectUntil(adapter, "thread.token-usage.updated");
+      assert.isFalse(
+        late.some(
+          (event) => event.type === "user-input.requested" || event.type === "request.opened",
+        ),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            adapter.respondToRequest(
+              threadId,
+              requestIdFrom(openedApproval, "request.opened"),
+              "accept",
+            ),
+          ),
+        ),
+      );
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -644,12 +1282,37 @@ describe("MuseAdapter", () => {
       );
       for (const outcome of ["noop", "cancelled"] as const) {
         fake.emit("item/completed", {
-          item: { itemId: outcome, kind: "compaction", revision: 1, status: "completed", outcome },
+          item: {
+            itemId: outcome,
+            kind: "compaction",
+            revision: 1,
+            status: "completed",
+            outcome,
+            trigger: "auto",
+          },
         });
       }
       fake.emit("session/contextUsage", { usedTokens: 10 });
       const nonFailures = yield* collectUntil(adapter, "thread.token-usage.updated");
       assert.isFalse(nonFailures.some((event) => event.type === "runtime.error"));
+      assert.isFalse(nonFailures.some((event) => event.type === "item.completed"));
+      for (const outcome of ["noop", "cancelled"] as const) {
+        fake.emit("item/completed", {
+          item: {
+            itemId: `manual-${outcome}`,
+            kind: "compaction",
+            revision: 1,
+            status: "completed",
+            outcome,
+            trigger: "manual",
+          },
+        });
+        const terminal = yield* collectUntil(adapter, "item.completed");
+        const completed = terminal.find((event) => event.type === "item.completed");
+        assert.equal(completed?.payload.itemType, "context_compaction");
+        assert.equal(completed?.payload.status, "declined");
+        assert.isFalse(terminal.some((event) => event.type === "runtime.error"));
+      }
       fake.emit("item/completed", {
         item: {
           itemId: "failed-compaction",
@@ -657,6 +1320,7 @@ describe("MuseAdapter", () => {
           revision: 1,
           status: "failed",
           outcome: "failed",
+          trigger: "manual",
           reason: "Summarizer failed",
         },
       });
@@ -664,6 +1328,36 @@ describe("MuseAdapter", () => {
       assert.equal(
         actualFailure.find((event) => event.type === "runtime.error")?.payload.message,
         "Summarizer failed",
+      );
+      const active = yield* adapter.sendTurn({ threadId, input: "Continue working" });
+      fake.emit("item/completed", {
+        item: {
+          itemId: "automatic-compaction-failed",
+          turnId: active.turnId,
+          kind: "compaction",
+          revision: 1,
+          status: "failed",
+          outcome: "failed",
+          trigger: "auto",
+          reason: "Automatic summarizer unavailable",
+        },
+      });
+      fake.emit("session/contextUsage", { usedTokens: 11 });
+      const automatic = yield* collectUntil(adapter, "thread.token-usage.updated");
+      assert.isFalse(automatic.some((event) => event.type === "runtime.error"));
+      assert.isFalse(automatic.some((event) => event.type === "turn.completed"));
+      assert.equal(
+        automatic.find((event) => event.type === "runtime.warning")?.payload.message,
+        "Automatic summarizer unavailable",
+      );
+      const [running] = yield* adapter.listSessions();
+      assert.equal(running?.status, "running");
+      assert.equal(running?.activeTurnId, active.turnId);
+      fake.emit("turn/completed", { turnId: active.turnId, terminal: "completed" });
+      const terminal = yield* collectUntil(adapter, "turn.completed");
+      assert.equal(
+        terminal.find((event) => event.type === "turn.completed")?.payload.state,
+        "completed",
       );
     }).pipe(Effect.provide(testLayer)),
   );
@@ -773,10 +1467,14 @@ describe("MuseAdapter", () => {
           },
         ],
       });
-      yield* collectUntil(adapter, "user-input.requested");
-      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("question"), {
-        q: ["A", "B", "Additional detail"],
-      });
+      const questions = yield* collectUntil(adapter, "user-input.requested");
+      yield* adapter.respondToUserInput(
+        threadId,
+        requestIdFrom(questions, "user-input.requested"),
+        {
+          q: ["A", "B", "Additional detail"],
+        },
+      );
       assert.deepEqual(
         fake.calls.find((call) => call.method === "userInput/answer")?.params.answers,
         [{ questionId: "q", selectedLabels: ["A", "B"], note: "Additional detail" }],
@@ -799,13 +1497,53 @@ describe("MuseAdapter", () => {
           },
         ],
       });
-      yield* collectUntil(adapter, "user-input.requested");
-      yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make("custom"), {
+      const custom = yield* collectUntil(adapter, "user-input.requested");
+      yield* adapter.respondToUserInput(threadId, requestIdFrom(custom, "user-input.requested"), {
         q: "Custom answer",
       });
       assert.deepEqual(
         fake.calls.findLast((call) => call.method === "userInput/answer")?.params.answers,
         [{ questionId: "q", freeText: "Custom answer" }],
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects incomplete question answers before making a native request", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Choose" });
+      fake.emit("userInput/requested", {
+        userInputId: "two-questions",
+        turnId: turn.turnId,
+        questions: ["first", "second"].map((id) => ({
+          id,
+          header: "Continue",
+          question: "Continue?",
+          options: [{ label: "Yes" }],
+          selection: { mode: "single" },
+        })),
+      });
+      const events = yield* collectUntil(adapter, "user-input.requested");
+      const requestId = requestIdFrom(events, "user-input.requested");
+      const result = yield* adapter
+        .respondToUserInput(threadId, requestId, { first: "Yes" })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterValidationError");
+        if (result.failure._tag === "ProviderAdapterValidationError")
+          assert.equal(result.failure.issue, "Muse requires an answer to every question.");
+      }
+      assert.isFalse(fake.calls.some((call) => call.method === "userInput/answer"));
+      yield* adapter.respondToUserInput(threadId, requestId, { first: "Yes", second: "Yes" });
+      assert.deepEqual(
+        fake.calls.find((call) => call.method === "userInput/answer")?.params.answers,
+        [
+          { questionId: "first", selectedLabel: "Yes" },
+          { questionId: "second", selectedLabel: "Yes" },
+        ],
       );
     }).pipe(Effect.provide(testLayer)),
   );
@@ -875,7 +1613,11 @@ describe("MuseAdapter", () => {
     Effect.gen(function* () {
       for (const failure of ["host", "gap"] as const) {
         const fake = makeFakeHost();
-        const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+        const resumed = makeFakeHost();
+        let hostCount = 0;
+        const adapter = yield* makeMuseAdapter(settings, {
+          createHost: async () => (hostCount++ === 0 ? fake.host : resumed.host),
+        });
         const session = yield* adapter.startSession(startInput);
         yield* adapter.sendTurn({ threadId, input: "Run" });
         if (failure === "host") fake.crash();
@@ -890,14 +1632,281 @@ describe("MuseAdapter", () => {
           events.find((event) => event.type === "session.started")?.payload.resume,
           session.resumeCursor,
         );
+        assert.equal(
+          events.find((event) => event.type === "session.exited")?.payload.recoverable,
+          true,
+        );
         yield* adapter.stopAll();
         assert.equal(fake.closeCount, 1);
+        if (failure === "gap") {
+          const error = events.find((event) => event.type === "runtime.error");
+          assert.include(
+            error?.payload.message,
+            "missing updates will not be restored in this chat",
+          );
+          assert.include(error?.payload.message, "Muse Code retains the saved conversation");
+          resumed.history.push({
+            itemId: "missing-from-chat",
+            turnId: "saved-turn",
+            kind: "agentMessage",
+            status: "completed",
+            revision: 1,
+            text: "Saved in Muse while delivery was interrupted",
+          });
+          const recovered = yield* adapter.startSession({
+            ...startInput,
+            resumeCursor: session.resumeCursor,
+          });
+          assert.deepEqual(recovered.resumeCursor, session.resumeCursor);
+          const replay = yield* collectUntil(adapter, "session.state.changed");
+          assert.equal(replay.filter((event) => event.type === "content.delta").length, 0);
+          assert.equal(replay.filter((event) => event.type === "turn.completed").length, 0);
+          assert.equal(
+            resumed.calls.find((call) => call.method === "session/resume")?.params.sessionId,
+            (session.resumeCursor as { sessionId: string }).sessionId,
+          );
+          const saved = yield* adapter.readThread(threadId);
+          assert.equal(saved.turns[0]?.id, "saved-turn");
+          yield* adapter.stopAll();
+          assert.equal(resumed.closeCount, 1);
+        }
       }
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("forwards max effort unchanged when switching to Muse Spark 1.3", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, {
+        createHost: async () => fake.host,
+        modelCatalog: Effect.succeed([
+          {
+            slug: "muse-spark-1.3",
+            name: "Muse Spark 1.3",
+            isCustom: false,
+            capabilities: museModelCapabilities("muse-spark-1.3"),
+          },
+        ]),
+      });
+      yield* adapter.startSession(startInput);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Think carefully",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("muse"),
+          model: "muse-spark-1.3",
+          options: [{ id: "reasoningEffort", value: "max" }],
+        },
+      });
+      assert.deepEqual(
+        fake.calls.find((call) => call.method === "session/setModel")?.params.model,
+        { modelId: "muse-spark-1.3", providerId: "meta" },
+      );
+      assert.equal(
+        fake.calls.find((call) => call.method === "turn/start")?.params.reasoningEffort,
+        "max",
+      );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("normalizes saved and implicit efforts against the current model catalog", () =>
+    Effect.gen(function* () {
+      for (const { saved, tiers, expected } of [
+        { saved: "ultra", tiers: ["medium", "xhigh"], expected: "medium" },
+        { saved: undefined, tiers: ["xhigh", "max"], expected: "xhigh" },
+        { saved: "high", tiers: [], expected: undefined },
+      ]) {
+        const fake = makeFakeHost();
+        const model = "muse-spark-1.3-contributor";
+        const adapter = yield* makeMuseAdapter(settings, {
+          createHost: async () => fake.host,
+          modelCatalog: Effect.succeed([
+            {
+              slug: model,
+              name: model,
+              isCustom: false,
+              capabilities: museModelCapabilities(
+                model,
+                tiers.map((tier) => ({ tier })),
+              ),
+            },
+          ]),
+        });
+        yield* adapter.startSession(startInput);
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Continue",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("muse"),
+            model,
+            ...(saved !== undefined ? { options: [{ id: "reasoningEffort", value: saved }] } : {}),
+          },
+        });
+        const turn = fake.calls.find((call) => call.method === "turn/start");
+        assert.equal(turn?.params.reasoningEffort, expected);
+        assert.equal(Object.hasOwn(turn?.params ?? {}, "reasoningEffort"), expected !== undefined);
+        yield* adapter.stopSession(threadId);
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("normalizes remembered max effort when switching to Contributor", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, {
+        createHost: async () => fake.host,
+        modelCatalog: Effect.succeed(
+          ["muse-spark-1.3", "muse-spark-1.3-contributor"].map((model) => ({
+            slug: model,
+            name: model,
+            isCustom: false,
+            capabilities: museModelCapabilities(model),
+          })),
+        ),
+      });
+      yield* adapter.startSession({
+        ...startInput,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("muse"),
+          model: "muse-spark-1.3",
+          options: [{ id: "reasoningEffort", value: "max" }],
+        },
+      });
+      const first = yield* adapter.sendTurn({ threadId, input: "First" });
+      yield* adapter.interruptTurn(threadId, first.turnId);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Continue",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("muse"),
+          model: "muse-spark-1.3-contributor",
+        },
+      });
+      assert.deepEqual(
+        fake.calls
+          .filter((call) => call.method === "turn/start")
+          .map((call) => call.params.reasoningEffort),
+        ["max", "medium"],
+      );
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect(
-    "rejected turn submission terminates once and unsupported effort never starts a turn",
+    "queues stop requests during admission and interrupts the admitted turn only once",
+    () =>
+      Effect.gen(function* () {
+        for (const startAfterAck of [false, true]) {
+          const fake = makeFakeHost();
+          if (startAfterAck) fake.deferTurnStarted();
+          const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+          yield* adapter.startSession(startInput);
+          let markAdmitting = (_turnId: TurnId) => {};
+          const admitting = new Promise<TurnId>((resolve) => {
+            markAdmitting = resolve;
+          });
+          let releaseAdmission = () => {};
+          const admission = new Promise<void>((resolve) => {
+            releaseAdmission = resolve;
+          });
+          fake.beforeTurn(async (commandId) => {
+            if (!commandId) throw new Error("Expected a turn command ID.");
+            markAdmitting(TurnId.make(commandId));
+            await admission;
+          });
+          const sending = yield* adapter
+            .sendTurn({ threadId, input: "Start work" })
+            .pipe(Effect.forkChild);
+          const pendingTurnId = yield* Effect.promise(() => admitting);
+          const wrongStop = yield* adapter
+            .interruptTurn(threadId, TurnId.make("older-turn"))
+            .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+          const stopping = yield* adapter
+            .interruptTurn(threadId, pendingTurnId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const duplicateStop = yield* adapter
+            .interruptTurn(threadId)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          assert.equal(fake.calls.filter((call) => call.method === "turn/interrupt").length, 0);
+          releaseAdmission();
+          const admitted = yield* Fiber.join(sending);
+          assert.equal((yield* Fiber.join(wrongStop))._tag, "Failure");
+          yield* Fiber.join(stopping);
+          yield* Fiber.join(duplicateStop);
+          assert.equal(admitted.turnId, pendingTurnId);
+          assert.deepEqual(
+            fake.calls
+              .filter((call) => call.method === "turn/interrupt")
+              .map((call) => call.params.turnId),
+            [pendingTurnId],
+          );
+          const events = yield* collectUntil(adapter, "turn.completed");
+          assert.deepEqual(
+            events.filter((event) => event.type === "turn.started").map((event) => event.turnId),
+            [pendingTurnId],
+          );
+          assert.deepEqual(
+            events
+              .filter((event) => event.type === "turn.completed")
+              .map((event) => event.payload.state),
+            ["interrupted"],
+          );
+          assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+          yield* adapter.stopSession(threadId);
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("a stop queued behind rejected admission does not cancel the next turn", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      let markAdmitting = () => {};
+      const admitting = new Promise<void>((resolve) => {
+        markAdmitting = resolve;
+      });
+      let releaseAdmission = () => {};
+      const admission = new Promise<void>((resolve) => {
+        releaseAdmission = resolve;
+      });
+      fake.beforeTurn(async () => {
+        markAdmitting();
+        await admission;
+        throw new Error("Native admission rejected.");
+      });
+      const sending = yield* adapter
+        .sendTurn({ threadId, input: "Try" })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Effect.promise(() => admitting);
+      const stopping = yield* adapter
+        .interruptTurn(threadId)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      releaseAdmission();
+      assert.equal((yield* Fiber.join(sending))._tag, "Failure");
+      yield* Fiber.join(stopping);
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+      fake.beforeTurn(async () => {});
+      const admitted = yield* adapter.sendTurn({ threadId, input: "Try again" });
+      assert.isFalse(fake.calls.some((call) => call.method === "turn/interrupt"));
+      assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, admitted.turnId);
+      fake.emit("turn/completed", { turnId: admitted.turnId, terminal: "completed" });
+      const events = yield* collectUntil(adapter, "turn.completed");
+      assert.deepEqual(
+        events.filter((event) => event.type === "turn.started").map((event) => event.turnId),
+        [admitted.turnId],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "turn.completed").map((event) => event.turnId),
+        [admitted.turnId],
+      );
+      assert.isFalse(events.some((event) => event.type === "runtime.error"));
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "rejected submissions create no turn or checkpoint and allow a later admitted turn",
     () =>
       Effect.gen(function* () {
         const fake = makeFakeHost();
@@ -910,7 +1919,7 @@ describe("MuseAdapter", () => {
             modelSelection: {
               instanceId: ProviderInstanceId.make("muse"),
               model: "muse-spark-1.3-contributor",
-              options: [{ id: "reasoningEffort", value: "max" }],
+              options: [{ id: "reasoningEffort", value: "invalid-effort" }],
             },
           }),
         );
@@ -919,10 +1928,63 @@ describe("MuseAdapter", () => {
         fake.reject("turn/start");
         const rejected = yield* Effect.result(adapter.sendTurn({ threadId, input: "Try" }));
         assert.equal(rejected._tag, "Failure");
+        assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+        fake.reject();
+        const admitted = yield* adapter.sendTurn({ threadId, input: "Try again" });
+        fake.emit("turn/completed", { turnId: admitted.turnId, terminal: "completed" });
         const events = yield* collectUntil(adapter, "turn.completed");
-        assert.equal(
-          events.find((event) => event.type === "turn.completed")?.payload.state,
-          "failed",
+        assert.deepEqual(
+          events.filter((event) => event.type === "turn.started").map((event) => event.turnId),
+          [admitted.turnId],
+        );
+        assert.deepEqual(
+          events.filter((event) => event.type === "turn.completed").map((event) => event.turnId),
+          [admitted.turnId],
+        );
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "does not reopen a native turn that completes before its admission acknowledgement",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeHost();
+        const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+        yield* adapter.startSession(startInput);
+        fake.deferTurnStarted();
+        fake.beforeTurn(async (commandId) => {
+          fake.emit("turn/started", { turnId: commandId });
+          fake.emit("item/completed", {
+            item: {
+              itemId: "fast-answer",
+              turnId: commandId,
+              kind: "agentMessage",
+              revision: 1,
+              status: "completed",
+              text: "Finished before admission returned",
+            },
+          });
+          fake.emit("turn/completed", { turnId: commandId, terminal: "completed" });
+        });
+        const admitted = yield* adapter.sendTurn({ threadId, input: "Quick response" });
+        const sessions = yield* adapter.listSessions();
+        assert.equal(sessions[0]?.status, "ready");
+        assert.isUndefined(sessions[0]?.activeTurnId);
+        yield* adapter.stopSession(threadId);
+        const events = yield* collectUntil(adapter, "session.exited");
+        assert.deepEqual(
+          events.filter((event) => event.type === "turn.started").map((event) => event.turnId),
+          [admitted.turnId],
+        );
+        assert.deepEqual(
+          events.filter((event) => event.type === "turn.completed").map((event) => event.turnId),
+          [admitted.turnId],
+        );
+        assert.deepEqual(
+          events
+            .filter((event) => event.type === "content.delta")
+            .map((event) => event.payload.delta),
+          ["Finished before admission returned"],
         );
       }).pipe(Effect.provide(testLayer)),
   );
@@ -1243,6 +2305,168 @@ describe("MuseAdapter", () => {
         assert.equal(fake.closeCount, 1);
         assert.isFalse(yield* adapter.hasSession(threadId));
         assert.isTrue(Exit.isFailure(yield* Effect.exit(Stream.runDrain(adapter.streamEvents))));
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("shows native retry progress without completing the turn", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Continue" });
+      const retry = {
+        turnId: turn.turnId,
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        reason: "Provider temporarily unavailable",
+        retryDelayMs: 1500,
+      };
+      fake.emit("turn/retryScheduled", { ...retry, turnId: "older-turn" });
+      fake.emit("turn/retryScheduled", retry);
+      const events = yield* collectUntil(adapter, "runtime.warning");
+      assert.equal(events.filter((event) => event.type === "runtime.warning").length, 1);
+      assert.equal(events.filter((event) => event.type === "turn.completed").length, 0);
+      const warning = events.find((event) => event.type === "runtime.warning");
+      assert.include(warning?.payload.message, "attempt 2 of 3");
+      assert.include(warning?.payload.detail, "2 seconds");
+      assert.equal((yield* adapter.listSessions())[0]?.status, "running");
+      fake.emit("turn/completed", { turnId: turn.turnId, terminal: "completed" });
+      yield* collectUntil(adapter, "turn.completed");
+      assert.equal((yield* adapter.listSessions())[0]?.status, "ready");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("preserves native reminder activity without inventing a delegated agent", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Reply without using tools" });
+      fake.emit("item/completed", {
+        item: {
+          itemId: "reminder-item",
+          turnId: turn.turnId,
+          kind: "reminderChild",
+          revision: 1,
+          status: "completed",
+          fallbackText: "Reminder child session",
+          childSessionId: "reminder-session",
+        },
+      });
+      const events = yield* collectUntil(adapter, "item.completed");
+      const completed = events.find((event) => event.type === "item.completed");
+      assert.equal(completed?.payload.title, "Reminder");
+      assert.equal(completed?.payload.detail, "Reminder child session");
+      assert.equal(completed?.payload.status, "completed");
+      assert.deepInclude(completed?.payload.data, {
+        item: {
+          itemId: "reminder-item",
+          turnId: turn.turnId,
+          kind: "reminderChild",
+          revision: 1,
+          status: "completed",
+          fallbackText: "Reminder child session",
+          childSessionId: "reminder-session",
+        },
+      });
+      assert.isFalse(events.some((event) => event.type.startsWith("task.")));
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps unfamiliar Muse activity visible without inventing a failure", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Run workflow" });
+      fake.emit("item/completed", {
+        item: {
+          itemId: "future-item",
+          turnId: turn.turnId,
+          kind: "futureWorkflow",
+          revision: 1,
+          status: "handedOff",
+          fallbackText: "Work handed to the next stage",
+        },
+      });
+      const events = yield* collectUntil(adapter, "item.completed");
+      const completed = events.find((event) => event.type === "item.completed");
+      assert.equal(completed?.payload.itemType, "dynamic_tool_call");
+      assert.equal(completed?.payload.title, "futureWorkflow");
+      assert.include(completed?.payload.detail, "handedOff");
+      assert.include(completed?.payload.detail, "Work handed to the next stage");
+      assert.isUndefined(completed?.payload.status);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("warns once when a Muse output surface is truncated", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeHost();
+      const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+      yield* adapter.startSession(startInput);
+      const turn = yield* adapter.sendTurn({ threadId, input: "Long response" });
+      const item = {
+        itemId: "clipped-reply",
+        turnId: turn.turnId,
+        kind: "agentMessage",
+        revision: 1,
+        status: "inProgress",
+        text: "Visible prefix",
+        truncated: true,
+      };
+      fake.emit("item/updated", { item });
+      fake.emit("item/completed", {
+        item: { ...item, revision: 2, status: "completed" },
+      });
+      fake.emit("turn/completed", { turnId: turn.turnId, terminal: "completed" });
+      const events = yield* collectUntil(adapter, "turn.completed");
+      const warnings = events.filter((event) => event.type === "runtime.warning");
+      assert.equal(warnings.length, 1);
+      assert.include(warnings[0]?.payload.message, "shortened");
+      assert.equal(warnings[0]?.itemId, "clipped-reply");
+      assert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => event.payload.delta),
+        ["Visible prefix"],
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "accepts a steering successor before the predecessor terminal notification arrives",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeHost();
+        const adapter = yield* makeMuseAdapter(settings, { createHost: async () => fake.host });
+        yield* adapter.startSession(startInput);
+        const first = yield* adapter.sendTurn({ threadId, input: "First" });
+        fake.resumeTurn();
+        fake.deferTurnStarted();
+        const second = yield* adapter.sendTurn({ threadId, input: "Second" });
+        assert.notEqual(second.turnId, first.turnId);
+        fake.emit("turn/completed", { turnId: first.turnId, terminal: "completed" });
+        fake.emit("turn/started", { turnId: second.turnId });
+        fake.emit("turn/completed", { turnId: second.turnId, terminal: "completed" });
+        const events = yield* Stream.runCollect(
+          adapter.streamEvents.pipe(
+            Stream.takeUntil(
+              (event) => event.type === "turn.completed" && event.turnId === second.turnId,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          events.filter((event) => event.type === "turn.started").map((event) => event.turnId),
+          [first.turnId, second.turnId],
+        );
+        assert.deepEqual(
+          events
+            .filter((event) => event.type === "turn.completed")
+            .map((event) => event.payload.state),
+          ["completed", "completed"],
+        );
+        assert.isFalse(events.some((event) => event.type === "runtime.error"));
       }).pipe(Effect.provide(testLayer)),
   );
 

@@ -1858,6 +1858,41 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("settles declined native compaction and permits the next request", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-compact-declined");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.compactThread.mockImplementationOnce(() =>
+        Effect.sync(() =>
+          routing.codex.emit({
+            type: "item.completed",
+            eventId: asEventId("evt-native-compact-declined"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: {
+              itemType: "context_compaction",
+              status: "declined",
+              detail: "Muse declined compaction because no context can be summarized.",
+            },
+          }),
+        ),
+      );
+      const failure = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.include(failure.message, "declined");
+      assert.include(failure.message, "no context can be summarized");
+      yield* provider.compactThread(threadId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
   it.effect("serializes native compaction and quarantines timed-out completions", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2540,6 +2575,36 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect("persists a forked rewind cursor before returning and uses it for recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-rewind-fork");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("rewind-fork"),
+        runtimeMode: "full-access",
+      });
+      const resumeCursor = { sessionId: "rewound-native-session" };
+      routing.codex.rollbackThread.mockImplementationOnce((id) =>
+        Effect.sync(() => {
+          routing.codex.updateSession(id, (session) => ({ ...session, resumeCursor }));
+          return { threadId: id, turns: [] as const };
+        }),
+      );
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.isTrue(Option.isSome(persisted));
+      if (Option.isSome(persisted)) assert.deepEqual(persisted.value.resumeCursor, resumeCursor);
+      yield* routing.codex.stopSession(threadId);
+      routing.codex.startSession.mockClear();
+      yield* provider.sendTurn({ threadId, input: "Continue after restart", attachments: [] });
+      assert.deepEqual(routing.codex.startSession.mock.calls[0]?.[0].resumeCursor, resumeCursor);
     }),
   );
 
