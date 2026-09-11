@@ -2485,7 +2485,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
         ]).pipe(
           Effect.map(([tracked, untracked]) => {
-            const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
+            const combinedDiff = [
+              tracked.diff.replace(/\r?\n$/, ""),
+              untracked.diff.replace(/\r?\n$/, ""),
+            ]
               .filter((diff) => diff.length > 0)
               .join("\n");
             const bounded = boundReviewDiffOutput(combinedDiff, REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES);
