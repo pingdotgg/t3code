@@ -39,12 +39,24 @@ const packExecutable = process.env.T3CODE_PACK_EXE === "1";
 // build host, so every archive of a release embeds the same runtime no matter
 // which Node happens to run the build.
 const SEA_NODE_VERSION = "26.8.2";
+const SEA_TARGETS = {
+  "darwin-arm64": { platform: "darwin", arch: "arm64" },
+  "darwin-x64": { platform: "darwin", arch: "x64" },
+  "linux-arm64": { platform: "linux", arch: "arm64" },
+  "linux-x64": { platform: "linux", arch: "x64" },
+  "win-arm64": { platform: "win", arch: "arm64" },
+  "win-x64": { platform: "win", arch: "x64" },
+} as const;
 const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
+if (packExecutableTarget && !(packExecutableTarget in SEA_TARGETS)) {
+  throw new Error(
+    `T3CODE_PACK_EXE_TARGET must be one of ${Object.keys(SEA_TARGETS).join(", ")}, got "${packExecutableTarget}".`,
+  );
+}
 const packExecutableTargets = packExecutableTarget
   ? [
       {
-        platform: packExecutableTarget.split("-")[0] as "darwin" | "linux" | "win",
-        arch: packExecutableTarget.split("-")[1] as "arm64" | "x64",
+        ...SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS],
         nodeVersion: SEA_NODE_VERSION,
       },
     ]
