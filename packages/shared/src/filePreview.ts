@@ -81,8 +81,8 @@ export function mediaKindFromPath(path: string): "image" | "video" | null {
 }
 
 function hasPreviewExtension(path: string, extensions: ReadonlyArray<string>): boolean {
-  const pathWithoutQuery = path.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
-  return extensions.some((extension) => pathWithoutQuery.endsWith(extension));
+  const literalPath = path.toLowerCase();
+  return extensions.some((extension) => literalPath.endsWith(extension));
 }
 
 export function isWorkspaceBrowserPreviewPath(path: string): boolean {
