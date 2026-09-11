@@ -54,6 +54,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
+const providerMessageKey = (threadId: ThreadId, turnId: TurnId, providerItemId: string) =>
+  `${threadId}:${turnId}:${providerItemId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
 
 // Fallback when the in-memory description cache no longer has the task name
@@ -95,6 +97,11 @@ interface AssistantSegmentState {
   baseKey: string;
   nextSegmentIndex: number;
   activeMessageId: MessageId | null;
+}
+
+interface PendingActualModel {
+  readonly actualModel: string;
+  readonly providerItemId?: string | undefined;
 }
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
@@ -921,6 +928,18 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(new Set<MessageId>()),
   });
 
+  const assistantMessageIdsByProviderMessageKey = yield* Cache.make<string, Set<MessageId>>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () => Effect.succeed(new Set<MessageId>()),
+  });
+
+  const pendingActualModelByTurnKey = yield* Cache.make<string, PendingActualModel>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () => Effect.die(new Error("pending actual model should be read through getOption")),
+  });
+
   const bufferedAssistantTextByMessageId = yield* Cache.make<MessageId, string>({
     capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
@@ -1025,6 +1044,43 @@ const make = Effect.gen(function* () {
 
   const clearAssistantMessageIdsForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(turnMessageIdsByTurnKey, providerTurnKey(threadId, turnId));
+
+  const rememberProviderAssistantMessageId = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    providerItemId: string,
+    messageId: MessageId,
+  ) =>
+    Cache.getOption(
+      assistantMessageIdsByProviderMessageKey,
+      providerMessageKey(threadId, turnId, providerItemId),
+    ).pipe(
+      Effect.flatMap((existingIds) => {
+        const nextIds = Option.match(existingIds, {
+          onNone: () => new Set([messageId]),
+          onSome: (ids) => new Set(ids).add(messageId),
+        });
+        return Cache.set(
+          assistantMessageIdsByProviderMessageKey,
+          providerMessageKey(threadId, turnId, providerItemId),
+          nextIds,
+        );
+      }),
+    );
+
+  const getProviderAssistantMessageIds = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    providerItemId: string,
+  ) =>
+    Cache.getOption(
+      assistantMessageIdsByProviderMessageKey,
+      providerMessageKey(threadId, turnId, providerItemId),
+    ).pipe(
+      Effect.map((existingIds) =>
+        Option.getOrElse(existingIds, (): Set<MessageId> => new Set<MessageId>()),
+      ),
+    );
 
   const getAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.getOption(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
@@ -1221,6 +1277,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    actualModel?: string;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -1251,6 +1308,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
+          ...(input.actualModel ? { actualModel: input.actualModel } : {}),
           createdAt: input.createdAt,
         });
       }
@@ -1344,6 +1402,10 @@ const make = Effect.gen(function* () {
       const prefix = `${threadId}:`;
       const proposedPlanPrefix = `plan:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
+      const providerMessageKeys = Array.from(
+        yield* Cache.keys(assistantMessageIdsByProviderMessageKey),
+      );
+      const pendingActualModelKeys = Array.from(yield* Cache.keys(pendingActualModelByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       const taskDescriptionKeys = Array.from(yield* Cache.keys(taskDescriptionByTaskKey));
@@ -1364,6 +1426,20 @@ const make = Effect.gen(function* () {
 
             yield* Cache.invalidate(turnMessageIdsByTurnKey, key);
           }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        providerMessageKeys,
+        (key) =>
+          key.startsWith(prefix)
+            ? Cache.invalidate(assistantMessageIdsByProviderMessageKey, key)
+            : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        pendingActualModelKeys,
+        (key) =>
+          key.startsWith(prefix) ? Cache.invalidate(pendingActualModelByTurnKey, key) : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
       yield* Effect.forEach(
@@ -1487,6 +1563,8 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const isTerminalTurn = event.type === "turn.completed" || event.type === "turn.aborted";
+      const terminalActualModel =
+        event.type === "turn.completed" ? event.payload.actualModel : undefined;
       const isCompactedThreadState =
         event.type === "thread.state.changed" && event.payload.state === "compacted";
       const pendingTurnStart =
@@ -1664,6 +1742,15 @@ const make = Effect.gen(function* () {
         });
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+          const providerItemId = event.providerRefs?.providerItemId;
+          if (providerItemId) {
+            yield* rememberProviderAssistantMessageId(
+              thread.id,
+              turnId,
+              providerItemId,
+              assistantMessageId,
+            );
+          }
         }
 
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
@@ -1767,6 +1854,21 @@ const make = Effect.gen(function* () {
 
       if (assistantCompletion) {
         const turnId = toTurnId(event.turnId);
+        const pendingActualModel = turnId
+          ? Option.getOrUndefined(
+              yield* Cache.getOption(
+                pendingActualModelByTurnKey,
+                providerTurnKey(thread.id, turnId),
+              ),
+            )
+          : undefined;
+        const completionProviderItemId = event.providerRefs?.providerItemId;
+        const matchingPendingActualModel =
+          pendingActualModel &&
+          (pendingActualModel.providerItemId === undefined ||
+            pendingActualModel.providerItemId === completionProviderItemId)
+            ? pendingActualModel.actualModel
+            : undefined;
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
           : Option.none<MessageId>();
@@ -1791,11 +1893,20 @@ const make = Effect.gen(function* () {
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
           hasAssistantMessagesForTurn &&
+          matchingPendingActualModel === undefined &&
           (assistantCompletion.fallbackText?.trim().length ?? 0) === 0;
 
         if (!shouldSkipRedundantCompletion) {
           if (turnId && Option.isNone(activeAssistantMessageId)) {
             yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+          }
+          if (turnId && completionProviderItemId) {
+            yield* rememberProviderAssistantMessageId(
+              thread.id,
+              turnId,
+              completionProviderItemId,
+              assistantMessageId,
+            );
           }
 
           yield* finalizeAssistantMessage({
@@ -1807,6 +1918,7 @@ const make = Effect.gen(function* () {
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
             hasProjectedMessage: existingAssistantMessage !== undefined,
+            ...(matchingPendingActualModel ? { actualModel: matchingPendingActualModel } : {}),
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
@@ -1814,6 +1926,12 @@ const make = Effect.gen(function* () {
 
           if (turnId) {
             yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
+            if (matchingPendingActualModel) {
+              yield* Cache.invalidate(
+                pendingActualModelByTurnKey,
+                providerTurnKey(thread.id, turnId),
+              );
+            }
           }
         }
 
@@ -1877,7 +1995,41 @@ const make = Effect.gen(function* () {
               createdAt: now,
             });
           }
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
+          const trackedAssistantMessageIds = yield* getAssistantMessageIdsForTurn(
+            thread.id,
+            turnId,
+          );
+          const terminalProviderItemId =
+            event.type === "turn.completed" ? event.providerRefs?.providerItemId : undefined;
+          const modelTargetMessageIds =
+            terminalActualModel && terminalProviderItemId
+              ? yield* getProviderAssistantMessageIds(thread.id, turnId, terminalProviderItemId)
+              : new Set<MessageId>();
+          const completedAssistantMessageId =
+            trackedAssistantMessageIds.size === 0 &&
+            modelTargetMessageIds.size === 0 &&
+            terminalActualModel &&
+            !terminalProviderItemId
+              ? Option.getOrUndefined(
+                  yield* projectionThreadMessages.getLatestAssistantMessageIdForTurn({
+                    threadId: thread.id,
+                    turnId,
+                  }),
+                )
+              : undefined;
+          const assistantMessageIds =
+            trackedAssistantMessageIds.size > 0 || modelTargetMessageIds.size > 0
+              ? Array.from(new Set([...trackedAssistantMessageIds, ...modelTargetMessageIds]))
+              : completedAssistantMessageId
+                ? [completedAssistantMessageId]
+                : [];
+          if (terminalActualModel && terminalProviderItemId && assistantMessageIds.length === 0) {
+            yield* Cache.set(pendingActualModelByTurnKey, providerTurnKey(thread.id, turnId), {
+              actualModel: terminalActualModel,
+              providerItemId: terminalProviderItemId,
+            });
+          }
+          const terminalAssistantMessageId = assistantMessageIds.at(-1);
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
@@ -1892,11 +2044,24 @@ const make = Effect.gen(function* () {
                     commandTag: "assistant-complete-finalize",
                     finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                     hasProjectedMessage: existingMessage !== undefined,
+                    ...(terminalActualModel &&
+                    (modelTargetMessageIds.size > 0
+                      ? modelTargetMessageIds.has(assistantMessageId)
+                      : !terminalProviderItemId &&
+                        assistantMessageId === terminalAssistantMessageId)
+                      ? { actualModel: terminalActualModel }
+                      : {}),
                   }),
                 ),
               ),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
+          if (terminalActualModel && assistantMessageIds.length > 0) {
+            yield* Cache.invalidate(
+              pendingActualModelByTurnKey,
+              providerTurnKey(thread.id, turnId),
+            );
+          }
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
 

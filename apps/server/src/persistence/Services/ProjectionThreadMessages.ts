@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -28,6 +29,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   turnId: Schema.NullOr(TurnId),
   role: OrchestrationMessageRole,
   text: Schema.String,
+  actualModel: Schema.optional(TrimmedNonEmptyString),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
@@ -58,6 +60,13 @@ export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
 });
 export type HasProjectionThreadAssistantMessageInput =
   typeof HasProjectionThreadAssistantMessageInput.Type;
+
+export const GetLatestProjectionThreadAssistantMessageInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+export type GetLatestProjectionThreadAssistantMessageInput =
+  typeof GetLatestProjectionThreadAssistantMessageInput.Type;
 
 export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
@@ -95,6 +104,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly hasAssistantMessageForTurn: (
     input: HasProjectionThreadAssistantMessageInput,
   ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /** Read the latest assistant message id for a turn without hydrating its text. */
+  readonly getLatestAssistantMessageIdForTurn: (
+    input: GetLatestProjectionThreadAssistantMessageInput,
+  ) => Effect.Effect<Option.Option<MessageId>, ProjectionRepositoryError>;
 
   /**
    * List projected thread messages for a thread.

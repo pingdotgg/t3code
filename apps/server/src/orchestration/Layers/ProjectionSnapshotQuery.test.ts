@@ -738,9 +738,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
       yield* sql`
         INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, attachments_json, is_streaming, created_at, updated_at
+          message_id, thread_id, role, text, actual_model, attachments_json,
+          is_streaming, created_at, updated_at
         ) VALUES (${messageId}, ${threadId}, 'user', 'Read these notes',
-          ${attachmentsJson}, 0, ${createdAt}, ${createdAt})
+          'openai/gpt-5.6-sol', ${attachmentsJson}, 0, ${createdAt}, ${createdAt})
       `;
       yield* sql`
         INSERT INTO projection_thread_messages (
@@ -763,6 +764,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             text: "Read these notes",
             turnId: null,
             streaming: false,
+            actualModel: "openai/gpt-5.6-sol",
             createdAt,
             updatedAt: createdAt,
             attachments,

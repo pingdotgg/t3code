@@ -2,6 +2,7 @@ import { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { ProjectionThreadMessageRepository } from "../Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./ProjectionThreadMessages.ts";
@@ -128,6 +129,43 @@ layer("ProjectionThreadMessageRepository", (it) => {
         assert.equal(row.value.createdAt, createdAt);
         assert.equal(row.value.updatedAt, "2026-02-28T19:05:02.000Z");
         assert.isTrue(row.value.isStreaming);
+      }
+    }),
+  );
+
+  it.effect("persists actual model metadata across later partial upserts", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-actual-model");
+      const messageId = MessageId.make("message-actual-model");
+      const createdAt = "2026-08-14T00:00:00.000Z";
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "complete",
+        actualModel: "gpt-5.6-luna",
+        isStreaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "assistant",
+        text: "complete",
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-08-14T00:00:01.000Z",
+      });
+
+      const row = yield* repository.getByMessageId({ messageId });
+      assert.equal(row._tag, "Some");
+      if (row._tag === "Some") {
+        assert.equal(row.value.actualModel, "gpt-5.6-luna");
       }
     }),
   );
@@ -273,6 +311,38 @@ layer("ProjectionThreadMessageRepository", (it) => {
           streamingOnly: false,
         }),
         false,
+      );
+    }),
+  );
+
+  it.effect("finds the latest assistant message id for a turn without hydrating message text", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-latest-assistant-message");
+      const turnId = TurnId.make("turn-latest-assistant-message");
+
+      assert.isTrue(
+        Option.isNone(yield* repository.getLatestAssistantMessageIdForTurn({ threadId, turnId })),
+      );
+      for (const [index, createdAt] of [
+        "2026-03-01T00:00:00.000Z",
+        "2026-03-01T00:00:01.000Z",
+      ].entries()) {
+        yield* repository.upsert({
+          messageId: MessageId.make(`message-latest-assistant-${index}`),
+          threadId,
+          turnId,
+          role: "assistant",
+          text: "large text that the id query must not select",
+          isStreaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        });
+      }
+
+      assert.deepEqual(
+        yield* repository.getLatestAssistantMessageIdForTurn({ threadId, turnId }),
+        Option.some(MessageId.make("message-latest-assistant-1")),
       );
     }),
   );

@@ -2,6 +2,7 @@ import {
   EventId,
   type OpenCodeSettings,
   ProviderDriverKind,
+  ProviderItemId,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
@@ -68,6 +69,7 @@ const PROVIDER = ProviderDriverKind.make("opencode");
  * rather than misread (mirrors GROK_RESUME_VERSION / CURSOR_RESUME_VERSION).
  */
 const OPENCODE_RESUME_VERSION = 1 as const;
+const MAX_PENDING_ACTUAL_MODEL_TURNS = 16;
 
 /**
  * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
@@ -323,6 +325,32 @@ function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
 
+function actualModelFromPart(part: Part): string | undefined {
+  if (part.type !== "step-finish") return undefined;
+  const modelID = (part as Part & { readonly modelID?: unknown }).modelID;
+  return typeof modelID === "string" ? trimText(modelID) : undefined;
+}
+
+export function rememberCompletedTurnWithoutModel(
+  pendingTurns: Map<TurnId, "completed" | "failed">,
+  turnId: TurnId,
+  state: "completed" | "failed",
+): void {
+  pendingTurns.delete(turnId);
+  pendingTurns.set(turnId, state);
+  if (pendingTurns.size <= MAX_PENDING_ACTUAL_MODEL_TURNS) return;
+  const oldestTurnId = pendingTurns.keys().next().value;
+  if (oldestTurnId !== undefined) pendingTurns.delete(oldestTurnId);
+}
+
+export function rememberMessageTurn(
+  messageTurns: Map<string, TurnId>,
+  messageId: string,
+  turnId: TurnId,
+): void {
+  if (!messageTurns.has(messageId)) messageTurns.set(messageId, turnId);
+}
+
 type OpenCodeTextPart = Extract<Part, { readonly type: "text" | "reasoning" }>;
 
 type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" | "time"> & {
@@ -347,11 +375,16 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
+  readonly turnIdByPromptMessageId: Map<string, TurnId>;
+  readonly turnIdByMessageId: Map<string, TurnId>;
+  readonly actualModelByMessageId: Map<string, string>;
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
+  activeActualModel: { readonly messageId: string; readonly model: string } | undefined;
+  readonly completedTurnsWithoutModel: Map<TurnId, "completed" | "failed">;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   cancellation: OpenCodeCancellation | undefined;
@@ -494,6 +527,7 @@ type EventBaseInput = {
   readonly threadId: ThreadId;
   readonly turnId?: TurnId | undefined;
   readonly itemId?: string | undefined;
+  readonly providerItemId?: string | undefined;
   readonly requestId?: string | undefined;
   readonly createdAt?: string | undefined;
   readonly raw?: unknown;
@@ -1032,6 +1066,9 @@ export function makeOpenCodeAdapter(
           createdAt,
           ...(input.turnId ? { turnId: input.turnId } : {}),
           ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
+          ...(input.providerItemId
+            ? { providerRefs: { providerItemId: ProviderItemId.make(input.providerItemId) } }
+            : {}),
           ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
           ...(input.raw !== undefined
             ? {
@@ -1129,12 +1166,19 @@ export function makeOpenCodeAdapter(
         context.pendingIdleReconciliation = undefined;
       }
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, true);
+      const actualModel = context.activeActualModel;
       context.activeTurnId = undefined;
+      context.activeActualModel = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.interruptedTurnId = undefined;
       context.awaitingBusyAfterInterruption = false;
       context.reconcileIdleStatus = false;
+      if (actualModel) {
+        context.completedTurnsWithoutModel.delete(turnId);
+      } else {
+        rememberCompletedTurnWithoutModel(context.completedTurnsWithoutModel, turnId, "completed");
+      }
       for (const requestId of context.autoRepliedRequestIds) {
         context.emittedTerminalRequestIds.add(requestId);
       }
@@ -1153,12 +1197,14 @@ export function makeOpenCodeAdapter(
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId,
+          providerItemId: actualModel?.messageId,
           raw,
         })),
         type: "turn.completed",
         payload: {
           state: "completed",
           tokenUsage,
+          ...(actualModel ? { actualModel: actualModel.model } : {}),
         },
       });
     });
@@ -1297,12 +1343,23 @@ export function makeOpenCodeAdapter(
         return;
       }
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
+      const actualModel = context.activeActualModel;
       context.promptAdmission = undefined;
       context.activeTurnId = undefined;
+      context.activeActualModel = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.awaitingBusyAfterInterruption = false;
       context.reconcileIdleStatus = false;
+      if (actualModel) {
+        context.completedTurnsWithoutModel.delete(promptAdmission.turnId);
+      } else {
+        rememberCompletedTurnWithoutModel(
+          context.completedTurnsWithoutModel,
+          promptAdmission.turnId,
+          "failed",
+        );
+      }
       yield* updateProviderSession(
         context,
         { status: "error", lastError: detail },
@@ -1312,6 +1369,7 @@ export function makeOpenCodeAdapter(
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
           turnId: promptAdmission.turnId,
+          providerItemId: actualModel?.messageId,
           raw: promptAdmission.recoveryRaw,
         })),
         type: "turn.completed",
@@ -1319,6 +1377,7 @@ export function makeOpenCodeAdapter(
           state: "failed",
           errorMessage: detail,
           tokenUsage,
+          ...(actualModel ? { actualModel: actualModel.model } : {}),
         },
       });
       yield* emit({
@@ -1505,6 +1564,7 @@ export function makeOpenCodeAdapter(
       if (context.activeTurnId === turnId) {
         tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
         context.activeTurnId = undefined;
+        context.activeActualModel = undefined;
         context.activeAgent = undefined;
         context.activeVariant = undefined;
         yield* updateProviderSession(
@@ -1610,6 +1670,7 @@ export function makeOpenCodeAdapter(
             threadId: context.session.threadId,
             turnId,
             itemId: part.id,
+            providerItemId: part.messageID,
             createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
             raw,
           })),
@@ -1628,6 +1689,7 @@ export function makeOpenCodeAdapter(
             threadId: context.session.threadId,
             turnId,
             itemId: part.id,
+            providerItemId: part.messageID,
             createdAt: isoFromEpochMs(part.time.end),
             raw,
           })),
@@ -2153,6 +2215,37 @@ export function makeOpenCodeAdapter(
       yield* run.pipe(Effect.forkIn(context.sessionScope));
     });
 
+    const captureActualModel = Effect.fn("captureActualModel")(function* (
+      context: OpenCodeSessionContext,
+      messageId: string,
+      actualModel: string,
+      raw: unknown,
+    ) {
+      const partTurnId = context.turnIdByMessageId.get(messageId);
+      if (!partTurnId) return false;
+      if (context.activeTurnId === partTurnId) {
+        context.activeActualModel = { messageId, model: actualModel };
+        return true;
+      }
+      const completedState = context.completedTurnsWithoutModel.get(partTurnId);
+      if (!completedState) return false;
+      context.completedTurnsWithoutModel.delete(partTurnId);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: partTurnId,
+          providerItemId: messageId,
+          raw,
+        })),
+        type: "turn.completed",
+        payload: {
+          state: completedState,
+          actualModel,
+        },
+      });
+      return true;
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -2335,6 +2428,9 @@ export function makeOpenCodeAdapter(
               event.properties.info.parentID.trim().length > 0
                 ? event.properties.info.parentID
                 : undefined;
+            const messageTurnId = parentMessageId
+              ? context.turnIdByPromptMessageId.get(parentMessageId)
+              : undefined;
             const observedOwnership =
               parentMessageId === undefined
                 ? "unknown"
@@ -2360,6 +2456,20 @@ export function makeOpenCodeAdapter(
                 usage.unresolvedStepsByMessageId.delete(event.properties.info.id);
               }
             }
+            if (messageTurnId) {
+              rememberMessageTurn(
+                context.turnIdByMessageId,
+                event.properties.info.id,
+                messageTurnId,
+              );
+            }
+            const actualModel = context.actualModelByMessageId.get(event.properties.info.id);
+            if (
+              actualModel &&
+              (yield* captureActualModel(context, event.properties.info.id, actualModel, event))
+            ) {
+              context.actualModelByMessageId.delete(event.properties.info.id);
+            }
             for (const part of context.textPartsByMessageId
               .get(event.properties.info.id)
               ?.values() ?? []) {
@@ -2371,6 +2481,9 @@ export function makeOpenCodeAdapter(
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
+          context.turnIdByPromptMessageId.delete(event.properties.messageID);
+          context.turnIdByMessageId.delete(event.properties.messageID);
+          context.actualModelByMessageId.delete(event.properties.messageID);
           context.textPartsByMessageId.delete(event.properties.messageID);
           break;
         }
@@ -2412,6 +2525,7 @@ export function makeOpenCodeAdapter(
               threadId: context.session.threadId,
               turnId,
               itemId: event.properties.partID,
+              providerItemId: event.properties.messageID,
               raw: event,
             })),
             type: "content.delta",
@@ -2426,6 +2540,24 @@ export function makeOpenCodeAdapter(
         case "message.part.updated": {
           const part = event.properties.part;
           const messageRole = messageRoleForPart(context, part);
+
+          const actualModel = actualModelFromPart(part);
+          if (actualModel) {
+            context.actualModelByMessageId.delete(part.messageID);
+            context.actualModelByMessageId.set(part.messageID, actualModel);
+            if (context.actualModelByMessageId.size > MAX_PENDING_ACTUAL_MODEL_TURNS) {
+              const oldestMessageId = context.actualModelByMessageId.keys().next().value;
+              if (oldestMessageId !== undefined) {
+                context.actualModelByMessageId.delete(oldestMessageId);
+              }
+            }
+            if (
+              messageRole === "assistant" &&
+              (yield* captureActualModel(context, part.messageID, actualModel, event))
+            ) {
+              context.actualModelByMessageId.delete(part.messageID);
+            }
+          }
 
           if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
             const usage = context.turnTokenUsage;
@@ -2623,6 +2755,7 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const actualModel = context.activeActualModel;
           const cancellation = context.cancellation;
           if (isOpenCodeAbortError(event.properties.error)) {
             if (cancellation !== undefined && cancellation.turnId === undefined) {
@@ -2650,9 +2783,21 @@ export function makeOpenCodeAdapter(
           }
           const tokenUsage = activeTurnId ? takeOpenCodeTurnTokenUsage(context, false) : undefined;
           context.activeTurnId = undefined;
+          context.activeActualModel = undefined;
           context.activeAgent = undefined;
           context.activeVariant = undefined;
           context.reconcileIdleStatus = false;
+          if (activeTurnId) {
+            if (actualModel) {
+              context.completedTurnsWithoutModel.delete(activeTurnId);
+            } else {
+              rememberCompletedTurnWithoutModel(
+                context.completedTurnsWithoutModel,
+                activeTurnId,
+                "failed",
+              );
+            }
+          }
           yield* schedulePendingRequestRecovery(context);
           yield* updateProviderSession(
             context,
@@ -2667,6 +2812,7 @@ export function makeOpenCodeAdapter(
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
                 turnId: activeTurnId,
+                providerItemId: actualModel?.messageId,
                 raw: event,
               })),
               type: "turn.completed",
@@ -2674,6 +2820,7 @@ export function makeOpenCodeAdapter(
                 state: "failed",
                 errorMessage: message,
                 tokenUsage,
+                ...(actualModel ? { actualModel: actualModel.model } : {}),
               },
             });
           }
@@ -2994,8 +3141,13 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          turnIdByPromptMessageId: new Map(),
+          turnIdByMessageId: new Map(),
+          actualModelByMessageId: new Map(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
+          activeActualModel: undefined,
+          completedTurnsWithoutModel: new Map(),
           activeAgent: undefined,
           activeVariant: undefined,
           cancellation: undefined,
@@ -3168,7 +3320,16 @@ export function makeOpenCodeAdapter(
 
           context.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
+            context.activeActualModel = undefined;
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
+          }
+          context.turnIdByPromptMessageId.delete(messageId);
+          context.turnIdByPromptMessageId.set(messageId, turnId);
+          if (context.turnIdByPromptMessageId.size > MAX_PENDING_ACTUAL_MODEL_TURNS) {
+            const oldestPromptMessageId = context.turnIdByPromptMessageId.keys().next().value;
+            if (oldestPromptMessageId !== undefined) {
+              context.turnIdByPromptMessageId.delete(oldestPromptMessageId);
+            }
           }
           context.turnTokenUsage?.promptMessageIds.add(messageId);
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
@@ -3262,6 +3423,7 @@ export function makeOpenCodeAdapter(
                       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                       context.promptAdmission = undefined;
                       context.activeTurnId = undefined;
+                      context.activeActualModel = undefined;
                       context.activeAgent = undefined;
                       context.activeVariant = undefined;
                       yield* updateProviderSession(
@@ -3310,6 +3472,7 @@ export function makeOpenCodeAdapter(
                     const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                     context.promptAdmission = undefined;
                     context.activeTurnId = undefined;
+                    context.activeActualModel = undefined;
                     context.activeAgent = undefined;
                     context.activeVariant = undefined;
                     context.awaitingBusyAfterInterruption = false;

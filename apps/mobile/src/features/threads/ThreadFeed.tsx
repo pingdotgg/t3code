@@ -1631,6 +1631,15 @@ function renderFeedEntry(
         })}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
+            {message.actualModel ? (
+              <Text
+                accessibilityLabel={`Actual model: ${message.actualModel}`}
+                className="mr-1 max-w-[70%] font-t3-medium text-secondary-foreground text-xs"
+                numberOfLines={1}
+              >
+                Model: {message.actualModel}
+              </Text>
+            ) : null}
             <CopyTextButton
               accessibilityLabel="Copy message"
               text={renderedText}

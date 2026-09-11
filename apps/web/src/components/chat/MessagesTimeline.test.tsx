@@ -291,6 +291,28 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Next turn"');
   });
 
+  it("shows the actual model on a completed assistant turn", () => {
+    const entry = buildAssistantTimelineEntry("Hello");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              actualModel: "gpt-5.6-luna",
+              turnId: TurnId.make("turn-model"),
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("data-assistant-actual-model");
+    expect(markup).toContain("Model: gpt-5.6-luna");
+  });
+
   // Expanding history uses this suite's existing test renderer, deprecated in
   // React 19. Migrate these interaction tests together when a DOM test setup is added.
   it.each([{}, { text: "Text-only answer", file: "Answer with a file" }])(
