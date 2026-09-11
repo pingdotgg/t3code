@@ -158,7 +158,11 @@ for (const [enabled, projectOverride] of [
                 projectSettingsOverrides:
                   projectOverride === undefined
                     ? {}
-                    : { "restart-project": { continueThreadsAfterServerUpdate: projectOverride } },
+                    : {
+                        [ProjectId.make("restart-project")]: {
+                          continueThreadsAfterServerUpdate: projectOverride,
+                        },
+                      },
               }),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
