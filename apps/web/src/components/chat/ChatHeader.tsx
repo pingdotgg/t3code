@@ -326,7 +326,7 @@ export const ChatHeader = memo(function ChatHeader({
             doesn't answer it. */}
         {activeProject ? (
           <>
-            <WorkspaceBreadcrumbItem className="shrink">
+            <WorkspaceBreadcrumbItem className="shrink @min-[0px]/pane-header:max-w-[40%]">
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -405,30 +405,34 @@ export const ChatHeader = memo(function ChatHeader({
         data-chat-header-actions
         className={cn(
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
-          rightPanelOpen ? "pr-0" : "pr-16",
+          rightPanelOpen ? "pr-0" : "pr-16 @min-[0px]/pane-header:pr-0",
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
-        {showOpenInPicker && (
-          <OpenInPicker
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        )}
+        {/* A narrow pane keeps only the source-control actions. Both stay
+            mounted, so their shortcuts still fire; widen the pane to click. */}
+        <span className="contents @max-[30rem]/pane-header:hidden">
+          {activeProjectScripts && (
+            <ProjectScriptsControl
+              scripts={activeProjectScripts}
+              fileScripts={fileScripts}
+              keybindings={keybindings}
+              preferredScriptId={preferredScriptId}
+              onRunScript={onRunProjectScript}
+              onAddScript={onAddProjectScript}
+              onUpdateScript={onUpdateProjectScript}
+              onDeleteScript={onDeleteProjectScript}
+            />
+          )}
+          {showOpenInPicker && (
+            <OpenInPicker
+              environmentId={activeThreadEnvironmentId}
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+          )}
+        </span>
         {activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}

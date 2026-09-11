@@ -60,6 +60,9 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`pane.close` closes the focused pane of a [split view](./thread-sidebar.md#work-in-split-view).
+It does nothing when only one thread is open.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

@@ -15,7 +15,7 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+import { ChevronDownIcon, ExternalLinkIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
@@ -284,11 +284,13 @@ export const OpenInPicker = memo(function OpenInPicker({
         disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
         onClick={() => openInEditor(preferredEditor)}
       >
-        {primaryOption?.Icon && (
+        {primaryOption ? (
           <primaryOption.Icon
             aria-hidden="true"
             className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
           />
+        ) : (
+          <ExternalLinkIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
         )}
         <span
           className={

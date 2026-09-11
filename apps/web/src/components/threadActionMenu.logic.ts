@@ -8,6 +8,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "open-in-split"
   | "project-settings"
   | "pin"
   | "unpin"
@@ -28,6 +29,8 @@ export type ThreadActionMenuId =
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
+  /** Split view is a desktop-width layout; the thread already on screen cannot split beside itself. */
+  readonly canOpenInSplit: boolean;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
@@ -61,6 +64,9 @@ export function buildThreadActionMenuItems(
             icon: "message-square-plus",
           },
         ]
+      : []),
+    ...(state.canOpenInSplit
+      ? [{ id: "open-in-split" as const, label: "Open in split view", icon: "columns-2" }]
       : []),
     ...(state.supports.pinning
       ? [

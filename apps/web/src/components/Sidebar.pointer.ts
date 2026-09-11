@@ -11,7 +11,7 @@ export function SidebarDragLifecycle({ onUnmount }: { onUnmount: () => void }) {
 type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
-  onFinish: (started: boolean) => void;
+  onFinish: (started: boolean, cancelled: boolean) => void;
 };
 
 /** A sidebar gesture ends on release, cancellation, or loss of its window.
@@ -25,6 +25,7 @@ export class SidebarPointerSensor {
     },
   ];
   autoScrollEnabled = true;
+  currentCoordinates: { x: number; y: number };
   private phase: "pending" | "dragging" | "finished" = "pending";
   private readonly pointer: PointerEvent;
   private readonly document: Document;
@@ -32,6 +33,7 @@ export class SidebarPointerSensor {
 
   constructor(private readonly props: SensorProps<Options>) {
     this.pointer = props.event as PointerEvent;
+    this.currentCoordinates = this.coordinates();
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
     this.document.addEventListener("pointermove", this.move, { passive: false, capture: true });
@@ -66,6 +68,7 @@ export class SidebarPointerSensor {
     // a drag when the initiating button is no longer held.
     if ((event.buttons & 1) === 0) return this.cancel();
     const coordinates = { x: event.clientX, y: event.clientY };
+    this.currentCoordinates = coordinates;
     if (this.phase === "pending") {
       const offset = {
         x: event.clientX - this.pointer.clientX,
@@ -131,7 +134,7 @@ export class SidebarPointerSensor {
     try {
       // Release the sidebar preview before dnd-kit clears its transforms.
       // Its public end/cancel event can be omitted before its first layout.
-      this.props.options.onFinish(!aborted);
+      this.props.options.onFinish(!aborted, cancelled);
     } finally {
       if (aborted) this.props.onAbort(this.props.active);
       if (cancelled) this.props.onCancel();

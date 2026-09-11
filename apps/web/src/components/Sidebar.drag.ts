@@ -9,6 +9,19 @@ import {
   type SidebarSection,
 } from "./Sidebar.logic";
 
+export function createSidebarPaneCollisionDetection(
+  sidebarCollisionDetection: CollisionDetection,
+  paneDraggingEnabled: boolean,
+  sidebarRight: () => number | undefined,
+): CollisionDetection {
+  return (args) => {
+    const pointerX = args.pointerCoordinates?.x;
+    const right = paneDraggingEnabled ? sidebarRight() : undefined;
+    if (right !== undefined && pointerX !== undefined && pointerX > right) return [];
+    return sidebarCollisionDetection(args);
+  };
+}
+
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
@@ -120,6 +133,7 @@ export function createSidebarSortingStrategy(input: {
     if (!target) return [];
     const groups: Record<SidebarSection, ThreadItem[]> = {
       pinned: [],
+      split: [],
       active: [],
       snoozed: [],
       settled: [],
@@ -135,7 +149,7 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active")
+      if (item.section !== "snoozed" && item.section !== "settled")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
@@ -180,6 +194,15 @@ export function createSidebarSortingStrategy(input: {
     projected.push(...groups.pinned);
     marker("pinned-divider");
     section("active");
+    // Split groups never take a drop, so their block passes through as is,
+    // minus a lifted split row on its way out.
+    projected.push(
+      ...items.filter((item) =>
+        item.kind === "marker"
+          ? item.marker.startsWith("split-")
+          : item.section === "split" && item.key !== active.key,
+      ),
+    );
     if (
       groups.snoozed.length > 0 ||
       ((active.section !== "snoozed" || (input.snoozedThreadCount ?? 0) > 1) &&
@@ -197,7 +220,7 @@ export function createSidebarSortingStrategy(input: {
       const rect = index === undefined ? undefined : rects[index];
       if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
       const fallback =
-        item.kind === "thread" && (item.section === "pinned" || item.section === "active")
+        item.kind === "thread" && item.section !== "snoozed" && item.section !== "settled"
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;

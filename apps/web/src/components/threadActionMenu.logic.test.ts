@@ -4,6 +4,7 @@ import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./thread
 
 const baseState: ThreadActionMenuState = {
   branch: null,
+  canOpenInSplit: false,
   isPinned: false,
   isSettled: false,
   isSnoozed: false,
@@ -45,6 +46,11 @@ describe("buildThreadActionMenuItems", () => {
       icon: "settings",
     });
     expect(items[copyIndex + 2]?.id).toBe("archive");
+  });
+
+  it("offers split view only when the thread can sit beside the open one", () => {
+    expect(ids(baseState)).not.toContain("open-in-split");
+    expect(ids({ ...baseState, canOpenInSplit: true })).toContain("open-in-split");
   });
 
   it("includes branch items only for threads with a branch", () => {

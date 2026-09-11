@@ -78,6 +78,19 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onFinish).toHaveBeenCalledOnce();
   });
 
+  it("exposes the activating move before drag start and ignores other pointers", () => {
+    const drag = gesture();
+    drag.onStart.mockImplementation(() => {
+      expect(drag.sensor.currentCoordinates).toEqual({ x: 400, y: 50 });
+    });
+    document.dispatchEvent(pointer("pointermove", { clientX: 400, clientY: 50 }));
+    expect(drag.onStart).toHaveBeenCalledOnce();
+    document.dispatchEvent(pointer("pointermove", { pointerId: 2, clientX: 900 }));
+    expect(drag.sensor.currentCoordinates).toEqual({ x: 400, y: 50 });
+    document.dispatchEvent(pointer("pointerup", { buttons: 0 }));
+    expect(drag.onEnd).toHaveBeenCalledOnce();
+  });
+
   const interruptions = {
     blur: () => window.dispatchEvent(new Event("blur")),
     hidden: () => {

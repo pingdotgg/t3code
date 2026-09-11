@@ -3,6 +3,7 @@ import { closestCenter, type CollisionDetection } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   createSidebarCollisionDetection,
+  createSidebarPaneCollisionDetection,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
@@ -37,10 +38,12 @@ function layout(
   const rects = items.map((item) => {
     const height =
       item.kind === "thread"
-        ? (item.section === "pinned" || item.section === "active" ? cardHeight : 36) * scale
+        ? (item.section === "snoozed" || item.section === "settled" ? 36 : cardHeight) * scale
         : item.marker === "pinned-header" || item.marker === "pinned-divider"
           ? 0
-          : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
+          : item.marker.startsWith("split-divider-")
+            ? 13 * scale
+            : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
     const rect = { top, height, bottom: top + height, left: 0, right: 260, width: 260 };
     top += height + 1;
     return rect;
@@ -116,6 +119,16 @@ describe("sidebar collision detection", () => {
       });
       expect(filtered[0]?.id).toBe(nearbyTarget);
       expect(detector(args).map((collision) => collision.id)).toEqual(["source"]);
+    },
+  );
+
+  it.each([false, true])(
+    "keeps sidebar targets beyond its edge unless pane dragging is enabled: %s",
+    (enabled) => {
+      const args = { ...collisionArgs(), pointerCoordinates: { x: 900, y: 50 } };
+      const sidebar = createSidebarCollisionDetection(() => true);
+      const detector = createSidebarPaneCollisionDetection(sidebar, enabled, () => 300);
+      expect(detector(args)).toEqual(enabled ? [] : sidebar(args));
     },
   );
 
@@ -278,6 +291,57 @@ describe("sidebar drag projection", () => {
       if (index === args.activeIndex) continue;
       expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
     }
+  });
+
+  it("keeps the split block in place and skips it as a target", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("split-header-g"),
+      thread("x", "split"),
+      marker("split-divider-g"),
+      settledHeader,
+    ];
+    expect(resolveSidebarDropTarget(items, "a2", "x")).toBeNull();
+    expect(resolveSidebarDropTarget(items, "a2", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: ["p"],
+      activeOrder: ["a2", "a1"],
+    });
+    const result = preview({ items, settledOrder: [], settledExpanded: true }, "a2", "a1");
+    expect(result.get("a1")?.y).toBe(83);
+    expect(result.get(sidebarMarkerId("split-header-g"))).toEqual(stationary);
+    expect(result.get("x")).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("split-divider-g"))).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("settled-header"))).toEqual(stationary);
+  });
+
+  it("previews a split row leaving its block for the Active slot under it", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      marker("split-header-g"),
+      thread("x", "split"),
+      thread("y", "split"),
+      marker("split-divider-g"),
+      settledHeader,
+    ];
+    expect(resolveSidebarDropTarget(items, "x", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: [],
+      activeOrder: ["x", "a1"],
+    });
+    const result = preview({ items, settledOrder: [], settledExpanded: true }, "x", "a1");
+    // The lifted row moves above a1; its old slot in the block closes up.
+    expect(result.get("x")).toEqual(stationary);
+    expect(result.get("a1")?.y).toBe(83);
+    expect(result.get(sidebarMarkerId("split-header-g"))?.y).toBe(83);
+    expect(result.get("y")?.y).toBe(0);
+    expect(result.get(sidebarMarkerId("split-divider-g"))?.y).toBe(0);
   });
 
   it("keeps the pinned header above the gap when a lower pin moves to the top", () => {

@@ -11,6 +11,7 @@ import type {
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
@@ -24,6 +25,7 @@ import {
   GitPullRequest,
   GitPullRequestArrow,
   Globe2,
+  type LucideIcon,
   Plus,
   TerminalSquare,
   Volume2,
@@ -43,6 +45,7 @@ import {
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { startChatPaneDrag } from "~/chatPaneDragStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
@@ -74,7 +77,7 @@ import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
-interface RightPanelTabsProps {
+interface RightPanelTabsProps extends AddSurfaceProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -97,6 +100,8 @@ interface RightPanelTabsProps {
    */
   previewRuntimeTabId?: ((tabId: string) => string) | undefined;
   terminalLabelsById: ReadonlyMap<string, string>;
+  /** The thread the tabs belong to; dragging a tab out opens it as a pane there. */
+  threadRef?: ScopedThreadRef;
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -104,28 +109,6 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: () => void;
-  /**
-   * Separate from `onAddBrowser` on purpose: that one is passed directly as a
-   * DOM click handler, and a `(profileId?: string)` signature would silently
-   * accept the MouseEvent as a profile id.
-   */
-  onAddBrowserInProfile: (profileId: string) => void;
-  onAddTerminal: () => void;
-  onAddDiff: () => void;
-  onAddFiles: () => void;
-  onAddPullRequest: () => void;
-  onAddPullRequests: () => void;
-  onAddAgents: () => void;
-  onAddDevice: () => void;
-  browserAvailable: boolean;
-  terminalAvailable: boolean;
-  diffAvailable: boolean;
-  filesAvailable: boolean;
-  pullRequestAvailable: boolean;
-  pullRequestsAvailable: boolean;
-  agentsAvailable: boolean;
-  deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -155,8 +138,8 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "Linked pull requests are only available for server threads.",
-  agents: "Agents are only available from a thread.",
   device: "Devices are only available from a thread.",
+  agents: "Agents are only available from a thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -170,18 +153,6 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
-
-/** One-line unavailability hints for the empty-state rows. */
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-  pullRequests: "Available for server threads.",
-  agents: "Available from a thread.",
-  device: "Available from a thread.",
-} as const;
 
 type TabContextMenuAction =
   | "rename"
@@ -281,13 +252,97 @@ function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement })
   );
 }
 
-function SurfaceMenuItem(props: {
-  available: boolean;
-  disabledReason?: string;
+interface SurfaceAction {
+  label: string;
+  icon: LucideIcon;
   shortcut: string;
+  available: boolean;
+  disabledReason?: string | undefined;
   onClick: () => void;
-  children: ReactNode;
-}) {
+  badgeCount: number;
+}
+
+/** One list drives the "+" menu and the launcher cards. */
+function surfaceActions(props: AddSurfaceProps, liveAgentCount = 0): SurfaceAction[] {
+  return [
+    {
+      label: "Browser",
+      icon: Globe2,
+      shortcut: "B",
+      available: props.browserAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.browser,
+      onClick: props.onAddBrowser,
+      badgeCount: 0,
+    },
+    {
+      label: "Terminal",
+      icon: TerminalSquare,
+      shortcut: "T",
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      onClick: props.onAddTerminal,
+      badgeCount: 0,
+    },
+    {
+      label: "Files",
+      icon: Files,
+      shortcut: "F",
+      available: props.filesAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.files,
+      onClick: props.onAddFiles,
+      badgeCount: 0,
+    },
+    {
+      label: "Diff",
+      icon: FileDiff,
+      shortcut: "D",
+      available: props.diffAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.diff,
+      onClick: props.onAddDiff,
+      badgeCount: 0,
+    },
+    {
+      label: "Pull request",
+      icon: GitPullRequest,
+      shortcut: "P",
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      onClick: props.onAddPullRequest,
+      badgeCount: 0,
+    },
+    {
+      label: "Linked pull requests",
+      icon: GitPullRequestArrow,
+      shortcut: "L",
+      available: props.pullRequestsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
+      onClick: props.onAddPullRequests,
+      badgeCount: 0,
+    },
+    {
+      label: "Agents",
+      icon: Bot,
+      shortcut: "A",
+      available: props.agentsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.agents,
+      onClick: props.onAddAgents,
+      badgeCount: liveAgentCount,
+    },
+    {
+      label: "Device",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.device,
+      onClick: props.onAddDevice,
+      badgeCount: 0,
+    },
+  ];
+}
+
+function SurfaceMenuItem(
+  props: Omit<SurfaceAction, "label" | "icon" | "badgeCount"> & { children: ReactNode },
+) {
   const item = (
     <MenuItem
       className={!props.available ? "data-disabled:pointer-events-auto" : undefined}
@@ -303,17 +358,10 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-/**
- * List launcher shown when the right panel has no surfaces. Keyboard-first
- * without palette chrome: a surface's letter opens it directly from anywhere
- * outside a typing context, and arrows plus Enter work while the launcher is
- * focused. The highlight only appears on hover or arrow use. Unavailable
- * surfaces stay visible with a one-line reason.
- */
-function RightPanelEmptyState(props: {
+/** The add-surface callbacks and availability flags, shared by the tab bar, launcher, and pane header. */
+export interface AddSurfaceProps {
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
-  browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -329,88 +377,143 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   deviceAvailable: boolean;
-  liveAgentCount: number;
-}) {
+}
+
+/**
+ * The "+" menu listing every surface. The tab bar and a split pane's header
+ * both mount it; letter shortcuts work while it is open.
+ */
+export function AddSurfaceMenu(
+  props: AddSurfaceProps & {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    align: "start" | "end";
+    trigger?: ReactElement;
+    /** Wraps every add action; a pane header uses it to place the new tab as a pane. */
+    onAdd?: (add: () => void) => void;
+  },
+) {
+  const browserProfiles = useBrowserDefaults().profiles;
+  const run = props.onAdd ?? ((add: () => void) => add());
+  const actions = surfaceActions(props);
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const action = surfaceShortcutActionForKey(actions, event.nativeEvent);
+    if (!action) return;
+    event.preventDefault();
+    event.stopPropagation();
+    props.onOpenChange(false);
+    run(action.onClick);
+  };
+  return (
+    <Menu open={props.open} onOpenChange={props.onOpenChange}>
+      <MenuTrigger
+        render={
+          props.trigger ?? (
+            <Button
+              aria-label="Add panel surface"
+              className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+              size="icon-xs"
+              variant="ghost"
+            />
+          )
+        }
+      >
+        <Plus className="size-3.5" />
+      </MenuTrigger>
+      <MenuPopup
+        align={props.align}
+        side="bottom"
+        sideOffset={6}
+        className="min-w-44"
+        onKeyDownCapture={handleKeyDown}
+      >
+        {actions.map((action) => {
+          const Icon = action.icon;
+          // Browser collapses into one row: clicking the trigger opens
+          // the default profile (the common case stays one click),
+          // while hover or arrow reveals the profiles. The choice
+          // lives at open time because a tab's profile is fixed then —
+          // Electron only honours a partition before attach.
+          if (action.label === "Browser" && action.available) {
+            return (
+              <MenuSub key={action.label}>
+                <MenuSubTrigger
+                  className="[&>svg:last-child]:ms-0"
+                  aria-keyshortcuts={action.shortcut}
+                  onClick={(event) => {
+                    const pointerType =
+                      "pointerType" in event.nativeEvent &&
+                      typeof event.nativeEvent.pointerType === "string"
+                        ? event.nativeEvent.pointerType
+                        : undefined;
+                    // Touch has no hover path to the profile choices:
+                    // its first tap opens the submenu, then a profile
+                    // is selected there. Mouse click keeps the common
+                    // default-profile action at one click.
+                    if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType)) return;
+                    props.onOpenChange(false);
+                    run(action.onClick);
+                  }}
+                >
+                  <Icon />
+                  {action.label}
+                  <MenuShortcut>{action.shortcut}</MenuShortcut>
+                </MenuSubTrigger>
+                {/*
+                  Capped and truncated: profile names are user-supplied
+                  and run to 48 characters, which would otherwise widen
+                  the popup to fit-content and wrap.
+                */}
+                <MenuSubPopup className="min-w-40 max-w-56">
+                  {browserProfiles.map((profile) => (
+                    <MenuItem
+                      key={profile.id}
+                      onClick={() => run(() => props.onAddBrowserInProfile(profile.id))}
+                    >
+                      <span className="min-w-0 truncate">{profile.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuSubPopup>
+              </MenuSub>
+            );
+          }
+          return (
+            <SurfaceMenuItem
+              key={action.label}
+              available={action.available}
+              disabledReason={action.disabledReason}
+              shortcut={action.shortcut}
+              onClick={() => run(action.onClick)}
+            >
+              <Icon />
+              {action.label}
+            </SurfaceMenuItem>
+          );
+        })}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+/**
+ * List launcher shown when the right panel has no surfaces. Keyboard-first
+ * without palette chrome: a surface's letter opens it directly from anywhere
+ * outside a typing context, and arrows plus Enter work while the launcher is
+ * focused. The highlight only appears on hover or arrow use. Unavailable
+ * surfaces stay visible with a one-line reason.
+ */
+function RightPanelEmptyState(
+  props: AddSurfaceProps & {
+    /** Dragging a card onto the chat area opens that surface as a pane there. */
+    threadRef?: ScopedThreadRef;
+    liveAgentCount: number;
+  },
+) {
+  const browserProfiles = useBrowserDefaults().profiles;
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
-      onClick: props.onAddBrowser,
-      badgeCount: 0,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
-      badgeCount: 0,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
-      badgeCount: 0,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
-      onClick: props.onAddDiff,
-      badgeCount: 0,
-    },
-    {
-      label: "Pull request",
-      icon: GitPullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
-      onClick: props.onAddPullRequest,
-      badgeCount: 0,
-    },
-    {
-      label: "Linked pull requests",
-      icon: GitPullRequestArrow,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
-      onClick: props.onAddPullRequests,
-      badgeCount: 0,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
-    },
-    {
-      label: "Device",
-      description: "Watch an iOS Simulator or Android Emulator.",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
-      onClick: props.onAddDevice,
-      badgeCount: 0,
-    },
-  ] as const;
-
-  type SurfaceAction = (typeof actions)[number];
+  const actions = surfaceActions(props, props.liveAgentCount);
 
   const availableActions = actions.filter((action) => action.available);
   const highlightIndex =
@@ -528,6 +631,16 @@ function RightPanelEmptyState(props: {
                 <button
                   type="button"
                   onClick={action.onClick}
+                  onPointerDown={(event) => {
+                    // A dropped card runs its add action, then the tab it
+                    // made moves into the pane.
+                    if (!props.threadRef) return;
+                    startChatPaneDrag(event, {
+                      content: { threadRef: props.threadRef },
+                      title: action.label,
+                      create: action.onClick,
+                    });
+                  }}
                   className={cn(
                     "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[var(--control-radius)] px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
@@ -537,7 +650,7 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      action.label === "Browser" && browserProfiles.length > 1 && "pr-7",
                     )}
                   >
                     {action.label}
@@ -549,7 +662,7 @@ function RightPanelEmptyState(props: {
                   default profile, the chevron picks another. Only worth showing
                   once there is something to choose between.
                 */}
-                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
+                {action.label === "Browser" && browserProfiles.length > 1 ? (
                   <Menu>
                     <MenuTrigger
                       render={
@@ -569,7 +682,7 @@ function RightPanelEmptyState(props: {
                       sideOffset={6}
                       className="min-w-40 max-w-56"
                     >
-                      {props.browserProfiles.map((profile) => (
+                      {browserProfiles.map((profile) => (
                         <MenuItem
                           key={profile.id}
                           onClick={() => props.onAddBrowserInProfile(profile.id)}
@@ -584,7 +697,7 @@ function RightPanelEmptyState(props: {
             ) : (
               <DisabledReasonTooltip
                 key={action.label}
-                reason={action.disabledReason}
+                reason={action.disabledReason ?? ""}
                 trigger={
                   <div
                     tabIndex={0}
@@ -605,10 +718,11 @@ function RightPanelEmptyState(props: {
   );
 }
 
-function surfaceTitle(
+/** Tab and pane-header title. The lookups refine browser and terminal names when present. */
+export function surfaceTitle(
   surface: RightPanelSurface,
-  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-  terminalLabelsById: ReadonlyMap<string, string>,
+  sessions: Readonly<Record<string, PreviewSessionSnapshot>> = {},
+  terminalLabelsById?: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
     case "diff":
@@ -621,7 +735,7 @@ function surfaceTitle(
       );
     case "terminal":
       return (
-        terminalLabelsById.get(surface.activeTerminalId) ??
+        terminalLabelsById?.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
     case "pull-request":
@@ -818,7 +932,6 @@ function PullRequestSurfaceIcon({
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
-  const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
@@ -859,82 +972,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       behavior: reduceMotion ? "auto" : "smooth",
     });
   }, []);
-
-  const addSurfaceActions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
-      onClick: props.onAddBrowser,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: GitPullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      onClick: props.onAddPullRequest,
-    },
-    {
-      label: "Linked pull requests",
-      icon: GitPullRequestArrow,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
-      onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      onClick: props.onAddAgents,
-    },
-    {
-      label: "Device",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.device,
-      onClick: props.onAddDevice,
-    },
-  ] as const;
-
-  const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
-    if (!action) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setAddSurfaceMenuOpen(false);
-    action.onClick();
-  };
 
   const handleTabContextMenu = useCallback(
     async (event: ReactMouseEvent, surface: RightPanelSurface) => {
@@ -1140,6 +1177,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   key={surface.id}
                   data-active-tab={active}
                   onMouseDown={handleTabMouseDown}
+                  onPointerDown={(event) => {
+                    // The rename field is a child of this tab: dragging to
+                    // select text there must not arm a pane drag.
+                    if (!props.threadRef || renamingDevice === surface.id) return;
+                    startChatPaneDrag(event, {
+                      content: { threadRef: props.threadRef, surface },
+                      title,
+                    });
+                  }}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
@@ -1243,92 +1289,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               );
             })}
             {props.surfaces.length > 0 ? (
-              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
-                <MenuTrigger
-                  render={
-                    <Button
-                      aria-label="Add panel surface"
-                      className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
-                      size="icon-xs"
-                      variant="ghost"
-                    />
-                  }
-                >
-                  <Plus className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup
-                  align="start"
-                  side="bottom"
-                  sideOffset={6}
-                  className="min-w-44"
-                  onKeyDownCapture={handleAddSurfaceMenuKeyDown}
-                >
-                  {addSurfaceActions.map((action) => {
-                    const Icon = action.icon;
-                    // Browser collapses into one row: clicking the trigger opens
-                    // the default profile (the common case stays one click),
-                    // while hover or arrow reveals the profiles. The choice
-                    // lives at open time because a tab's profile is fixed then —
-                    // Electron only honours a partition before attach.
-                    if (action.label === "Browser" && action.available) {
-                      return (
-                        <MenuSub key={action.label}>
-                          <MenuSubTrigger
-                            className="[&>svg:last-child]:ms-0"
-                            aria-keyshortcuts={action.shortcut}
-                            onClick={(event) => {
-                              const pointerType =
-                                "pointerType" in event.nativeEvent &&
-                                typeof event.nativeEvent.pointerType === "string"
-                                  ? event.nativeEvent.pointerType
-                                  : undefined;
-                              // Touch has no hover path to the profile choices:
-                              // its first tap opens the submenu, then a profile
-                              // is selected there. Mouse click keeps the common
-                              // default-profile action at one click.
-                              if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
-                                return;
-                              setAddSurfaceMenuOpen(false);
-                              action.onClick();
-                            }}
-                          >
-                            <Icon />
-                            {action.label}
-                            <MenuShortcut>{action.shortcut}</MenuShortcut>
-                          </MenuSubTrigger>
-                          {/*
-                            Capped and truncated: profile names are user-supplied
-                            and run to 48 characters, which would otherwise widen
-                            the popup to fit-content and wrap.
-                          */}
-                          <MenuSubPopup className="min-w-40 max-w-56">
-                            {browserProfiles.map((profile) => (
-                              <MenuItem
-                                key={profile.id}
-                                onClick={() => props.onAddBrowserInProfile(profile.id)}
-                              >
-                                <span className="min-w-0 truncate">{profile.name}</span>
-                              </MenuItem>
-                            ))}
-                          </MenuSubPopup>
-                        </MenuSub>
-                      );
-                    }
-                    return (
-                      <SurfaceMenuItem
-                        key={action.label}
-                        available={action.available}
-                        disabledReason={action.disabledReason}
-                        shortcut={action.shortcut}
-                        onClick={action.onClick}
-                      >
-                        <Icon />
-                        {action.label}
-                      </SurfaceMenuItem>
-                    );
-                  })}
-                </MenuPopup>
-              </Menu>
+              <AddSurfaceMenu
+                {...props}
+                open={addSurfaceMenuOpen}
+                onOpenChange={setAddSurfaceMenuOpen}
+                align="start"
+              />
             ) : null}
           </div>
         </ScrollArea>
@@ -1385,31 +1351,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ) : null}
       </div>
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
-        {props.activeSurfaceId === null ? (
-          <RightPanelEmptyState
-            onAddBrowser={props.onAddBrowser}
-            onAddBrowserInProfile={props.onAddBrowserInProfile}
-            browserProfiles={browserProfiles}
-            onAddTerminal={props.onAddTerminal}
-            onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
-            onAddPullRequest={props.onAddPullRequest}
-            onAddPullRequests={props.onAddPullRequests}
-            onAddAgents={props.onAddAgents}
-            onAddDevice={props.onAddDevice}
-            browserAvailable={props.browserAvailable}
-            terminalAvailable={props.terminalAvailable}
-            diffAvailable={props.diffAvailable}
-            filesAvailable={props.filesAvailable}
-            pullRequestAvailable={props.pullRequestAvailable}
-            pullRequestsAvailable={props.pullRequestsAvailable}
-            agentsAvailable={props.agentsAvailable}
-            deviceAvailable={props.deviceAvailable}
-            liveAgentCount={props.liveAgentCount}
-          />
-        ) : (
-          props.children
-        )}
+        {props.activeSurfaceId === null ? <RightPanelEmptyState {...props} /> : props.children}
       </div>
     </PreviewPanelShell>
   );

@@ -1,3 +1,5 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
@@ -93,7 +95,8 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 // order. Snoozed rows can leave the shelf, but dropping into it is not
 // supported because snoozing requires a wake time.
 
-export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
+/** Split threads sit between pinned and active. They are never a drop target. */
+export type SidebarSection = "pinned" | "split" | "active" | "snoozed" | "settled";
 
 /** Sortable ids: thread rows use their scoped key; structural items use a
     colon-free prefix: scoped thread keys always contain a colon. */
@@ -107,6 +110,9 @@ export type SidebarListMarker =
   | "settled-placeholder"
   /** The boundary between pinned and active rows. */
   | "pinned-divider"
+  /** One split group: its heading and the rule that closes the block. */
+  | `split-header-${string}`
+  | `split-divider-${string}`
   | "snoozed-header"
   | "settled-header";
 
@@ -117,6 +123,63 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+
+type SidebarListThread = Pick<EnvironmentThreadShell, "environmentId" | "id">;
+
+export function buildSidebarListItems({
+  pinnedThreads,
+  activeThreads,
+  snoozedThreads,
+  settledThreads,
+  visibleSnoozedThreads,
+  renderedSettledThreads,
+  splitGroups,
+}: {
+  pinnedThreads: readonly SidebarListThread[];
+  activeThreads: readonly SidebarListThread[];
+  snoozedThreads: readonly SidebarListThread[];
+  settledThreads: readonly SidebarListThread[];
+  visibleSnoozedThreads: readonly SidebarListThread[];
+  renderedSettledThreads: readonly SidebarListThread[];
+  splitGroups: readonly { root: { id: string }; threads: readonly SidebarListThread[] }[];
+}): readonly SidebarListItem[] {
+  const rowsOf = (list: readonly SidebarListThread[], section: SidebarSection): SidebarListItem[] =>
+    list.map((thread) => {
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return { kind: "thread", key, section };
+    });
+  if (
+    splitGroups.length +
+      pinnedThreads.length +
+      activeThreads.length +
+      snoozedThreads.length +
+      settledThreads.length ===
+    0
+  ) {
+    return [];
+  }
+  const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
+  const pinnedRows = rowsOf(pinnedThreads, "pinned");
+  items.push(...pinnedRows);
+  items.push({ kind: "marker", marker: "pinned-divider" });
+  const activeRows = rowsOf(activeThreads, "active");
+  items.push({ kind: "marker", marker: "active-placeholder" });
+  items.push(...activeRows);
+  for (const group of splitGroups) {
+    items.push({ kind: "marker", marker: `split-header-${group.root.id}` });
+    items.push(...rowsOf(group.threads, "split"));
+    items.push({ kind: "marker", marker: `split-divider-${group.root.id}` });
+  }
+  if (snoozedThreads.length > 0) {
+    items.push({ kind: "marker", marker: "snoozed-header" });
+    items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
+  }
+  items.push({ kind: "marker", marker: "settled-header" });
+  const settledRows = rowsOf(renderedSettledThreads, "settled");
+  items.push({ kind: "marker", marker: "settled-placeholder" });
+  items.push(...settledRows);
+  return items;
+}
 
 export function sidebarListItemId(item: SidebarListItem): string {
   return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
@@ -132,6 +195,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     const item = items[i]!;
     if (item.kind !== "marker") continue;
     if (item.marker === "pinned-divider") section = "active";
+    else if (item.marker.startsWith("split-header-")) section = "split";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
@@ -157,14 +221,20 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "snoozed") return null;
+  if (section === "snoozed" || section === "split") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
   for (const item of moved) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
-      else if (item.marker === "snoozed-header" || item.marker === "settled-header") break;
+      else if (
+        item.marker.startsWith("split-header-") ||
+        item.marker === "snoozed-header" ||
+        item.marker === "settled-header"
+      ) {
+        break;
+      }
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
@@ -201,7 +271,7 @@ export type SidebarThreadDropPlan =
 /** What dropping in `to` does to a thread lifted from `from`, for the badge
     on the lifted row. Null while reordering inside one section and for the
     snoozed shelf, which cannot be a drop target. */
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake" | "unsplit";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
@@ -212,6 +282,7 @@ export function resolveSidebarDropVerb(
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
   if (from === "settled") return "unsettle";
+  if (from === "split") return "unsplit";
   return "wake";
 }
 
@@ -244,6 +315,7 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
+  if (reorderableKeys && !reorderableKeys.has(activeKey)) return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }

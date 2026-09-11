@@ -163,6 +163,7 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useChatPanesStore } from "../chatPanesStore";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -173,6 +174,8 @@ import {
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
+  withTerminalSplit,
+  withoutTerminal,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -201,7 +204,7 @@ import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs } from "./RightPanelTabs";
+import { RightPanelTabs, type AddSurfaceProps } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -689,6 +692,20 @@ type ChatViewProps =
       threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
       draftId?: never;
+      /**
+       * Set when this view is one pane of a split layout. Only the focused
+       * pane owns window-level listeners and the titlebar controls; a
+       * background pane still renders and streams but never steals input.
+       */
+      paneMode?: "focused" | "background";
+      /**
+       * Set when the pane shows one of the thread's panels instead of its
+       * chat. The view keeps the thread's panel state and callbacks and
+       * renders that surface alone, full-bleed.
+       */
+      paneSurface?: RightPanelSurface;
+      /** Receives what the pane header needs from the view inside it. */
+      onPaneHeaderProps?: (props: ChatPaneHeaderProps) => void;
     }
   | {
       environmentId: EnvironmentId;
@@ -699,7 +716,17 @@ type ChatViewProps =
       threadSyncPhase?: never;
       routeKind: "draft";
       draftId: DraftId;
+      paneMode?: never;
+      paneSurface?: never;
+      onPaneHeaderProps?: never;
     };
+
+export interface ChatPaneHeaderProps {
+  /** The right panel's add actions, which the header's "+" opens as panes. */
+  addSurface: AddSurfaceProps;
+  /** Closes the pane; a surface pane also ends its tab's sessions, asking first when needed. */
+  close: () => void;
+}
 
 interface TerminalLaunchContext {
   threadId: ThreadId;
@@ -1414,6 +1441,10 @@ export default function ChatView(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const paneMode = routeKind === "server" ? (props.paneMode ?? null) : null;
+  const paneSurface = routeKind === "server" ? (props.paneSurface ?? null) : null;
+  const onPaneHeaderProps = routeKind === "server" ? props.onPaneHeaderProps : undefined;
+  const inputOwner = paneMode !== "background";
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
@@ -1522,6 +1553,19 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  /** After a pane closes, the route follows the pane that stays. */
+  const followPane = useCallback(
+    (survivor: ScopedThreadRef | null) => {
+      if (survivor) {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(survivor),
+          replace: true,
+        });
+      }
+    },
+    [navigate],
+  );
   const citationLocation = useLocation({
     select: (location) => ({
       href: location.href,
@@ -1903,9 +1947,12 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
-  const activeRightPanelSurface = useRightPanelStore((state) =>
+  const dockedRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  // A surface pane renders its own surface: the docked panel's selection is
+  // another tab entirely and must not steer the terminal callbacks here.
+  const activeRightPanelSurface = paneSurface ?? dockedRightPanelSurface;
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
@@ -1918,21 +1965,24 @@ export default function ChatView(props: ChatViewProps) {
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
+  // A pane's surface has left the docked store, and the server has not listed
+  // a terminal it just created, so it has to be counted here too or the next
+  // allocation hands back an id the pane already shows.
   const panelTerminalIds = useMemo(
     () =>
       new Set(
-        rightPanelState.surfaces.flatMap((surface) =>
+        [...rightPanelState.surfaces, ...(paneSurface ? [paneSurface] : [])].flatMap((surface) =>
           surface.kind === "terminal" ? surface.terminalIds : [],
         ),
       ),
-    [rightPanelState.surfaces],
+    [paneSurface, rightPanelState.surfaces],
   );
   const allocatableActiveTerminalIds = useMemo(
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelOpen = paneSurface !== null || rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -1950,7 +2000,7 @@ export default function ChatView(props: ChatViewProps) {
     [activeRightPanelSurface, rightPanelState.surfaces],
   );
   const rightPanelPresence = usePanelPresence(
-    rightPanelOpen && activeThreadRef !== null,
+    rightPanelOpen && activeThreadRef !== null && paneSurface === null,
     rightPanelPresenceValue,
     panelAnimationsActive,
     activeThreadKey,
@@ -1958,7 +2008,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const rightPanelPresent = rightPanelPresence.present;
   const rightPanelControlsInPanel = shouldUseRightPanelSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUseRightPanelSheet;
+  const rightPanelControlsAtRoot =
+    rightPanelPresent && !shouldUseRightPanelSheet && paneMode === null;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
@@ -3632,7 +3683,10 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  useEffect(() => subscribeSnapShotComposerFocus(focusComposer), [focusComposer]);
+  useEffect(
+    () => (inputOwner ? subscribeSnapShotComposerFocus(focusComposer) : undefined),
+    [focusComposer, inputOwner],
+  );
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -4470,9 +4524,19 @@ export default function ChatView(props: ChatViewProps) {
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
       const cwd = gitCwd ?? activeProject.workspaceRoot;
-      useRightPanelStore
-        .getState()
-        .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
+      if (paneSurface) {
+        useChatPanesStore
+          .getState()
+          .updateSurface(activeThreadRef, paneSurface.id, (surface) =>
+            surface.kind === "terminal"
+              ? withTerminalSplit(surface, terminalId, direction)
+              : surface,
+          );
+      } else {
+        useRightPanelStore
+          .getState()
+          .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
+      }
       setTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
@@ -4497,6 +4561,7 @@ export default function ChatView(props: ChatViewProps) {
       allocatableActiveTerminalIds,
       gitCwd,
       openTerminal,
+      paneSurface,
     ],
   );
   const splitPanelTerminalVertical = useCallback(() => {
@@ -4505,12 +4570,22 @@ export default function ChatView(props: ChatViewProps) {
   const activatePanelTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-      useRightPanelStore
-        .getState()
-        .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+      if (paneSurface) {
+        useChatPanesStore
+          .getState()
+          .updateSurface(activeThreadRef, paneSurface.id, (surface) =>
+            surface.kind === "terminal" && surface.terminalIds.includes(terminalId)
+              ? { ...surface, activeTerminalId: terminalId }
+              : surface,
+          );
+      } else {
+        useRightPanelStore
+          .getState()
+          .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+      }
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef],
+    [activeRightPanelSurface, activeThreadRef, paneSurface],
   );
   const closePanelTerminal = useCallback(
     (terminalId: string) => {
@@ -4520,12 +4595,26 @@ export default function ChatView(props: ChatViewProps) {
         input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
       });
       storeCloseTerminal(activeThreadRef, terminalId);
-      useRightPanelStore
-        .getState()
-        .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+      if (paneSurface?.kind === "terminal") {
+        const next = withoutTerminal(paneSurface, terminalId);
+        const panes = useChatPanesStore.getState();
+        if (next) panes.updateSurface(activeThreadRef, paneSurface.id, () => next);
+        else followPane(panes.closeSurface(activeThreadRef, paneSurface.id));
+      } else {
+        useRightPanelStore
+          .getState()
+          .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+      }
       setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
+    [
+      activeRightPanelSurface,
+      activeThreadRef,
+      closeTerminalMutation,
+      followPane,
+      paneSurface,
+      storeCloseTerminal,
+    ],
   );
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
@@ -4561,14 +4650,6 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, diffOpen, onDiffPanelOpen],
   );
-  const toggleRightPanel = useCallback(() => {
-    if (!activeThreadRef) return;
-    if (rightPanelOpen) {
-      closePreviewPanel();
-      return;
-    }
-    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -4644,10 +4725,11 @@ export default function ChatView(props: ChatViewProps) {
       const store = useRightPanelStore.getState();
       for (const surface of surfaces) {
         store.closeSurface(activeThreadRef, surface.id);
+        followPane(useChatPanesStore.getState().closeSurface(activeThreadRef, surface.id));
       }
       syncActivePreviewSurface();
     },
-    [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
+    [activeThreadRef, cleanupRightPanelSurfaces, followPane, syncActivePreviewSurface],
   );
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -4680,6 +4762,26 @@ export default function ChatView(props: ChatViewProps) {
       finishRightPanelSurfaceClose,
     ],
   );
+  /** Closes the pane this view renders in: its surface's tab, or the thread's chat pane. */
+  const closeOwnPane = useCallback(() => {
+    if (!activeThreadRef) return;
+    if (paneSurface) closeRightPanelSurface(paneSurface);
+    else followPane(useChatPanesStore.getState().closeThread(activeThreadRef));
+  }, [activeThreadRef, closeRightPanelSurface, followPane, paneSurface]);
+  const toggleRightPanel = useCallback(() => {
+    if (!activeThreadRef) return;
+    // A surface pane is this view's panel, so the toggle closes the pane
+    // rather than the docked panel the thread may still have elsewhere.
+    if (paneSurface !== null) {
+      closeOwnPane();
+      return;
+    }
+    if (rightPanelOpen) {
+      closePreviewPanel();
+      return;
+    }
+    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
+  }, [activeThreadRef, closeOwnPane, closePreviewPanel, paneSurface, rightPanelOpen]);
   const closeOtherRightPanelSurfaces = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
@@ -4753,10 +4855,12 @@ export default function ChatView(props: ChatViewProps) {
   }, []);
   useEffect(
     () =>
-      subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanel();
-      }),
-    [togglePreviewPanel],
+      inputOwner
+        ? subscribePreviewAction((action) => {
+            if (action === "toggle-panel") togglePreviewPanel();
+          })
+        : undefined,
+    [inputOwner, togglePreviewPanel],
   );
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -5071,8 +5175,8 @@ export default function ChatView(props: ChatViewProps) {
           if (
             !(event.target instanceof Node) ||
             (!scrollNode.contains(event.target) &&
-              event.target !== document.body &&
-              event.target !== document.documentElement) ||
+              (!inputOwner ||
+                (event.target !== document.body && event.target !== document.documentElement))) ||
             event.defaultPrevented ||
             event.isComposing ||
             event.altKey ||
@@ -5136,7 +5240,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
+  }, [activeThread?.id, inputOwner, isTimelineAtLogicalEnd, timelineRealContentOverflowsViewport]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     // Anchored-end space can be remeasured when the turn completes. Once the
@@ -5293,14 +5397,14 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!activeThread?.id || terminalUiState.terminalOpen || !inputOwner) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, inputOwner, terminalUiState.terminalOpen]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
@@ -5308,7 +5412,9 @@ export default function ChatView(props: ChatViewProps) {
   // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
   // returning to the app does not raise the keyboard.
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport || !inputOwner) {
+      return;
+    }
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -5327,7 +5433,7 @@ export default function ChatView(props: ChatViewProps) {
       window.removeEventListener("focus", onWindowFocus);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, isMobileViewport, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, inputOwner, isMobileViewport, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -6205,7 +6311,7 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (!activeThreadId || !inputOwner || isCommandPaletteOpen()) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -6241,6 +6347,15 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) copyActiveThreadReference();
+        return;
+      }
+
+      if (command === "pane.close") {
+        if (paneMode === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat || !activeThreadRef) return;
+        closeOwnPane();
         return;
       }
 
@@ -6419,7 +6534,10 @@ export default function ChatView(props: ChatViewProps) {
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
     activeThreadId,
+    closeOwnPane,
     closeRightPanelSurface,
+    inputOwner,
+    paneMode,
     requestCloseTerminal,
     requestClosePanelTerminal,
     createNewTerminal,
@@ -6430,6 +6548,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     handleUnsettleActiveThread,
     isServerThread,
+    navigate,
     onInterrupt,
     onToggleDiff,
     pinThread,
@@ -6450,7 +6569,7 @@ export default function ChatView(props: ChatViewProps) {
   // Route it to the composer like a typed key, which also expands it.
   useEffect(() => {
     const handler = (event: ClipboardEvent) => {
-      if (!activeThreadId || isCommandPaletteOpen()) return;
+      if (!activeThreadId || !inputOwner || isCommandPaletteOpen()) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
       const text = pasteTextToFocusComposer(event);
@@ -6462,7 +6581,7 @@ export default function ChatView(props: ChatViewProps) {
     };
     window.addEventListener("paste", handler, true);
     return () => window.removeEventListener("paste", handler, true);
-  }, [activeThreadId, composerRef]);
+  }, [activeThreadId, composerRef, inputOwner]);
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
@@ -8147,6 +8266,49 @@ export default function ChatView(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
+  const addSurfaceProps = useMemo<AddSurfaceProps>(
+    () => ({
+      // Not passed bare: a DOM click handler would hand it a MouseEvent as the profile id.
+      onAddBrowser: () => createBrowserSurface(),
+      onAddBrowserInProfile: createBrowserSurface,
+      onAddTerminal: addTerminalSurface,
+      onAddDiff: addDiffSurface,
+      onAddFiles: addFilesSurface,
+      onAddPullRequest: addPullRequestSurface,
+      onAddPullRequests: addPullRequestsSurface,
+      onAddAgents: addAgentsSurface,
+      onAddDevice: addDeviceSurface,
+      browserAvailable: isPreviewSupportedInRuntime(),
+      terminalAvailable: activeProject !== null,
+      diffAvailable: isServerThread && isGitRepo,
+      filesAvailable: activeProject !== null,
+      pullRequestAvailable: pullRequestSurfaceAvailable,
+      pullRequestsAvailable: isServerThread && supportsThreadPullRequests,
+      agentsAvailable: true,
+      deviceAvailable: activeThreadRef !== null,
+    }),
+    [
+      createBrowserSurface,
+      addTerminalSurface,
+      addDiffSurface,
+      addFilesSurface,
+      addPullRequestSurface,
+      addPullRequestsSurface,
+      addAgentsSurface,
+      addDeviceSurface,
+      activeProject,
+      isServerThread,
+      isGitRepo,
+      pullRequestSurfaceAvailable,
+      supportsThreadPullRequests,
+      activeThreadRef,
+    ],
+  );
+  useEffect(
+    () => onPaneHeaderProps?.({ addSurface: addSurfaceProps, close: closeOwnPane }),
+    [onPaneHeaderProps, addSurfaceProps, closeOwnPane],
+  );
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
@@ -8172,13 +8334,17 @@ export default function ChatView(props: ChatViewProps) {
   const panelLayoutControls = (
     <div
       className={cn(
+        "pointer-events-none flex items-center gap-1 [-webkit-app-region:no-drag]",
         // Keep one viewport anchor inside the header's no-drag region. The
         // header can shrink behind the right panel without moving the controls.
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        // A pane has no titlebar of its own, so its controls stay in flow.
+        paneMode === null
+          ? "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px h-[var(--workspace-topbar-height)]"
+          : "order-last ml-auto h-7 shrink-0",
       )}
       data-workspace-titlebar-controls
     >
-      {!shouldUseRightPanelSheet ? (
+      {!shouldUseRightPanelSheet && (paneMode === null || rightPanelOpen) ? (
         <span
           aria-hidden={!rightPanelOpen}
           className={cn(
@@ -8198,13 +8364,16 @@ export default function ChatView(props: ChatViewProps) {
       <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
     </div>
   );
+  // A surface pane renders its own surface; the docked panel renders whatever
+  // the presence hook says is showing.
+  const renderedSurface = paneSurface ?? renderedRightPanelSurface;
   const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "preview" ? (
+    renderedSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
-          tabId={renderedRightPanelSurface.resourceId}
+          tabId={renderedSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
@@ -8212,11 +8381,11 @@ export default function ChatView(props: ChatViewProps) {
           }}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "terminal" ? (
+    ) : renderedSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         visible={rightPanelOpen}
         threadRef={activeThreadRef}
-        surface={renderedRightPanelSurface}
+        surface={renderedSurface}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
@@ -8231,7 +8400,7 @@ export default function ChatView(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
-    ) : renderedRightPanelSurface?.kind === "diff" ? (
+    ) : renderedSurface?.kind === "diff" ? (
       <Suspense fallback={null}>
         <DiffPanel
           key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
@@ -8241,21 +8410,21 @@ export default function ChatView(props: ChatViewProps) {
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+    ) : renderedSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
+    ) : renderedSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
         error="Update this environment's T3 Code server to browse pull requests."
       />
-    ) : renderedRightPanelSurface?.kind === "pull-request" ? (
+    ) : renderedSurface?.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
       // would be the same action twice. The thread context also drops the checkout button, so it
       // is only right for the thread's own pull request, whose branch is already under the
       // reader's feet. A link the agent wrote can open any other one here, and that one has to be
       // checkable out like it is anywhere else.
       <PullRequestDetailPanel
-        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
+        key={`${renderedSurface.host ?? ""}:${renderedSurface.repository}#${renderedSurface.number}`}
         environmentId={activeThread.environmentId}
         onSelectPullRequest={(reference) => {
           if (activeThreadRef)
@@ -8268,10 +8437,10 @@ export default function ChatView(props: ChatViewProps) {
         }}
         threadRef={activeThreadRef}
         reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
-          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-          repository: renderedRightPanelSurface.repository,
-          number: renderedRightPanelSurface.number,
+          projectId: renderedSurface.projectId as ProjectId,
+          ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
+          repository: renderedSurface.repository,
+          number: renderedSurface.number,
         }}
         context={
           isThreadOwnPullRequest(
@@ -8281,9 +8450,9 @@ export default function ChatView(props: ChatViewProps) {
               number: linkedThreadPullRequest?.number ?? null,
             },
             {
-              projectId: renderedRightPanelSurface.projectId,
-              repository: renderedRightPanelSurface.repository,
-              number: renderedRightPanelSurface.number,
+              projectId: renderedSurface.projectId,
+              repository: renderedSurface.repository,
+              number: renderedSurface.number,
             },
           )
             ? "thread"
@@ -8296,37 +8465,36 @@ export default function ChatView(props: ChatViewProps) {
             : undefined
         }
       />
-    ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
+    ) : renderedSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
-    ) : renderedRightPanelSurface?.kind === "agents" ? (
+    ) : renderedSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
-    ) : renderedRightPanelSurface?.kind === "device" ? (
+    ) : renderedSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
           mode="embedded"
           threadRef={activeThreadRef}
-          key={renderedRightPanelSurface.id}
-          surface={renderedRightPanelSurface}
+          key={renderedSurface.id}
+          surface={renderedSurface}
           visible={rightPanelOpen}
           onDismissSetup={() => {
-            closeRightPanelSurface(renderedRightPanelSurface);
+            closeRightPanelSurface(renderedSurface);
             useRightPanelStore.getState().show(activeThreadRef);
           }}
         />
       </Suspense>
-    ) : (renderedRightPanelSurface?.kind === "files" ||
-        renderedRightPanelSurface?.kind === "file") &&
+    ) : (renderedSurface?.kind === "files" || renderedSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
-        (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
+        (renderedSurface.kind === "file" && renderedSurface.attachment)) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
           key={`${activeThread.environmentId}:${
-            renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-              ? `attachment:${renderedRightPanelSurface.attachment.id}`
+            renderedSurface.kind === "file" && renderedSurface.attachment
+              ? `attachment:${renderedSurface.attachment.id}`
               : activeWorkspaceRoot
           }`}
           environmentId={activeThread.environmentId}
@@ -8336,29 +8504,16 @@ export default function ChatView(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}
-          relativePath={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.relativePath
-              : null
-          }
-          {...(renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
-            ? { attachment: renderedRightPanelSurface.attachment }
+          relativePath={renderedSurface.kind === "file" ? renderedSurface.relativePath : null}
+          {...(renderedSurface.kind === "file" && renderedSurface.attachment
+            ? { attachment: renderedSurface.attachment }
             : {})}
-          revealLine={
-            renderedRightPanelSurface.kind === "file"
-              ? (renderedRightPanelSurface.revealLine ?? null)
-              : null
-          }
-          revealRequestId={
-            renderedRightPanelSurface.kind === "file"
-              ? renderedRightPanelSurface.revealRequestId
-              : 0
-          }
+          revealLine={renderedSurface.kind === "file" ? (renderedSurface.revealLine ?? null) : null}
+          revealRequestId={renderedSurface.kind === "file" ? renderedSurface.revealRequestId : 0}
           onOpenFile={openFileSurface}
           onPendingChange={handleFilePendingChange}
           selectedFilePending={
-            renderedRightPanelSurface.kind === "file" &&
-            pendingFileSurfaceIds.has(renderedRightPanelSurface.id)
+            renderedSurface.kind === "file" && pendingFileSurfaceIds.has(renderedSurface.id)
           }
           workspaceMutationId={workspaceMutationId}
         />
@@ -8370,6 +8525,14 @@ export default function ChatView(props: ChatViewProps) {
     setDragActive: setIsWorkspaceFileDragActive,
     addFiles: (files) => composerRef.current?.addDroppedFiles(files),
   });
+
+  if (paneSurface) {
+    return (
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        {rightPanelContent}
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
@@ -8400,6 +8563,7 @@ export default function ChatView(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
+          paneMode !== null && "@container/pane-header",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
@@ -8409,7 +8573,12 @@ export default function ChatView(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className={cn(
+            "relative bg-background",
+            // Match the action toolbar's gap so the panel controls read as
+            // one row with it instead of floating at the pane edge.
+            paneMode !== null && "gap-2 @3xl/pane-header:gap-3",
+          )}
         >
           {isElectron && rightPanelControlsAtRoot ? (
             <span
@@ -8898,6 +9067,7 @@ export default function ChatView(props: ChatViewProps) {
           open={rightPanelOpen}
           maximized={rightPanelMaximized}
           surfaces={renderedRightPanelSurfaces}
+          threadRef={activeThreadRef}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -8915,23 +9085,7 @@ export default function ChatView(props: ChatViewProps) {
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={() => createBrowserSurface()}
-          onAddBrowserInProfile={createBrowserSurface}
-          onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
-          onAddFiles={addFilesSurface}
-          onAddPullRequest={addPullRequestSurface}
-          onAddPullRequests={addPullRequestsSurface}
-          onAddAgents={addAgentsSurface}
-          onAddDevice={addDeviceSurface}
-          browserAvailable={isPreviewSupportedInRuntime()}
-          terminalAvailable={activeProject !== null}
-          diffAvailable={isServerThread && isGitRepo}
-          filesAvailable={activeProject !== null}
-          pullRequestAvailable={pullRequestSurfaceAvailable}
-          pullRequestsAvailable={isServerThread && supportsThreadPullRequests}
-          agentsAvailable
-          deviceAvailable={activeThreadRef !== null}
+          {...addSurfaceProps}
           liveAgentCount={agentPanelModel.liveCount}
         >
           {rightPanelContent}
@@ -8973,23 +9127,7 @@ export default function ChatView(props: ChatViewProps) {
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
-            onAddBrowser={() => createBrowserSurface()}
-            onAddBrowserInProfile={createBrowserSurface}
-            onAddTerminal={addTerminalSurface}
-            onAddDiff={addDiffSurface}
-            onAddFiles={addFilesSurface}
-            onAddPullRequest={addPullRequestSurface}
-            onAddPullRequests={addPullRequestsSurface}
-            onAddAgents={addAgentsSurface}
-            onAddDevice={addDeviceSurface}
-            browserAvailable={isPreviewSupportedInRuntime()}
-            terminalAvailable={activeProject !== null}
-            diffAvailable={isServerThread && isGitRepo}
-            filesAvailable={activeProject !== null}
-            pullRequestAvailable={pullRequestSurfaceAvailable}
-            pullRequestsAvailable={isServerThread && supportsThreadPullRequests}
-            agentsAvailable
-            deviceAvailable={activeThreadRef !== null}
+            {...addSurfaceProps}
             liveAgentCount={agentPanelModel.liveCount}
           >
             {rightPanelContent}

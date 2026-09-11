@@ -113,6 +113,14 @@ import {
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import {
+  chatPaneDragPointer,
+  releaseChatPaneDrag,
+  useChatPaneDragStore,
+} from "../chatPaneDragStore";
+import { canOpenInSplit, openInSplit, useChatPanesStore } from "../chatPanesStore";
+import { collectLeaves, filterPaneTree } from "../chatPanes.logic";
+import { SidebarSplitViewHeader } from "./chat/SidebarSplitView";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -175,13 +183,14 @@ import {
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   useThreadJumpHintVisibility,
-  type SidebarListItem,
+  buildSidebarListItems,
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
+  createSidebarPaneCollisionDetection,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
@@ -910,6 +919,12 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 // the same icons as the row actions and context menu so the drop reads as the
 // action it performs.
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
+  unsplit: (
+    <>
+      <XIcon aria-hidden className="size-3" />
+      Leave split
+    </>
+  ),
   pin: (
     <>
       <PinIcon aria-hidden className="size-3" />
@@ -972,6 +987,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // the user visits the thread.
   wokeAt: string | null;
   isActive: boolean;
+  /** Split-view rows step in from the edge so the block reads as one group. */
+  inset?: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
@@ -1722,6 +1739,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        props.inset && "ps-2",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -2226,6 +2244,8 @@ export default function Sidebar() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
+  const routeThreadRefRef = useRef(routeThreadRef);
+  routeThreadRefRef.current = routeThreadRef;
 
   const environmentLabelById = useMemo(
     () =>
@@ -2480,7 +2500,12 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // Split threads leave their sections for one block per group below the
+  // active rows (desktop only: mobile has no panes). Reading the layout here
+  // keeps the rows real rows instead of a second copy.
+  const savedPaneGroups = useChatPanesStore((state) => state.groups);
   const {
+    splitGroups,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -2505,10 +2530,27 @@ export default function Sidebar() {
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
+    const paneGroups = isMobile ? [] : savedPaneGroups;
+    const splitThreadByKey = new Map<string, EnvironmentThreadShell | null>(
+      paneGroups.flatMap((group) =>
+        collectLeaves(group).map((leaf) => [scopedThreadKey(leaf.threadRef), null]),
+      ),
+    );
     const draggable = new Set<string>();
     const activeReorderable = new Set<string>();
     for (const thread of visible) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      if (splitThreadByKey.has(key)) {
+        splitThreadByKey.set(key, thread);
+        // A split row drags out of its pane into Pinned or Active, so it
+        // needs the same reorder capabilities as the rows already there.
+        if (capabilities?.threadActiveReorder === true) activeReorderable.add(key);
+        if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
+          draggable.add(key);
+        }
+        continue;
+      }
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
       // could neither un-settle nor pin them, so auto-settling them would
@@ -2558,6 +2600,17 @@ export default function Sidebar() {
     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
     const sortedActive = sortThreadsForSidebar(active);
     return {
+      // Rows follow the pane order, so the block reads like the layout.
+      splitGroups: paneGroups.flatMap((root) => {
+        // Panel panes sit beside their thread's chat pane; the row is the thread.
+        const threads = collectLeaves(root).flatMap((leaf) => {
+          const thread = leaf.surface
+            ? null
+            : splitThreadByKey.get(scopedThreadKey(leaf.threadRef));
+          return thread ? [thread] : [];
+        });
+        return threads.length === 0 ? [] : [{ root, threads }];
+      }),
       pinnedThreads:
         optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
           ? sortedPinned
@@ -2585,15 +2638,48 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    isMobile,
+    nowMinute,
+    optimisticDrop,
+    savedPaneGroups,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
+  const splitThreads = useMemo(() => splitGroups.flatMap((group) => group.threads), [splitGroups]);
+  const splitRootById = useMemo(
+    () =>
+      new Map(
+        splitGroups.map((group) => {
+          const visible = new Set(
+            group.threads.map((thread) =>
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ),
+          );
+          return [
+            group.root.id,
+            filterPaneTree(group.root, (leaf) => visible.has(scopedThreadKey(leaf.threadRef)))!,
+          ];
+        }),
+      ),
+    [splitGroups],
+  );
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
+    () => [
+      ...pinnedThreads,
+      ...activeThreads,
+      ...splitThreads,
+      ...snoozedThreads,
+      ...settledThreads,
+    ],
+    [activeThreads, pinnedThreads, settledThreads, snoozedThreads, splitThreads],
   );
   const threadSearchResults = useMemo(
     () => searchSidebarThreads(searchableThreads, threadSearchQuery),
@@ -2711,8 +2797,14 @@ export default function Sidebar() {
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...pinnedThreads,
+      ...activeThreads,
+      ...splitThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [pinnedThreads, activeThreads, splitThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -3098,11 +3190,17 @@ export default function Sidebar() {
   } | null>(null);
   const dragTargetSection = dragState?.targetSection ?? null;
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
-  const finishThreadDrag = useCallback((started: boolean) => {
+  const finishThreadDrag = useCallback((started: boolean, cancelled: boolean) => {
     dragSensorRef.current = null;
     if (started) {
-      listMotionRef.current?.release();
+      // Rows glide back into place only for a sidebar drop: a pane drop is
+      // about to rebuild the split block, and gliding into that is noise.
+      const paneDrag = useChatPaneDragStore.getState();
+      if (paneDrag.target === null) listMotionRef.current?.release();
+      else listMotionRef.current?.suspend();
       setDragState(null);
+      if (cancelled) paneDrag.end();
+      else releaseChatPaneDrag();
     }
   }, []);
   const attachDragSensor = useCallback((sensor: SidebarPointerSensor) => {
@@ -3126,11 +3224,12 @@ export default function Sidebar() {
       }
     };
     add(pinnedThreads, "pinned");
+    add(splitThreads, "split");
     add(activeThreads, "active");
     add(snoozedThreads, "snoozed");
     add(settledThreads, "settled");
     return map;
-  }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads]);
+  }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads, splitThreads]);
   const pinnedKeys = useMemo(
     () =>
       pinnedThreads.map((thread) =>
@@ -3280,53 +3379,42 @@ export default function Sidebar() {
         activationY:
           event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
       });
+      // The chat area listens for this row too: carrying it over a pane
+      // splits the view instead of reordering the list.
+      const thread = threadByKeyRef.current.get(activeKey);
+      if (thread && !isMobile) {
+        chatPaneDragPointer.current = dragSensorRef.current?.currentCoordinates ?? null;
+        useChatPaneDragStore.getState().start({
+          content: { threadRef: scopeThreadRef(thread.environmentId, thread.id) },
+          title: thread.title,
+        });
+      }
     },
-    [sectionByThreadKey],
+    [isMobile, sectionByThreadKey],
   );
   // Include every visible row in the measured order. Older servers disable
   // pickup on their rows without changing where those rows render.
-  const sidebarListItems = useMemo((): readonly SidebarListItem[] => {
-    const rowsOf = (
-      list: readonly EnvironmentThreadShell[],
-      section: SidebarSection,
-    ): SidebarListItem[] =>
-      list.map((thread) => {
-        const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        return { kind: "thread", key, section };
-      });
-    if (
-      pinnedThreads.length +
-        activeThreads.length +
-        snoozedThreads.length +
-        settledThreads.length ===
-      0
-    ) {
-      return [];
-    }
-    const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
-    items.push(...pinnedRows);
-    items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
-    items.push({ kind: "marker", marker: "active-placeholder" });
-    items.push(...activeRows);
-    if (snoozedThreads.length > 0) {
-      items.push({ kind: "marker", marker: "snoozed-header" });
-      items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
-    }
-    items.push({ kind: "marker", marker: "settled-header" });
-    const settledRows = rowsOf(renderedSettledThreads, "settled");
-    items.push({ kind: "marker", marker: "settled-placeholder" });
-    items.push(...settledRows);
-    return items;
-  }, [
-    activeThreads,
-    pinnedThreads,
-    renderedSettledThreads,
-    settledThreads.length,
-    snoozedThreads.length,
-    visibleSnoozedThreads,
-  ]);
+  const sidebarListItems = useMemo(
+    () =>
+      buildSidebarListItems({
+        pinnedThreads,
+        activeThreads,
+        snoozedThreads,
+        settledThreads,
+        visibleSnoozedThreads,
+        renderedSettledThreads,
+        splitGroups,
+      }),
+    [
+      pinnedThreads,
+      activeThreads,
+      snoozedThreads,
+      settledThreads,
+      visibleSnoozedThreads,
+      renderedSettledThreads,
+      splitGroups,
+    ],
+  );
   useEffect(() => {
     if (
       dragState !== null &&
@@ -3348,18 +3436,32 @@ export default function Sidebar() {
     [sidebarListItems],
   );
   const sidebarListHasRows = sidebarListItems.length + visibleDraftSessionCount > 0;
+  // A split opening or closing moves whole cards between sections. Sliding
+  // and fading every displaced row reads as the sidebar rearranging itself,
+  // so that update jumps; only reorders within a section animate.
+  const splitMembershipKey = useMemo(
+    () =>
+      sidebarListItems
+        .flatMap((item) => (item.kind === "thread" && item.section === "split" ? [item.key] : []))
+        .join("\0"),
+    [sidebarListItems],
+  );
+  const previousSplitMembershipKeyRef = useRef(splitMembershipKey);
   useLayoutEffect(() => {
     // Drag release clears the baseline, so its commit cannot replay the
     // sortable preview; rows glide from their released positions instead.
     // Later thread actions can animate while writes settle.
     // Draft navigation can reveal a frozen row without changing the draft count.
     void sidebarListOrderKey;
-    listMotionRef.current?.update(!listMotionPaused && sidebarListHasRows);
+    const splitChanged = previousSplitMembershipKeyRef.current !== splitMembershipKey;
+    previousSplitMembershipKeyRef.current = splitMembershipKey;
+    listMotionRef.current?.update(!listMotionPaused && sidebarListHasRows && !splitChanged);
   }, [
     listMotionPaused,
     routeDraftIdForRows,
     sidebarListHasRows,
     sidebarListOrderKey,
+    splitMembershipKey,
     visibleDraftSessionCount,
   ]);
   const handleThreadDragOver = useCallback(
@@ -3428,7 +3530,7 @@ export default function Sidebar() {
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
-  const dndCollisionDetection = useMemo(() => {
+  const sidebarCollisionDetection = useMemo(() => {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
     const source = threadByKey.get(draggedThreadKey);
@@ -3440,7 +3542,7 @@ export default function Sidebar() {
         return (
           planSidebarThreadDrop({
             activeKey: draggedThreadKey,
-            activeSection: draggedFromSection,
+            activeSection: draggedFromSection === "split" ? "active" : draggedFromSection,
             activePinned: source.pinnedAt != null,
             activeSettled: source.settledOverride === "settled",
             supportsSettlement:
@@ -3475,8 +3577,20 @@ export default function Sidebar() {
     sidebarListItems,
     threadByKey,
   ]);
+  // Past the sidebar's right edge the row is headed for a chat pane, so the
+  // list stops previewing a reorder that the release will not perform.
+  const dndCollisionDetection = useMemo(
+    () =>
+      createSidebarPaneCollisionDetection(
+        sidebarCollisionDetection,
+        !isMobile,
+        () => threadListRef.current?.getBoundingClientRect().right,
+      ),
+    [isMobile, sidebarCollisionDetection],
+  );
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
+      if (useChatPaneDragStore.getState().target !== null) return;
       const activeKey = String(event.active.id);
       const activeSection = sectionByThreadKey.get(activeKey);
       const target =
@@ -3486,9 +3600,21 @@ export default function Sidebar() {
       const activeThread = threadByKey.get(activeKey);
       if (activeSection === undefined || target === null || activeThread === undefined) return;
       const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+      // A split row leaves its pane and then places like an Active row.
+      const dropFrom = activeSection === "split" ? "active" : activeSection;
+      if (activeSection === "split") {
+        // Dropping a split row anywhere in the list takes it out of its
+        // pane; the route follows the pane that stays when it was focused.
+        const survivor = useChatPanesStore.getState().closeThread(threadRef);
+        if (survivor) void navigateToThread(survivor);
+        if (target.section === "settled") {
+          attemptSettle(threadRef);
+          return;
+        }
+      }
       const plan = planSidebarThreadDrop({
         activeKey,
-        activeSection,
+        activeSection: dropFrom,
         activePinned: activeThread.pinnedAt != null,
         activeSettled: activeThread.settledOverride === "settled",
         supportsSettlement:
@@ -3515,7 +3641,7 @@ export default function Sidebar() {
             : [];
       const drop = {
         key: activeKey,
-        sourceSection: activeSection,
+        sourceSection: dropFrom,
         section: target.section,
         occurredAt: new Date().toISOString(),
         clearsSnooze:
@@ -3611,7 +3737,9 @@ export default function Sidebar() {
       serverConfigs,
       activeKeys,
       activeReorderableThreadKeys,
+      attemptSettle,
       draggableThreadKeys,
+      navigateToThread,
       pinThread,
       pinnedKeys,
       planForwardNavigation,
@@ -3986,6 +4114,7 @@ export default function Sidebar() {
           api.contextMenu.show(
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
+              canOpenInSplit: !isMobile && canOpenInSplit(routeThreadRefRef.current, { threadRef }),
               isPinned,
               isSettled,
               isSnoozed,
@@ -4061,6 +4190,11 @@ export default function Sidebar() {
             return;
           case "unpin":
             attemptUnpin(threadRef);
+            return;
+          case "open-in-split":
+            if (openInSplit(routeThreadRefRef.current, { threadRef })) {
+              navigateToThread(threadRef);
+            }
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
@@ -4182,7 +4316,9 @@ export default function Sidebar() {
       copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
+      isMobile,
       markThreadUnread,
+      navigateToThread,
       openProjectSettings,
       projectByKey,
       serverConfigs,
@@ -4649,7 +4785,7 @@ export default function Sidebar() {
                         // row: every other thread is a full card. Density comes
                         // from users (or the auto rules) actually parking work,
                         // not from the sidebar second-guessing what still matters.
-                        const isCard = section === "active" || section === "pinned";
+                        const isCard = section !== "snoozed" && section !== "settled";
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SidebarThreadRow
@@ -4701,6 +4837,7 @@ export default function Sidebar() {
                             // rows resolve to null on their own.
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeThreadKey === threadKey}
+                            inset={section === "split"}
                             openPullRequestsInRightPanel={routeThreadRef !== null}
                             jumpLabel={
                               showThreadJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
@@ -4757,7 +4894,12 @@ export default function Sidebar() {
                             key={threadKey}
                             id={threadKey}
                             disabled={
-                              !draggableThreadKeys.has(threadKey) || optimisticDrop !== null
+                              optimisticDrop !== null ||
+                              (!draggableThreadKeys.has(threadKey) &&
+                                (isMobile ||
+                                  !canOpenInSplit(routeThreadRef, {
+                                    threadRef: scopeThreadRef(thread.environmentId, thread.id),
+                                  })))
                             }
                           >
                             {(bag) => renderThreadRowInner(thread, section, bag)}
@@ -4778,6 +4920,32 @@ export default function Sidebar() {
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          continue;
+                        }
+                        if (item.marker.startsWith("split-header-")) {
+                          items.push(
+                            <SortableSidebarMarker
+                              key={item.marker}
+                              marker={item.marker}
+                              className="mx-0.5"
+                            >
+                              <SidebarSplitViewHeader
+                                root={splitRootById.get(item.marker.slice("split-header-".length))!}
+                                activeThreadKey={routeThreadKey}
+                                onOpenThread={navigateToThread}
+                              />
+                            </SortableSidebarMarker>,
+                          );
+                          continue;
+                        }
+                        if (item.marker.startsWith("split-divider-")) {
+                          items.push(
+                            <SortableSidebarMarker
+                              key={item.marker}
+                              marker={item.marker}
+                              className="mx-2.5 my-1.5 h-px bg-sidebar-border/60"
+                            />,
+                          );
                           continue;
                         }
                         switch (item.marker) {
@@ -4896,13 +5064,7 @@ export default function Sidebar() {
               </DndContext>
             </TooltipProvider>
           ) : null}
-          {!isSearchingThreads &&
-          visibleDraftSessionCount === 0 &&
-          pinnedThreads.length +
-            activeThreads.length +
-            snoozedThreads.length +
-            settledThreads.length ===
-            0 ? (
+          {!isSearchingThreads && !sidebarListHasRows ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>

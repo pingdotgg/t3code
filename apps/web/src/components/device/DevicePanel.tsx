@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { useChatPanesStore } from "~/chatPanesStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
@@ -116,9 +117,16 @@ export function DevicePanel(props: {
     }
   };
 
+  // Split out as a pane, the surface no longer lives in the right panel store,
+  // so both have to be told or the pane keeps rendering a closed device.
+  const closeSurface = () => {
+    useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+    useChatPanesStore.getState().closeSurface(props.threadRef, props.surface.id);
+  };
+
   const closeActive = (powerOff: boolean) => {
     if (!powerOff) {
-      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      closeSurface();
       return;
     }
     if (!activeSession) return;
@@ -133,7 +141,7 @@ export function DevicePanel(props: {
       },
     }).then((result) => {
       if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else closeSurface();
     });
   };
 
