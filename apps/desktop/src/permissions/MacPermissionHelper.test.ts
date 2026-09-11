@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import * as Electron from "electron";
 import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";
-import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
+import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 const mocks = vi.hoisted(() => ({
   granted: false,
@@ -109,11 +109,11 @@ afterEach(() => {
 });
 const iconPaths = ["/bundle/prod-resources/icon.png"];
 const open = () =>
-  helper.show("accessibility", "/bundle/snapshot-permission-preload.cjs", null, iconPaths);
+  helper.show("accessibility", "/bundle/mac-permission-preload.cjs", null, iconPaths);
 function send(action: string, trusted = true) {
   const window = windows.at(-1)!;
   Electron.ipcMain.emit(
-    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
+    MAC_PERMISSION_HELPER_CHANNEL,
     {
       sender: trusted ? window.webContents : {},
       senderFrame: window.webContents.mainFrame,
@@ -147,16 +147,16 @@ it("drags the running app bundle only for the helper's own renderer", async () =
 it("rechecks permissions and releases resources when granted", async () => {
   await open();
   mocks.granted = true;
-  vi.advanceTimersByTime(1000);
+  await vi.advanceTimersByTimeAsync(1000);
   expect(windows[0]!.destroyed).toBe(true);
-  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(Electron.ipcMain.listenerCount(MAC_PERMISSION_HELPER_CHANNEL)).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
 it("keeps only one helper and cleans up on dismissal", async () => {
   await open();
   await helper.show("screen-recording", "/preload.cjs", null, iconPaths);
   expect(windows[0]!.destroyed).toBe(true);
-  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(1);
+  expect(Electron.ipcMain.listenerCount(MAC_PERMISSION_HELPER_CHANNEL)).toBe(1);
   send("close");
   expect(windows[1]!.destroyed).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
@@ -174,7 +174,7 @@ it("does not show a helper with a missing packaged icon", async () => {
 it("cleans up when the helper page fails to load", async () => {
   mocks.loadURL.mockRejectedValueOnce(new Error("load failed"));
   await expect(open()).rejects.toThrow("load failed");
-  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(Electron.ipcMain.listenerCount(MAC_PERMISSION_HELPER_CHANNEL)).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -192,7 +192,7 @@ it("returns focus to onboarding when the permission is granted", async () => {
   const owner = new Electron.BrowserWindow({});
   await helper.show("screen-recording", "/preload.cjs", owner, iconPaths);
   mocks.granted = true;
-  vi.advanceTimersByTime(1000);
+  await vi.advanceTimersByTimeAsync(1000);
   expect(owner.show).toHaveBeenCalledOnce();
   expect(owner.focus).toHaveBeenCalledOnce();
   expect(windows[1]!.destroyed).toBe(true);
@@ -203,7 +203,7 @@ it("closes the helper and stops checking when onboarding's window closes", async
   await helper.show("accessibility", "/preload.cjs", owner, iconPaths);
   owner.destroy();
   expect(windows[1]!.destroyed).toBe(true);
-  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(Electron.ipcMain.listenerCount(MAC_PERMISSION_HELPER_CHANNEL)).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -256,4 +256,59 @@ it("hides on tracking failure and resumes on a valid update", async () => {
   expect(windows[0]!.hide).toHaveBeenCalledOnce();
   mocks.settingsChanged!(state);
   expect(windows[0]!.showInactive).toHaveBeenCalledTimes(2);
+});
+
+it("waits for an asynchronous Full Disk Access check and returns to the owner", async () => {
+  const owner = new Electron.BrowserWindow();
+  const probe = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+  await helper.show(
+    "full-disk-access",
+    "/bundle/mac-permission-preload.cjs",
+    owner,
+    iconPaths,
+    probe,
+  );
+  const pending = Promise.withResolvers<boolean>();
+  probe.mockReturnValue(pending.promise);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(probe).toHaveBeenCalledTimes(2);
+  expect(windows[1]!.destroyed).toBe(false);
+  pending.resolve(true);
+  await pending.promise;
+  expect(windows[1]!.destroyed).toBe(true);
+  expect(owner.focus).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps the helper open after a failed access check and retries", async () => {
+  const probe = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+  await helper.show(
+    "full-disk-access",
+    "/bundle/mac-permission-preload.cjs",
+    null,
+    iconPaths,
+    probe,
+  );
+  probe.mockRejectedValueOnce(new Error("temporarily unavailable"));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(windows[0]!.destroyed).toBe(false);
+  probe.mockResolvedValue(true);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(windows[0]!.destroyed).toBe(true);
+});
+
+it("does not reopen a superseded helper when its initial probe completes", async () => {
+  const pending = Promise.withResolvers<boolean>();
+  const first = helper.show(
+    "full-disk-access",
+    "/bundle/mac-permission-preload.cjs",
+    null,
+    iconPaths,
+    () => pending.promise,
+  );
+  await open();
+  pending.resolve(false);
+  await first;
+  expect(windows).toHaveLength(1);
+  expect(windows[0]!.destroyed).toBe(false);
 });

@@ -100,7 +100,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/snapshot-permission-preload.ts"],
+      entry: ["src/mac-permission-preload.ts"],
     },
   ],
   test: {

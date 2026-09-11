@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Poll TCC only while the native permission helper is open.
 import * as Electron from "electron";
-import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
+import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 import {
   settingsHelperBounds,
@@ -8,12 +8,15 @@ import {
   type SettingsWindow,
 } from "./MacSettingsWindow.ts";
 
-type Permission = "screen-recording" | "accessibility";
+import { MAC_PERMISSION_TITLES, type MacPermission } from "./MacPermission.ts";
 
-const permissionGranted = (permission: Permission) =>
-  permission === "screen-recording"
-    ? Electron.systemPreferences.getMediaAccessStatus("screen") === "granted"
-    : Electron.systemPreferences.isTrustedAccessibilityClient(false);
+const permissionGranted = (permission: MacPermission) => {
+  if (permission === "screen-recording")
+    return Electron.systemPreferences.getMediaAccessStatus("screen") === "granted";
+  if (permission === "accessibility")
+    return Electron.systemPreferences.isTrustedAccessibilityClient(false);
+  return false;
+};
 
 /** Resolve the outer app bundle, never the executable or the ASAR inside it. */
 export function macAppBundlePath(executable: string): string | undefined {
@@ -36,8 +39,8 @@ const escapeHtml = (value: string) =>
     }
   });
 
-function helperHtml(permission: Permission, icon: string) {
-  const title = permission === "screen-recording" ? "Screen Recording" : "Accessibility";
+function helperHtml(permission: MacPermission, icon: string) {
+  const title = MAC_PERMISSION_TITLES[permission];
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <title>Set up ${title}</title><style>
@@ -64,21 +67,26 @@ img { width: 32px; height: 32px; pointer-events: none; }
 
 /** Owns one temporary panel and its IPC listener. Closing it releases all resources. */
 export class MacPermissionHelper {
+  private generation = 0;
   private window: Electron.BrowserWindow | undefined;
 
   close() {
+    this.generation++;
     this.window?.destroy();
     this.window = undefined;
   }
 
   async show(
-    permission: Permission,
+    permission: MacPermission,
     preload: string,
     owner: Electron.BrowserWindow | null,
     iconPaths: readonly string[],
+    isGranted: () => boolean | Promise<boolean> = () => permissionGranted(permission),
   ) {
     this.close();
-    if (permissionGranted(permission)) return;
+    const generation = this.generation;
+    if (await isGranted()) return;
+    if (generation !== this.generation) return;
     const bundle = macAppBundlePath(Electron.app.getPath("exe"));
     if (!bundle) return;
     if (owner?.isDestroyed()) return;
@@ -104,7 +112,7 @@ export class MacPermissionHelper {
       fullscreenable: false,
       alwaysOnTop: true,
       skipTaskbar: true,
-      title: "Set up snapshots",
+      title: `Set up ${MAC_PERMISSION_TITLES[permission]}`,
       webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
     this.window = window;
@@ -115,12 +123,17 @@ export class MacPermissionHelper {
         owner.focus();
       }
     };
-    const check = () => {
-      if (!window.isDestroyed() && permissionGranted(permission)) {
-        finish();
-        return true;
+    let checking = false;
+    const check = async () => {
+      if (checking || window.isDestroyed()) return;
+      checking = true;
+      try {
+        if ((await isGranted()) && !window.isDestroyed()) finish();
+      } catch {
+        // An unavailable probe is not evidence of a grant; the wizard can retry.
+      } finally {
+        checking = false;
       }
-      return false;
     };
     const onMessage = (event: Electron.IpcMainEvent, action: unknown) => {
       if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
@@ -169,13 +182,13 @@ export class MacPermissionHelper {
     let stopTracking = () => {};
     window.on("blur", syncPosition);
     const onOwnerClosed = () => window.destroy();
-    Electron.ipcMain.on(SNAP_SHOT_PERMISSION_HELPER_CHANNEL, onMessage);
+    Electron.ipcMain.on(MAC_PERMISSION_HELPER_CHANNEL, onMessage);
     const timer = setInterval(check, 1_000);
     owner?.once("closed", onOwnerClosed);
     window.once("closed", () => {
       clearInterval(timer);
       stopTracking();
-      Electron.ipcMain.removeListener(SNAP_SHOT_PERMISSION_HELPER_CHANNEL, onMessage);
+      Electron.ipcMain.removeListener(MAC_PERMISSION_HELPER_CHANNEL, onMessage);
       owner?.removeListener("closed", onOwnerClosed);
       if (this.window === window) this.window = undefined;
     });

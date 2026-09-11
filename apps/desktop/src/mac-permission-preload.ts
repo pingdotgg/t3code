@@ -1,10 +1,10 @@
 import { ipcRenderer } from "electron";
-import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "./ipc/channels.ts";
+import { MAC_PERMISSION_HELPER_CHANNEL } from "./ipc/channels.ts";
 
 // This preload belongs only to the static permission panel. No general desktop bridge is exposed.
 window.addEventListener("DOMContentLoaded", () => {
   const send = (action: "drag" | "finder" | "close") =>
-    ipcRenderer.send(SNAP_SHOT_PERMISSION_HELPER_CHANNEL, action);
+    ipcRenderer.send(MAC_PERMISSION_HELPER_CHANNEL, action);
   document.getElementById("app")?.addEventListener("dragstart", (event) => {
     event.preventDefault();
     send("drag");
