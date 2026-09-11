@@ -131,7 +131,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stderr-" });
-      const stderr = `npm warn ERESOLVE overriding peer dependency\n${"x".repeat(2500)}`;
+      // npm puts the actionable failure near the end of stderr; the bounded
+      // tail must keep that reason when earlier noise is large.
+      const stderr = `${"x".repeat(2500)}\nnpm error code ERESOLVE\nnpm error Could not resolve dependency\n`;
 
       const error = yield* ensurePinnedRuntimeInstalled({
         baseDir,
