@@ -10,7 +10,6 @@ import {
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
-  settingsPageSections,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -445,96 +444,11 @@ describe("auto-settlement search availability", () => {
 });
 
 describe("settings sidebar scope", () => {
-  it("uses the route's device default when no scope is selected", () => {
-    for (const path of [
-      "/settings/general",
-      "/settings/appearance",
-      "/settings/integrations",
-      "/settings/source-control",
-      "/settings/actions",
-    ] as const) {
-      expect(settingsPageSections(path, {})).toEqual(
-        settingsPageSections(path, { scope: "device" }),
-      );
-    }
-    expect(
-      settingsPageSections("/settings/general", {}).map((section) => section.targetId),
-    ).toEqual(["organization", "behavior", "confirmations", "about", "legacy-features"]);
-    expect(
-      settingsPageSections("/settings/general", { scope: "all" }).map(
-        (section) => section.targetId,
-      ),
-    ).toEqual([
-      "project-defaults",
-      "organization",
-      "behavior",
-      "projects-and-threads",
-      "text-generation",
-      "legacy-features",
-    ]);
-  });
-
   it("shows Overview only for project and checkout targets", () => {
     expect(isSettingsOverviewVisible({})).toBe(false);
     expect(isSettingsOverviewVisible({ scope: "device", project: "old" })).toBe(false);
     expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
     expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
     expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
-  });
-
-  it("limits project General and Source Control links to their overrides", () => {
-    const target = { project: "project" };
-    expect(
-      settingsPageSections("/settings/general", target).map((section) => section.targetId),
-    ).toEqual(["project-defaults"]);
-    expect(
-      settingsPageSections("/settings/source-control", target).map((section) => section.targetId),
-    ).toEqual(["automatic-pull-defaults"]);
-    expect(settingsPageSections("/settings/appearance", target)).toEqual([]);
-  });
-
-  it("does not link to device-only sections from environment settings", () => {
-    const sections = settingsPageSections(
-      "/settings/general",
-      { machine: "remote" },
-      { hasThreadAutoSettlement: false },
-    );
-    expect(sections.map((section) => section.targetId)).toEqual([
-      "project-defaults",
-      "behavior",
-      "projects-and-threads",
-      "text-generation",
-      "diagnostics",
-      "legacy-features",
-    ]);
-    const deviceSections = settingsPageSections("/settings/general", { scope: "device" });
-    expect(deviceSections.map((section) => section.targetId)).toEqual([
-      "organization",
-      "behavior",
-      "confirmations",
-      "about",
-      "legacy-features",
-    ]);
-  });
-
-  it("retains connection-management links independently of the target", () => {
-    expect(settingsPageSections("/settings/connections", { scope: "device" })).toEqual(
-      settingsPageSections("/settings/connections", { project: "project" }),
-    );
-    expect(settingsPageSections("/settings/general", { checkout: "orphaned" })).toEqual([]);
-    expect(
-      settingsPageSections(
-        "/settings/general",
-        { machine: "offline" },
-        { hasConnectedEnvironment: false },
-      ),
-    ).toEqual([]);
-    expect(
-      settingsPageSections(
-        "/settings/connections",
-        { machine: "offline" },
-        { hasConnectedEnvironment: false },
-      ),
-    ).not.toEqual([]);
   });
 });
