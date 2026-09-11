@@ -92,11 +92,36 @@ describe("nativeMarkdownTextRuns", () => {
         externalHost: "example.com",
       },
       { text: " " },
+      { text: "ignored label", href: "file:///repo/README.md#L12" },
       {
-        text: "README.md:12",
+        text: " (README.md:12)",
         href: "file:///repo/README.md#L12",
         fileIcon: "readme",
       },
+    ]);
+  });
+
+  it("preserves descriptive file-link formatting and keeps filename links compact", () => {
+    const href = "/repo/src/example.ts:12";
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href,
+            children: [
+              { type: "bold", children: [{ type: "text", content: "validates" }] },
+              { type: "text", content: " the input" },
+            ],
+          },
+          { type: "link", href, children: [{ type: "code_inline", content: "src/example.ts:12" }] },
+        ],
+      }),
+    ).toEqual([
+      { text: "validates", bold: true, href },
+      { text: " the input", href },
+      { text: " (example.ts:12)example.ts:12", href, fileIcon: "typescript" },
     ]);
   });
 

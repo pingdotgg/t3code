@@ -44,7 +44,10 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -1106,6 +1109,7 @@ function UncachedShikiCodeBlock({
 }
 
 interface MarkdownFileLinkProps {
+  children?: ReactNode;
   href: string;
   targetPath: string;
   iconPath: string;
@@ -1805,6 +1809,7 @@ function MarkdownExternalLinkContent({
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
+  children,
   href,
   targetPath,
   iconPath,
@@ -2087,6 +2092,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
 
+  const chip = <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />;
+  const content = children ? (
+    <>
+      {children} (<span className={CHAT_FILE_TAG_CHIP_CLASS_NAME}>{chip}</span>)
+    </>
+  ) : (
+    chip
+  );
+
   return (
     <Tooltip>
       <TooltipTrigger
@@ -2095,7 +2109,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <a
               href={href}
               className={cn(
-                CHAT_FILE_TAG_CHIP_CLASS_NAME,
+                children ? "text-left" : CHAT_FILE_TAG_CHIP_CLASS_NAME,
                 MARKDOWN_FILE_LINK_CLASS_NAME,
                 className,
               )}
@@ -2115,15 +2129,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               }}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              {content}
             </a>
           ) : (
             <button
               type="button"
-              aria-label={`File options for ${label}`}
+              aria-label={children ? undefined : `File options for ${label}`}
               aria-haspopup="menu"
               className={cn(
-                CHAT_FILE_TAG_CHIP_CLASS_NAME,
+                children ? "text-left" : CHAT_FILE_TAG_CHIP_CLASS_NAME,
                 MARKDOWN_FILE_LINK_CLASS_NAME,
                 "select-text",
                 className,
@@ -2132,7 +2146,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              {content}
             </button>
           )
         }
@@ -2156,6 +2170,7 @@ function areMarkdownFileLinkPropsEqual(
   next: Readonly<MarkdownFileLinkProps>,
 ): boolean {
   return (
+    previous.children === next.children &&
     previous.href === next.href &&
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
@@ -2495,6 +2510,7 @@ function useChatMarkdownState({
       copyMarkdown: string,
       className?: string,
       mediaSource?: string,
+      children?: ReactNode,
     ) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
@@ -2553,7 +2569,9 @@ function useChatMarkdownState({
               : undefined
           }
           className={className}
-        />
+        >
+          {children}
+        </MarkdownFileLink>
       );
     },
     [
@@ -2965,11 +2983,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
 
+    const label = nodeToPlainText(children);
+    const escapedLabel = (label.trim() ? label : fileLinkMeta.basename)
+      .replaceAll("\\", "\\\\")
+      .replaceAll("[", "\\[")
+      .replaceAll("]", "\\]");
+    const copyMarkdown = `[${escapedLabel}](${normalizedHref})`;
     return fileLinkChip(
       fileLinkMeta,
-      `[${fileLinkMeta.basename}](${normalizedHref})`,
+      copyMarkdown,
       props.className,
       normalizedHref,
+      isMarkdownFileLinkLabel(label, normalizedHref) ? undefined : children,
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {

@@ -1,3 +1,5 @@
+import { isMarkdownFileLinkLabel } from "@t3tools/client-runtime/markdown-links";
+import { nodeTextContent } from "@t3tools/mobile-markdown-text/markdown";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
@@ -1055,21 +1057,26 @@ function useMarkdownStyles(
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
-      link: ({ children, href = "" }) => {
+      link: ({ node, children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
+          const descriptive = !isMarkdownFileLinkLabel(nodeTextContent(node), href);
           return (
-            <NativeText
-              className="font-t3-bold"
-              onPress={() => onLinkPress(href)}
-              style={{ color: inlineTextColor }}
-            >
-              <Image
-                source={markdownFileIconSource(presentation.icon)}
-                style={markdownLinkStyles.inlineIcon}
-              />
-              {presentation.label}
-            </NativeText>
+            <MarkdownLinkLabelContext.Provider value>
+              <NativeText
+                className="font-t3-bold"
+                onPress={() => onLinkPress(href)}
+                style={{ color: inlineTextColor }}
+              >
+                {descriptive ? <>{children} (</> : null}
+                <Image
+                  source={markdownFileIconSource(presentation.icon)}
+                  style={markdownLinkStyles.inlineIcon}
+                />
+                {presentation.label}
+                {descriptive ? ")" : null}
+              </NativeText>
+            </MarkdownLinkLabelContext.Provider>
           );
         }
         if (presentation.kind === "external") {

@@ -339,3 +339,15 @@ export function workspaceRelativeFilePath(
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }
+
+export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
+  if (!label.trim()) return true;
+  const target = parseMarkdownFileLink(href);
+  if (!target) return false;
+  const path = (parseMarkdownFileLink(label)?.path ?? splitFilePathPosition(label.trim()).path)
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/([^/:])\/+$/, "$1");
+  const targetPath = target.path.replaceAll("\\", "/").replace(/([^/:])\/+$/, "$1");
+  return path === targetPath || targetPath.endsWith(`/${path}`);
+}

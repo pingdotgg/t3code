@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileBasename,
+  isMarkdownFileLinkLabel,
   inlineCodeFilePathCandidate,
   parseFileUrlHref,
   parseMarkdownFileLink,
@@ -166,5 +167,35 @@ describe("workspaceRelativeFilePath", () => {
     ["/repo/project/a.ts", undefined, null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("isMarkdownFileLinkLabel", () => {
+  it.each([
+    "example.ts",
+    "example.ts:12",
+    "src/example.ts",
+    "./src/example.ts:12",
+    "/repo/src/example.ts",
+    "file:///repo/src/example.ts#L12",
+    "",
+  ])("keeps destination label %s compact", (label) =>
+    expect(isMarkdownFileLinkLabel(label, "/repo/src/example.ts:12")).toBe(true),
+  );
+  it.each(["validates the input", "the example.ts", "other.ts", "src/other.ts"])(
+    "preserves authored label %s",
+    (label) => expect(isMarkdownFileLinkLabel(label, "/repo/src/example.ts:12")).toBe(false),
+  );
+  it.each(["favicons", "favicons/", "/tmp/favicons/"])(
+    "keeps directory label %s compact",
+    (label) => {
+      expect(isMarkdownFileLinkLabel(label, "/tmp/favicons/")).toBe(true);
+    },
+  );
+  it("recognizes Windows paths and encoded destinations", () => {
+    expect(isMarkdownFileLinkLabel("src\\example.ts:12", "C:\\repo\\src\\example.ts:12")).toBe(
+      true,
+    );
+    expect(isMarkdownFileLinkLabel("my file.ts", "/repo/my%20file.ts#L12")).toBe(true);
   });
 });
