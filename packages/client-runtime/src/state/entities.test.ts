@@ -17,7 +17,11 @@ import {
   parseProjectRefCollectionKey,
   parseThreadKey,
 } from "./entities.ts";
-import { presentThreadShell, resolveThreadProviderStack } from "./models.ts";
+import {
+  presentThreadShell,
+  resolveThreadProviderStack,
+  resolveThreadWorkingStartedAt,
+} from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
@@ -349,6 +353,52 @@ describe("V2 client presentation", () => {
       activeRunId: runId,
       providerInstanceId: projection.thread.providerInstanceId,
     });
+    for (const status of ["queued", "cancelled"] as const) {
+      const later = DateTime.add(now, { hours: 1 });
+      const latest = {
+        ...projection.runs[0]!,
+        id: RunId.make("newer-run"),
+        ordinal: 2,
+        status,
+        requestedAt: later,
+        startedAt: null,
+        completedAt: status === "cancelled" ? later : null,
+      };
+      const detail = { ...projection, runs: [...projection.runs, latest], updatedAt: later };
+      const shell = presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        latestRunId: latest.id,
+        latestRunStartedAt: null,
+        latestRunRequestedAt: later,
+        latestRunCompletedAt: latest.completedAt,
+        status,
+        activeRunId: runId,
+        activityRunStatus: "running",
+        activityRunStartedAt: now,
+        updatedAt: later,
+      });
+      expect(resolveThreadWorkingStartedAt(shell)).toBe(DateTime.formatIso(now));
+      expect(
+        resolveThreadWorkingStartedAt({
+          latestRun: deriveLatestThreadRun(detail),
+          runtime: deriveThreadRuntime(detail),
+        }),
+      ).toBe(resolveThreadWorkingStartedAt(shell));
+      const stopped = {
+        ...detail,
+        runs: detail.runs.map((run) => ({
+          ...run,
+          status: "completed" as const,
+          completedAt: later,
+        })),
+      };
+      expect(
+        resolveThreadWorkingStartedAt({
+          latestRun: deriveLatestThreadRun(stopped),
+          runtime: deriveThreadRuntime(stopped),
+        }),
+      ).toBeNull();
+    }
   });
 
   it("parks waiting runtime for a post-settlement roster without hiding active running work", () => {

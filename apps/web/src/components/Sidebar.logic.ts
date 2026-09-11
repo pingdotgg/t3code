@@ -1,3 +1,4 @@
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { isAtomCommandInterrupted, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -950,18 +951,6 @@ export function firstValidTimestampMs(
   return 0;
 }
 
-/** String twin of firstValidTimestampMs for callers that need the ISO string
-    (display labels, tick anchors) rather than epoch ms. */
-function firstValidTimestamp(
-  ...candidates: ReadonlyArray<string | null | undefined>
-): string | null {
-  for (const candidate of candidates) {
-    if (candidate == null) continue;
-    if (!Number.isNaN(Date.parse(candidate))) return candidate;
-  }
-  return null;
-}
-
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
@@ -1062,18 +1051,10 @@ export function sortSettledThreadsForSidebar<
   );
 }
 
-/** The timestamp a working thread's elapsed label counts from: the running
-    turn's start (request time until adoption), falling back to the session's
-    last transition when the turn projection lags behind. Malformed
-    timestamps fall through to the next candidate, not just missing ones. */
 export function resolveWorkingStartedAt(
   thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
-  const run = thread.latestRun;
-  if (run && run.completedAt === null) {
-    return firstValidTimestamp(run.startedAt, run.requestedAt, thread.runtime?.updatedAt);
-  }
-  return firstValidTimestamp(thread.runtime?.updatedAt);
+  return resolveThreadWorkingStartedAt(thread);
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {
