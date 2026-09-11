@@ -794,7 +794,7 @@ export function DiagnosticsSettingsPanel() {
     environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
   );
   const diagnosticsAccess = resolveUsageAccess({
-    connectionPhase: primaryEnvironment?.connection.phase ?? "available",
+    connectionPhase: environment?.connection.phase ?? "available",
     session: session.data,
     hasSessionError: session.error !== null,
   });
@@ -885,7 +885,12 @@ export function DiagnosticsSettingsPanel() {
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (targetEnvironmentId === null || process === undefined || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
+      if (
+        targetEnvironmentId === null ||
+        process === undefined ||
+        !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+      )
+        return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
