@@ -360,6 +360,10 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  /** Masks block row backdrop filters from sampling a wallpaper behind the list. */
+  topFadeMaskEnabled?: boolean;
+  /** Reserve header space inside the scrollport so rows can scroll beneath its blur. */
+  headerInset?: number;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
 }
@@ -408,6 +412,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  topFadeMaskEnabled = true,
+  headerInset = 0,
   loadEarlier = null,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
@@ -616,10 +622,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       rows,
       anchorMessageId,
       (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
-      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
+      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET + headerInset },
     );
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
-  }, [anchorMessageId, handleAnchorReady, rows]);
+  }, [anchorMessageId, handleAnchorReady, rows, headerInset]);
   const timelineListFooter = useMemo(
     () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,
     [anchoredEndSpace, contentInsetEndAdjustment],
@@ -629,9 +635,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () =>
       timelineContentOverflowsViewport(listRef.current?.getState?.(), {
         composerInset: contentInsetEndAdjustment,
-        anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+        anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET + headerInset,
       }),
-    [contentInsetEndAdjustment, listRef],
+    [contentInsetEndAdjustment, listRef, headerInset],
   );
   // LegendList lays rows out from layout effects, so a read on the next frame
   // sees the settled positions. One frame is shared across bursts of size
@@ -872,20 +878,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onItemSizeChanged={reportContentOverflow}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
-              topFadeEnabled && "topbar-scroll-fade",
+              topFadeEnabled && topFadeMaskEnabled && "topbar-scroll-fade",
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
-                <TimelineLoadEarlierHeader
-                  loading={loadEarlier.loading}
-                  onLoadEarlier={loadEarlier.onLoadEarlier}
-                  fade={topFadeEnabled}
-                />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              <div style={{ paddingTop: headerInset }}>
+                {loadEarlier !== null ? (
+                  <TimelineLoadEarlierHeader
+                    loading={loadEarlier.loading}
+                    onLoadEarlier={loadEarlier.onLoadEarlier}
+                    fade={topFadeEnabled}
+                  />
+                ) : topFadeEnabled ? (
+                  TIMELINE_LIST_FADE_HEADER
+                ) : (
+                  TIMELINE_LIST_HEADER
+                )}
+              </div>
             }
             ListFooterComponent={timelineListFooter}
           />
@@ -900,7 +908,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
                 animated: true,
-                viewOffset: 24,
+                viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET + headerInset,
               });
             }}
           />
@@ -1386,6 +1394,14 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   );
 }
 
+export function UserMessageBubble({ children }: { children: ReactNode }) {
+  return (
+    <div className="surface-glass relative max-w-[80%] rounded-2xl p-3 text-message-foreground [text-shadow:none] [--surface-glass-color:var(--message-surface)]">
+      {children}
+    </div>
+  );
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const resources = useMemo(
@@ -1433,7 +1449,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <UserMessageBubble>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image) => (
@@ -1587,7 +1603,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
-      </div>
+      </UserMessageBubble>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
@@ -1657,13 +1673,17 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   );
 }
 
+export function AssistantMessageSurface({ children }: { children: ReactNode }) {
+  return <div className="relative min-w-0 px-1 py-0.5">{children}</div>;
+}
+
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <AssistantMessageSurface>
         <AssistantCitationSource
           messageId={row.message.id}
           {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
@@ -1696,7 +1716,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             copyStreaming={row.assistantCopyStreaming}
           />
         ) : null}
-      </div>
+      </AssistantMessageSurface>
     </>
   );
 }
@@ -1808,6 +1828,24 @@ function ProposedPlanTimelineRow({
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   return (
+    <WorkingIndicator
+      createdAt={row.createdAt}
+      isCompacting={isCompacting}
+      isPreparingWorktree={isPreparingWorktree}
+    />
+  );
+}
+
+export function WorkingIndicator({
+  createdAt,
+  isCompacting = false,
+  isPreparingWorktree = false,
+}: {
+  createdAt: string | null;
+  isCompacting?: boolean;
+  isPreparingWorktree?: boolean;
+}) {
+  return (
     <div className="border-b border-border/60 pb-2 pt-1">
       <div className="flex h-6 min-w-0 items-baseline px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
@@ -1827,9 +1865,9 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
                 <CompactingLabel />
               </ActivityShimmerOverlay>
             </>
-          ) : row.createdAt ? (
+          ) : createdAt ? (
             <>
-              Working for <WorkingTimer createdAt={row.createdAt} />
+              Working for <WorkingTimer createdAt={createdAt} />
             </>
           ) : (
             "Working..."
@@ -2112,7 +2150,7 @@ function toolIconAcceptsTint(
   return toolIcon === undefined && iconName !== "computer";
 }
 
-function LiveActivityRow({
+export function LiveActivityRow({
   label,
   iconName,
   toolIcon,
@@ -2890,11 +2928,11 @@ function ToolActivityIconView(props: {
   className: string;
   muted: boolean;
 }) {
-  const { resolvedTheme } = use(TimelineRowCtx);
   const fallbackClassName = cn(props.className, props.muted && "opacity-70 light:brightness-[.6]");
   if (!props.icon) {
     return <WorkEntryIcon name={props.fallbackName} className={fallbackClassName} />;
   }
+  const { resolvedTheme } = use(TimelineRowCtx);
   if (props.icon._tag === "website") {
     const src = toolActivityFaviconUrl(props.icon, resolvedTheme, 32);
     return src ? (

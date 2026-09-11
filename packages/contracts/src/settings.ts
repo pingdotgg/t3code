@@ -98,6 +98,13 @@ export const AppearanceContrast = Schema.Int.check(
 );
 export type AppearanceContrast = typeof AppearanceContrast.Type;
 const DEFAULT_APPEARANCE_CONTRAST: AppearanceContrast = 100;
+export const TimelineBackgroundImage = Schema.String.check(Schema.isMaxLength(1_500_000));
+export const TimelineBackgroundOpacity = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 100 }),
+);
+export const TimelineBackgroundBlur = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 30 }),
+);
 export const MIN_PANEL_ANIMATION_DURATION_MS = 0;
 export const MAX_PANEL_ANIMATION_DURATION_MS = 400;
 export const PanelAnimationDurationMs = Schema.Int.check(
@@ -282,6 +289,15 @@ export const ClientSettingsSchema = Schema.Struct({
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
+  ),
+  timelineBackgroundImage: TimelineBackgroundImage.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  timelineBackgroundOpacity: TimelineBackgroundOpacity.pipe(
+    Schema.withDecodingDefault(Effect.succeed(20)),
+  ),
+  timelineBackgroundBlur: TimelineBackgroundBlur.pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
   ),
   // Panel motion defaults to zero because width and height transitions cause
   // layout work on every frame, which is noticeable on lower-power clients.
@@ -1326,6 +1342,9 @@ export const ClientSettingsPatch = Schema.Struct({
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
+  timelineBackgroundImage: Schema.optionalKey(TimelineBackgroundImage),
+  timelineBackgroundOpacity: Schema.optionalKey(TimelineBackgroundOpacity),
+  timelineBackgroundBlur: Schema.optionalKey(TimelineBackgroundBlur),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),

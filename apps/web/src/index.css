@@ -7,6 +7,11 @@
 
 /* On mobile, morph the expanded hero composer into the compact docked
    composer while it moves; the rest of the app remains visually stationary. */
+/* A persistent transition name prevents the composer glass from sampling its backdrop. */
+html[data-mobile-composer-route-transition="true"] [data-mobile-composer-transition] {
+  view-transition-name: t3-mobile-composer;
+}
+
 html[data-mobile-composer-route-transition="true"]::view-transition-old(root),
 html[data-mobile-composer-route-transition="true"]::view-transition-new(root) {
   animation: none;
@@ -262,12 +267,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @utility surface-glass {
-  background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  background: color-mix(
+    in srgb,
+    var(--surface-glass-color, var(--background)) var(--glass-opacity),
+    transparent
+  );
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    background: var(--background) !important;
+    background: var(--surface-glass-color, var(--background)) !important;
   }
 }
 
