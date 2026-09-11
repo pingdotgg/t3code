@@ -805,7 +805,10 @@ const make = Effect.gen(function* () {
           );
         }
         const inheritedCandidate = candidates.find(
-          (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
+          (candidate) =>
+            candidate.instanceId === input.parent.thread.modelSelection.instanceId &&
+            providerConstraints(candidate, isBuiltInProviderAdapterDriverV2(candidate.driver))
+              .length === 0,
         );
         const availableCandidate = candidates.find((candidate) => {
           return (
