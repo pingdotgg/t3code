@@ -238,6 +238,12 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
+import {
+  deriveAutoBalanceProviderStatuses,
+  environmentSupportsModelSelection,
+  isAutoBalanceRoutableEnvironment,
+  shouldResetAutoBalanceRouting,
+} from "../autoBalanceProviders";
 import { getProviderModelCapabilities } from "../providerModels";
 import {
   applyProviderInstanceSettings,
@@ -1545,6 +1551,15 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  // The draft's selected model for the active provider. Feeds the
+  // load-balancing candidate filter so routing follows model-level
+  // availability, not just provider-level availability.
+  const composerSelectedModel = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    const instanceId = draft?.activeProvider ?? null;
+    if (instanceId === null) return null;
+    return draft?.modelSelectionByProvider[instanceId]?.model ?? null;
+  });
   const composerHasUnsentContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
@@ -2323,12 +2338,72 @@ export default function ChatView(props: ChatViewProps) {
     [openOrReuseProjectDraftThread],
   );
 
+  const envLocked = Boolean(
+    activeThread &&
+    (activeThread.messages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "stopped")),
+  );
+
+  const loadBalancingSettings = useClientSettings();
+  const automaticEnvironment = Boolean(
+    clientSettingsHydrated &&
+    draftId &&
+    !envLocked &&
+    hasMultipleEnvironments &&
+    loadBalancingSettings.loadBalancingEnabled &&
+    draftThread?.environmentSelection !== "manual" &&
+    (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
+    (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
+    !draftThread?.worktreePath,
+  );
+  // Auto balance offers the union of every routable machine's providers, so a
+  // provider that exists on only one machine stays selectable. The union is
+  // selection truth only; `loadBalancingCandidates` still routes per
+  // environment against each machine's own server config.
+  const autoBalanceProviderStatuses = useMemo(
+    () =>
+      automaticEnvironment
+        ? deriveAutoBalanceProviderStatuses({
+            environments: logicalProjectEnvironments.flatMap((candidate) => {
+              const environment = environmentById.get(candidate.environmentId);
+              if (
+                !environment ||
+                !isAutoBalanceRoutableEnvironment({
+                  connectionPhase: environment.connection.phase,
+                  environmentId: candidate.environmentId,
+                  weights: loadBalancingSettings.loadBalancingWeights,
+                })
+              ) {
+                return [];
+              }
+              return [
+                {
+                  environmentId: candidate.environmentId,
+                  providers: environment.serverConfig?.providers ?? EMPTY_PROVIDERS,
+                },
+              ];
+            }),
+            preferredEnvironmentId: draftThread?.environmentId ?? null,
+          })
+        : EMPTY_PROVIDERS,
+    [
+      automaticEnvironment,
+      draftThread?.environmentId,
+      environmentById,
+      loadBalancingSettings.loadBalancingWeights,
+      logicalProjectEnvironments,
+    ],
+  );
+
   // Once a thread selects an environment, never substitute the primary
   // environment's config while the selected environment is still loading.
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const singleEnvironmentProviderStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const providerStatuses = automaticEnvironment
+    ? autoBalanceProviderStatuses
+    : singleEnvironmentProviderStatuses;
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -2354,24 +2429,7 @@ export default function ChatView(props: ChatViewProps) {
     advertisedFileAttachmentBytes === null
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
-  const envLocked = Boolean(
-    activeThread &&
-    (activeThread.messages.length > 0 ||
-      (activeThread.session !== null && activeThread.session.status !== "stopped")),
-  );
 
-  const loadBalancingSettings = useClientSettings();
-  const automaticEnvironment = Boolean(
-    clientSettingsHydrated &&
-    draftId &&
-    !envLocked &&
-    hasMultipleEnvironments &&
-    loadBalancingSettings.loadBalancingEnabled &&
-    draftThread?.environmentSelection !== "manual" &&
-    (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
-    (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
-    !draftThread?.worktreePath,
-  );
   const autoUpdateEnvironments = useMemo(
     () =>
       automaticEnvironment
@@ -2589,9 +2647,18 @@ export default function ChatView(props: ChatViewProps) {
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        // In auto balance the catalogue already unions every machine's
+        // snapshots. A single environment's settings must not hide instances
+        // that only exist on another machine; per-machine routability is
+        // enforced by the load-balancing candidates instead.
+        automaticEnvironment
+          ? deriveProviderInstanceEntries(providerStatuses)
+          : applyProviderInstanceSettings(
+              deriveProviderInstanceEntries(providerStatuses),
+              settings,
+            ),
       ),
-    [providerStatuses, settings],
+    [providerStatuses, settings, automaticEnvironment],
   );
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
@@ -3453,21 +3520,25 @@ export default function ChatView(props: ChatViewProps) {
         ? logicalProjectEnvironments
             .filter((candidate) => {
               const environment = environmentById.get(candidate.environmentId);
-              return (
-                environment?.connection.phase === "connected" &&
-                (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-                environment.serverConfig?.providers.some(
-                  (provider) =>
-                    (activeProviderInstanceId === null ||
-                      provider.instanceId === activeProviderInstanceId) &&
-                    provider.driver === selectedProvider &&
-                    provider.enabled &&
-                    provider.installed &&
-                    provider.status !== "error" &&
-                    provider.auth.status !== "unauthenticated" &&
-                    provider.availability !== "unavailable",
-                )
-              );
+              if (
+                !environment ||
+                !isAutoBalanceRoutableEnvironment({
+                  connectionPhase: environment.connection.phase,
+                  environmentId: candidate.environmentId,
+                  weights: loadBalancingSettings.loadBalancingWeights,
+                })
+              ) {
+                return false;
+              }
+              // Route to a machine that serves the selected provider *and*
+              // model: the picker offers the union across machines, so the
+              // selection may exist on only a subset of them.
+              return environmentSupportsModelSelection({
+                providers: environment.serverConfig?.providers ?? EMPTY_PROVIDERS,
+                instanceId: activeProviderInstanceId,
+                driver: selectedProvider,
+                model: composerSelectedModel,
+              });
             })
             .map((candidate) => candidate.environmentId)
         : [],
@@ -3478,6 +3549,7 @@ export default function ChatView(props: ChatViewProps) {
       loadBalancingSettings.loadBalancingWeights,
       activeProviderInstanceId,
       selectedProvider,
+      composerSelectedModel,
     ],
   );
   const loadBalancing = useLoadBalancedEnvironment(
@@ -8015,19 +8087,49 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
+      // Read before writing: the comparison below needs the selection that
+      // was active until this pick.
+      const previousDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const previousInstanceId = previousDraft?.activeProvider ?? null;
+      const previousModel =
+        previousInstanceId === null
+          ? null
+          : (previousDraft?.modelSelectionByProvider[previousInstanceId]?.model ?? null);
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
         { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
+      // Auto balance pins the draft to one machine once resources resolve. A
+      // changed provider/model can invalidate that pin, so clear it and let
+      // the candidates recompute for the new selection instead of sending to
+      // (or blocking on) a machine that cannot serve it.
+      if (
+        draftId &&
+        shouldResetAutoBalanceRouting({
+          automaticEnvironment,
+          pinnedEnvironmentId: draftThread?.loadBalancedEnvironmentId,
+          previousInstanceId,
+          previousModel,
+          nextInstanceId: instanceId,
+          nextModel: resolvedModel,
+        })
+      ) {
+        setDraftThreadContext(draftId, { loadBalancedEnvironmentId: null });
+      }
       scheduleComposerFocus();
     },
     [
       activeThread,
+      automaticEnvironment,
+      composerDraftTarget,
+      draftId,
+      draftThread?.loadBalancedEnvironmentId,
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
+      setDraftThreadContext,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
