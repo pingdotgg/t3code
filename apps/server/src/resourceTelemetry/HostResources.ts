@@ -1,5 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect FileSystem has no free-space query.
+import * as NodeFSP from "node:fs/promises";
+import type * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import {
+  HostStorageSnapshot,
+  type HostResourcesSnapshot,
+  type HostStorageResult,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -7,11 +14,48 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { ServerConfig } from "../config.ts";
+
+export class HostStorageError extends Schema.TaggedError<HostStorageError>()("HostStorageError", {
+  cause: Schema.Defect(),
+}) {}
+
+type StorageStats = Pick<NodeFS.BigIntStatsFs, "blocks" | "bavail" | "bsize">;
+
+/** A timed-out caller must not start another uncancellable statfs on the same filesystem. */
+export function makeHostStorageStatFs(
+  read: (path: string) => Promise<StorageStats> = (path) => NodeFSP.statfs(path, { bigint: true }),
+) {
+  const pending = new Map<string, Promise<StorageStats>>();
+  return (path: string) =>
+    Effect.tryPromise({
+      try: () => {
+        const current = pending.get(path);
+        if (current) return current;
+        const next = read(path).finally(() => pending.delete(path));
+        pending.set(path, next);
+        return next;
+      },
+      catch: (cause) => new HostStorageError({ cause }),
+    });
+}
+
+export const HostStorageStatFs = Context.Reference<ReturnType<typeof makeHostStorageStatFs>>(
+  "t3/resourceTelemetry/HostStorageStatFs",
+  { defaultValue: makeHostStorageStatFs },
+);
+
+const decodeStorage = Schema.decodeUnknownEffect(HostStorageSnapshot);
 
 export class HostResources extends Context.Service<
   HostResources,
-  { readonly read: Effect.Effect<HostResourcesSnapshot> }
+  {
+    readonly read: Effect.Effect<HostResourcesSnapshot>;
+    readonly readStorage: Effect.Effect<HostStorageResult>;
+  }
 >()("t3/resourceTelemetry/HostResources") {}
 
 function readCpu() {
@@ -42,6 +86,21 @@ export const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const { stateDir } = yield* ServerConfig;
+  const statfs = yield* HostStorageStatFs;
+
+  const sampleStorage = Effect.fn("HostResources.sampleStorage")(
+    function* () {
+      const stats = yield* statfs(stateDir);
+      if (stats.bsize <= 0n) return null;
+      return yield* decodeStorage({
+        totalBytes: Number(stats.blocks * stats.bsize),
+        availableBytes: Number(stats.bavail * stats.bsize),
+      });
+    },
+    Effect.timeout("1 second"),
+    Effect.catch(() => Effect.succeed(null)),
+  );
 
   const sample = Effect.fn("HostResources.sample")(function* () {
     const previousCpu = readCpu();
@@ -87,7 +146,15 @@ export const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+  return HostResources.of({
+    read: Cache.get(cache, "host"),
+    // Settings reads storage on demand. Keep it independent of load balancing and
+    // uncached so an explicit refresh always checks the filesystem again.
+    readStorage: Effect.gen(function* () {
+      const storage = yield* sampleStorage();
+      return { sampledAt: DateTime.toEpochMillis(yield* DateTime.now), storage };
+    }),
+  });
 });
 
 export const layer = Layer.effect(HostResources, make());

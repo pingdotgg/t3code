@@ -16,6 +16,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { ConnectionHostStorage } from "./ConnectionHostStorage";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   return connectionStatusText({
@@ -65,76 +66,84 @@ export function ConnectionEnvironmentRow(props: {
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-card">
-      <Pressable
-        className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
-        onPress={props.onToggle}
-      >
-        <ConnectionStatusDot
-          state={props.environment.connectionState}
-          pulse={isRetrying}
-          size={8}
-        />
+      <View className="flex-row items-center pr-2">
+        <Pressable
+          className="min-w-0 flex-1 flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
+          onPress={props.onToggle}
+        >
+          <ConnectionStatusDot
+            state={props.environment.connectionState}
+            pulse={isRetrying}
+            size={8}
+          />
 
-        <View className="flex-1 gap-0.5">
-          <View className="flex-row items-center gap-1.5">
-            <EnvironmentMachineSymbol
-              kind={resolveEnvironmentMachineKind(serverConfig)}
-              size={14}
-              tintColorClassName="accent-foreground-muted"
-            />
-            <Text
-              className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
-              numberOfLines={1}
-            >
-              {props.environment.environmentLabel}
+          <View className="flex-1 gap-0.5">
+            <View className="flex-row items-center gap-1.5">
+              <EnvironmentMachineSymbol
+                kind={resolveEnvironmentMachineKind(serverConfig)}
+                size={14}
+                tintColorClassName="accent-foreground-muted"
+              />
+              <Text
+                className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
+                numberOfLines={1}
+              >
+                {props.environment.environmentLabel}
+              </Text>
+            </View>
+            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+              {props.environment.displayUrl}
             </Text>
+            {statusLabel ? (
+              <Text
+                className={cn(
+                  "text-xs",
+                  hasConnectionFailure ? "text-danger-foreground" : "text-foreground-muted",
+                )}
+                numberOfLines={props.expanded ? undefined : 1}
+                selectable={props.expanded}
+              >
+                {statusLabel}
+                {statusTraceId ? (
+                  <>
+                    {" Trace ID: "}
+                    <Text
+                      accessibilityHint="Copies the trace ID"
+                      accessibilityRole="button"
+                      className="underline decoration-dotted"
+                      onLongPress={(event) => {
+                        event.stopPropagation();
+                        copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
+                      }}
+                      onPress={(event) => {
+                        event.stopPropagation();
+                      }}
+                    >
+                      {statusTraceId}
+                    </Text>
+                  </>
+                ) : null}
+              </Text>
+            ) : null}
           </View>
-          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {props.environment.displayUrl}
-          </Text>
-          {statusLabel ? (
-            <Text
-              className={cn(
-                "text-xs",
-                hasConnectionFailure ? "text-danger-foreground" : "text-foreground-muted",
-              )}
-              numberOfLines={props.expanded ? undefined : 1}
-              selectable={props.expanded}
-            >
-              {statusLabel}
-              {statusTraceId ? (
-                <>
-                  {" Trace ID: "}
-                  <Text
-                    accessibilityHint="Copies the trace ID"
-                    accessibilityRole="button"
-                    className="underline decoration-dotted"
-                    onLongPress={(event) => {
-                      event.stopPropagation();
-                      copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
-                    }}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                    }}
-                  >
-                    {statusTraceId}
-                  </Text>
-                </>
-              ) : null}
-            </Text>
-          ) : null}
-        </View>
 
-        <SymbolView
-          name="chevron.down"
-          size={12}
-          tintColorClassName={"accent-icon-subtle"}
-          type="monochrome"
-          style={{
-            transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
-          }}
+          <SymbolView
+            name="chevron.down"
+            size={12}
+            tintColorClassName={"accent-icon-subtle"}
+            type="monochrome"
+            style={{
+              transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
+            }}
+          />
+        </Pressable>
+
+        <ConnectionHostStorage
+          environmentId={props.environment.environmentId}
+          environmentLabel={props.environment.environmentLabel}
+          connected={props.environment.connectionState === "connected"}
         />
-      </Pressable>
+      </View>
 
       {props.expanded ? (
         <Animated.View

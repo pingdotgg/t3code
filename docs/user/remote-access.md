@@ -61,6 +61,14 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Check available disk space
+
+Hover or tap the ring beside an environment in **Settings → Connections** on web
+and desktop, or tap it in **Settings → Environments** on mobile. Each reading describes the disk containing
+that server's T3 data. Projects on another drive may have different space available;
+WSL and containers report the filesystem visible to their server. Refresh the reading
+to check again. An offline or unsupported environment shows storage as unavailable.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in

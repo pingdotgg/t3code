@@ -2048,6 +2048,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetHostResources, hostResources.read, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetHostStorage]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetHostStorage, hostResources.readStorage, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverGetProcessResourceHistory]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverGetProcessResourceHistory,

@@ -6220,6 +6220,23 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("returns disk capacity independently over websocket", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetHostStorage]({})),
+      );
+      assert.isAtLeast(result.sampledAt, 0);
+      assert.isNotNull(result.storage);
+      if (result.storage) {
+        assert.isAbove(result.storage.totalBytes, 0);
+        assert.isAtLeast(result.storage.availableBytes, 0);
+        assert.isAtMost(result.storage.availableBytes, result.storage.totalBytes);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("returns cached whole-host resources over websocket", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -6252,6 +6269,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-resources-" })),
         Effect.provideService(HostProcessPlatform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
@@ -6281,6 +6299,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const started = yield* Deferred.make<void>();
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-resources-" })),
         Effect.provideService(HostProcessPlatform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({

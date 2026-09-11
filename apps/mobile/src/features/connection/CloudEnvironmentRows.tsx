@@ -10,7 +10,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -28,6 +28,7 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { serverEnvironment } from "../../state/server";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { ConnectionHostStorage } from "./ConnectionHostStorage";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -225,6 +226,13 @@ function ConnectedCloudEnvironmentRow(props: {
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
         machine={resolveEnvironmentMachineKind(serverConfig)}
+        storageIndicator={
+          <ConnectionHostStorage
+            environmentId={props.environment.environmentId}
+            environmentLabel={props.environment.environmentLabel}
+            connected={props.environment.connectionState === "connected"}
+          />
+        }
         onValueChange={(enabled) => {
           if (enabled) {
             props.onConnect();
@@ -286,6 +294,7 @@ function CloudEnvironmentRowShell(props: {
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
+  readonly storageIndicator?: ReactNode;
   readonly value: boolean;
 }) {
   const isRetrying =
@@ -406,6 +415,7 @@ function CloudEnvironmentRowShell(props: {
           ) : null}
         </StatusContainer>
       </View>
+      {props.storageIndicator}
       <ThemedSwitch
         disabled={props.disabled}
         onValueChange={props.onValueChange}
