@@ -10,7 +10,7 @@ VENDOR_DIR="${WEB_DIR}/src/terminal/ghostty/vendor"
 
 GHOSTTY_REVISION="$(tr -d '[:space:]' < "${CANONICAL_VENDOR_DIR}/VERSION")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
-GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
+GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.16.0}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
 
 log() {
@@ -101,11 +101,17 @@ log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
   # The pinned revision rides along as semver build metadata so the artifact
   # identifies its own provenance through ghostty_build_info(); mobile's
   # VERSION file stays the single source of truth for the pin.
+  #
+  # Only the feature areas the web adapter calls are compiled in. Snapshots,
+  # Kitty graphics, and the glyph protocol are dropped to keep the artifact
+  # inside the size budget enforced by runtimeAbi.test.ts. The syntax is
+  # -Dcpu style: start from -all and add back what is needed.
   "${GHOSTTY_ZIG}" build \
     -Demit-lib-vt \
     -Dtarget=wasm32-freestanding \
     -Doptimize=ReleaseSmall \
     -Dstrip=true \
+    -Dvt-features=-all,+render_state,+input_encode,+selection,+color,+grid_introspection,+formatter \
     -Dlib-version-string="0.1.0-dev+${GHOSTTY_REVISION}" \
     -p "${build_root}"
 )

@@ -242,6 +242,37 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Repository identities are derived by snapshot queries, not persisted events.
+        // Refresh the legacy PR view before deciding which existing link to replace.
+        if (
+          (envelope.command.type === "thread.meta.update" &&
+            envelope.command.linkedPullRequest !== undefined) ||
+          envelope.command.type === "thread.pull-request.sync"
+        ) {
+          const shell = yield* projectionSnapshotQuery.getThreadShellById(
+            envelope.command.threadId,
+          );
+          if (Option.isSome(shell) && shell.value.projectId !== null) {
+            const project = yield* projectionSnapshotQuery.getProjectShellById(
+              shell.value.projectId,
+            );
+            if (Option.isSome(project)) {
+              commandReadModel = {
+                ...commandReadModel,
+                projects: commandReadModel.projects.map((entry) =>
+                  entry.id === project.value.id
+                    ? { ...entry, repositoryIdentity: project.value.repositoryIdentity }
+                    : entry,
+                ),
+                threads: commandReadModel.threads.map((entry) =>
+                  entry.id === shell.value.id
+                    ? { ...entry, linkedPullRequest: shell.value.linkedPullRequest }
+                    : entry,
+                ),
+              };
+            }
+          }
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,

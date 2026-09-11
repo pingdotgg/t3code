@@ -7,9 +7,9 @@ MODULE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENDOR_DIR="${MODULE_DIR}/../../../../native/libghostty-vt"
 PATCH_DIR="${SCRIPT_DIR}/libghostty-android-patches"
 
-GHOSTTY_REVISION="${GHOSTTY_REVISION:-9f62873bf195e4d8a762d768a1405a5f2f7b1697}"
+GHOSTTY_REVISION="${GHOSTTY_REVISION:-76e568b475fe88f5506be33ad1a684f3c1eae85e}"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
-GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
+GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.16.0}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-}"
 
@@ -129,12 +129,16 @@ for entry in "${targets[@]}"; do
   log "building ${abi} (${target})"
   (
     cd "${GHOSTTY_SOURCE_DIR}"
+    # Same feature set as the web build (apps/web/scripts/build-libghostty-wasm.sh):
+    # the JNI bridge only calls render state, selection, formatter, color, and
+    # grid APIs, and every dropped feature is dead weight in the APK.
     ANDROID_NDK_HOME="${ANDROID_NDK_HOME}" "${GHOSTTY_ZIG}" build \
       -Demit-lib-vt \
       -Dtarget="${target}" \
       -Doptimize=ReleaseFast \
       -Dstrip=true \
       -Dsimd=false \
+      -Dvt-features=-all,+render_state,+input_encode,+selection,+color,+grid_introspection,+formatter \
       -p "${prefix}"
   )
 

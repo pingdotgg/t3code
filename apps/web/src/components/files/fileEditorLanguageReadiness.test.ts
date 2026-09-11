@@ -94,12 +94,22 @@ function firstEnter(highlighter: DiffsHighlighter, file: FileContents, language:
   }
 }
 
+const animationFrames = new Set<ReturnType<typeof setImmediate>>();
+
 beforeEach(async () => {
   terminationPromises = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-    setImmediate(() => callback(0)),
-  );
-  vi.stubGlobal("cancelAnimationFrame", clearImmediate);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const handle = setImmediate(() => {
+      animationFrames.delete(handle);
+      callback(0);
+    });
+    animationFrames.add(handle);
+    return handle;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (handle: ReturnType<typeof setImmediate>) => {
+    clearImmediate(handle);
+    animationFrames.delete(handle);
+  });
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
   await disposeHighlighter();
   pool = new WorkerPoolManager(
@@ -116,6 +126,9 @@ afterEach(async () => {
   pool?.terminate();
   await Promise.all(terminationPromises);
   await disposeHighlighter();
+  // Worker broadcasts queued during termination must not outlive the browser globals.
+  for (const handle of animationFrames) clearImmediate(handle);
+  animationFrames.clear();
   vi.unstubAllGlobals();
 });
 

@@ -60,10 +60,10 @@ describe("ghosttyCellText", () => {
 describe("GhosttyTerminalCore snapshots", () => {
   const cores = new Set<GhosttyTerminalCore>();
 
-  async function createCore(onData: (data: string) => void = () => {}) {
+  async function createCore(onData: (data: string) => void = () => {}, cols = 12, rows = 3) {
     const core = await GhosttyTerminalCore.create(
-      12,
-      3,
+      cols,
+      rows,
       8,
       16,
       {
@@ -76,6 +76,18 @@ describe("GhosttyTerminalCore snapshots", () => {
     cores.add(core);
     return core;
   }
+
+  it.each([
+    [0, 0, 1, 1],
+    [-2, 3.8, 1, 3],
+    [65536, 1, 65535, 1],
+  ])(
+    "normalizes constructor dimensions %i by %i",
+    async (cols, rows, expectedCols, expectedRows) => {
+      const core = await createCore(() => {}, cols, rows);
+      expect(core.snapshot()).toMatchObject({ cols: expectedCols, rows: expectedRows });
+    },
+  );
 
   function createSession(history: string) {
     return applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
@@ -160,7 +172,8 @@ describe("GhosttyTerminalCore snapshots", () => {
     core.write("ASCII");
     core.snapshot();
 
-    const grapheme = `z${"\u0301".repeat(256)}`;
+    // The pinned Ghostty revision retains at most 64 suffix codepoints per cell.
+    const grapheme = `z${"\u0301".repeat(64)}`;
     core.resetAndWrite(`${grapheme}X`);
     const alloc = vi.spyOn(runtime, "alloc");
     const free = vi.spyOn(runtime, "free");

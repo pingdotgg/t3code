@@ -21,7 +21,7 @@ The Android terminal renderer vendors upstream `libghostty-vt` shared libraries 
 The web terminal vendors a WebAssembly build from the same revision and uses the same C ABI.
 
 - Upstream project: https://github.com/ghostty-org/ghostty
-- Vendored revision: `9f62873bf195e4d8a762d768a1405a5f2f7b1697`
+- Vendored revision: `76e568b475fe88f5506be33ad1a684f3c1eae85e`
 - License: MIT
 
 Ghostty's MIT license applies to the vendored Android and web libraries. Keep this notice and both
