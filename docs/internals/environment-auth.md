@@ -46,13 +46,15 @@ agent writes in a temporary directory. Relative paths and writes still follow
 the [workspace path rules](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
 
 Signed asset URLs are bearer credentials. A URL for media on the host grants
-access to one canonical file and its device/inode identity, not its containing directory.
-[Asset access](../../apps/server/src/assets/AssetAccess.ts) rechecks the opened
-file's identity when serving it, so atomic replacement requires a new URL while
-editing the same file in place does not. An HTML file authorized this way cannot
-load sibling assets; directory-scoped workspace previews are a separate grant.
-Clients should share the authored file reference so they do not disclose the
-temporary URL's credential.
+access to one canonical file, not its containing directory. Image URLs sign the
+canonical path, so an atomic image replacement at that path keeps the same URL
+valid. Video, HTML, and PDF URLs also sign the file's device/inode identity, so
+replacing those files requires a new URL while editing them in place does not.
+[Asset access](../../apps/server/src/assets/AssetAccess.ts) rechecks the path and
+media type when serving and opens the current file without following symlinks.
+An HTML file authorized this way cannot load sibling assets; directory-scoped
+workspace previews are a separate grant. Clients should share the authored file
+reference so they do not disclose the temporary URL's credential.
 
 Host videos can change in place. Their [HTTP
 responses](../../apps/server/src/http.ts) omit cache validators because file

@@ -103,6 +103,12 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("media-image-path"),
+    filePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
     /** Decided at mint time. Absent tokens (from before this field) serve
@@ -296,7 +302,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (!canonicalFile) {
         return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
       }
-      if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+      const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
+      if (mimeType === null) {
         return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
       const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(
@@ -324,15 +331,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (!opened) {
         return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
       }
-      const identity = opened.identity;
       imageDimensions = opened.dimensions;
-      claims = {
-        version: 1,
-        kind: "media-file-exact",
-        filePath: canonicalFile,
-        ...identity,
-        expiresAt,
-      };
+      claims = mimeType.startsWith("image/")
+        ? {
+            version: 1,
+            kind: "media-image-path",
+            filePath: canonicalFile,
+            expiresAt,
+          }
+        : {
+            version: 1,
+            kind: "media-file-exact",
+            filePath: canonicalFile,
+            ...opened.identity,
+            expiresAt,
+          };
       fileName = path.basename(canonicalFile);
       break;
     }
@@ -517,6 +530,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
+      if (
+        canonicalFaviconPath &&
+        !hostPreviewMimeTypeFromExtension(path.extname(canonicalFaviconPath))?.startsWith("image/")
+      ) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+      }
       claims =
         isExternalOverride && canonicalFaviconPath
           ? {
@@ -672,9 +691,17 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => null),
     );
-    return faviconPath === claims.filePath
-      ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
-      : null;
+    if (faviconPath !== claims.filePath) return null;
+    const file = yield* openMediaFile(faviconPath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open external project favicon.", {
+          filePath: faviconPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file ? ({ kind: "file", path: faviconPath, file } satisfies ResolvedAsset) : null;
   }
 
   if (claims.kind === "native-app-icon") {
@@ -686,7 +713,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   const path = yield* Path.Path;
-  if (claims.kind === "media-file-exact") {
+  if (claims.kind === "media-file-exact" || claims.kind === "media-image-path") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
       Effect.tapError((cause) =>
@@ -700,7 +727,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     if (canonicalFile !== claims.filePath) return null;
     const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
     if (!mimeType) return null;
-    const file = yield* openMediaFile(canonicalFile, claims).pipe(
+    const file = yield* openMediaFile(
+      canonicalFile,
+      claims.kind === "media-file-exact" ? claims : undefined,
+    ).pipe(
       Effect.tapError((cause) =>
         Effect.logError("Failed to open canonical media file.", { filePath: canonicalFile, cause }),
       ),
