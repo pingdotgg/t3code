@@ -20,6 +20,7 @@ it.effect("loads only due tasks and skips a corrupt due row without decoding set
         status: "failed",
         corrupt: false,
       },
+      { id: "", next: now, enabled: 1, status: "never", corrupt: false },
       { id: "due-corrupt", next: now, enabled: 1, status: "never", corrupt: true },
       { id: "disabled", next: now, enabled: 0, status: "never", corrupt: true },
       {
@@ -69,7 +70,7 @@ it.effect("loads only due tasks and skips a corrupt due row without decoding set
       tasks.map((task) => task.id),
       ["due-earlier", "due-now"],
     );
-    assert.equal(warnings.length, 1);
+    assert.equal(warnings.length, 2);
     const running = yield* sql<{
       last_run_status: string;
     }>`SELECT last_run_status FROM scheduled_tasks WHERE task_id = 'running'`;
