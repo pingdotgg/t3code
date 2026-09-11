@@ -2,7 +2,7 @@
 # Installs the T3 Code CLI from a GitHub Release archive. Needs only sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
-#   curl -fsSL https://raw.githubusercontent.com/pingdotgg/t3code/main/scripts/install.sh | sh
+#   curl -fsSL https://t3.codes/install.sh | sh
 #
 # Environment:
 #   T3CODE_VERSION           exact version to install (default: latest preview release)

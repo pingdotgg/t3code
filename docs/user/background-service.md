@@ -31,8 +31,10 @@ service does not need Node.js or npm once the CLI is on it. To get the CLI
 onto a machine without Node, run the install script:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pingdotgg/t3code/main/scripts/install.sh | sh
+curl -fsSL https://t3.codes/install.sh | sh
 ```
+
+On Windows, run `irm https://t3.codes/install.ps1 | iex` in PowerShell instead.
 
 It places `t3` in `~/.local/bin` and reuses the same download when you later
 run `t3 service install`. Set `T3CODE_VERSION` to pin an exact version, or
