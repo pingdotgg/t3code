@@ -206,6 +206,19 @@ export const encodeManifestCache = Schema.encodeEffect(
   ),
 );
 
+/**
+ * Base slug behind a gateway-prefixed model id such as `claude/claude-opus-5`,
+ * used when a provider CLI is pointed at a gateway that namespaces the models
+ * it serves. Only a single leading segment counts; anything else is a plain
+ * slug and resolves to `undefined`.
+ */
+export function gatewayModelBaseSlug(slug: string): string | undefined {
+  const separator = slug.indexOf("/");
+  if (separator <= 0) return undefined;
+  const base = slug.slice(separator + 1);
+  return base.length > 0 && !base.includes("/") ? base : undefined;
+}
+
 /** True when the manifest classifies `slug` as legacy for `driverKind`. */
 function isLegacyModel(
   manifest: ModelManifestData,
@@ -217,8 +230,13 @@ function isLegacyModel(
   );
   if (catalogModel) return catalogModel.status === "legacy";
   const currentModels = manifest.currentModels[driverKind];
+  if (currentModels?.includes(slug)) return false;
+  const base = gatewayModelBaseSlug(slug);
+  if (base) return isLegacyModel(manifest, driverKind, base);
   if (!currentModels) return false;
-  return !currentModels.includes(slug);
+  // A current list exists and the guards above already ruled out membership,
+  // so a slug that reaches here is one the manifest no longer carries.
+  return true;
 }
 
 /**

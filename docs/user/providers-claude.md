@@ -88,6 +88,10 @@ If that Claude config directory has a cached Anthropic login, run `/logout` in a
 Claude Code session using that directory before starting the router setup. Cached
 login credentials can conflict with the router token.
 
+Add one of OpenRouter's prefixed model IDs as a custom model. T3 Code reads the
+part after the prefix. `anthropic/claude-opus-4.6` gets the same model options as
+Claude Opus 4.6, and T3 Code still sends the full prefixed ID your gateway expects.
+
 Verify requests in OpenRouter's activity dashboard. For model-role overrides and
 current compatibility requirements, use the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
