@@ -1,4 +1,4 @@
-import type { ProjectIconColor } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectIconColor } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
@@ -30,12 +30,14 @@ import {
 } from "lucide-react";
 import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
+
+const projectFaviconColors = new Map<string, string | null | Promise<string | null>>();
 
 const DynamicIcon = lazy(() =>
   import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
@@ -178,6 +180,104 @@ export function ProjectFavicon(input: {
       fallbackColorClassName={fallbackColorClassName}
     />
   );
+}
+
+export function useProjectFaviconColor(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly faviconPath?: string | null | undefined;
+}) {
+  const assetUrl = useAtomValue(projectFaviconUrlAtom(input));
+  const src = assetUrl && !isProjectFaviconFallbackUrl(assetUrl) ? assetUrl : null;
+  const cacheKey =
+    src === null
+      ? null
+      : `${getProjectFaviconResourceKey(input.environmentId, input.cwd, input.faviconPath)}:${src}`;
+  const [sample, setSample] = useState<{ cacheKey: string; color: string | null } | null>(() => {
+    if (cacheKey === null) return null;
+    const cached = projectFaviconColors.get(cacheKey);
+    return typeof cached === "string" || cached === null ? { cacheKey, color: cached } : null;
+  });
+
+  useEffect(() => {
+    if (cacheKey === null || src === null) return;
+    let cancelled = false;
+    void loadProjectFaviconColor(cacheKey, src).then((color) => {
+      if (!cancelled) setSample({ cacheKey, color });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, src]);
+
+  return sample !== null && sample.cacheKey === cacheKey ? sample.color : null;
+}
+
+function loadProjectFaviconColor(cacheKey: string, src: string): Promise<string | null> {
+  const cached = projectFaviconColors.get(cacheKey);
+  if (cached !== undefined) return Promise.resolve(cached);
+
+  const pending = new Promise<string | null>((resolve) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.addEventListener("load", () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 32;
+        canvas.height = 32;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (context === null) {
+          resolve(null);
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(
+          extractProjectFaviconColor(context.getImageData(0, 0, canvas.width, canvas.height).data),
+        );
+      } catch {
+        resolve(null);
+      }
+    });
+    image.addEventListener("error", () => resolve(null));
+    image.src = src;
+  });
+  projectFaviconColors.set(cacheKey, pending);
+  void pending.then((color) => {
+    if (projectFaviconColors.get(cacheKey) === pending) projectFaviconColors.set(cacheKey, color);
+  });
+  return pending;
+}
+
+/** Samples the strongest hue family, excluding transparent padding and neutral backgrounds. */
+export function extractProjectFaviconColor(data: Uint8ClampedArray): string | null {
+  const hues = Array.from({ length: 12 }, () => ({ red: 0, green: 0, blue: 0, weight: 0 }));
+  for (let index = 0; index + 3 < data.length; index += 4) {
+    const red = data[index]!;
+    const green = data[index + 1]!;
+    const blue = data[index + 2]!;
+    const alpha = data[index + 3]! / 255;
+    const maximum = Math.max(red, green, blue);
+    const minimum = Math.min(red, green, blue);
+    const chroma = maximum - minimum;
+    if (alpha < 0.2 || chroma < 24 || maximum < 40) continue;
+
+    const hue =
+      maximum === red
+        ? (green - blue) / chroma
+        : maximum === green
+          ? (blue - red) / chroma + 2
+          : (red - green) / chroma + 4;
+    const bucket = hues[Math.round((hue + 6) * 2) % hues.length]!;
+    const weight = alpha * chroma;
+    bucket.red += red * weight;
+    bucket.green += green * weight;
+    bucket.blue += blue * weight;
+    bucket.weight += weight;
+  }
+
+  const dominant = hues.reduce((best, hue) => (hue.weight > best.weight ? hue : best));
+  if (dominant.weight === 0) return null;
+  return `rgb(${Math.round(dominant.red / dominant.weight)} ${Math.round(dominant.green / dominant.weight)} ${Math.round(dominant.blue / dominant.weight)})`;
 }
 
 function ProjectFaviconFallback({
