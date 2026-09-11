@@ -253,6 +253,12 @@ const preferredMimeTypes = [
   "video/webm",
 ] as const;
 
+/**
+ * Builds the recorder for a capture stream. Bitrate scales with the captured
+ * resolution and frame rate; `settingsStream` lets callers read those settings
+ * from the raw capture even when `stream` is a re-encoded canvas stream whose
+ * track settings may not be populated yet.
+ */
 const createMediaRecorder = (
   stream: MediaStream,
   settingsStream: MediaStream = stream,

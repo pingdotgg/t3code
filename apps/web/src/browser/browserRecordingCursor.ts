@@ -96,6 +96,11 @@ export function resolveRecordingCursorPlacement(
   };
 }
 
+/**
+ * Paints one cursor placement onto the recording canvas: a white arrow with its
+ * tip at the pointer position, plus an expanding dark ring while a click is
+ * fresh. Colors are fixed rather than themed so the cursor reads on any page.
+ */
 export function drawRecordingCursor(
   context: CanvasRenderingContext2D,
   placement: RecordingCursorPlacement,
