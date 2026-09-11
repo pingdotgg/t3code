@@ -170,7 +170,7 @@ describe("DesktopConnectionCatalogStore", () => {
             makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
           ),
         );
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments.pipe(
+        const environment = yield* DesktopEnvironment.DesktopEnvironment.pipe(
           Effect.provide(
             makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
           ),
@@ -180,16 +180,23 @@ describe("DesktopConnectionCatalogStore", () => {
 
         yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
         yield* fileSystem.writeFileString(officialCatalogPath, "official-ciphertext");
-        yield* savedEnvironments.setRegistry([
-          {
-            environmentId: EnvironmentId.make("legacy-bearer-environment"),
-            label: "Legacy bearer",
-            httpBaseUrl: "https://legacy.example.com/",
-            wsBaseUrl: "wss://legacy.example.com/",
-            createdAt: "2026-06-01T00:00:00.000Z",
-            lastConnectedAt: null,
-          },
-        ]);
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          yield* encodeLegacySavedEnvironments({
+            version: 1,
+            records: [
+              {
+                environmentId: EnvironmentId.make("legacy-bearer-environment"),
+                label: "Legacy bearer",
+                httpBaseUrl: "https://legacy.example.com/",
+                wsBaseUrl: "wss://legacy.example.com/",
+                createdAt: "2026-06-01T00:00:00.000Z",
+                lastConnectedAt: null,
+              },
+            ],
+          }),
+        );
         assert.deepStrictEqual(yield* store.get, Option.none());
         assert.isFalse(yield* fileSystem.exists(downstreamCatalogPath));
         assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
@@ -217,6 +224,7 @@ describe("DesktopConnectionCatalogStore", () => {
               profiles: [],
               credentials: [],
               remoteDpopTokens: [],
+              disabledEnvironmentIds: [],
             });
             yield* store.set(current);
             const legacyPath = environment.legacyConnectionCatalogPaths[0]!;
@@ -259,6 +267,7 @@ describe("DesktopConnectionCatalogStore", () => {
               profiles: [],
               credentials: [],
               remoteDpopTokens: [],
+              disabledEnvironmentIds: [],
             });
             yield* fs.writeFileString(
               path,
@@ -281,6 +290,7 @@ describe("DesktopConnectionCatalogStore", () => {
                 profiles: [],
                 credentials: [],
                 remoteDpopTokens: [],
+                disabledEnvironmentIds: [],
               }),
             );
           const imported = Option.getOrThrow(yield* store.get);
@@ -332,6 +342,7 @@ describe("DesktopConnectionCatalogStore", () => {
               },
             ],
             remoteDpopTokens: [],
+            disabledEnvironmentIds: [],
           });
         yield* store.set(yield* catalogFor("current"));
         const legacy = yield* catalogFor("superseded");
