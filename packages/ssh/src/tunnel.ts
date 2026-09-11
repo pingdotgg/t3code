@@ -329,13 +329,12 @@ NODE
 }
 
 ensure_remote_node_path() {
-  prepend_path_if_dir "$HOME/.local/bin"
-  prepend_path_if_dir "$HOME/bin"
-
   if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
     return 0
   fi
 
+  prepend_path_if_dir "$HOME/.local/bin"
+  prepend_path_if_dir "$HOME/bin"
   prepend_path_if_dir "/opt/homebrew/bin"
   prepend_path_if_dir "/usr/local/bin"
   prepend_path_if_dir "/usr/bin"
@@ -415,8 +414,21 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+resolve_installed_t3_cli() {
+  if command -v t3 >/dev/null 2>&1; then
+    command -v t3
+    return 0
+  fi
+  for T3_USER_CLI in "$HOME/.local/bin/t3" "$HOME/bin/t3"; do
+    if [ -x "$T3_USER_CLI" ]; then
+      printf '%s\n' "$T3_USER_CLI"
+      return 0
+    fi
+  done
+  return 1
+}
+if T3_CLI_PATH="$(resolve_installed_t3_cli)"; then
+  exec "$T3_CLI_PATH" "$@"
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves

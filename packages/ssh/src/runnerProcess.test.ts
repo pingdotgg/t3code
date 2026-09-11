@@ -23,6 +23,51 @@ const decodeStarted = Schema.decodeUnknownSync(Schema.fromJsonString(Started));
 describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
   "remote runner process ownership",
   () => {
+    it.live("runs a user-installed CLI without changing Node precedence", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runner-user-cli-" });
+        const bin = path.join(fixture, "bin");
+        const home = path.join(fixture, "home");
+        const userBin = path.join(home, ".local/bin");
+        yield* fs.makeDirectory(bin);
+        yield* fs.makeDirectory(userBin, { recursive: true });
+        yield* fs.symlink(process.execPath, path.join(bin, "node"));
+        yield* fs.writeFileString(
+          path.join(userBin, "node"),
+          "#!/bin/sh\nprintf 'wrong node\\n' >&2\nexit 88\n",
+        );
+        yield* fs.chmod(path.join(userBin, "node"), 0o700);
+        yield* fs.writeFileString(
+          path.join(userBin, "t3"),
+          '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
+        );
+        yield* fs.chmod(path.join(userBin, "t3"), 0o700);
+        for (const packageManager of ["npx", "npm"]) {
+          yield* fs.writeFileString(path.join(bin, packageManager), "#!/bin/sh\nexit 89\n");
+          yield* fs.chmod(path.join(bin, packageManager), 0o700);
+        }
+
+        const child = yield* spawner.spawn(
+          ChildProcess.make("/bin/sh", ["-s", "--", "auth", "pairing", "create"], {
+            cwd: fixture,
+            env: { HOME: home, PATH: bin },
+            detached: false,
+            stdin: Stream.make(
+              new TextEncoder().encode(buildRemoteT3RunnerScript({ nodeEngineRange: "" })),
+            ),
+          }),
+        );
+        const stdout = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
+        const stderr = yield* child.stderr.pipe(Stream.decodeText(), Stream.mkString);
+        assert.equal(yield* child.exitCode, 0);
+        assert.equal(stdout.trim(), '["auth","pairing","create"]');
+        assert.equal(stderr, "");
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+
     it.live.each(["npx", "npm"] as const)(
       "keeps the server PID and graceful shutdown through the %s fallback",
       (packageManager) =>
