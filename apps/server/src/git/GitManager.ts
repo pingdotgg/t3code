@@ -1050,13 +1050,13 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
-  const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
-  if (!lookup) {
-    return {
-      outcome: { _tag: "Complete", latest: null } satisfies PrLookupOutcome,
-      headContext,
-    };
-  }
+        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+        if (!lookup) {
+          return {
+            outcome: { _tag: "Complete", latest: null } satisfies PrLookupOutcome,
+            headContext,
+          };
+        }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
         if (
@@ -1146,119 +1146,119 @@ export const make = Effect.gen(function* () {
     return lastKnown.pr;
   };
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
-  cwd: string,
-  details: {
-    branch: string;
-    upstreamRef: string | null;
-    defaultBranch: string | null;
-    isDefaultBranch: boolean;
-  },
-  refreshMissingPullRequest = false,
-) {
-  // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
-  // `push -u`) must not orphan the fallback value for the same branch.
-  const branchKey = `${cwd}\u0000${details.branch}`;
-  const cacheKey = prLookupCacheKey(cwd, details);
-  if (refreshMissingPullRequest) {
-    const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    if (
-      Option.isSome(cached) &&
-      cached.value.outcome._tag === "Complete" &&
-      cached.value.outcome.latest === null
-    ) {
-      yield* Cache.invalidate(prLookupCache, cacheKey);
-    }
-  }
-  return yield* Cache.get(prLookupCache, cacheKey).pipe(
-    Effect.flatMap(({ outcome, headContext }) => {
-      const lastKnownContext = {
-        upstreamRef: details.upstreamRef,
-        headBranch: headContext.headBranch,
-        remoteName: headContext.remoteName,
-        headRemoteUrlKey: headContext.headRemoteUrlKey,
-      };
-      if (outcome._tag === "ProviderUnknown") {
-        return Effect.succeed(resolveLastKnownPr(branchKey, lastKnownContext));
+    cwd: string,
+    details: {
+      branch: string;
+      upstreamRef: string | null;
+      defaultBranch: string | null;
+      isDefaultBranch: boolean;
+    },
+    refreshMissingPullRequest = false,
+  ) {
+    // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
+    // `push -u`) must not orphan the fallback value for the same branch.
+    const branchKey = `${cwd}\u0000${details.branch}`;
+    const cacheKey = prLookupCacheKey(cwd, details);
+    if (refreshMissingPullRequest) {
+      const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (
+        Option.isSome(cached) &&
+        cached.value.outcome._tag === "Complete" &&
+        cached.value.outcome.latest === null
+      ) {
+        yield* Cache.invalidate(prLookupCache, cacheKey);
       }
+    }
+    return yield* Cache.get(prLookupCache, cacheKey).pipe(
+      Effect.flatMap(({ outcome, headContext }) => {
+        const lastKnownContext = {
+          upstreamRef: details.upstreamRef,
+          headBranch: headContext.headBranch,
+          remoteName: headContext.remoteName,
+          headRemoteUrlKey: headContext.headRemoteUrlKey,
+        };
+        if (outcome._tag === "ProviderUnknown") {
+          return Effect.succeed(resolveLastKnownPr(branchKey, lastKnownContext));
+        }
 
-      const pr =
-        outcome.latest === null ||
-        // On the default branch, only surface open PRs. Merged/closed
-        // matches are usually reverse-merge history, not the thread's PR.
-        (details.isDefaultBranch && outcome.latest.state !== "open")
-          ? null
-          : toStatusPr(outcome.latest);
-      return Effect.sync(() => {
-        rememberLastKnownPr(branchKey, { pr, ...lastKnownContext });
-        return pr;
-      });
-    }),
-    Effect.catch((error) =>
-      Effect.logWarning("PR lookup failed; keeping last known PR state.").pipe(
-        Effect.annotateLogs({
-          operation: "lookupStatusPr",
-          branch: details.branch,
-          errorTag:
-            typeof error === "object" && error !== null && "_tag" in error
-              ? String(error._tag)
-              : typeof error,
-          ...(isSourceControlProviderError(error)
-            ? {
-                provider: error.provider,
-                providerOperation: error.operation,
-                providerCommand: error.command ?? "unknown",
-                errorDetail: error.detail,
-              }
-            : {}),
-        }),
-        Effect.andThen(resolveLookupHeadContext(cwd, details)),
-        Effect.map(({ headContext }) =>
-          resolveLastKnownPr(branchKey, {
-            upstreamRef: details.upstreamRef,
-            headBranch: headContext.headBranch,
-            remoteName: headContext.remoteName,
-            headRemoteUrlKey: headContext.headRemoteUrlKey,
+        const pr =
+          outcome.latest === null ||
+          // On the default branch, only surface open PRs. Merged/closed
+          // matches are usually reverse-merge history, not the thread's PR.
+          (details.isDefaultBranch && outcome.latest.state !== "open")
+            ? null
+            : toStatusPr(outcome.latest);
+        return Effect.sync(() => {
+          rememberLastKnownPr(branchKey, { pr, ...lastKnownContext });
+          return pr;
+        });
+      }),
+      Effect.catch((error) =>
+        Effect.logWarning("PR lookup failed; keeping last known PR state.").pipe(
+          Effect.annotateLogs({
+            operation: "lookupStatusPr",
+            branch: details.branch,
+            errorTag:
+              typeof error === "object" && error !== null && "_tag" in error
+                ? String(error._tag)
+                : typeof error,
+            ...(isSourceControlProviderError(error)
+              ? {
+                  provider: error.provider,
+                  providerOperation: error.operation,
+                  providerCommand: error.command ?? "unknown",
+                  errorDetail: error.detail,
+                }
+              : {}),
           }),
+          Effect.andThen(resolveLookupHeadContext(cwd, details)),
+          Effect.map(({ headContext }) =>
+            resolveLastKnownPr(branchKey, {
+              upstreamRef: details.upstreamRef,
+              headBranch: headContext.headBranch,
+              remoteName: headContext.remoteName,
+              headRemoteUrlKey: headContext.headRemoteUrlKey,
+            }),
+          ),
         ),
       ),
-    ),
-  );
-});
-const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (
-  cwd: string,
-  options?: GitRemoteStatusOptions,
-) {
-  const details = yield* gitCore
-    .statusDetailsRemote(cwd, options)
-    .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
-  if (details === null || !details.isRepo) {
-    return null;
-  }
+    );
+  });
+  const readRemoteStatus = Effect.fn("readRemoteStatus")(function* (
+    cwd: string,
+    options?: GitRemoteStatusOptions,
+  ) {
+    const details = yield* gitCore
+      .statusDetailsRemote(cwd, options)
+      .pipe(Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(null)));
+    if (details === null || !details.isRepo) {
+      return null;
+    }
 
-  const pr =
-    details.branch !== null
-      ? yield* lookupStatusPr(
-          cwd,
-          {
-            branch: details.branch,
-            upstreamRef: details.upstreamRef,
-            defaultBranch: details.defaultBranch,
-            isDefaultBranch: details.isDefaultBranch,
-          },
-          options?.refreshMissingPullRequest,
-        )
-      : null;
+    const pr =
+      details.branch !== null
+        ? yield* lookupStatusPr(
+            cwd,
+            {
+              branch: details.branch,
+              upstreamRef: details.upstreamRef,
+              defaultBranch: details.defaultBranch,
+              isDefaultBranch: details.isDefaultBranch,
+            },
+            options?.refreshMissingPullRequest,
+          )
+        : null;
 
-  return {
-    hasUpstream: details.hasUpstream,
-    aheadCount: details.aheadCount,
-    behindCount: details.behindCount,
-    aheadOfDefaultCount: details.aheadOfDefaultCount,
-    pr,
-  } satisfies VcsStatusRemoteResult;
-});
+    return {
+      hasUpstream: details.hasUpstream,
+      aheadCount: details.aheadCount,
+      behindCount: details.behindCount,
+      aheadOfDefaultCount: details.aheadOfDefaultCount,
+      pr,
+    } satisfies VcsStatusRemoteResult;
+  });
   const remoteStatusResultCache = yield* Cache.makeWith((cwd: string) => readRemoteStatus(cwd), {
     capacity: STATUS_RESULT_CACHE_CAPACITY,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
