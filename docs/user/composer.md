@@ -8,14 +8,9 @@ so you can shorten them or split them into several messages.
 
 ## Answer agent questions
 
-On web and desktop, expanded questions render Markdown links, headings, lists,
-code blocks, and tables. Collapse a question from its header to show a one-line text
-preview. Markdown links appear as their labels in the preview. Long questions scroll
-inside the card so the header and answer controls remain visible.
-
-Answer options support inline Markdown, including emphasis, code, and links.
-Opening a link in an option does not select that option or advance the question.
-Select the option itself when you are ready to answer.
+When an agent asks a question, choose an answer or type your own in the composer.
+On web and desktop, you can open links in an answer option to read more before
+deciding. Opening a link does not select the option or submit an answer.
 
 ## Attach files
 

@@ -8,6 +8,18 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
 import { Collapsible } from "../ui/collapsible";
 
+const linkActions = vi.hoisted(() => ({
+  openExternal: vi.fn(async (_url: string) => {}),
+  toast: vi.fn(),
+}));
+vi.mock("../../localApi", () => ({
+  readLocalApi: () => ({ shell: { openExternal: linkActions.openExternal } }),
+}));
+vi.mock("../ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ui/toast")>()),
+  toastManager: { add: linkActions.toast },
+}));
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../../hooks/useSettings", async (importOriginal) => {
@@ -15,6 +27,7 @@ vi.mock("../../hooks/useSettings", async (importOriginal) => {
   const settings = actual.getClientSettings();
   return {
     ...actual,
+    ensureClientSettingsHydrated: async () => {},
     useClientSettings: (select?: (value: typeof settings) => unknown) =>
       select ? select(settings) : settings,
   };
@@ -76,11 +89,11 @@ const prompt: PendingUserInput = {
 };
 
 /** Renders a pending question without mounting client effects for Markdown output assertions. */
-function renderPanel(pendingUserInput: PendingUserInput = prompt, isResponding = false) {
+function renderPanel(pendingUserInput: PendingUserInput = prompt) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}
-      respondingRequestIds={isResponding ? [pendingUserInput.requestId] : []}
+      respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
       onToggleOption={() => {}}
@@ -136,6 +149,9 @@ describe("ComposerPendingUserInputPanel", () => {
     renderer = undefined;
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    linkActions.openExternal.mockClear();
+    linkActions.toast.mockClear();
   });
 
   it("renders the header as a disclosure control for the question body", () => {
@@ -225,7 +241,7 @@ describe("ComposerPendingUserInputPanel", () => {
           ...prompt.questions[0]!,
           options: [
             {
-              label: "**Bold option**",
+              label: "**Bold option** *emphasis* ~~old~~",
               description: "Use `inline code` and [help](https://example.com/help).",
               value: "provider-choice",
             },
@@ -243,13 +259,14 @@ describe("ComposerPendingUserInputPanel", () => {
 
     expect(markup).toContain("<strong>Bold option</strong>");
     expect(markup).toContain("<code>inline code</code>");
-    expect(markup).toContain('data-pending-user-input-link="true"');
+    expect(markup).toContain("<em>emphasis</em>");
+    expect(markup).toContain("<del>old</del>");
     expect(markup).toContain('href="https://example.com/help"');
     expect(markup).not.toContain('href="javascript:');
     expect(markup).toContain("bad link");
   });
 
-  it("keeps option links separate from selection and auto-advance", async () => {
+  it("submits the original option value and advances only after the selection delay", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", {
       setTimeout,
@@ -277,21 +294,6 @@ describe("ComposerPendingUserInputPanel", () => {
       onToggleOption,
       onAdvance,
     );
-
-    const link = renderer.root.findByProps({ "data-pending-user-input-link": true });
-    expect(link.type).toBe("a");
-    expect(link.props.href).toBe("https://example.com/help");
-    // A native link must not live inside a selection button or clickable row.
-    for (let parent = link.parent; parent; parent = parent.parent) {
-      expect(parent.type).not.toBe("button");
-      expect(parent.props.onClick).toBeUndefined();
-    }
-    const stopPropagation = vi.fn();
-    await act(() => link.props.onKeyDown({ key: "Enter", stopPropagation }));
-    expect(stopPropagation).toHaveBeenCalledOnce();
-    await act(() => vi.advanceTimersByTime(200));
-    expect(onToggleOption).not.toHaveBeenCalled();
-    expect(onAdvance).not.toHaveBeenCalled();
 
     const optionButton = renderer.root
       .findAllByType("button")
@@ -339,36 +341,65 @@ describe("ComposerPendingUserInputPanel", () => {
     ).toHaveLength(0);
   });
 
-  it("preserves inline formatting and accessible labels while responding", () => {
-    const markup = renderPanel(
-      {
-        ...prompt,
-        questions: [
-          {
-            ...prompt.questions[0]!,
-            options: [
-              {
-                label: "**Bold** *emphasis* ~~old~~",
-                description: "Read [help](https://example.com/help).",
-              },
-            ],
-          },
-        ],
-      },
-      true,
-    );
-    expect(markup).toContain("<strong>Bold</strong>");
-    expect(markup).toContain("<em>emphasis</em>");
-    expect(markup).toContain("<del>old</del>");
-    const button = markup.match(/<button[^>]*aria-pressed="false"[^>]*>/)?.[0];
-    expect(button).toContain('disabled=""');
-    const labelId = button?.match(/aria-labelledby="([^"]+)"/)?.[1];
-    const descriptionId = button?.match(/aria-describedby="([^"]+)"/)?.[1];
-    expect(labelId).toBeDefined();
-    expect(descriptionId).toBeDefined();
-    expect(markup).toContain(`id="${labelId}"`);
-    expect(markup).toContain(`id="${descriptionId}"`);
-  });
+  it.each([false, true])(
+    "opens option links without answering (opening fails=%s)",
+    async (fails) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("window", { setTimeout, clearTimeout });
+      const onToggleOption = vi.fn();
+      const onAdvance = vi.fn();
+      const error = new Error("Browser unavailable");
+      const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+      if (fails) linkActions.openExternal.mockRejectedValueOnce(error);
+      const url = "https://example.com/help";
+      // ReactTestRenderer has no DOM. Only the event target's anchor lookup is needed here.
+      class LinkTarget {
+        closest() {
+          return { href: url };
+        }
+      }
+      vi.stubGlobal("Element", LinkTarget);
+      renderer = await renderInteractivePanel(
+        {
+          ...prompt,
+          questions: [
+            { ...prompt.questions[0]!, options: [{ label: `[Help](${url})`, description: "" }] },
+          ],
+        },
+        onToggleOption,
+        onAdvance,
+      );
+      const options = renderer.root.findAllByType("div").find((node) => node.props.onClick)!;
+      const event = {
+        target: new LinkTarget(),
+        defaultPrevented: false,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault: vi.fn(),
+      };
+      await act(async () => options.props.onClick(event));
+      expect(linkActions.openExternal).toHaveBeenCalledExactlyOnceWith(url);
+      await act(() => vi.advanceTimersByTime(200));
+      expect(onToggleOption).not.toHaveBeenCalled();
+      expect(onAdvance).not.toHaveBeenCalled();
+      if (fails) {
+        expect(reportError).toHaveBeenCalledWith(error);
+        expect(linkActions.toast).toHaveBeenCalledWith({
+          type: "error",
+          title: "Unable to open question link",
+        });
+      } else {
+        expect(linkActions.toast).not.toHaveBeenCalled();
+      }
+      // Modified clicks retain the anchor's native browser behavior.
+      event.preventDefault.mockClear();
+      await act(async () => options.props.onClick({ ...event, metaKey: true }));
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(linkActions.openExternal).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([false, true])(
     "keeps raw fallback labels and cleans up auto-advance (multiSelect=%s)",

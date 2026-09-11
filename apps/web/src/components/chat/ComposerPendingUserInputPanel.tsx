@@ -13,6 +13,8 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import { useOpenLink } from "../../browser/useOpenLink";
+import { toastManager } from "../ui/toast";
 
 /** Removes inline formatting and link targets from the collapsed question preview. */
 function MarkdownText({ children }: { children?: ReactNode }) {
@@ -44,8 +46,6 @@ const inlineMarkdownComponents = {
         target="_blank"
         rel="noopener noreferrer"
         className="pointer-events-auto text-primary underline underline-offset-2"
-        data-pending-user-input-link
-        onKeyDown={(event) => event.stopPropagation()}
       >
         {children}
       </a>
@@ -158,6 +158,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const optionA11yIdPrefix = useId();
+  const openLink = useOpenLink(threadRef);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -329,7 +330,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
-            <div className="mt-2 space-y-0.5">
+            <div
+              className="mt-2 space-y-0.5"
+              onClick={(event) => {
+                if (!(event.target instanceof Element) || event.defaultPrevented) return;
+                const link = event.target.closest<HTMLAnchorElement>("a[href]");
+                if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+                  return;
+                event.preventDefault();
+                void openLink(link.href).catch((error: unknown) => {
+                  console.error(error);
+                  toastManager.add({ type: "error", title: "Unable to open question link" });
+                });
+              }}
+            >
               {activeQuestion.options.map((option, index) => {
                 const optionValue = option.value ?? option.label;
                 const isOptimisticallySelected =
