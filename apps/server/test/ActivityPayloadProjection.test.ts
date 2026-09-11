@@ -558,3 +558,53 @@ describe("context-window snapshot dedup", () => {
     ).toEqual(activity);
   });
 });
+
+describe("usage-limits snapshot dedup", () => {
+  function makeUsageLimitsActivity(
+    id: string,
+    windows: ReadonlyArray<string>,
+    turn = "turn-a",
+  ): OrchestrationThreadActivity {
+    return {
+      id: EventId.make(id),
+      tone: "info",
+      kind: "usage-limits.updated",
+      summary: "Usage limits updated",
+      payload: {
+        provider: "claudeAgent",
+        status: "ok",
+        windows: windows.map((windowId) => ({
+          id: windowId,
+          usedPercent: 10,
+          resetsAt: null,
+          windowDurationMins: null,
+        })),
+      },
+      turnId: TurnId.make(turn),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+  }
+
+  it("keeps the latest row per turn and per window set", () => {
+    const staleSession = makeUsageLimitsActivity("limits-1", ["five_hour"]);
+    const weekly = makeUsageLimitsActivity("limits-2", ["seven_day"]);
+    const latestSession = makeUsageLimitsActivity("limits-3", ["five_hour"]);
+    const otherTurn = makeUsageLimitsActivity("limits-4", ["five_hour"], "turn-b");
+    const malformed: OrchestrationThreadActivity = {
+      ...makeUsageLimitsActivity("limits-broken", []),
+      payload: { provider: "claudeAgent" },
+    };
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 7,
+      thread: makeThread([staleSession, weekly, malformed, latestSession, otherTurn]),
+    });
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      weekly.id,
+      malformed.id,
+      latestSession.id,
+      otherTurn.id,
+    ]);
+  });
+});

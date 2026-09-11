@@ -22,6 +22,7 @@ import {
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -252,6 +253,249 @@ function buildContextWindowActivityPayload(
     return undefined;
   }
   return event.payload.usage;
+}
+
+// --------------------------------------------------------------------------
+// Usage limits (account rate limits)
+// --------------------------------------------------------------------------
+
+export type UsageLimitStatus = "ok" | "warning" | "limited";
+
+export interface UsageLimitWindowPayload {
+  /** Provider window identifier, e.g. `five_hour`, `seven_day`, `primary`. */
+  readonly id: string;
+  /** Percent of the window consumed, clamped to 0..100. */
+  readonly usedPercent: number;
+  /** ISO timestamp when the window resets, when the provider reports one. */
+  readonly resetsAt: string | null;
+  /** Window length in minutes, when known. */
+  readonly windowDurationMins: number | null;
+}
+
+/**
+ * Provider-agnostic shape of a `usage-limits.updated` activity payload. Both
+ * clients derive the composer meter from it, so the field set is the contract
+ * even though the activity payload is typed `unknown` on the wire.
+ */
+export interface UsageLimitsActivityPayload {
+  readonly provider: string;
+  readonly status: UsageLimitStatus;
+  readonly windows: ReadonlyArray<UsageLimitWindowPayload>;
+  readonly planType?: string;
+  readonly credits?: {
+    readonly hasCredits: boolean;
+    readonly unlimited: boolean;
+    readonly balance: string | null;
+  };
+  readonly overage?: {
+    readonly status: UsageLimitStatus;
+    readonly inUse: boolean;
+    readonly resetsAt: string | null;
+    readonly disabledReason: string | null;
+  };
+  readonly spendLimit?: {
+    readonly used: string;
+    readonly limit: string;
+    readonly remainingPercent: number;
+    readonly resetsAt: string | null;
+  };
+  readonly limitReason?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+/**
+ * Providers report reset instants as unix seconds; tolerate milliseconds too
+ * so a future unit change degrades to a correct timestamp instead of 1970.
+ */
+function unixTimestampToIso(value: unknown): string | null {
+  const numeric = asFiniteNumber(value);
+  if (numeric === null || numeric <= 0) {
+    return null;
+  }
+  const millis = numeric > 1e12 ? numeric : numeric * 1000;
+  return Option.match(DateTime.make(millis), {
+    onNone: () => null,
+    onSome: (date) => DateTime.formatIso(date),
+  });
+}
+
+function claudeRateLimitStatus(value: unknown): UsageLimitStatus | null {
+  switch (value) {
+    case "allowed":
+      return "ok";
+    case "allowed_warning":
+      return "warning";
+    case "rejected":
+      return "limited";
+    default:
+      return null;
+  }
+}
+
+const CLAUDE_WINDOW_DURATION_MINS: Record<string, number> = {
+  five_hour: 5 * 60,
+  seven_day: 7 * 24 * 60,
+  seven_day_opus: 7 * 24 * 60,
+  seven_day_sonnet: 7 * 24 * 60,
+};
+
+/**
+ * Claude's `rate_limit_event` carries a single window per event; the clients
+ * merge windows across activities. `utilization` is a 0..1 fraction; values
+ * above 1 are treated as an already-percent figure so either unit renders.
+ */
+function buildClaudeUsageLimitsPayload(
+  provider: string,
+  message: Record<string, unknown>,
+): UsageLimitsActivityPayload | undefined {
+  const info = asRecord(message.rate_limit_info) ?? message;
+  const status = claudeRateLimitStatus(info.status);
+  if (!status) {
+    return undefined;
+  }
+
+  const windows: UsageLimitWindowPayload[] = [];
+  const utilization = asFiniteNumber(info.utilization);
+  const windowId = asNonEmptyString(info.rateLimitType);
+  if (utilization !== null && windowId && windowId !== "overage") {
+    windows.push({
+      id: windowId,
+      usedPercent: clampPercent(utilization <= 1 ? utilization * 100 : utilization),
+      resetsAt: unixTimestampToIso(info.resetsAt),
+      windowDurationMins: CLAUDE_WINDOW_DURATION_MINS[windowId] ?? null,
+    });
+  }
+
+  const overageStatus = claudeRateLimitStatus(info.overageStatus);
+  const overage =
+    overageStatus !== null
+      ? {
+          status: overageStatus,
+          inUse: info.isUsingOverage === true || info.overageInUse === true,
+          resetsAt: unixTimestampToIso(info.overageResetsAt),
+          disabledReason: asNonEmptyString(info.overageDisabledReason),
+        }
+      : undefined;
+
+  if (windows.length === 0 && status === "ok" && !overage) {
+    return undefined;
+  }
+
+  return {
+    provider,
+    status,
+    windows,
+    ...(overage ? { overage } : {}),
+  };
+}
+
+function codexRateLimitWindow(id: string, value: unknown): UsageLimitWindowPayload | null {
+  const window = asRecord(value);
+  const usedPercent = asFiniteNumber(window?.usedPercent);
+  if (!window || usedPercent === null) {
+    return null;
+  }
+  return {
+    id,
+    usedPercent: clampPercent(usedPercent),
+    resetsAt: unixTimestampToIso(window.resetsAt),
+    windowDurationMins: asFiniteNumber(window.windowDurationMins),
+  };
+}
+
+/**
+ * Codex's `account/rateLimits/updated` snapshot reports both windows at once
+ * plus plan/credit context. The adapter forwards the notification params, so
+ * the snapshot sits under `rateLimits`; a bare snapshot is accepted as well.
+ */
+function buildCodexUsageLimitsPayload(
+  provider: string,
+  params: Record<string, unknown>,
+): UsageLimitsActivityPayload | undefined {
+  const snapshot = asRecord(params.rateLimits) ?? params;
+  const windows = [
+    codexRateLimitWindow("primary", snapshot.primary),
+    codexRateLimitWindow("secondary", snapshot.secondary),
+  ].filter((window): window is UsageLimitWindowPayload => window !== null);
+
+  const limitReason = asNonEmptyString(snapshot.rateLimitReachedType);
+  const spendControlReached = snapshot.spendControlReached === true;
+  const creditsRecord = asRecord(snapshot.credits);
+  const credits =
+    creditsRecord && typeof creditsRecord.hasCredits === "boolean"
+      ? {
+          hasCredits: creditsRecord.hasCredits,
+          unlimited: creditsRecord.unlimited === true,
+          balance: asNonEmptyString(creditsRecord.balance),
+        }
+      : undefined;
+  const spendLimitRecord = asRecord(snapshot.individualLimit);
+  const spendLimitRemaining = asFiniteNumber(spendLimitRecord?.remainingPercent);
+  const spendLimit =
+    spendLimitRecord && spendLimitRemaining !== null
+      ? {
+          used: asNonEmptyString(spendLimitRecord.used) ?? "0",
+          limit: asNonEmptyString(spendLimitRecord.limit) ?? "0",
+          remainingPercent: clampPercent(spendLimitRemaining),
+          resetsAt: unixTimestampToIso(spendLimitRecord.resetsAt),
+        }
+      : undefined;
+
+  if (windows.length === 0 && !limitReason && !spendControlReached && !credits) {
+    return undefined;
+  }
+
+  const highestUsedPercent = windows.reduce(
+    (highest, window) => Math.max(highest, window.usedPercent),
+    0,
+  );
+  const status: UsageLimitStatus =
+    limitReason || spendControlReached ? "limited" : highestUsedPercent >= 90 ? "warning" : "ok";
+  const planType = asNonEmptyString(snapshot.planType);
+
+  return {
+    provider,
+    status,
+    windows,
+    ...(planType ? { planType } : {}),
+    ...(credits ? { credits } : {}),
+    ...(spendLimit ? { spendLimit } : {}),
+    ...(limitReason ? { limitReason } : {}),
+    ...(spendControlReached && !limitReason ? { limitReason: "spend_control_reached" } : {}),
+  };
+}
+
+export function buildUsageLimitsActivityPayload(
+  event: ProviderRuntimeEvent,
+): UsageLimitsActivityPayload | undefined {
+  if (event.type !== "account.rate-limits.updated") {
+    return undefined;
+  }
+  const rateLimits = asRecord(event.payload.rateLimits);
+  if (!rateLimits) {
+    return undefined;
+  }
+  if (rateLimits.type === "rate_limit_event" || "rate_limit_info" in rateLimits) {
+    return buildClaudeUsageLimitsPayload(event.provider, rateLimits);
+  }
+  return buildCodexUsageLimitsPayload(event.provider, rateLimits);
 }
 
 function normalizeRuntimeTurnState(
@@ -774,6 +1018,26 @@ export function runtimeEventToActivities(
           tone: "info",
           kind: "context-window.updated",
           summary: "Context window updated",
+          payload,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "account.rate-limits.updated": {
+      const payload = buildUsageLimitsActivityPayload(event);
+      if (!payload) {
+        return [];
+      }
+
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "usage-limits.updated",
+          summary: "Usage limits updated",
           payload,
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

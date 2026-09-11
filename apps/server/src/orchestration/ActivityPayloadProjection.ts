@@ -366,6 +366,54 @@ function dropStaleContextWindowActivities(
 }
 
 /**
+ * Identity of a `usage-limits.updated` row: the set of provider windows it
+ * carries. Claude reports one window per event (five-hour, seven-day, ...) so
+ * rows for different windows must coexist, while a newer row for the same
+ * window set supersedes the older one. Mirrors `usageLimitsActivityKey` in
+ * client-runtime's `threadReducer`. Null for malformed rows, which pass
+ * through untouched.
+ */
+function usageLimitsActivityKey(activity: OrchestrationThreadActivity): string | null {
+  if (activity.kind !== "usage-limits.updated") {
+    return null;
+  }
+  const payload = asRecord(activity.payload);
+  if (!payload || !Array.isArray(payload.windows)) {
+    return null;
+  }
+  const ids = payload.windows
+    .map((window) => asTrimmedString(asRecord(window)?.id))
+    .filter((id): id is string => id !== null)
+    .sort();
+  return `${asTrimmedString(payload.provider) ?? ""}|${ids.join(",")}`;
+}
+
+/**
+ * Same retention rule as `dropStaleContextWindowActivities`, keyed per turn
+ * and per window set: the meter only needs the newest row for each window.
+ */
+function dropStaleUsageLimitsActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  const latestIndexByKey = new Map<string, number>();
+  const keys: Array<string | null> = [];
+  for (let index = 0; index < activities.length; index += 1) {
+    const key = usageLimitsActivityKey(activities[index]!);
+    keys.push(key);
+    if (key !== null) {
+      latestIndexByKey.set(`${activities[index]!.turnId ?? ""}|${key}`, index);
+    }
+  }
+  if (latestIndexByKey.size === 0) {
+    return activities;
+  }
+  return activities.filter((activity, index) => {
+    const key = keys[index];
+    return key === null || latestIndexByKey.get(`${activity.turnId ?? ""}|${key}`) === index;
+  });
+}
+
+/**
  * Identity both clients use to fold a tool lifecycle row into the call it
  * belongs to (`deriveToolLifecycleCollapseKey` in web's `session-logic` and
  * mobile's `threadActivity`): an explicit `data.toolCallId` when the adapter
@@ -474,7 +522,9 @@ export function projectThreadDetailSnapshot(
     thread: {
       ...snapshot.thread,
       activities: dropSupersededToolUpdatedActivities(
-        dropStaleContextWindowActivities(snapshot.thread.activities),
+        dropStaleUsageLimitsActivities(
+          dropStaleContextWindowActivities(snapshot.thread.activities),
+        ),
       ).map(projectActivityPayload),
     },
   };

@@ -82,3 +82,124 @@ describe("runtimeEventToActivities task progress", () => {
     expect(usagePayload).not.toHaveProperty("status");
   });
 });
+
+describe("runtimeEventToActivities usage limits", () => {
+  it("normalizes a Claude rate_limit_event into a usage-limits activity", () => {
+    const activities = runtimeEventToActivities({
+      ...base,
+      provider: ProviderDriverKind.make("claudeAgent"),
+      type: "account.rate-limits.updated",
+      eventId: EventId.make("evt-claude-limits"),
+      payload: {
+        rateLimits: {
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed_warning",
+            rateLimitType: "five_hour",
+            utilization: 0.82,
+            resetsAt: 1_785_000_000,
+            overageStatus: "allowed",
+            isUsingOverage: false,
+          },
+          uuid: "uuid-1",
+          session_id: "session-1",
+        },
+      },
+    } satisfies ProviderRuntimeEvent);
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      kind: "usage-limits.updated",
+      tone: "info",
+      summary: "Usage limits updated",
+      payload: {
+        provider: "claudeAgent",
+        status: "warning",
+        windows: [
+          {
+            id: "five_hour",
+            usedPercent: 82,
+            resetsAt: "2026-07-25T17:20:00.000Z",
+            windowDurationMins: 300,
+          },
+        ],
+        overage: { status: "ok", inUse: false, resetsAt: null, disabledReason: null },
+      },
+    });
+  });
+
+  it("normalizes a Codex rate limit snapshot with both windows and plan context", () => {
+    const activities = runtimeEventToActivities({
+      ...base,
+      type: "account.rate-limits.updated",
+      eventId: EventId.make("evt-codex-limits"),
+      payload: {
+        rateLimits: {
+          rateLimits: {
+            planType: "plus",
+            primary: { usedPercent: 12, resetsAt: 1_785_000_000, windowDurationMins: 300 },
+            secondary: { usedPercent: 47, resetsAt: 1_785_400_000, windowDurationMins: 10_080 },
+            credits: { hasCredits: true, unlimited: false, balance: "12.50" },
+            rateLimitReachedType: null,
+            spendControlReached: false,
+          },
+        },
+      },
+    } satisfies ProviderRuntimeEvent);
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]?.payload).toEqual({
+      provider: "codex",
+      status: "ok",
+      windows: [
+        {
+          id: "primary",
+          usedPercent: 12,
+          resetsAt: "2026-07-25T17:20:00.000Z",
+          windowDurationMins: 300,
+        },
+        {
+          id: "secondary",
+          usedPercent: 47,
+          resetsAt: "2026-07-30T08:26:40.000Z",
+          windowDurationMins: 10_080,
+        },
+      ],
+      planType: "plus",
+      credits: { hasCredits: true, unlimited: false, balance: "12.50" },
+    });
+  });
+
+  it("marks Codex snapshots limited when a limit has been reached", () => {
+    const activities = runtimeEventToActivities({
+      ...base,
+      type: "account.rate-limits.updated",
+      eventId: EventId.make("evt-codex-limited"),
+      payload: {
+        rateLimits: {
+          rateLimits: {
+            primary: { usedPercent: 100, resetsAt: null, windowDurationMins: 300 },
+            rateLimitReachedType: "rate_limit_reached",
+          },
+        },
+      },
+    } satisfies ProviderRuntimeEvent);
+
+    expect(activities[0]?.payload).toMatchObject({
+      status: "limited",
+      limitReason: "rate_limit_reached",
+      windows: [{ id: "primary", usedPercent: 100, resetsAt: null }],
+    });
+  });
+
+  it("drops rate limit events that carry nothing to display", () => {
+    const activities = runtimeEventToActivities({
+      ...base,
+      type: "account.rate-limits.updated",
+      eventId: EventId.make("evt-empty-limits"),
+      payload: { rateLimits: { rateLimits: {} } },
+    } satisfies ProviderRuntimeEvent);
+
+    expect(activities).toEqual([]);
+  });
+});

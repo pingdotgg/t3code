@@ -54,6 +54,34 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
 }
 
 /**
+ * Identity of a `usage-limits.updated` row: provider plus the set of windows
+ * it carries. Claude reports one window per event, so rows for different
+ * windows coexist while a newer row for the same window set supersedes the
+ * older one. Mirrors the server's snapshot-side `usageLimitsActivityKey`.
+ */
+function usageLimitsActivityKey(activity: OrchestrationThreadActivity): string | null {
+  if (activity.kind !== "usage-limits.updated") {
+    return null;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  if (!payload || !Array.isArray(payload.windows)) {
+    return null;
+  }
+  const ids = payload.windows
+    .map((window) => {
+      const id = window && typeof window === "object" ? (window as { id?: unknown }).id : null;
+      return typeof id === "string" ? id.trim() : "";
+    })
+    .filter((id) => id.length > 0)
+    .sort();
+  const provider = typeof payload.provider === "string" ? payload.provider : "";
+  return `${provider}|${ids.join(",")}`;
+}
+
+/**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
  * the updated thread, a deletion signal, or an "unchanged" marker when the
  * event doesn't affect this thread.
@@ -571,6 +599,7 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      const usageLimitsKey = usageLimitsActivityKey(activity);
       const activities = pipe(
         thread.activities,
         Arr.filter(
@@ -580,6 +609,11 @@ export function applyThreadDetailEvent(
               supersedesContextWindow &&
               entry.turnId === activity.turnId &&
               isResolvableContextWindowActivity(entry)
+            ) &&
+            !(
+              usageLimitsKey !== null &&
+              entry.turnId === activity.turnId &&
+              usageLimitsActivityKey(entry) === usageLimitsKey
             ),
         ),
         Arr.append(activity),

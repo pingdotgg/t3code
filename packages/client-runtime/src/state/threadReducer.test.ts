@@ -902,3 +902,58 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 });
+
+describe("applyThreadDetailEvent usage-limits supersession", () => {
+  const usageLimitsActivity = (id: string, sequence: number, windows: ReadonlyArray<string>) => ({
+    id: EventId.make(id),
+    tone: "info" as const,
+    kind: "usage-limits.updated",
+    summary: "Usage limits updated",
+    payload: {
+      provider: "claudeAgent",
+      status: "ok",
+      windows: windows.map((windowId) => ({ id: windowId, usedPercent: 5 })),
+    },
+    turnId: TurnId.make("turn-1"),
+    sequence,
+    createdAt: "2026-04-01T11:00:00.000Z",
+  });
+
+  it("replaces the same-turn row for the same window set only", () => {
+    const existingActivities = [
+      usageLimitsActivity("limits-session-1", 1, ["five_hour"]),
+      usageLimitsActivity("limits-weekly", 2, ["seven_day"]),
+      {
+        ...usageLimitsActivity("limits-other-turn", 3, ["five_hour"]),
+        turnId: TurnId.make("turn-0"),
+      },
+    ];
+
+    const result = applyThreadDetailEvent(
+      { ...baseThread, activities: existingActivities },
+      {
+        ...baseEventFields,
+        sequence: 30,
+        occurredAt: "2026-04-01T11:05:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: usageLimitsActivity("limits-session-2", 4, ["five_hour"]),
+        },
+      },
+    );
+
+    expect(result.kind).toBe("updated");
+    if (result.kind === "updated") {
+      // Sorted by sequence: the weekly row and the other turn's session row
+      // survive, the same-turn session row is superseded.
+      expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+        "limits-weekly",
+        "limits-other-turn",
+        "limits-session-2",
+      ]);
+    }
+  });
+});
