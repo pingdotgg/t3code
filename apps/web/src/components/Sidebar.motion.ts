@@ -1,3 +1,5 @@
+import { sidebarPinPath } from "../sidebarPinPath";
+
 const motionTiming = { duration: 150, easing: "ease-out" };
 // A project filter change or a bulk snooze swaps a large part of the list at
 // once. Fades are the expensive part: every removed row gets a deep clone and
@@ -6,7 +8,7 @@ const motionTiming = { duration: 150, easing: "ease-out" };
 // so only the fade count decides whether an update animates.
 const MAX_FADED_ROWS_PER_UPDATE = 40;
 
-type RowPosition = { top: number; left: number; width: number; height: number };
+type RowPosition = { top: number; left: number; width: number; height: number; pinned: boolean };
 
 function progress(animation: Animation) {
   return animation.playState === "finished"
@@ -22,7 +24,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
     "(prefers-reduced-motion: reduce)",
   );
-  const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
+  const running = new Map<
+    HTMLElement,
+    {
+      animation: Animation;
+      path: { x: number; y: number; offset: number }[];
+      pinVisual: boolean;
+    }
+  >();
   const entering = new Map<HTMLElement, Animation>();
   const exiting = new Map<HTMLElement, Animation>();
   // Visual tops at drag release, relative to the list, so the release
@@ -31,7 +40,19 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
 
   const remainingOffset = (node: HTMLElement) => {
     const current = running.get(node);
-    return current ? current.offset * (1 - progress(current.animation)) : 0;
+    if (!current) return { x: 0, y: 0 };
+    const elapsed = progress(current.animation);
+    const afterIndex = current.path.findIndex((point) => point.offset >= elapsed);
+    const after = current.path[afterIndex === -1 ? current.path.length - 1 : afterIndex]!;
+    const before = current.path[Math.max(0, afterIndex - 1)]!;
+    const fraction =
+      after.offset === before.offset
+        ? 0
+        : (elapsed - before.offset) / (after.offset - before.offset);
+    return {
+      x: before.x + (after.x - before.x) * fraction,
+      y: before.y + (after.y - before.y) * fraction,
+    };
   };
   const clearFades = () => {
     for (const animation of [...entering.values(), ...exiting.values()]) animation.cancel();
@@ -57,10 +78,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     }
     clone.setAttribute("aria-hidden", "true");
     clone.inert = true;
+    const offset = remainingOffset(node);
     Object.assign(clone.style, {
       position: "absolute",
-      top: `${position.top + remainingOffset(node)}px`,
-      left: `${position.left}px`,
+      top: `${position.top + offset.y}px`,
+      left: `${position.left + offset.x}px`,
       width: `${position.width}px`,
       height: `${position.height}px`,
       margin: "0",
@@ -97,14 +119,26 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     positions = null;
     released = null;
   };
-  const move = (node: HTMLElement, offset: number) => {
+  const move = (node: HTMLElement, offset: number, pinning = false, offsetX = 0) => {
+    const pinVisual = pinning || (running.get(node)?.pinVisual ?? false);
     cancel(node);
-    if (offset === 0) return;
+    if (offset === 0 && offsetX === 0) return;
+    const path = pinning
+      ? sidebarPinPath(offsetX, offset)
+      : [
+          { x: offsetX, y: offset, offset: 0 },
+          { x: 0, y: 0, offset: 1 },
+        ];
+    // A pinning row stays opaque and above its neighbours until it settles.
     const animation = node.animate(
-      [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],
-      motionTiming,
+      path.map(({ x, y, offset }) => ({
+        transform: `translate(${x}px, ${y}px)`,
+        offset,
+        ...(pinVisual ? { zIndex: 20, backgroundColor: "var(--sidebar)" } : {}),
+      })),
+      pinning ? { duration: 550, easing: "cubic-bezier(.32,0,.18,1)" } : motionTiming,
     );
-    running.set(node, { animation, offset });
+    running.set(node, { animation, path, pinVisual });
     animation.addEventListener(
       "finish",
       () => {
@@ -127,6 +161,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
               left: node.offsetLeft,
               width: node.offsetWidth,
               height: node.offsetHeight,
+              pinned: node.getAttribute("data-thread-pinned") === "true",
             },
           ]),
       );
@@ -177,9 +212,16 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
             continue;
           }
           if (previousTop === position.top) continue;
-          // Computed progress includes the effect's easing. Only our own
-          // translate is carried forward; dnd-kit's transforms are never read.
-          move(node, previousTop + remainingOffset(node) - position.top);
+          // Interpolate our sampled path at the effect's eased progress, so
+          // an interrupted pin preserves its curved XY position, not a linear Y.
+          // dnd-kit's transforms are never read.
+          const offset = remainingOffset(node);
+          move(
+            node,
+            previousTop + offset.y - position.top,
+            position.pinned && !positions?.get(node)?.pinned,
+            offset.x,
+          );
         }
       }
       if (released !== null) {
