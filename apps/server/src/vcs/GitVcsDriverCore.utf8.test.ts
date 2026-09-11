@@ -140,3 +140,60 @@ it.effect("bounds the combined working-tree review preview to one MiB", () =>
     assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
   }).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("bounds the fallback working-tree review preview to one MiB", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    const pathService = yield* Path.Path;
+    const trackedLineCount = 30_000;
+    const original = Array.from(
+      { length: trackedLineCount },
+      (_, index) => `before-${index.toString().padStart(5, "0")}\n`,
+    ).join("");
+    const updated = Array.from(
+      { length: trackedLineCount },
+      (_, index) => `after-${index.toString().padStart(5, "0")}\n`,
+    ).join("");
+    const untracked = Array.from(
+      { length: 30_000 },
+      (_, index) => `untracked-${index.toString().padStart(5, "0")}\n`,
+    ).join("");
+
+    yield* writeTextFile(cwd, "large-tracked.txt", original);
+    yield* git(cwd, ["add", "large-tracked.txt"]);
+    yield* git(cwd, ["commit", "-m", "add fallback fixture"]);
+    yield* writeTextFile(cwd, "large-tracked.txt", updated);
+    yield* writeTextFile(cwd, "large-untracked.txt", untracked);
+
+    // Force temporary-index creation to fail so getReviewDiffPreview exercises the
+    // tracked + untracked fallback assembly rather than the unified diff path.
+    const blockerPath = pathService.join(cwd, "tmp-blocker");
+    yield* writeTextFile(cwd, "tmp-blocker", "not a directory\n");
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const preview = yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.TMPDIR;
+        process.env.TMPDIR = blockerPath;
+        return previous;
+      }),
+      () => driver.getReviewDiffPreview({ cwd }),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) {
+            delete process.env.TMPDIR;
+          } else {
+            process.env.TMPDIR = previous;
+          }
+        }),
+    );
+    const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+    assert.isDefined(source);
+    assert.isTrue(source.truncated);
+    assert.include(source.diff, "large-tracked.txt");
+    assert.include(source.diff, "large-untracked.txt");
+    assert.notInclude(source.diff, "\uFFFD");
+    assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
+  }).pipe(Effect.provide(TestLayer)),
+);

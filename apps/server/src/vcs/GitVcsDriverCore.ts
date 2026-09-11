@@ -725,6 +725,26 @@ const collectOutput = Effect.fnUntraced(function* (
   };
 });
 
+const boundReviewDiffOutput = (
+  diff: string,
+  maxOutputBytes: number,
+): { readonly diff: string; readonly truncated: boolean } => {
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(diff);
+  if (encoded.byteLength <= maxOutputBytes) {
+    return { diff, truncated: false };
+  }
+
+  const markerBytes = encoder.encode(OUTPUT_TRUNCATED_MARKER).byteLength;
+  const contentBudget = Math.max(0, maxOutputBytes - markerBytes);
+  const decoder = new TextDecoder();
+  const boundedDiff = decoder.decode(encoded.subarray(0, contentBudget), { stream: true });
+  return {
+    diff: `${boundedDiff}${OUTPUT_TRUNCATED_MARKER}`,
+    truncated: true,
+  };
+};
+
 export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -2464,12 +2484,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             Effect.orElseSucceed(() => ({ diff: "", truncated: false })),
           ),
         ]).pipe(
-          Effect.map(([tracked, untracked]) => ({
-            diff: [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
+          Effect.map(([tracked, untracked]) => {
+            const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
               .filter((diff) => diff.length > 0)
-              .join("\n"),
-            truncated: tracked.truncated || untracked.truncated,
-          })),
+              .join("\n");
+            const bounded = boundReviewDiffOutput(combinedDiff, REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES);
+            return {
+              diff: bounded.diff,
+              truncated: tracked.truncated || untracked.truncated || bounded.truncated,
+            };
+          }),
         ),
       ),
     );
