@@ -12,6 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as FileSystem from "effect/FileSystem";
 import { TestClock } from "effect/testing";
 import { McpSchema, McpServer } from "effect/unstable/ai";
@@ -53,7 +54,10 @@ const scope: McpInvocationContext.McpInvocationScope = {
   capabilities: new Set(["threads"]),
   issuedAt: 1,
 };
-function makeLayer(db: string) {
+function makeLayer(
+  db: string,
+  wrapQuery = (query: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape) => query,
+) {
   const orchestration = Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -70,7 +74,12 @@ function makeLayer(db: string) {
   );
   return ThreadsToolkitRegistrationLive.pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
-    Layer.provideMerge(orchestration),
+    Layer.provideMerge(
+      Layer.effect(
+        ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+        Effect.map(ProjectionSnapshotQuery.ProjectionSnapshotQuery, wrapQuery),
+      ).pipe(Layer.provideMerge(orchestration)),
+    ),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-tools-" })),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -123,6 +132,44 @@ const seed = Effect.gen(function* () {
 });
 
 describe("peer thread MCP", () => {
+  it.effect("retries a read when projection changes between shell and detail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-peer-detail-" });
+        let detailReads = 0;
+        let rename = Effect.void;
+        yield* Effect.gen(function* () {
+          yield* seed;
+          const engine = yield* OrchestrationEngineService;
+          rename = engine
+            .dispatch({
+              type: "thread.meta.update",
+              threadId: callerId,
+              commandId: CommandId.make("rename-during-read"),
+              title: "New title",
+            })
+            .pipe(Effect.asVoid, Effect.orDie);
+          const read = result(yield* call("read_thread", { threadId: callerId }));
+          expect(read.thread.title).toBe("New title");
+          expect(read.thread.hasPendingApprovals).toBe(false);
+          expect(detailReads).toBe(2);
+        }).pipe(
+          Effect.provide(
+            makeLayer(`${directory}/state.sqlite`, (query) => ({
+              ...query,
+              getThreadDetailSnapshot: (...args) =>
+                Effect.gen(function* () {
+                  if (++detailReads === 1) yield* rename;
+                  return yield* query.getThreadDetailSnapshot(...args);
+                }),
+            })),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.effect("keeps retry IDs distinct across caller IDs containing delimiters", () =>
     Effect.scoped(
       Effect.gen(function* () {

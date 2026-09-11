@@ -67,10 +67,11 @@ const makeTool = <const N extends string, P extends Schema.Top, S extends Schema
   parameters: P,
   success: S,
   readonly: boolean,
+  destructive = false,
 ) =>
   Tool.make(name, { description, parameters, success, failure, dependencies })
     .annotate(Tool.Readonly, readonly)
-    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Destructive, destructive)
     .annotate(Tool.Idempotent, readonly)
     .annotate(Tool.OpenWorld, false);
 
@@ -158,6 +159,7 @@ export const ThreadsToolkit = Toolkit.make(
     Schema.Struct({ ...mutation, ...target, settled: Schema.Boolean }),
     receipt,
     false,
+    true,
   ),
   makeTool(
     "interrupt_thread",
@@ -165,5 +167,6 @@ export const ThreadsToolkit = Toolkit.make(
     Schema.Struct({ ...mutation, ...target }),
     receipt,
     false,
+    true,
   ),
 );
