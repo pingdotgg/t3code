@@ -11,6 +11,7 @@ import serverPackageJson from "../../apps/server/package.json" with { type: "jso
 
 import {
   CLI_RUNTIME_EXTERNAL_PREFIXES,
+  findEsmImportsOfExternalPackages,
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
@@ -279,5 +280,36 @@ var x = 1;
     const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
     assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
+  });
+});
+
+// The single-executable build can only `import` built-ins. A file-backed
+// import of an external package passes every bundler check and the regular
+// `node dist/bin.mjs` path, then fails inside the executable, so the scan
+// reads the emitted module graph instead.
+describe("findEsmImportsOfExternalPackages", () => {
+  it("flags static and dynamic imports of file-backed packages", () => {
+    const source = [
+      'import { FileFinder } from "@ff-labs/fff-node";',
+      'import * as fs from "fs";',
+      'import { createRequire } from "node:module";',
+      'const pty = () => import("node-pty");',
+      'const local = () => import("./chunk-abc.mjs");',
+    ].join("\n");
+
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), [
+      "@ff-labs/fff-node",
+      "node-pty",
+    ]);
+  });
+
+  it("ignores the bun-only entry points Node never evaluates", () => {
+    const source = 'const bun = () => import("@effect/platform-bun/BunServices");';
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
+  });
+
+  it("does not mistake createRequire calls for imports", () => {
+    const source = 'const { FileFinder } = createRequire(import.meta.url)("@ff-labs/fff-node");';
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
   });
 });
