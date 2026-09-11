@@ -23,6 +23,24 @@ const otherIdentity = {
 };
 
 describe("applyShellStreamEvent", () => {
+  it("updates a thread in place without moving its siblings", () => {
+    const threads = ["a", "b", "c"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) }));
+    const updated = { ...threads[1]!, title: "Streaming" };
+    const next = applyShellStreamEvent(
+      { ...v2ShellSnapshot, threads },
+      {
+        kind: "thread.updated",
+        sequence: 1,
+        location: "active",
+        thread: updated,
+      },
+    );
+    expect(next.threads.map((thread) => thread.id)).toEqual(["a", "b", "c"]);
+    expect(next.threads[0]).toBe(threads[0]);
+    expect(next.threads[1]).toBe(updated);
+    expect(next.threads[2]).toBe(threads[2]);
+  });
+
   it("ignores stale project updates without mutating the snapshot", () => {
     const snapshotWithProject = {
       ...v2ShellSnapshot,

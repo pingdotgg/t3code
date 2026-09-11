@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, OrchestrationV2ThreadProjection, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
@@ -27,7 +28,11 @@ export function useThreadDetail(target: ThreadDetailTarget) {
  * creation has not reached the server yet.
  */
 export function useSelectedThreadDetailState() {
-  return useThreadSelection().selectedThreadDetailState;
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useEnvironmentThread(
+    selectedThreadDetailRef?.environmentId ?? null,
+    selectedThreadDetailRef?.threadId ?? null,
+  );
 }
 
 export function useThreadProjection(target: ThreadDetailTarget): EnvironmentThread | null {
@@ -42,10 +47,10 @@ export function useThreadProjection(target: ThreadDetailTarget): EnvironmentThre
 }
 
 export function useSelectedThreadProjection(): EnvironmentThread | null {
-  const { selectedThread } = useThreadSelection();
+  const { selectedThreadDetailRef } = useThreadSelection();
   return useThreadProjection({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+    environmentId: selectedThreadDetailRef?.environmentId ?? null,
+    threadId: selectedThreadDetailRef?.threadId ?? null,
   });
 }
 
@@ -63,9 +68,30 @@ export function useThreadVisibleTurnItems(
 }
 
 export function useSelectedThreadVisibleTurnItems(): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  const { selectedThread } = useThreadSelection();
+  const { selectedThreadDetailRef } = useThreadSelection();
   return useThreadVisibleTurnItems({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+    environmentId: selectedThreadDetailRef?.environmentId ?? null,
+    threadId: selectedThreadDetailRef?.threadId ?? null,
   });
+}
+
+const EMPTY_WORKTREE_PATH_ATOM = Atom.make<string | null>(null);
+const EMPTY_PENDING_REQUESTS_ATOM = Atom.make<PendingThreadRequests | null>(null);
+
+export function useSelectedThreadWorktreePath() {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_WORKTREE_PATH_ATOM
+      : environmentThreadDetails.worktreePathAtom(selectedThreadDetailRef),
+  );
+}
+
+export function useSelectedThreadPendingRequests() {
+  const { selectedThreadDetailRef } = useThreadSelection();
+  return useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_PENDING_REQUESTS_ATOM
+      : environmentThreadDetails.pendingRequestsAtom(selectedThreadDetailRef),
+  );
 }

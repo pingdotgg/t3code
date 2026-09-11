@@ -82,6 +82,23 @@ export function resolveThreadProviderSession(projection: Projection): ProviderSe
   );
 }
 
+/** Automatic completion/notification runs are not messages in the user's queue. */
+export function getUserQueuedThreadRuns(
+  projection: Pick<Projection, "runs" | "messages">,
+): ReadonlyArray<Run> {
+  const automaticCompletionMessageIds = new Set(
+    projection.messages
+      .filter(
+        (message) =>
+          message.delegatedCompletion !== undefined || message.notification !== undefined,
+      )
+      .map((message) => message.id),
+  );
+  return projection.runs.filter(
+    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+  );
+}
+
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
@@ -92,18 +109,8 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
-  const automaticCompletionMessageIds = new Set(
-    projection.messages
-      .filter(
-        (message) =>
-          message.delegatedCompletion !== undefined || message.notification !== undefined,
-      )
-      .map((message) => message.id),
-  );
   const queuedRuns = copySorted(
-    projection.runs.filter(
-      (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
-    ),
+    getUserQueuedThreadRuns(projection),
     (left, right) =>
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
