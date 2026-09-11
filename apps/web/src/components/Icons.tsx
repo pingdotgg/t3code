@@ -681,6 +681,12 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
+export const JcodeIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 180 180" fill="none">
+    <image href="/jcode-icon.png" width="180" height="180" />
+  </svg>
+);
+
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g clipPath="url(#opencode__clip0_1311_94969)">

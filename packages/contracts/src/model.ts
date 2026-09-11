@@ -148,6 +148,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+export const JCODE_DRIVER_KIND = ProviderDriverKind.make("jcode");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -173,6 +174,8 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  // "auto": pick whatever the running Jcode session picks.
+  [JCODE_DRIVER_KIND]: "auto",
 };
 
 /** Per-provider text generation model defaults. */
@@ -184,6 +187,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [JCODE_DRIVER_KIND]: "auto",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<

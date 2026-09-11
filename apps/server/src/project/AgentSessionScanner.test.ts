@@ -71,6 +71,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
 interface ScannerTestInput {
   readonly claudeHomePath: string;
   readonly codexHomePath: string;
+  readonly jcodeHomePath?: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
@@ -85,6 +86,13 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
           providers: {
             claudeAgent: { homePath: input.claudeHomePath },
             codex: { homePath: input.codexHomePath },
+            jcode: {
+              // Jcode opts in from Settings like Cursor and Grok; the
+              // scanner only touches enabled providers. Default the home to
+              // a temp dir so tests never read the real ~/.jcode.
+              enabled: true,
+              homePath: input.jcodeHomePath ?? input.claudeHomePath,
+            },
           },
           ...(input.providerInstances === undefined
             ? {}
@@ -148,6 +156,34 @@ const claudeSessionLine = (cwd: string) =>
 /** Codex rollout line: session metadata is nested under `payload`. */
 const codexRolloutLine = (cwd: string) =>
   `${JSON.stringify({ timestamp: "2026-01-01T00:00:00.000Z", type: "session_meta", payload: { id: "r1", cwd } })}\n`;
+
+/** Jcode session file: one JSON object with everything at the top level. */
+const jcodeSessionFile = (cwd: string, options?: { id?: string; model?: string | null }) =>
+  JSON.stringify({
+    id: options?.id ?? "session_fixture_1",
+    title: null,
+    model: options?.model ?? null,
+    working_dir: cwd,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T01:00:00.000Z",
+    messages: [
+      {
+        id: "m1",
+        role: "user",
+        content: [{ type: "text", text: "Hello from jcode" }],
+        timestamp: "2026-01-01T00:00:01.000Z",
+      },
+      {
+        id: "m2",
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking" },
+          { type: "text", text: "Hi back" },
+        ],
+        timestamp: "2026-01-01T00:00:05.000Z",
+      },
+    ],
+  });
 
 const encodeTranscriptRecord = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -276,6 +312,96 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             alreadyImported: false,
             git: null,
           },
+        ]);
+      }),
+    );
+
+    it.effect("groups Jcode session objects by cwd", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const jcodeHomePath = yield* makeTempDir("t3code-jcode-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const otherWorkspace = yield* makeTempDir("t3code-workspace-other-");
+
+        yield* writeTranscript({
+          filePath: path.join(jcodeHomePath, "sessions", "session_one.json"),
+          contents: jcodeSessionFile(workspace),
+          mtimeMs: Date.parse("2026-02-01T10:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(jcodeHomePath, "sessions", "session_two.json"),
+          contents: jcodeSessionFile(workspace, { id: "session_fixture_2" }),
+          mtimeMs: Date.parse("2026-02-02T10:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(jcodeHomePath, "sessions", "session_three.json"),
+          contents: jcodeSessionFile(otherWorkspace, { id: "session_fixture_3" }),
+          mtimeMs: Date.parse("2026-02-03T10:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(jcodeHomePath, "sessions", "not-a-session.txt"),
+          contents: "ignored",
+          mtimeMs: Date.parse("2026-02-04T10:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, jcodeHomePath });
+
+        expect(result.candidates).toEqual([
+          {
+            path: otherWorkspace,
+            title: path.basename(otherWorkspace),
+            sources: ["jcode"],
+            threadCount: 1,
+            lastActiveAt: "2026-02-03T10:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+          {
+            path: workspace,
+            title: path.basename(workspace),
+            sources: ["jcode"],
+            threadCount: 2,
+            lastActiveAt: "2026-02-02T10:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("imports a Jcode session thread for its workspace", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-jcode-import-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-jcode-import-codex-");
+        const jcodeHomePath = yield* makeTempDir("t3code-jcode-import-home-");
+        const workspace = yield* makeTempDir("t3code-jcode-import-project-");
+        yield* writeTranscript({
+          filePath: path.join(jcodeHomePath, "sessions", "session_import.json"),
+          contents: jcodeSessionFile(workspace, { model: "omen-alpha" }),
+          mtimeMs: nowMs - 1_000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          jcodeHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads).toHaveLength(1);
+        expect(threads[0]).toMatchObject({
+          source: "jcode",
+          providerSessionId: "session_fixture_1",
+          model: "omen-alpha",
+        });
+        expect(threads[0]?.messages.map((message) => message.text)).toEqual([
+          "Hello from jcode",
+          "Hi back",
         ]);
       }),
     );
@@ -3212,5 +3338,80 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]?.text).toBe("Keep this prompt");
     expect(thread?.messages.at(-1)?.text).toBe("Assistant update 249");
+  });
+
+  it("keeps jcode prompts and replies while dropping tools, reasoning, and context blobs", () => {
+    const session = {
+      id: "session_test_123",
+      title: null,
+      model: "omen-alpha",
+      working_dir: "/tmp/somewhere",
+      created_at: "2026-08-24T10:00:00.000Z",
+      updated_at: "2026-08-24T11:00:00.000Z",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "<system-reminder># Session Context</system-reminder>" }],
+          timestamp: "2026-08-24T10:00:00.000Z",
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Fix the login flow" }],
+          timestamp: "2026-08-24T10:00:01.000Z",
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "thinking" },
+            { type: "tool_use", id: "call_1", name: "bash", input: {} },
+            { type: "text", text: "Updated the login page" },
+          ],
+          timestamp: "2026-08-24T10:00:05.000Z",
+        },
+      ],
+    };
+
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: JSON.stringify(session),
+      source: "jcode",
+      providerInstanceId: ProviderInstanceId.make("jcode"),
+      fallbackSessionId: "unused",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toMatchObject({
+      providerSessionId: "session_test_123",
+      title: "Fix the login flow",
+      model: "omen-alpha",
+      messages: [
+        { role: "user", text: "Fix the login flow" },
+        { role: "assistant", text: "Updated the login page" },
+      ],
+    });
+  });
+
+  it("skips jcode sessions without a resumable id or visible user text", () => {
+    const session = {
+      id: "",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "Reply" }] }],
+    };
+    expect(
+      AgentSessionScanner.parseAgentSessionTranscript({
+        contents: JSON.stringify(session),
+        source: "jcode",
+        providerInstanceId: ProviderInstanceId.make("jcode"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: 0,
+      }),
+    ).toBeNull();
+    expect(
+      AgentSessionScanner.parseAgentSessionTranscript({
+        contents: "not json",
+        source: "jcode",
+        providerInstanceId: ProviderInstanceId.make("jcode"),
+        fallbackSessionId: "fallback",
+        lastActiveAtMs: 0,
+      }),
+    ).toBeNull();
   });
 });

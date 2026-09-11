@@ -486,3 +486,48 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
 }
 
 export { EMPTY_TOTALS };
+
+/* -------------------------------------------------------------------------- */
+/* Jcode                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parses one jcode session message. Unlike the other providers, jcode keeps
+ * one whole-JSON-object file per session, not one JSON object per line, so
+ * this parser receives a single pre-extracted message record plus the
+ * session's top-level model. `token_usage` sits on assistant messages only.
+ */
+export function parseJcodeMessage(
+  message: unknown,
+  sessionModel: string,
+  sessionId: string,
+): UsageRecord | null {
+  if (typeof message !== "object" || message === null) return null;
+  const record = message as Record<string, unknown>;
+  if (record["role"] !== "assistant") return null;
+
+  const usage = record["token_usage"];
+  if (typeof usage !== "object" || usage === null) return null;
+  const usageRecord = usage as Record<string, unknown>;
+
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+
+  const messageId = typeof record["id"] === "string" ? record["id"] : null;
+  return {
+    provider: "jcode",
+    timestampMs,
+    model: sessionModel,
+    sessionId,
+    totals: {
+      uncachedInputTokens: int(usageRecord["input_tokens"]),
+      cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
+      cacheCreationTokens: 0,
+      outputTokens: int(usageRecord["output_tokens"]),
+      reasoningTokens: 0,
+    },
+    // Jcode transcripts carry no cost figure.
+    reportedCostUsd: null,
+    dedupeKey: messageId === null ? null : `${sessionId}:${messageId}`,
+  };
+}

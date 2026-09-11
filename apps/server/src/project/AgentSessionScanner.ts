@@ -4,7 +4,9 @@
  * Claude Code and Codex both keep a per-session transcript on disk, and each
  * transcript records the directory the session ran in. Reading those `cwd`
  * values gives us the set of directories worth offering as projects during
- * onboarding, without asking the user to browse the filesystem.
+ * onboarding, without asking the user to browse the filesystem. Jcode keeps
+ * one JSON object (not JSONL) per session under `~/.jcode/sessions`, with the
+ * cwd, resumable session ID, title, model, and messages in the same file.
  *
  * The scan is read-only and best-effort: an unreadable home, a malformed
  * transcript, or a directory that has since been deleted is skipped rather
@@ -19,6 +21,7 @@ import {
   AgentSessionScanError,
   ClaudeSettings,
   CodexSettings,
+  JcodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -137,6 +140,10 @@ const TranscriptRecord = Schema.Struct({
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeJcodeSettings = Schema.decodeUnknownOption(JcodeSettings);
+
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const decodeUnknownFromJsonString = Schema.decodeUnknownOption(UnknownFromJsonString);
 const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(TranscriptRecord));
 const decodeTranscriptValue = Schema.decodeUnknownOption(TranscriptRecord);
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
@@ -177,6 +184,35 @@ export type AgentSessionRecentThread =
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Skipped" };
+
+/**
+ * Jcode session files are a single JSON object: `{ id, title, model,
+ * working_dir, messages: [{ role, content, timestamp }], ... }`, where
+ * `content` is Claude-shaped text/tool blocks. Callers courtesy: `readCwd`
+ * still scans line-oriented JSONL for Claude/Codex, so jcode's whole-object
+ * shape has its own extractor below.
+ */
+const JcodeSessionFile = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  title: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(512)))),
+  model: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(256)))),
+  created_at: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+  updated_at: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+  working_dir: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  messages: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        role: Schema.optional(Schema.String),
+        content: Schema.optional(
+          Schema.Union([Schema.String, Schema.Array(TranscriptContentBlock)]),
+        ),
+        timestamp: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
+      }),
+    ),
+  ),
+});
+
+const decodeJcodeSessionFile = Schema.decodeUnknownOption(JcodeSessionFile);
 
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
@@ -283,6 +319,67 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+/**
+ * Jcode writes the whole session as one JSON object rather than JSONL
+ * records. Keep the visible prompt and assistant replies — tool calls,
+ * reasoning, and system-reminder scaffolding stay out of the imported
+ * history — and require the top-level `id` so the thread can resume.
+ */
+function parseJcodeSessionObject(
+  input: AgentSessionTranscriptMetadata,
+  parsedJson: unknown,
+): AgentSessionThread | null {
+  const session = Option.getOrElse(decodeJcodeSessionFile(parsedJson), () => null);
+  if (session === null) return null;
+  const providerSessionId = session.id?.trim() ?? "";
+  if (providerSessionId.length === 0) return null;
+
+  const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
+  const messages: AgentSessionThreadMessage[] = [];
+  let firstUserMessage: AgentSessionThreadMessage | undefined;
+  for (const message of session.messages ?? []) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    const text = extractText(message.content);
+    // Jcode prefixes prompts with a system-reminder context blob that is not
+    // part of what the user typed.
+    const visible = text.replace(/^(<system-reminder>[\s\S]*?<\/system-reminder>\s*)+/, "");
+    if (visible.trim().length === 0) continue;
+    const retained: AgentSessionThreadMessage = {
+      role: message.role,
+      text: visible,
+      createdAt: normalizeTimestamp(message.timestamp, fallbackTimestamp),
+    };
+    if (firstUserMessage === undefined && message.role === "user") {
+      firstUserMessage = retained;
+    }
+    messages.push(retained);
+    if (messages.length > MAX_IMPORTED_MESSAGES) {
+      // The initial prompt pointer survives the window shift: when it slides
+      // out of the retained messages it is re-attached below instead of
+      // discarding a valid session that simply has a long tail.
+      messages.shift();
+    }
+  }
+  if (firstUserMessage === undefined) return null;
+
+  const retainedMessages = messages.includes(firstUserMessage)
+    ? messages
+    : [firstUserMessage, ...messages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+  const derivedTitle = firstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
+
+  return {
+    source: "jcode",
+    providerInstanceId: input.providerInstanceId,
+    providerSessionId,
+    title: session.title?.trim() || (derivedTitle ? derivedTitle : "Imported thread"),
+    model: session.model?.trim() || null,
+    createdAt:
+      retainedMessages[0]?.createdAt ?? normalizeTimestamp(session.created_at, fallbackTimestamp),
+    updatedAt: fallbackTimestamp,
+    messages: retainedMessages,
+  };
+}
+
 /** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
@@ -290,6 +387,10 @@ export function parseAgentSessionTranscript(
   },
   lines = splitTranscriptRecords(input.contents, MAX_IMPORT_RECORDS + 1),
 ): AgentSessionThread | null {
+  if (input.source === "jcode") {
+    const parsedJson = Option.getOrUndefined(decodeUnknownFromJsonString(input.contents));
+    return parsedJson === undefined ? null : parseJcodeSessionObject(input, parsedJson);
+  }
   if (lines.length > MAX_IMPORT_RECORDS) return null;
   const records = lines.flatMap((line) => Option.toArray(decodeTranscriptRecord(line)));
   return parseAgentSessionRecords(input, records);
@@ -562,6 +663,69 @@ function isT3ManagedWorktree(
   );
 }
 
+/**
+ * Jcode session files carry `working_dir` at the top level, so discovery
+ * needs only a bounded prefix read instead of streaming JSONL records.
+ */
+function extractJcodeCwdFromParsed(parsed: unknown): string | null {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const workingDir = (parsed as Record<string, unknown>).working_dir;
+  return typeof workingDir === "string" && workingDir.trim().length > 0 ? workingDir : null;
+}
+
+function extractJcodeCwd(text: string): string | null {
+  return extractJcodeCwdFromParsed(Option.getOrUndefined(decodeUnknownFromJsonString(text)));
+}
+
+/**
+ * Full import read for a jcode session: one bounded file read feeds both the
+ * cwd re-check and the message parse, mirroring the JSONL path's budget
+ * accounting without its line-oriented reader.
+ */
+const MAX_JCODE_IMPORT_BYTES = MAX_IMPORTED_TRANSCRIPT_BYTES;
+const MAX_JCODE_MESSAGES_BYTES = 16 * 1024 * 1024;
+
+interface JcodeParsedThread {
+  readonly thread: AgentSessionThread;
+  readonly cwd: string;
+}
+
+const readAndParseJcodeThread = (
+  fileSystem: FileSystem.FileSystem,
+  filePath: string,
+  providerInstanceId: ProviderInstanceId,
+  mtimeMs: number,
+  size: number,
+): Effect.Effect<JcodeParsedThread | null> =>
+  Effect.gen(function* () {
+    // Only the bounded fixed-size fields matter here, so oversized files are
+    // rejected before any allocation; the post-read length check below stays
+    // as a defense against a file that grew between stat and read.
+    if (size > MAX_JCODE_MESSAGES_BYTES) return null;
+    const contents = yield* fileSystem
+      .readFileString(filePath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (contents === null || contents.length > MAX_JCODE_IMPORT_BYTES) return null;
+    const parsedJson = Option.getOrUndefined(decodeUnknownFromJsonString(contents));
+    if (parsedJson === undefined) return null;
+    const workingDir = extractJcodeCwdFromParsed(parsedJson);
+    if (workingDir === null) return null;
+    // The schema bounds every fixed-size field; oversized files stop here
+    // rather than decoding a huge message body only to discard it.
+    if (contents.length > MAX_JCODE_MESSAGES_BYTES) return null;
+    const thread = parseJcodeSessionObject(
+      {
+        source: "jcode",
+        providerInstanceId,
+        fallbackSessionId: "",
+        lastActiveAtMs: mtimeMs,
+      },
+      parsedJson,
+    );
+    if (thread === null) return null;
+    return { thread, cwd: workingDir } satisfies JcodeParsedThread;
+  });
+
 /** Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes. */
 function extractCwd(line: string): string | null {
   let parsed: unknown;
@@ -727,12 +891,54 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
-  // A large history snapshot can precede session metadata. Read bounded
-  // chunks until a complete record names its cwd or the safety budget ends.
-  const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
+  /**
+   * Jcode session JSON must be parsed whole, so read the file (bounded by the
+   * same metadata budget the JSONL path uses) and pick out `working_dir`.
+   */
+  const readJcodeSessionCwd = Effect.fn("AgentSessionScanner.readJcodeSessionCwd")(function* (
     transcript: TranscriptCandidate,
     budget: MetadataReadBudget,
   ) {
+    if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
+      budget.truncated = true;
+      return null;
+    }
+    budget.operationsRemaining -= 1;
+    // Oversized jcode sessions carry only huge message bodies; the fixed-size
+    // fields the scanner needs are bounded, so skip them instead of parsing.
+    if (transcript.size > MAX_JCODE_MESSAGES_BYTES) {
+      budget.truncated = true;
+      return null;
+    }
+    // JSON.parse needs complete input, and readFileString allocates the whole
+    // file regardless of what we reserve, so the budget must reflect the
+    // actual allocation: reject anything beyond what remains, then reserve
+    // and read the complete file. Files bigger than MAX_JCODE_MESSAGES_BYTES
+    // were already rejected above, so this stays within the import cap too.
+    if (transcript.size > budget.bytesRemaining) {
+      budget.truncated = true;
+      budget.bytesRemaining = 0;
+      return null;
+    }
+    budget.bytesRemaining -= transcript.size;
+    const contents = yield* fileSystem
+      .readFileString(transcript.filePath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (contents === null) return null;
+    return extractJcodeCwd(contents);
+  });
+
+  // A large history snapshot can precede session metadata. Read bounded
+  // chunks until a complete record names its cwd or the safety budget ends.
+  const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
+    source: AgentSessionSource,
+    transcript: TranscriptCandidate,
+    budget: MetadataReadBudget,
+  ) {
+    if (source === "jcode") {
+      if (transcript.size === 0) return null;
+      return yield* readJcodeSessionCwd(transcript, budget);
+    }
     if (transcript.size === 0) return null;
     if (
       budget.bytesRemaining === 0 ||
@@ -1039,6 +1245,40 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const discoverJcodeTranscripts = Effect.fn("AgentSessionScanner.discoverJcodeTranscripts")(
+    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
+      const sessionsDir = path.join(homePath, "sessions");
+      const transcripts: Array<TranscriptCandidate> = [];
+      let operationsRemaining = operationBudget;
+      let truncated = false;
+
+      for (const entry of (yield* listDirectory(sessionsDir)).toSorted().toReversed()) {
+        // Jcode names session files `session_*.json`; skip anything else.
+        if (!entry.startsWith("session_") || !entry.endsWith(".json")) continue;
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          break;
+        }
+        const filePath = path.join(sessionsDir, entry);
+        operationsRemaining -= 1;
+        const stats = yield* statOption(filePath);
+        if (
+          Option.isSome(stats) &&
+          stats.value.type === "File" &&
+          Option.isSome(stats.value.mtime)
+        ) {
+          transcripts.push({
+            filePath,
+            mtimeMs: stats.value.mtime.value.getTime(),
+            providerInstanceId,
+            size: Number(stats.value.size),
+          });
+        }
+      }
+      return { transcripts, truncated };
+    },
+  );
+
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
     source: AgentSessionSource,
     transcripts: ReadonlyArray<TranscriptCandidate>,
@@ -1055,7 +1295,7 @@ export const make = Effect.gen(function* () {
     >();
 
     for (const transcript of transcripts) {
-      const cwd = yield* readCwd(transcript, budget);
+      const cwd = yield* readCwd(source, transcript, budget);
       if (cwd === null) continue;
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
@@ -1090,7 +1330,7 @@ export const make = Effect.gen(function* () {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
 
-    for (const source of ["claudeAgent", "codex"] as const) {
+    for (const source of ["claudeAgent", "codex", "jcode"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
@@ -1135,6 +1375,15 @@ export const make = Effect.gen(function* () {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
           homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+        } else if (source === "jcode") {
+          const config = decodeJcodeSettings(instance.config ?? {});
+          if (Option.isNone(config)) continue;
+          // Jcode keeps its state in a fixed home; the override only
+          // redirects transcript discovery, never how the CLI is spawned.
+          homePath =
+            config.value.homePath.trim().length > 0
+              ? path.resolve(expandHomePath(config.value.homePath))
+              : path.join(NodeOS.homedir(), ".jcode");
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
@@ -1169,7 +1418,9 @@ export const make = Effect.gen(function* () {
         }
         const discovered = yield* source === "claudeAgent"
           ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
-          : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
+          : source === "codex"
+            ? discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+            : discoverJcodeTranscripts(home.homePath, home.providerInstanceId, operationBudget);
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
       }
@@ -1420,6 +1671,43 @@ export const make = Effect.gen(function* () {
           // Reserve the whole file even if its read or parse fails.
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
+          if (candidate.source === "jcode") {
+            const parsedThread = yield* readAndParseJcodeThread(
+              fileSystem,
+              transcript.filePath,
+              candidate.providerInstanceId,
+              transcript.mtimeMs,
+              identity.size,
+            );
+            if (parsedThread === null) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            }
+            // A stable replacement file can belong to a different project
+            // than the cached candidate said.
+            const expandedCwd = expandHomePath(parsedThread.cwd.trim());
+            if (
+              !path.isAbsolute(expandedCwd) ||
+              (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
+            ) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            }
+            const source: AgentSessionImportSource = {
+              ...identity,
+              provider: parsedThread.thread.source,
+              providerInstanceId: parsedThread.thread.providerInstanceId,
+              providerSessionId: parsedThread.thread.providerSessionId,
+            };
+            const sessionKey = `${parsedThread.thread.providerInstanceId}\0${parsedThread.thread.providerSessionId}`;
+            if (importedSessions.has(sessionKey)) {
+              return Option.some<AgentSessionRecentThread>({ _tag: "Duplicate", source });
+            }
+            importedSessions.add(sessionKey);
+            return Option.some<AgentSessionRecentThread>({
+              _tag: "Importable",
+              thread: parsedThread.thread,
+              source,
+            });
+          }
           const snapshot = yield* readTranscript(
             transcript.filePath,
             identity,
