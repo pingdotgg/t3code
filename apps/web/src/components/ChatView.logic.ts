@@ -283,7 +283,9 @@ export function rememberReadyThreadTimeline<T extends readonly unknown[]>(
   heldThreadTimeline = held;
 }
 
-export function peekHeldThreadTimeline<T extends readonly unknown[]>(): HeldThreadTimeline<T> | null {
+export function peekHeldThreadTimeline<
+  T extends readonly unknown[],
+>(): HeldThreadTimeline<T> | null {
   return heldThreadTimeline as HeldThreadTimeline<T> | null;
 }
 
