@@ -1,6 +1,7 @@
 import {
   ClaudeSettings,
   CodexSettings,
+  DevinSettings,
   type ExecutionEnvironmentPlatformOs,
   type ServerProvider,
   type ServerSettings,
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeDevinSettings = Schema.decodeUnknownOption(DevinSettings);
 const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
 
 function quoteProviderBinary(
@@ -85,6 +87,10 @@ const NATIVE_INSTALL_COMMANDS = {
     windows: "irm https://chatgpt.com/codex/install.ps1 | iex",
     posix: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
   },
+  devin: {
+    windows: "irm https://static.devin.ai/cli/setup.ps1 | iex",
+    posix: "curl -fsSL https://cli.devin.ai/install.sh | bash",
+  },
 } as const;
 
 /**
@@ -123,6 +129,14 @@ export function resolveOnboardingProviderLoginCommand(
     );
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
     return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
+  }
+
+  if (provider.driver === "devin") {
+    const config = decodeDevinSettings(
+      instance ? (instance.config ?? {}) : settings.providers.devin,
+    );
+    const binaryPath = Option.isSome(config) ? config.value.binaryPath : "devin";
+    return `${quoteProviderBinary(binaryPath, "devin", platform)} auth login`;
   }
 
   return provider.driver;

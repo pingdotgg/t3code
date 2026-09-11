@@ -60,6 +60,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
+import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ClaudeAI, OpenAI } from "../Icons";
@@ -606,7 +607,7 @@ function PairingForm({
 
 // ── Step 3: agents ───────────────────────────────────────────
 
-const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
+const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex", "devin"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
 /** Setup values stay fixed while provider probes refresh the surrounding cards. */
@@ -675,6 +676,7 @@ function ConnectedAgentsStep({
     reportFailure: false,
   });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
@@ -684,6 +686,30 @@ function ConnectedAgentsStep({
   }, [environmentId, refreshProviders]);
 
   const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
+
+  // Opt-in drivers (Devin) arrive disabled by default; the card's Enable
+  // button flips the instance envelope, which is authoritative over the
+  // legacy `providers.<kind>.enabled` flag.
+  const enableProvider = (provider: ServerProvider, driver: OnboardingAgentDriver) => {
+    if (serverConfig === null) return;
+    const settings = serverConfig.settings;
+    const existing = settings.providerInstances?.[provider.instanceId];
+    const legacyConfig = (settings.providers as Record<string, { enabled?: boolean } | undefined>)[
+      driver
+    ];
+    const { enabled: _legacyEnabled, ...legacyConfigRest } = legacyConfig ?? {};
+    updateSettings({
+      providerInstances: {
+        ...settings.providerInstances,
+        [provider.instanceId]: {
+          ...existing,
+          driver: ProviderDriverKind.make(driver),
+          enabled: true,
+          config: existing?.config ?? legacyConfigRest,
+        },
+      },
+    });
+  };
 
   const primaryAgents = PRIMARY_AGENT_DRIVERS.map((driver) => ({
     driver,
@@ -700,6 +726,7 @@ function ConnectedAgentsStep({
             provider={provider}
             terminalOpen={terminalSession?.driver === driver}
             terminalAvailable={serverConfig !== null}
+            onEnable={provider === undefined ? undefined : () => enableProvider(provider, driver)}
             onOpenTerminal={() => {
               if (provider === undefined || serverConfig === null) return;
               setTerminalSession({
@@ -742,12 +769,14 @@ function AgentCard({
   provider,
   terminalOpen,
   terminalAvailable,
+  onEnable,
   onOpenTerminal,
 }: {
   readonly driver: OnboardingAgentDriver;
   readonly provider: ServerProvider | undefined;
   readonly terminalOpen: boolean;
   readonly terminalAvailable: boolean;
+  readonly onEnable: (() => void) | undefined;
   readonly onOpenTerminal: () => void;
 }) {
   const meta = getDriverOption(ProviderDriverKind.make(driver));
@@ -777,7 +806,13 @@ function AgentCard({
         ) : providerState === "checking" ? (
           <span className="text-xs text-muted-foreground">Checking...</span>
         ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
+          onEnable ? (
+            <Button size="xs" variant="ghost" onClick={onEnable}>
+              Enable
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground">Disabled</span>
+          )
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
