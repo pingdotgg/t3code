@@ -1,0 +1,189 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import * as Electron from "electron";
+import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
+import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
+
+const mocks = vi.hoisted(() => ({
+  granted: false,
+  getFileIcon: vi.fn(),
+  startDrag: vi.fn(),
+  showItemInFolder: vi.fn(),
+  send: vi.fn(),
+  loadURL: vi.fn(),
+}));
+const windows = vi.hoisted(
+  () =>
+    [] as Array<{
+      destroyed: boolean;
+      webContents: { mainFrame: object };
+    }>,
+);
+vi.mock("electron", async () => {
+  const { EventEmitter } = await import("node:events");
+  class MockWindow extends EventEmitter {
+    destroyed = false;
+    webContents = Object.assign(new EventEmitter(), {
+      mainFrame: {},
+      startDrag: mocks.startDrag,
+      send: mocks.send,
+      setWindowOpenHandler: vi.fn(),
+    });
+    constructor(_options: unknown) {
+      super();
+      windows.push(this);
+    }
+    isDestroyed() {
+      return this.destroyed;
+    }
+    destroy() {
+      this.destroyed = true;
+      this.emit("closed");
+    }
+    close() {
+      this.destroy();
+    }
+    loadURL = mocks.loadURL;
+    showInactive = vi.fn();
+    show = vi.fn();
+    focus = vi.fn();
+    getBounds = () => ({ x: 0, y: 0, width: 800, height: 600 });
+  }
+  return {
+    app: {
+      getPath: () => "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code",
+      getName: () => "T3 Code (Nightly)",
+      getFileIcon: mocks.getFileIcon,
+    },
+    BrowserWindow: class extends MockWindow {},
+    ipcMain: new EventEmitter(),
+    screen: {
+      getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 900 } }),
+      getCursorScreenPoint: () => ({ x: 10, y: 10 }),
+      getDisplayNearestPoint: () => ({ workArea: { x: -1200, y: 0, width: 1200, height: 900 } }),
+    },
+    systemPreferences: {
+      getMediaAccessStatus: () => (mocks.granted ? "granted" : "denied"),
+      isTrustedAccessibilityClient: () => mocks.granted,
+    },
+    shell: { showItemInFolder: mocks.showItemInFolder },
+  };
+});
+let helper: MacPermissionHelper;
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.clearAllMocks();
+  mocks.granted = false;
+  mocks.getFileIcon.mockResolvedValue({ toDataURL: () => "data:image/png;base64,abc" });
+  mocks.loadURL.mockResolvedValue(undefined);
+  windows.length = 0;
+  helper = new MacPermissionHelper();
+});
+afterEach(() => {
+  helper.close();
+  vi.useRealTimers();
+});
+const open = () => helper.show("accessibility", "/bundle/snapshot-permission-preload.cjs", null);
+function send(action: string, trusted = true) {
+  const window = windows.at(-1)!;
+  Electron.ipcMain.emit(
+    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
+    {
+      sender: trusted ? window.webContents : {},
+      senderFrame: window.webContents.mainFrame,
+    },
+    action,
+  );
+}
+
+describe("macAppBundlePath", () => {
+  it("resolves bundles with spaces and refuses non-bundle executables", () => {
+    expect(macAppBundlePath("/Applications/T3 Code.app/Contents/MacOS/T3 Code")).toBe(
+      "/Applications/T3 Code.app",
+    );
+    expect(macAppBundlePath("/usr/local/bin/electron")).toBeUndefined();
+    expect(macAppBundlePath("/Applications/T3 Code.app/other/MacOS/T3 Code")).toBeUndefined();
+  });
+});
+it("drags the running app bundle only for the helper's own renderer", async () => {
+  await open();
+  send("drag", false);
+  expect(mocks.startDrag).not.toHaveBeenCalled();
+  send("drag");
+  expect(mocks.startDrag).toHaveBeenCalledWith({
+    file: "/Applications/T3 Code (Nightly).app",
+    icon: await mocks.getFileIcon.mock.results[0]!.value,
+  });
+  send("finder");
+  expect(mocks.showItemInFolder).toHaveBeenCalledWith("/Applications/T3 Code (Nightly).app");
+});
+it("rechecks permissions, reports restart guidance, and releases resources when granted", async () => {
+  await open();
+  send("check");
+  expect(mocks.send).toHaveBeenCalledWith(
+    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
+    expect.stringContaining("quit and reopen"),
+  );
+  mocks.granted = true;
+  vi.advanceTimersByTime(1000);
+  expect(windows[0]!.destroyed).toBe(true);
+  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("keeps only one helper and cleans up on dismissal", async () => {
+  await open();
+  await helper.show("screen-recording", "/preload.cjs", null);
+  expect(windows[0]!.destroyed).toBe(true);
+  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(1);
+  send("close");
+  expect(windows[1]!.destroyed).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("does not open for a permission already granted", async () => {
+  mocks.granted = true;
+  await open();
+  expect(windows).toHaveLength(0);
+});
+it("does not reopen after disposal while the icon is loading", async () => {
+  const loading = open();
+  helper.close();
+  await loading;
+  expect(windows).toHaveLength(0);
+});
+it("cleans up when the helper page fails to load", async () => {
+  mocks.loadURL.mockRejectedValueOnce(new Error("load failed"));
+  await expect(open()).rejects.toThrow("load failed");
+  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("offers the Finder fallback when native dragging fails", async () => {
+  await open();
+  mocks.startDrag.mockImplementationOnce(() => {
+    throw new Error("drag failed");
+  });
+  send("drag");
+  expect(mocks.send).toHaveBeenCalledWith(
+    SNAP_SHOT_PERMISSION_HELPER_CHANNEL,
+    expect.stringContaining("Show in Finder"),
+  );
+  expect(windows[0]!.destroyed).toBe(false);
+});
+
+it("returns focus to onboarding when the permission is granted", async () => {
+  const owner = new Electron.BrowserWindow({});
+  await helper.show("screen-recording", "/preload.cjs", owner);
+  mocks.granted = true;
+  vi.advanceTimersByTime(1000);
+  expect(owner.show).toHaveBeenCalledOnce();
+  expect(owner.focus).toHaveBeenCalledOnce();
+  expect(windows[1]!.destroyed).toBe(true);
+  expect(owner.listenerCount("closed")).toBe(0);
+});
+it("closes the helper and stops checking when onboarding's window closes", async () => {
+  const owner = new Electron.BrowserWindow({});
+  await helper.show("accessibility", "/preload.cjs", owner);
+  owner.destroy();
+  expect(windows[1]!.destroyed).toBe(true);
+  expect(Electron.ipcMain.listenerCount(SNAP_SHOT_PERMISSION_HELPER_CHANNEL)).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});

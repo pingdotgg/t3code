@@ -76,6 +76,7 @@ import {
   type AccessibilityProcessPool,
   makeSnapShotAccessibilityProcessPool,
 } from "./SnapShotAccessibilityProcess.ts";
+import { MacPermissionHelper } from "./MacPermissionHelper.ts";
 import { showWindowsCaptureOverlay } from "./WindowsCaptureFeedback.ts";
 
 import {
@@ -704,6 +705,7 @@ function probeGlobalShortcut(accelerator: string): DesktopSnapShotShortcutAvaila
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const permissionHelper = new MacPermissionHelper();
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1372,9 +1374,32 @@ export const make = Effect.gen(function* () {
           action,
           reason: "unsupported-session",
         });
-      if (action === "allow-accessibility")
-        Electron.systemPreferences.isTrustedAccessibilityClient(true);
-      else yield* Effect.promise(requestMacScreenCapturePermission);
+      const owner = Electron.BrowserWindow.getFocusedWindow();
+      if (action === "allow-accessibility") {
+        const granted = Electron.systemPreferences.isTrustedAccessibilityClient(true);
+        if (!granted && environment.isPackaged) {
+          yield* Effect.promise(() =>
+            Electron.shell
+              .openExternal(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+              )
+              .catch(() => undefined),
+          );
+        }
+      } else yield* Effect.promise(requestMacScreenCapturePermission);
+      if (environment.isPackaged) {
+        yield* Effect.tryPromise(() =>
+          permissionHelper.show(
+            action === "allow-accessibility" ? "accessibility" : "screen-recording",
+            path.join(environment.dirname, "snapshot-permission-preload.cjs"),
+            owner,
+          ),
+        ).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not show snapshot permission helper", cause),
+          ),
+        );
+      }
     } else if (action !== "retry-shortcut") {
       if (!hasGnomeSetup())
         return yield* new DesktopSnapShotSetupError({
@@ -1418,6 +1443,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
+      permissionHelper.close();
       releaseShortcut();
       flash.dispose();
       transition.dispose();
