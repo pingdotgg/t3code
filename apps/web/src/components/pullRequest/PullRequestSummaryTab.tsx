@@ -806,7 +806,7 @@ export function PullRequestSummaryTab({
                       onClick={() => check.url && openCheck(check.url)}
                       className={cn(
                         "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
-                        check.url ? undefined : "cursor-default",
+                        check.url ? "cursor-pointer" : "cursor-default",
                       )}
                     >
                       <PullRequestCheckStatusIcon status={check.status} />
