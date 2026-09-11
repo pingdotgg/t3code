@@ -170,7 +170,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "compact-thread-list",
-    title: "Compact thread list",
+    title: "Thread list layout",
+    searchTerms: ["standard compact custom rows saved layouts preview my threads"],
     to: "/settings/general",
   },
   {

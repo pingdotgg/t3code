@@ -55,6 +55,22 @@ const clientSettings: ClientSettings = {
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
   sidebarCompactThreadRows: false,
+  sidebarThreadRowLayoutMode: "custom",
+  sidebarActiveThreadLayoutId: "daily",
+  sidebarSavedThreadLayouts: [
+    {
+      id: "daily",
+      name: "Daily",
+      layout: [
+        { component: "title", row: 1, alignment: "left" },
+        { component: "status", row: 2, alignment: "right" },
+      ],
+    },
+  ],
+  sidebarThreadRowLayout: [
+    { component: "title", row: 1, alignment: "left" },
+    { component: "status", row: 2, alignment: "right" },
+  ],
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
