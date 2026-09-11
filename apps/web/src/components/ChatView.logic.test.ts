@@ -59,6 +59,9 @@ import {
   resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
+  peekHeldThreadTimeline,
+  rememberReadyThreadTimeline,
+  resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
@@ -567,6 +570,10 @@ describe("draft hero submission transition", () => {
 });
 
 describe("resolveThreadSwitchTimeline", () => {
+  afterEach(() => {
+    resetHeldThreadTimeline();
+  });
+
   const held = { threadKey: "thread-a", entries: ["a1", "a2"] };
 
   it("keeps the previous thread's entries while the next thread is loading", () => {
@@ -600,6 +607,19 @@ describe("resolveThreadSwitchTimeline", () => {
         held: null,
       }),
     ).toEqual({ entries: [], displayThreadKey: "thread-a" });
+  });
+
+  it("survives a ChatView remount by remembering the last ready timeline", () => {
+    rememberReadyThreadTimeline(held);
+    expect(peekHeldThreadTimeline<string[]>()).toEqual(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "thread-b",
+        nextEntries: [],
+        held: peekHeldThreadTimeline<string[]>(),
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
   });
 });
 

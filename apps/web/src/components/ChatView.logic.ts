@@ -266,12 +266,36 @@ export function resolveDraftHeroState(input: {
  * Keep the last ready timeline on screen while the next thread's detail is
  * still loading. Remounting to an empty list punches a hole through the chat
  * pane (white in light mode, blank in dark) for the whole snapshot wait.
+ *
+ * Stored at module scope because ChatView remounts when the thread route
+ * changes (same pattern as the thread-error banner session dismissals).
  */
+export type HeldThreadTimeline<T extends readonly unknown[]> = {
+  threadKey: string | null;
+  entries: T;
+};
+
+let heldThreadTimeline: HeldThreadTimeline<readonly unknown[]> | null = null;
+
+export function rememberReadyThreadTimeline<T extends readonly unknown[]>(
+  held: HeldThreadTimeline<T>,
+): void {
+  heldThreadTimeline = held;
+}
+
+export function peekHeldThreadTimeline<T extends readonly unknown[]>(): HeldThreadTimeline<T> | null {
+  return heldThreadTimeline as HeldThreadTimeline<T> | null;
+}
+
+export function resetHeldThreadTimeline(): void {
+  heldThreadTimeline = null;
+}
+
 export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input: {
   loading: boolean;
   activeThreadKey: string | null;
   nextEntries: T;
-  held: { threadKey: string | null; entries: T } | null;
+  held: HeldThreadTimeline<T> | null;
 }): { entries: T; displayThreadKey: string | null } {
   const held = input.held;
   if (

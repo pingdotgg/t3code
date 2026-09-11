@@ -415,6 +415,8 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  peekHeldThreadTimeline,
+  rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
@@ -3240,18 +3242,14 @@ export default function ChatView(props: ChatViewProps) {
     timelineMessages,
     workLogEntries,
   ]);
-  const lastReadyTimelineRef = useRef<{
-    threadKey: string | null;
-    entries: typeof timelineEntries;
-  } | null>(null);
   if (!threadDetailLoading && timelineEntries.length > 0) {
-    lastReadyTimelineRef.current = { threadKey: activeThreadKey, entries: timelineEntries };
+    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries: timelineEntries });
   }
   const displayedTimeline = resolveThreadSwitchTimeline({
-    loading: threadDetailLoading,
+    loading: timelineEntries.length === 0 && threadSyncPhase !== null,
     activeThreadKey,
     nextEntries: timelineEntries,
-    held: lastReadyTimelineRef.current,
+    held: peekHeldThreadTimeline<typeof timelineEntries>(),
   });
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
