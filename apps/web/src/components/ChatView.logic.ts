@@ -369,7 +369,7 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
 
   const rememberedForActive =
     input.rememberedForActive ?? peekRememberedThreadTimeline<T>(input.activeThreadKey);
-  if (rememberedForActive !== null && rememberedForActive.length > 0) {
+  if (input.loading && rememberedForActive !== null && rememberedForActive.length > 0) {
     return { entries: rememberedForActive, displayThreadKey: input.activeThreadKey };
   }
 

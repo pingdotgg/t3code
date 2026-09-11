@@ -648,6 +648,17 @@ describe("resolveThreadSwitchTimeline", () => {
     ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
   });
 
+  it("does not keep a remembered snapshot on a resolved empty thread", () => {
+    rememberReadyThreadTimeline(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
   it("does not hold another environment's timeline across a jump", () => {
     expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
     expect(
