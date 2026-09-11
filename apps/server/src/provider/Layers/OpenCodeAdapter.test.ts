@@ -3815,6 +3815,309 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("maps task tool metadata and child activity to the shared task lifecycle", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-task-metadata");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child_task_metadata";
+      const enqueue = makeOpenCodeEventQueue();
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.started" ||
+              event.type === "task.progress" ||
+              event.type === "task.updated"),
+        ),
+        Stream.takeUntil(
+          (event) => event.type === "task.updated" && event.payload.status === "interrupted",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate the adapter inspection",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      const taskPart = {
+        id: "part-parent-task",
+        sessionID: parentSessionId,
+        messageID: "msg-parent-task",
+        type: "tool",
+        callID: "call-parent-task",
+        tool: "task",
+        state: {
+          status: "completed",
+          input: {
+            description: "Inspect the OpenCode adapter",
+            prompt: "Trace child events",
+            subagent_type: "explore",
+          },
+          output: "Child session started",
+          title: "Delegating",
+          metadata: { parentSessionId, sessionId: childSessionId },
+          time: { start: 1, end: 2 },
+        },
+      } satisfies ToolPart;
+      enqueue({
+        id: "evt-parent-task",
+        type: "message.part.updated",
+        properties: { sessionID: parentSessionId, part: taskPart, time: 1 },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-parent-task-repeat",
+        type: "message.part.updated",
+        properties: { sessionID: parentSessionId, part: taskPart, time: 2 },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-child-tool",
+        type: "message.part.updated",
+        properties: {
+          sessionID: childSessionId,
+          part: {
+            id: "part-child-tool",
+            sessionID: childSessionId,
+            messageID: "msg-child-tool",
+            type: "tool",
+            callID: "call-child-tool",
+            tool: "bash",
+            state: {
+              status: "running",
+              input: { command: "pwd" },
+              title: "Reading the workspace",
+              time: { start: 3 },
+            },
+          },
+        },
+      });
+      for (const status of ["busy", "idle"] as const) {
+        enqueue({
+          id: `evt-child-${status}`,
+          type: "session.status",
+          properties: { sessionID: childSessionId, status: { type: status } },
+        } satisfies OpenCodeEvent);
+      }
+      enqueue({
+        id: "evt-child-deleted",
+        type: "session.deleted",
+        properties: {
+          info: {
+            id: childSessionId,
+            parentID: parentSessionId,
+            title: "Child session",
+          },
+        },
+      });
+
+      const taskEvents = Array.from(
+        yield* Fiber.join(taskEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      const started = taskEvents.filter((event) => event.type === "task.started");
+      NodeAssert.equal(started.length, 1);
+      NodeAssert.partialDeepStrictEqual(started[0], {
+        type: "task.started",
+        turnId: turn.turnId,
+        payload: {
+          taskId: childSessionId,
+          description: "Inspect the OpenCode adapter",
+          title: "Inspect the OpenCode adapter",
+          role: "explore",
+          timelineBypass: true,
+        },
+      });
+      const progress = taskEvents.find((event) => event.type === "task.progress");
+      NodeAssert.partialDeepStrictEqual(progress, {
+        type: "task.progress",
+        turnId: turn.turnId,
+        payload: {
+          taskId: childSessionId,
+          description: "Inspect the OpenCode adapter",
+          lastToolName: "bash",
+          summary: "Reading the workspace",
+          role: "explore",
+          timelineBypass: true,
+        },
+      });
+      NodeAssert.deepEqual(
+        taskEvents.flatMap((event) =>
+          event.type === "task.updated" && event.payload.status ? [event.payload.status] : [],
+        ),
+        ["running", "idle", "interrupted"],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps parent turn state isolated from child session events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-child-turn-isolation");
+      const parentSessionId = "http://127.0.0.1:9999/session";
+      const childSessionId = "ses_child_turn_isolation";
+      const enqueue = makeOpenCodeEventQueue();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate without ending my turn",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      enqueue({
+        id: "evt-parent-busy",
+        type: "session.status",
+        properties: { sessionID: parentSessionId, status: { type: "busy" } },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-child-created-first",
+        type: "session.created",
+        properties: {
+          info: {
+            id: childSessionId,
+            parentID: parentSessionId,
+            title: "Investigate event routing",
+          },
+        },
+      });
+      enqueue({
+        id: "evt-unrelated-status",
+        type: "session.status",
+        properties: { sessionID: "ses_unrelated", status: { type: "busy" } },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-child-todos",
+        type: "todo.updated",
+        properties: {
+          sessionID: childSessionId,
+          todos: [{ content: "Inspect routing", status: "in_progress", priority: "high" }],
+        },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-child-idle",
+        type: "session.status",
+        properties: { sessionID: childSessionId, status: { type: "idle" } },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-parent-task-after-child",
+        type: "message.part.updated",
+        properties: {
+          sessionID: parentSessionId,
+          time: 1,
+          part: {
+            id: "part-parent-task-after-child",
+            sessionID: parentSessionId,
+            messageID: "msg-parent-task-after-child",
+            type: "tool",
+            callID: "call-parent-task-after-child",
+            tool: "task",
+            state: {
+              status: "completed",
+              input: {
+                description: "Inspect routing deeply",
+                prompt: "Inspect child routing",
+                subagent_type: "librarian",
+              },
+              output: "Child session linked",
+              title: "Delegating",
+              metadata: { parentSessionId, sessionId: childSessionId },
+              time: { start: 1, end: 2 },
+            },
+          } satisfies ToolPart,
+        },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-parent-todos",
+        type: "todo.updated",
+        properties: {
+          sessionID: parentSessionId,
+          todos: [{ content: "Finish parent turn", status: "in_progress", priority: "high" }],
+        },
+      } satisfies OpenCodeEvent);
+      enqueue({
+        id: "evt-parent-idle",
+        type: "session.status",
+        properties: { sessionID: parentSessionId, status: { type: "idle" } },
+      } satisfies OpenCodeEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const started = events.find((event) => event.type === "task.started");
+      NodeAssert.partialDeepStrictEqual(started, {
+        type: "task.started",
+        turnId: turn.turnId,
+        payload: {
+          taskId: childSessionId,
+          description: "Investigate event routing",
+          title: "Investigate event routing",
+          timelineBypass: true,
+        },
+      });
+      NodeAssert.equal(
+        events.some(
+          (event) =>
+            (event.type === "task.started" ||
+              event.type === "task.progress" ||
+              event.type === "task.updated") &&
+            event.payload.taskId === "ses_unrelated",
+        ),
+        false,
+      );
+      NodeAssert.equal(
+        events.some(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.taskId === childSessionId &&
+            event.payload.status === "idle",
+        ),
+        true,
+      );
+      NodeAssert.equal(
+        events.some((event) => event.type === "task.completed"),
+        false,
+      );
+      NodeAssert.equal(
+        events.some(
+          (event) =>
+            event.type === "task.updated" &&
+            event.payload.taskId === childSessionId &&
+            event.payload.title === "Inspect routing deeply" &&
+            event.payload.role === "librarian",
+        ),
+        true,
+      );
+      const plans = events.filter((event) => event.type === "turn.plan.updated");
+      NodeAssert.equal(plans.length, 1);
+      NodeAssert.equal(plans[0]?.turnId, turn.turnId);
+      NodeAssert.deepEqual(plans[0]?.payload.plan, [
+        { step: "Finish parent turn", status: "inProgress" },
+      ]);
+      const completions = events.filter((event) => event.type === "turn.completed");
+      NodeAssert.equal(completions.length, 1);
+      NodeAssert.equal(completions[0]?.turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("routes child-session approval requests and replies through the parent thread", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
@@ -3849,8 +4152,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       ];
 
       const openedEventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.take(3),
+        Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -4149,8 +4452,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       ];
 
       const requestedEventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.threadId === threadId),
-        Stream.take(3),
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "user-input.requested",
+        ),
+        Stream.take(1),
         Stream.runCollect,
         Effect.forkChild,
       );

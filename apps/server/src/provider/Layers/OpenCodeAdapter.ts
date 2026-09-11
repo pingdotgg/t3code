@@ -8,6 +8,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ThreadId,
   type ToolLifecycleItemType,
   type TurnTokenUsage,
@@ -340,6 +341,8 @@ interface OpenCodeSessionContext {
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
+  readonly startedTaskSessionIds: Set<string>;
+  readonly childTaskInfoBySessionId: Map<string, OpenCodeChildTaskInfo>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
@@ -379,6 +382,11 @@ interface OpenCodeSessionContext {
    *   - tears down the OpenCode server process for scope-owned servers.
    */
   readonly sessionScope: Scope.Closeable;
+}
+
+interface OpenCodeChildTaskInfo {
+  title: string | undefined;
+  role: string | undefined;
 }
 
 interface OpenCodeTurnTokenUsageAccumulator {
@@ -1652,6 +1660,147 @@ export function makeOpenCodeAdapter(
       }
     };
 
+    const rememberOpenCodeChildTask = (
+      context: OpenCodeSessionContext,
+      sessionId: string,
+      update: Partial<OpenCodeChildTaskInfo>,
+    ): OpenCodeChildTaskInfo => {
+      const existing = context.childTaskInfoBySessionId.get(sessionId);
+      const next = {
+        title: update.title ?? existing?.title,
+        role: update.role ?? existing?.role,
+      };
+      context.childTaskInfoBySessionId.set(sessionId, next);
+      return next;
+    };
+
+    const openCodeChildTaskLinkage = (context: OpenCodeSessionContext, sessionId: string) => {
+      const info = context.childTaskInfoBySessionId.get(sessionId);
+      const title = info?.title ?? info?.role ?? sessionId;
+      return {
+        description: title,
+        title,
+        ...(info?.role ? { role: info.role } : {}),
+        timelineBypass: true,
+      } as const;
+    };
+
+    const emitOpenCodeChildTaskStarted = Effect.fn("emitOpenCodeChildTaskStarted")(function* (
+      context: OpenCodeSessionContext,
+      sessionId: string,
+      raw: unknown,
+    ) {
+      if (context.startedTaskSessionIds.has(sessionId)) {
+        return;
+      }
+      context.startedTaskSessionIds.add(sessionId);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: context.activeTurnId,
+          raw,
+        })),
+        type: "task.started",
+        payload: {
+          taskId: RuntimeTaskId.make(sessionId),
+          ...openCodeChildTaskLinkage(context, sessionId),
+        },
+      });
+    });
+
+    const handleOpenCodeChildEvent = Effect.fn("handleOpenCodeChildEvent")(function* (
+      context: OpenCodeSessionContext,
+      event: OpenCodeSubscribedEvent,
+      sessionId: string,
+    ) {
+      yield* emitOpenCodeChildTaskStarted(context, sessionId, event);
+      const taskId = RuntimeTaskId.make(sessionId);
+      const linkage = openCodeChildTaskLinkage(context, sessionId);
+      switch (event.type) {
+        case "message.part.updated": {
+          const part = event.properties.part;
+          if (part.type !== "tool") {
+            return;
+          }
+          const stateTitle =
+            part.state.status === "running" || part.state.status === "completed"
+              ? trimText(part.state.title)
+              : undefined;
+          const command = trimText(
+            typeof part.state.input.command === "string" ? part.state.input.command : undefined,
+          );
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              raw: event,
+            })),
+            type: "task.progress",
+            payload: {
+              taskId,
+              ...linkage,
+              lastToolName: part.tool,
+              summary: stateTitle ?? command ?? part.tool,
+            },
+          });
+          return;
+        }
+        case "session.status": {
+          const status = event.properties.status.type;
+          if (status !== "busy" && status !== "retry" && status !== "idle") {
+            return;
+          }
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              raw: event,
+            })),
+            type: "task.updated",
+            payload: {
+              taskId,
+              status: status === "idle" ? "idle" : "running",
+              ...linkage,
+            },
+          });
+          return;
+        }
+        case "session.deleted": {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              raw: event,
+            })),
+            type: "task.updated",
+            payload: { taskId, status: "interrupted", ...linkage },
+          });
+          return;
+        }
+        case "todo.updated": {
+          const current = event.properties.todos.find(
+            (todo) => todo.status === "in_progress" || todo.status === "pending",
+          );
+          const summary = trimText(current?.content);
+          if (!summary) {
+            return;
+          }
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: context.activeTurnId,
+              raw: event,
+            })),
+            type: "task.progress",
+            payload: { taskId, ...linkage, summary },
+          });
+          return;
+        }
+        default:
+          return;
+      }
+    });
+
     const isRelatedOpenCodeSession = Effect.fn("isRelatedOpenCodeSession")(function* (
       context: OpenCodeSessionContext,
       candidateSessionId: string,
@@ -2203,9 +2352,11 @@ export function makeOpenCodeAdapter(
         const session = event.properties.info;
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
           addRelatedOpenCodeSession(context, session.id);
+          const title = trimText(session.title);
+          rememberOpenCodeChildTask(context, session.id, {
+            title: title && !isOpenCodeDefaultTitle(title) ? title : undefined,
+          });
         }
-      } else if (event.type === "session.deleted") {
-        context.relatedSessionIds.delete(event.properties.info.id);
       }
 
       const payloadSessionId = openCodeEventSessionId(event);
@@ -2234,11 +2385,15 @@ export function makeOpenCodeAdapter(
           }
         }
       }
+      const isChildEvent =
+        payloadSessionId !== undefined &&
+        payloadSessionId !== context.openCodeSessionId &&
+        context.relatedSessionIds.has(payloadSessionId);
       const isChildRequestEvent =
         payloadSessionId !== undefined &&
         isOpenCodeChildRequestEvent(event) &&
         (context.relatedSessionIds.has(payloadSessionId) || isKnownPendingTerminalEvent);
-      if (!isParentEvent && !isChildRequestEvent) {
+      if (!isParentEvent && !isChildEvent && !isChildRequestEvent) {
         return;
       }
 
@@ -2255,6 +2410,14 @@ export function makeOpenCodeAdapter(
           payload: event,
         },
       });
+
+      if (isChildEvent && !isOpenCodeChildRequestEvent(event) && payloadSessionId) {
+        yield* handleOpenCodeChildEvent(context, event, payloadSessionId);
+        if (event.type === "session.deleted") {
+          context.relatedSessionIds.delete(payloadSessionId);
+        }
+        return;
+      }
 
       const suppressInterruptedParentOutput =
         isParentEvent &&
@@ -2460,6 +2623,64 @@ export function makeOpenCodeAdapter(
           }
 
           if (part.type === "tool") {
+            if (part.tool === "task") {
+              const metadata =
+                "metadata" in part.state &&
+                typeof part.state.metadata === "object" &&
+                part.state.metadata !== null
+                  ? part.state.metadata
+                  : undefined;
+              const childSessionId =
+                metadata && "sessionId" in metadata && typeof metadata.sessionId === "string"
+                  ? trimText(metadata.sessionId)
+                  : undefined;
+              const metadataParentSessionId =
+                metadata &&
+                "parentSessionId" in metadata &&
+                typeof metadata.parentSessionId === "string"
+                  ? trimText(metadata.parentSessionId)
+                  : undefined;
+              const hasValidParent =
+                metadataParentSessionId === undefined ||
+                context.relatedSessionIds.has(metadataParentSessionId);
+              if (childSessionId && hasValidParent) {
+                const alreadyStarted = context.startedTaskSessionIds.has(childSessionId);
+                const priorInfo = context.childTaskInfoBySessionId.get(childSessionId);
+                const description = trimText(
+                  typeof part.state.input.description === "string"
+                    ? part.state.input.description
+                    : undefined,
+                );
+                const role = trimText(
+                  typeof part.state.input.subagent_type === "string"
+                    ? part.state.input.subagent_type
+                    : undefined,
+                );
+                addRelatedOpenCodeSession(context, childSessionId);
+                const nextInfo = rememberOpenCodeChildTask(context, childSessionId, {
+                  title: description,
+                  role,
+                });
+                yield* emitOpenCodeChildTaskStarted(context, childSessionId, event);
+                if (
+                  alreadyStarted &&
+                  (priorInfo?.title !== nextInfo.title || priorInfo?.role !== nextInfo.role)
+                ) {
+                  yield* emit({
+                    ...(yield* buildEventBase({
+                      threadId: context.session.threadId,
+                      turnId: context.activeTurnId,
+                      raw: event,
+                    })),
+                    type: "task.updated",
+                    payload: {
+                      taskId: RuntimeTaskId.make(childSessionId),
+                      ...openCodeChildTaskLinkage(context, childSessionId),
+                    },
+                  });
+                }
+              }
+            }
             const itemType = toToolLifecycleItemType(part.tool);
             const title =
               part.state.status === "running" || part.state.status === "completed"
@@ -2983,6 +3204,8 @@ export function makeOpenCodeAdapter(
           directory,
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
+          startedTaskSessionIds: new Set(),
+          childTaskInfoBySessionId: new Map(),
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
