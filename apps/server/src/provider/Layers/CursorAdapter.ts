@@ -24,6 +24,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -91,6 +92,16 @@ const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+/**
+ * Cursor's ACP leaks transient transport failures as assistant text and then
+ * reports a successful turn (#7830). A prompt whose only output was such a
+ * diagnostic did no work, so replaying it cannot duplicate anything; retry it
+ * with these backoffs before failing the turn.
+ */
+const TRANSPORT_FAILURE_RETRY_DELAYS: ReadonlyArray<Duration.Duration> = [
+  Duration.seconds(1),
+  Duration.seconds(3),
+];
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -129,6 +140,27 @@ interface PendingUserInput {
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
 }
 
+/** What the agent produced since the current prompt attempt was sent. */
+interface PromptActivity {
+  /** Assistant items started. A leaked transport diagnostic is itself one. */
+  assistantItems: number;
+  /**
+   * Tool calls and requests to the user (approvals, questions, plan proposals):
+   * side effects a replay would repeat. Plan and todo updates are progress
+   * notes the replay regenerates, so they do not count.
+   */
+  work: number;
+}
+
+function promptDidNoWork(activity: PromptActivity): boolean {
+  return activity.assistantItems <= 1 && activity.work === 0;
+}
+
+function resetPromptActivity(activity: PromptActivity): void {
+  activity.assistantItems = 0;
+  activity.work = 0;
+}
+
 interface CursorSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
@@ -146,6 +178,16 @@ interface CursorSessionContext {
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
   assistantReply: CursorTransportFailure;
+  /** Activity since the current prompt attempt; gates transport-failure retries. */
+  readonly promptActivity: PromptActivity;
+  /** Settled by `interruptTurn` so a pending transport-failure retry settles as cancelled. */
+  turnInterrupted: Deferred.Deferred<void>;
+  /**
+   * Bumped by every sendTurn. A transport-failure retry replays its prompt
+   * only while no later prompt (a steer) has arrived; `promptsInFlight` is
+   * transient and can be back at 1 by then.
+   */
+  promptSequence: number;
   stopped: boolean;
 }
 
@@ -469,6 +511,7 @@ export function makeCursorAdapter(
       Effect.gen(function* () {
         if (ctx.stopped) return;
         ctx.stopped = true;
+        yield* Deferred.succeed(ctx.turnInterrupted, undefined);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) {
@@ -514,6 +557,7 @@ export function makeCursorAdapter(
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+          const promptActivity: PromptActivity = { assistantItems: 0, work: 0 };
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
@@ -600,6 +644,7 @@ export function makeCursorAdapter(
                   const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                   const runtimeRequestId = RuntimeRequestId.make(requestId);
                   const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+                  promptActivity.work += 1;
                   pendingUserInputs.set(requestId, { answers });
                   yield* offerRuntimeEvent({
                     type: "user-input.requested",
@@ -639,6 +684,7 @@ export function makeCursorAdapter(
                     params,
                     "acp.cursor.extension",
                   );
+                  promptActivity.work += 1;
                   yield* offerRuntimeEvent({
                     type: "turn.proposed.completed",
                     ...(yield* makeEventStamp()),
@@ -689,6 +735,7 @@ export function makeCursorAdapter(
                     params,
                     "acp.jsonrpc",
                   );
+                  promptActivity.work += 1;
                   if (input.runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
@@ -797,7 +844,10 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            promptSequence: 0,
             assistantReply: new CursorTransportFailure(),
+            promptActivity,
+            turnInterrupted: yield* Deferred.make<void>(),
             stopped: false,
           };
 
@@ -811,6 +861,7 @@ export function makeCursorAdapter(
                   case "ModeChanged":
                     return;
                   case "AssistantItemStarted":
+                    ctx.promptActivity.assistantItems += 1;
                     ctx.assistantReply = new CursorTransportFailure();
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
@@ -851,6 +902,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "ToolCallUpdated":
+                    ctx.promptActivity.work += 1;
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -946,6 +998,8 @@ export function makeCursorAdapter(
         // resolving from here on does not settle the turn; the matching
         // decrement is the `ensuring` below.
         ctx.promptsInFlight += 1;
+        ctx.promptSequence += 1;
+        const promptSequence = ctx.promptSequence;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -970,6 +1024,8 @@ export function makeCursorAdapter(
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
             ctx.assistantReply = new CursorTransportFailure();
+            resetPromptActivity(ctx.promptActivity);
+            ctx.turnInterrupted = yield* Deferred.make<void>();
           }
           ctx.session = {
             ...ctx.session,
@@ -1058,7 +1114,7 @@ export function makeCursorAdapter(
           }
 
           // ACP has no system-message field; keep runtime context separate from the user's text.
-          const result = yield* ctx.acp
+          const prompt = ctx.acp
             .prompt({
               prompt: [
                 ...promptParts,
@@ -1074,8 +1130,48 @@ export function makeCursorAdapter(
               ),
             );
 
+          let result = yield* prompt;
           yield* ctx.acp.drainEvents;
-          const failure = ctx.assistantReply.failure;
+          let failure = ctx.assistantReply.failure;
+          // Retry only while the attempt produced nothing but the diagnostic;
+          // a steer, a cancel, or any work leaves the failure to the check below.
+          for (const delay of TRANSPORT_FAILURE_RETRY_DELAYS) {
+            if (
+              ctx.promptSequence !== promptSequence ||
+              result.stopReason === "cancelled" ||
+              failure === undefined ||
+              !promptDidNoWork(ctx.promptActivity)
+            ) {
+              break;
+            }
+            yield* Effect.logWarning(
+              "Cursor reported a transport failure before doing any work; retrying the prompt.",
+              {
+                threadId: input.threadId,
+                turnId,
+                failure,
+                delayMs: Duration.toMillis(delay),
+              },
+            );
+            const interrupted = yield* Deferred.await(ctx.turnInterrupted).pipe(
+              Effect.as(true),
+              Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.succeed(false) }),
+            );
+            // interruptTurn and stopSession both settle the wait as cancelled.
+            if (interrupted) {
+              result = { stopReason: "cancelled" };
+              break;
+            }
+            // A steer that landed during the backoff owns the turn now.
+            if (ctx.promptSequence !== promptSequence) {
+              break;
+            }
+            resetPromptActivity(ctx.promptActivity);
+            ctx.assistantReply = new CursorTransportFailure();
+            result = yield* prompt;
+            yield* ctx.acp.drainEvents;
+            failure = ctx.assistantReply.failure;
+          }
           if (ctx.promptsInFlight === 1 && result.stopReason !== "cancelled" && failure) {
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
@@ -1132,6 +1228,7 @@ export function makeCursorAdapter(
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        yield* Deferred.succeed(ctx.turnInterrupted, undefined);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(
