@@ -43,7 +43,7 @@ export interface PendingThreadRequests {
 
 /** Joins pending request entities to the request items that carry display data. */
 export function derivePendingThreadRequests(
-  projection: OrchestrationV2ThreadProjection,
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];

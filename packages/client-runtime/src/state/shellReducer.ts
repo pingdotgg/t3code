@@ -129,7 +129,7 @@ export function applyShellStreamEvent(
         ...snapshot,
         threads:
           event.location === "active"
-            ? upsertById(withoutThread(snapshot.threads), event.thread)
+            ? upsertById(snapshot.threads, event.thread)
             : withoutThread(snapshot.threads),
         // The archive has its own bounded query/subscription. Older servers may
         // still send archive-located deltas here; remove them from the normal
