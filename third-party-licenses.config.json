@@ -266,6 +266,15 @@
     {
       "name": "boolbase",
       "noticeFile": "apps/mobile/licenses/boolbase.txt"
+    },
+    {
+      "noticeFile": "apps/web/licenses/fff.txt",
+      "repositoryUrl": "https://github.com/dmtrKovalenko/fff"
+    },
+    {
+      "name": "@opencode-ai/sdk",
+      "noticeFile": "apps/web/licenses/opencode.txt",
+      "sourceUrl": "https://github.com/anomalyco/opencode/tree/dev/packages/sdk/js"
     }
   ]
 }

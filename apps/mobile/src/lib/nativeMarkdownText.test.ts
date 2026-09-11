@@ -95,7 +95,7 @@ describe("nativeMarkdownTextRuns", () => {
       {
         text: "README.md:12",
         href: "file:///repo/README.md#L12",
-        fileIcon: "readme",
+        fileIcon: "markdown",
       },
     ]);
   });

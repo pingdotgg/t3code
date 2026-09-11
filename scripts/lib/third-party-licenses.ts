@@ -308,15 +308,21 @@ async function collectProductionDependencyPackages(
   };
   const visited = new Set<string>();
 
-  const visitManifest = async (packageJsonPath: string, bundle: string): Promise<void> => {
+  const visitManifest = async (
+    packageJsonPath: string,
+    bundle: string,
+    isRootManifest: boolean,
+  ): Promise<void> => {
     const packageJson = await readPackageJson(packageJsonPath);
     for (const { name: dependencyName, optional } of dependencies(packageJson)) {
       const resolved = await resolveDependencyPackage(dependencyName, packageJsonPath);
       if (!resolved) {
-        if (optional) continue;
-        throw new Error(
-          `Unable to resolve production dependency "${dependencyName}" declared by ${packageJsonPath} for bundle "${bundle}".`,
-        );
+        if (!optional && isRootManifest) {
+          throw new Error(
+            `Unable to resolve production dependency "${dependencyName}" declared by ${packageJsonPath} for bundle "${bundle}".`,
+          );
+        }
+        continue;
       }
       const visitKey = `${bundle}:${resolved.packageRoot}`;
       if (visited.has(visitKey)) continue;
@@ -339,12 +345,12 @@ async function collectProductionDependencyPackages(
         }
       }
 
-      await visitManifest(dependencyPackageJsonPath, bundle);
+      await visitManifest(dependencyPackageJsonPath, bundle, false);
     }
   };
 
   for (const manifest of packageManifests) {
-    await visitManifest(asPath(manifest.path), manifest.bundle);
+    await visitManifest(asPath(manifest.path), manifest.bundle, true);
   }
   return collection;
 }
