@@ -6568,9 +6568,7 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
         createdAt,
         modelSelection: context.selectedModelSelection,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
+        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: context.interactionMode,
       });
