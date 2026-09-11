@@ -16,9 +16,8 @@ export interface GetAccessTokenRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.GetAccessTokenHttp)`.
- * @binding
- * @section License Checkout Data Plane
- * @example Exchange a Refresh Token for an Access Token
+ * ### License Checkout Data Plane
+ * **Example:** Exchange a Refresh Token for an Access Token
  * ```typescript
  * // init
  * const getAccessToken = yield* AWS.LicenseManager.GetAccessToken();
@@ -26,6 +25,8 @@ export interface GetAccessTokenRequest
  * // runtime — AccessToken is Redacted; unwrap only at the point of use
  * const { AccessToken } = yield* getAccessToken({ Token: refreshToken });
  * ```
+ *
+ * @binding
  */
 export interface GetAccessToken extends Binding.Service<
   GetAccessToken,

@@ -1,34 +1,35 @@
 ---
 title: Migrations
-description: Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in a neon_migrations table.
+description: Apply SQL migrations and seed data to Neon projects and branches as part of every deploy — ordered, hashed, and tracked in Alchemy's __alchemy_migrations table.
 ---
 
-Both `Neon.Project` and `Neon.Branch` accept a `migrationsDir` — a
-folder of `.sql` files applied in order as part of every deploy. On a
-project, migrations run against the default branch's primary
-database; on a branch, they run against the branch itself:
+Both `Neon.Project` and `Neon.Branch` accept a `migrations` prop — a
+folder of `.sql` files (or a [`Drizzle.Schema`](/sql/drizzle/migrations)
+resource) applied in order as part of every deploy. On a project,
+migrations run against the default branch's primary database; on a
+branch, they run against the branch itself:
 
 ```typescript
 const project = yield* Neon.Project("my-project", {
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
 Because branches are copy-on-write forks, a branch created from a
 migrated parent already contains the parent's schema — and its
-tracking table. Point the branch at the same `migrationsDir` and only
+tracking table. Point the branch at the same `migrations` directory and only
 migrations added after the fork are applied:
 
 ```typescript
 const featureBranch = yield* Neon.Branch("feature", {
   project,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
 ## Ordering and hashing
 
-Files are discovered recursively under `migrationsDir` and sorted by
+Files are discovered recursively under the migrations directory and sorted by
 their numeric prefix (`0001_init.sql`, `0002_users.sql`, …), falling
 back to name order for files without one. Each file's contents are
 SHA-256 hashed and the hashes are persisted in the resource's state
@@ -39,25 +40,32 @@ entirely.
 
 ## The tracking table
 
-Applied migrations are recorded in a `neon_migrations` table
-(created automatically) with one row per file:
+Applied migrations are recorded in Alchemy's `__alchemy_migrations`
+table (created automatically), one row per file:
 
 ```sql
-CREATE TABLE IF NOT EXISTS "neon_migrations" (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
+  id SERIAL PRIMARY KEY,
+  hash text NOT NULL,
+  created_at bigint,
+  name text,
+  applied_at timestamp with time zone DEFAULT now()
 );
 ```
 
+A database previously migrated with drizzle-kit or Prisma is
+[adopted automatically](/sql/effect-sql/migrations#adopting-an-existing-database):
+its old tracking table's history is copied in once and the old table
+is frozen. Projects deployed by older Alchemy versions (which used a
+`neon_migrations` table) are upgraded in place.
+
 On each deploy, files whose names already appear in the table are
-skipped. Use `migrationsTable` to point at a different table — for
-example one written by another migration tool:
+skipped. Use `migrations: { dir, table }` to put the bookkeeping in
+a differently-named table:
 
 ```typescript
 const project = yield* Neon.Project("my-project", {
-  migrationsDir: "./migrations",
-  migrationsTable: "my_migrations",
+  migrations: { dir: "./migrations", table: "my_migrations" },
 });
 ```
 
@@ -77,7 +85,7 @@ migrations. Paths are resolved relative to the working directory:
 
 ```typescript
 const project = yield* Neon.Project("my-project", {
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
   importFiles: ["./seed/users.sql"],
 });
 ```

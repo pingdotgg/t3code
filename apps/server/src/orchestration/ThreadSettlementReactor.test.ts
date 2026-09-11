@@ -80,6 +80,7 @@ function makeThread(
     },
     runtimeMode: "full-access",
     interactionMode: "default",
+    pullRequests: [],
     branch: null,
     worktreePath: null,
     latestTurn: null,
@@ -167,6 +168,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReadCount = yield* Ref.make(0);
   const snapshotReads = yield* Queue.unbounded<number>();
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
@@ -226,7 +228,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
+    getSettings: Ref.get(settings).pipe(Effect.tap((value) => Queue.offer(settingsReads, value))),
     updateSettings,
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
@@ -271,6 +273,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshots,
     snapshotReadCount,
     snapshotReads,
+    settingsReads,
     commands,
     branchCalls,
     summaryCalls,
@@ -299,6 +302,86 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it("distinguishes a project that inherits the threshold from one that disables it", () => {
+    const inherits = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
+    });
+    const never = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
+      },
+    });
+    assert.notStrictEqual(inherits, never);
+  });
+
+  it("ignores project overrides that do not touch settlement", () => {
+    const base = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: false } },
+    });
+    const unrelated = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [LINKED_PROJECT_ID]: { defaultThreadEnvMode: "worktree" },
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: false, defaultAutoPull: true },
+      },
+    });
+    assert.strictEqual(base, unrelated);
+  });
+
+  it.effect(
+    "settles all-terminal links from snapshots and keeps open or unsynced links active",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const link = (number: number, state: "open" | "merged" | null) => ({
+            host: "example.test",
+            repository: "owner/repository",
+            number,
+            url: `https://example.test/owner/repository/pull/${number}`,
+            source: "manual" as const,
+            linkedAt: NOW,
+            stack: null,
+            snapshot:
+              state === null
+                ? null
+                : {
+                    state,
+                    title: "Review",
+                    headBranch: "feature",
+                    baseBranch: "main",
+                    isDraft: false,
+                    updatedAt: NOW,
+                    syncedAt: NOW,
+                    mergedAt: state === "merged" ? NOW : null,
+                  },
+          });
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread("merged", { pullRequests: [link(1, "merged"), link(2, "merged")] }),
+              makeThread("open", { pullRequests: [link(1, "merged"), link(2, "open")] }),
+              makeThread("unsynced", { pullRequests: [link(1, "merged"), link(2, null)] }),
+            ]),
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
+            branchPullRequest: () => Effect.die("linked threads must not query the branch"),
+            pullRequestSummary: () => Effect.die("linked threads must use their snapshots"),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+              [ThreadId.make("merged")],
+            );
+            assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+            assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
   it.effect("uses saved PRs without settling resumed threads or branches with newer PRs", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -370,6 +453,115 @@ describe("ThreadSettlementReactor", () => {
           assert.deepStrictEqual(
             new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
             new Set([ThreadId.make("retained-terminal"), ThreadId.make("foreign-branch-pr")]),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips PR work on startup, timer and merge sweeps when settlement is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("branch-thread", { branch: "feature" }),
+            makeThread("linked-thread", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+          ]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.settingsReads);
+          yield* reactor.drain;
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.settingsReads);
+          yield* reactor.drain;
+          yield* fixture.publishMerge;
+          yield* Queue.take(fixture.settingsReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.invalidatedCwds), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 0);
+
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          // Inactive threads settle without a PR lookup, so only the dispatches prove work resumed.
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
+            [ThreadId.make("branch-thread"), ThreadId.make("linked-thread")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a project override settles only that project's inactive threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const overriddenProject = ProjectId.make("overridden-project");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("inherits-thread"),
+              makeThread("overridden-thread", { projectId: overriddenProject }),
+            ],
+            [makeProject(), makeProject(overriddenProject, "/workspace/overridden")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: {
+              [overriddenProject]: { sidebarAutoSettleAfterDays: 1 },
+            },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("overridden-thread")],
+          );
+
+          // Clearing the override is a settlement change, so the sweep re-arms.
+          yield* fixture.updateSettings({
+            projectSettingsOverrides: { [overriddenProject]: null },
+            sidebarAutoSettleAfterDays: 1,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          // The static snapshot never records the first settlement, so the
+          // second sweep dispatches for both; the inheriting thread is new.
+          assert.include(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ThreadId.make("inherits-thread"),
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -694,14 +886,14 @@ describe("ThreadSettlementReactor", () => {
               Effect.tap((count) =>
                 count === 1
                   ? Deferred.succeed(firstLookupStarted, undefined)
-                  : count === 3
+                  : count === 2
                     ? Deferred.succeed(laterLookupStarted, undefined)
                     : Effect.void,
               ),
               Effect.tap((count) =>
                 count === 1
                   ? Deferred.await(releaseFirstLookup)
-                  : count === 3
+                  : count === 2
                     ? Deferred.await(releaseLaterLookup)
                     : Effect.void,
               ),
@@ -716,13 +908,16 @@ describe("ThreadSettlementReactor", () => {
           yield* Deferred.succeed(fixture.activation, undefined);
           yield* Queue.take(fixture.snapshotReads);
           yield* Deferred.await(firstLookupStarted);
+          yield* Queue.clear(fixture.settingsReads);
 
           yield* fixture.updateSettings({ sidebarAutoSettleOnMerge: false });
           yield* Deferred.succeed(releaseFirstLookup, undefined);
-          yield* Queue.take(fixture.snapshotReads);
+          // The in-flight decision and the newly queued sweep both read the disabled settings.
+          yield* Queue.take(fixture.settingsReads);
+          yield* Queue.take(fixture.settingsReads);
           yield* reactor.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 1);
 
           yield* Ref.set(state, "closed");
           yield* fixture.updateSettings({ enableAgentBrowserAccess: false });
@@ -731,8 +926,8 @@ describe("ThreadSettlementReactor", () => {
           yield* Deferred.succeed(releaseLaterLookup, undefined);
           yield* reactor.drain;
 
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 3);
-          assert.strictEqual(yield* Ref.get(lookupCount), 3);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
+          assert.strictEqual(yield* Ref.get(lookupCount), 2);
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
             [ThreadId.make("settings-thread")],

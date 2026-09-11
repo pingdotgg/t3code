@@ -14,30 +14,33 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider("list enumerates the deployed Network ACL", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed Network ACL",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const { vpc, acl } = yield* stack.deploy(
-      Effect.gen(function* () {
-        const vpc = yield* Vpc("ListNaclVpc", {
-          cidrBlock: "10.0.0.0/16",
-        });
-        const acl = yield* NetworkAcl("ListNacl", {
-          vpcId: vpc.vpcId,
-        });
-        return { vpc, acl };
-      }),
-    );
+      const { vpc, acl } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const vpc = yield* Vpc("ListNaclVpc", {
+            cidrBlock: "10.0.0.0/16",
+          });
+          const acl = yield* NetworkAcl("ListNacl", {
+            vpcId: vpc.vpcId,
+          });
+          return { vpc, acl };
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(NetworkAcl);
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(NetworkAcl);
+      const all = yield* provider.list();
 
-    expect(all.some((x) => x.networkAclId === acl.networkAclId)).toBe(true);
+      expect(all.some((x) => x.networkAclId === acl.networkAclId)).toBe(true);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertNetworkAclGone(acl.networkAclId);
-    yield* assertVpcGone(vpc.vpcId);
-  }).pipe(logLevel),
+      yield* assertNetworkAclGone(acl.networkAclId);
+      yield* assertVpcGone(vpc.vpcId);
+    }).pipe(logLevel),
+  { timeout: 180_000 },
 );

@@ -801,14 +801,12 @@ export function ProviderInstanceCard({
 
   return (
     <>
-      <SettingsSection
-        title={displayName}
-        description={editorStatusNode}
-        icon={titleIconNode}
-        headerAction={editorHeaderAction}
-      >
+      <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
         <SettingsRow
           title="Display name"
+          status={
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">{editorStatusNode}</div>
+          }
           control={
             <div
               inert={readOnly}
@@ -898,6 +896,10 @@ export function ProviderInstanceCard({
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
           <div className="px-3 py-3 sm:px-4">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Favorites, visibility, and ordering are saved on this device. Custom models are saved
+              on the selected environment.
+            </p>
             <ProviderModelsSection
               instanceId={instanceId}
               driverKind={driverKind}

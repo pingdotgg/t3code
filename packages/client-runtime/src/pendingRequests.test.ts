@@ -282,7 +282,25 @@ describe("pending questions", () => {
         payload: { requestId: "async-1", responseMode: "message", questions: [question] },
       }),
     ];
-    expect(derivePendingRequests(activities).userInputs[0]?.questions).toEqual([question]);
+    expect(derivePendingRequests(activities).userInputs[0]).toMatchObject({
+      questions: [question],
+      dismissible: true,
+    });
+  });
+
+  it("only marks async questions as dismissible", () => {
+    const question = {
+      id: "0",
+      header: "Question",
+      question: "Continue?",
+      options: [{ label: "Yes", description: "" }],
+      multiSelect: false,
+    };
+    const native = makeActivity({
+      kind: "user-input.requested",
+      payload: { requestId: "native-1", questions: [question] },
+    });
+    expect(derivePendingRequests([native]).userInputs[0]?.dismissible).toBe(false);
   });
 
   it("preserves native choice values and the custom-answer restriction", () => {
@@ -378,6 +396,7 @@ describe("pending questions", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
+        dismissible: false,
         questions: [
           {
             id: "sandbox_mode",

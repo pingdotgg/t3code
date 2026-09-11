@@ -1,7 +1,59 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { Prompt, Response } from "effect/unstable/ai"
 
 describe("Prompt", () => {
+  describe("part schemas", () => {
+    it("exports schemas for all parts and message-specific parts", () => {
+      const parts = {
+        text: { type: "text", text: "hello" },
+        reasoning: { type: "reasoning", text: "thinking" },
+        file: { type: "file", mediaType: "text/plain", data: "hello" },
+        toolCall: { type: "tool-call", id: "call-1", name: "tool", params: {} },
+        toolResult: { type: "tool-result", id: "call-1", name: "tool", isFailure: false, result: "done" },
+        toolApprovalResponse: {
+          type: "tool-approval-response",
+          approvalId: "approval-1",
+          approved: true
+        },
+        toolApprovalRequest: {
+          type: "tool-approval-request",
+          approvalId: "approval-1",
+          toolCallId: "call-1"
+        }
+      } as const
+
+      const decodePart = Schema.decodeUnknownExit(Prompt.Part)
+      for (const part of Object.values(parts)) {
+        assert.strictEqual(decodePart(part)._tag, "Success")
+      }
+
+      const decodeUserMessagePart = Schema.decodeUnknownExit(Prompt.UserMessagePart)
+      for (const part of [parts.text, parts.file]) {
+        assert.strictEqual(decodeUserMessagePart(part)._tag, "Success")
+      }
+
+      const decodeAssistantMessagePart = Schema.decodeUnknownExit(Prompt.AssistantMessagePart)
+      for (
+        const part of [
+          parts.text,
+          parts.file,
+          parts.reasoning,
+          parts.toolCall,
+          parts.toolResult,
+          parts.toolApprovalRequest
+        ]
+      ) {
+        assert.strictEqual(decodeAssistantMessagePart(part)._tag, "Success")
+      }
+
+      const decodeToolMessagePart = Schema.decodeUnknownExit(Prompt.ToolMessagePart)
+      for (const part of [parts.toolResult, parts.toolApprovalResponse]) {
+        assert.strictEqual(decodeToolMessagePart(part)._tag, "Success")
+      }
+    })
+  })
+
   describe("fromResponseParts", () => {
     it("folds streamed text and reasoning deltas into an assistant message", () => {
       const parts = [
@@ -27,6 +79,145 @@ describe("Prompt", () => {
         }
       ])
       assert.deepStrictEqual(prompt, expected)
+    })
+
+    it("preserves metadata on non-streaming response parts", () => {
+      const parts = [
+        Response.makePart("text", {
+          text: "Hello",
+          metadata: { test: { value: "text" } }
+        }),
+        Response.makePart("reasoning", {
+          text: "Thinking",
+          metadata: { openai: { encryptedContent: "encrypted-reasoning" } }
+        }),
+        Response.makePart("tool-call", {
+          id: "call-1",
+          name: "get_weather",
+          params: { city: "London" },
+          providerExecuted: false,
+          metadata: { google: { thoughtSignature: "signed-call" } }
+        }),
+        Response.makePart("tool-result", {
+          id: "call-1",
+          name: "get_weather",
+          isFailure: false,
+          result: { temp: 20 },
+          encodedResult: { temp: 20 },
+          preliminary: false,
+          providerExecuted: false,
+          metadata: { test: { value: "tool-result" } }
+        })
+      ]
+
+      const prompt = Prompt.fromResponseParts(parts)
+
+      assert.deepStrictEqual(
+        prompt,
+        Prompt.make([
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Hello", options: { test: { value: "text" } } },
+              {
+                type: "reasoning",
+                text: "Thinking",
+                options: { openai: { encryptedContent: "encrypted-reasoning" } }
+              },
+              {
+                type: "tool-call",
+                id: "call-1",
+                name: "get_weather",
+                params: { city: "London" },
+                providerExecuted: false,
+                options: { google: { thoughtSignature: "signed-call" } }
+              }
+            ]
+          },
+          {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              id: "call-1",
+              name: "get_weather",
+              isFailure: false,
+              result: { temp: 20 },
+              providerExecuted: false,
+              options: { test: { value: "tool-result" } }
+            }]
+          }
+        ])
+      )
+    })
+
+    it("accumulates metadata across streamed text and reasoning parts", () => {
+      const parts = [
+        Response.makePart("text-start", {
+          id: "text-1",
+          metadata: { testStart: { value: "text-start" } }
+        }),
+        Response.makePart("text-delta", {
+          id: "text-1",
+          delta: "Hello",
+          metadata: { testDelta: { value: "text-delta" } }
+        }),
+        Response.makePart("text-end", {
+          id: "text-1",
+          metadata: { testEnd: { value: "text-end" } }
+        }),
+        Response.makePart("reasoning-start", {
+          id: "reasoning-1",
+          metadata: { openai: { itemId: "reasoning-item" } }
+        }),
+        Response.makePart("reasoning-delta", {
+          id: "reasoning-1",
+          delta: "Thinking"
+        }),
+        Response.makePart("reasoning-delta", {
+          id: "reasoning-1",
+          delta: "",
+          metadata: { testDelta: { value: "reasoning-delta" } }
+        }),
+        Response.makePart("reasoning-end", {
+          id: "reasoning-1",
+          metadata: {
+            openai: { encryptedContent: "encrypted-reasoning" },
+            testEnd: { value: "reasoning-end" }
+          }
+        })
+      ]
+
+      const prompt = Prompt.fromResponseParts(parts)
+
+      assert.deepStrictEqual(
+        prompt,
+        Prompt.make([{
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "Hello",
+              options: {
+                testStart: { value: "text-start" },
+                testDelta: { value: "text-delta" },
+                testEnd: { value: "text-end" }
+              }
+            },
+            {
+              type: "reasoning",
+              text: "Thinking",
+              options: {
+                openai: {
+                  itemId: "reasoning-item",
+                  encryptedContent: "encrypted-reasoning"
+                },
+                testDelta: { value: "reasoning-delta" },
+                testEnd: { value: "reasoning-end" }
+              }
+            }
+          ]
+        }])
+      )
     })
 
     it("places tool calls in assistant messages and tool results in tool messages", () => {
@@ -63,6 +254,59 @@ describe("Prompt", () => {
       const toolContent = prompt.content[1].content
       assert.strictEqual(toolContent.length, 1)
       assert.strictEqual(typeof toolContent[0] === "object" && toolContent[0].type, "tool-result")
+    })
+
+    it("places provider-executed tool results in the assistant message", () => {
+      const parts = [
+        Response.makePart("tool-call", {
+          id: "ws-1",
+          name: "web_search",
+          params: {},
+          providerExecuted: true
+        }),
+        Response.makePart("tool-result", {
+          id: "ws-1",
+          name: "web_search",
+          isFailure: false,
+          result: { sources: 3 },
+          encodedResult: { sources: 3 },
+          preliminary: false,
+          providerExecuted: true
+        }),
+        Response.makePart("tool-call", {
+          id: "call-1",
+          name: "get_weather",
+          params: { city: "London" },
+          providerExecuted: false
+        }),
+        Response.makePart("tool-result", {
+          id: "call-1",
+          name: "get_weather",
+          isFailure: false,
+          result: { temp: 20 },
+          encodedResult: { temp: 20 },
+          preliminary: false,
+          providerExecuted: false
+        })
+      ]
+      const prompt = Prompt.fromResponseParts(parts)
+
+      // Provider-executed pair stays in the assistant message; only the
+      // framework-executed result forms a tool message
+      assert.strictEqual(prompt.content.length, 2)
+      assert.strictEqual(prompt.content[0].role, "assistant")
+      assert.strictEqual(prompt.content[1].role, "tool")
+
+      const assistantContent = prompt.content[0].content
+      assert.strictEqual(assistantContent.length, 3)
+      assert.strictEqual(typeof assistantContent[1] === "object" && assistantContent[1].type, "tool-result")
+      assert.deepStrictEqual((assistantContent[1] as any).id, "ws-1")
+      assert.strictEqual((assistantContent[1] as any).providerExecuted, true)
+
+      const toolContent = prompt.content[1].content
+      assert.strictEqual(toolContent.length, 1)
+      assert.deepStrictEqual((toolContent[0] as any).id, "call-1")
+      assert.strictEqual((toolContent[0] as any).providerExecuted, false)
     })
 
     it("should handle out-of-order tool results (result before call in stream)", () => {

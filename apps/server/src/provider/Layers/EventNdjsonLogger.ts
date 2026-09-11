@@ -87,7 +87,7 @@ export interface EventNdjsonLoggerOptions extends EventNdjsonLogStoreOptions {
   readonly stream: EventNdjsonStream;
 }
 
-export class EventNdjsonLogConfigurationError extends Schema.TaggedErrorClass<EventNdjsonLogConfigurationError>()(
+export class EventNdjsonLogConfigurationError extends Schema.TaggedError<EventNdjsonLogConfigurationError>()(
   "EventNdjsonLogConfigurationError",
   {
     filePath: Schema.String,
@@ -101,7 +101,7 @@ export class EventNdjsonLogConfigurationError extends Schema.TaggedErrorClass<Ev
   }
 }
 
-export class EventNdjsonLogDirectoryError extends Schema.TaggedErrorClass<EventNdjsonLogDirectoryError>()(
+export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjsonLogDirectoryError>()(
   "EventNdjsonLogDirectoryError",
   {
     directory: Schema.String,

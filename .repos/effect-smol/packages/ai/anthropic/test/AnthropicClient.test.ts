@@ -1,4 +1,5 @@
 import { AnthropicClient } from "@effect/ai-anthropic"
+import * as Errors from "@effect/ai-anthropic/internal/errors"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Layer, Redacted, type Schema } from "effect"
 import {
@@ -40,6 +41,94 @@ describe("AnthropicClient", () => {
         error: {
           type: "invalid_request_error",
           message: "Bad request"
+        },
+        request_id: null
+      }
+    }))))
+
+  it.effect("surfaces the provider message on 401 AuthenticationError", () =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+
+      const result = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(result.reason._tag, "AuthenticationError")
+      if (result.reason._tag !== "AuthenticationError") {
+        return yield* Effect.die(new Error("Expected AuthenticationError"))
+      }
+      assert.strictEqual(result.reason.kind, "InvalidKey")
+      assert.strictEqual(
+        result.reason.description,
+        "invalid x-api-key (POST https://api.anthropic.com/v1/messages?beta=true) [type: authentication_error] [requestId: req_anthropic]"
+      )
+      assert.include(result.reason.message, "invalid x-api-key")
+      assert.strictEqual(
+        result.reason.message,
+        "InvalidKey: Verify your API key is correct. invalid x-api-key (POST https://api.anthropic.com/v1/messages?beta=true) [type: authentication_error] [requestId: req_anthropic]"
+      )
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 401,
+      body: {
+        type: "error",
+        error: { type: "authentication_error", message: "invalid x-api-key" },
+        request_id: "req_anthropic"
+      }
+    }))))
+
+  it("preserves and truncates a fallback HTTP response", () => {
+    const body = `${"a".repeat(200)}b`
+    const reason = Errors.mapStatusCodeToReason({
+      status: 400,
+      headers: {},
+      message: undefined,
+      metadata: { errorType: null, requestId: null },
+      http: makeHttpContext("https://api.anthropic.com/v1/messages?beta=true", body)
+    })
+
+    assert.strictEqual(reason._tag, "InvalidRequestError")
+    if (reason._tag !== "InvalidRequestError") {
+      throw new Error("Expected InvalidRequestError")
+    }
+    assert.strictEqual(
+      reason.description,
+      `HTTP 400 (POST https://api.anthropic.com/v1/messages?beta=true) Response: ${"a".repeat(200)}...`
+    )
+  })
+
+  it.effect("surfaces the provider message on 403 AuthenticationError", () =>
+    Effect.gen(function*() {
+      const client = yield* AnthropicClient.AnthropicClient
+
+      const result = yield* client.createMessage({
+        payload: {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1,
+          messages: [{ role: "user", content: "hello" }]
+        }
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(result.reason._tag, "AuthenticationError")
+      if (result.reason._tag !== "AuthenticationError") {
+        return yield* Effect.die(new Error("Expected AuthenticationError"))
+      }
+      assert.strictEqual(result.reason.kind, "InsufficientPermissions")
+      assert.include(result.reason.description ?? "", "not available for this account")
+      assert.include(result.reason.message, "not available for this account")
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 403,
+      body: {
+        type: "error",
+        error: {
+          type: "permission_error",
+          message: "claude-sonnet-4-20250514 is not available for this account"
         },
         request_id: null
       }
@@ -125,3 +214,14 @@ const makeResponse = (
     })
   )
 }
+
+const makeHttpContext = (url: string, body: string) => ({
+  request: {
+    method: "POST" as const,
+    url,
+    urlParams: [],
+    hash: undefined,
+    headers: {}
+  },
+  body
+})

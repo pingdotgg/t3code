@@ -10,6 +10,12 @@ import { getThreadListV2OrderedSection } from "../features/threads/threadListV2"
 import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadShells } from "./threads";
+import { queuedThreadKeysAtom } from "./use-thread-outbox";
+
+// Covers lifecycle commands before a cross-section move can acquire an order hold.
+export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
+
+export const threadDropBusyAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 export const pendingThreadOrderAtom = Atom.make<PendingThreadOrder | null>(null).pipe(
   Atom.keepAlive,
@@ -50,6 +56,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
       threads: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
       section: current.section,
       now: new Date().toISOString(),
+      queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
       settlementEnvironmentIds: new Set(
         [...configs].flatMap(([id, config]) =>
           config.environment.capabilities.threadSettlement === true ? [id] : [],
@@ -70,6 +77,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
   unsubscribers.push(
     appAtomRegistry.subscribe(environmentThreadShells.threadShellsAtom, refresh),
     appAtomRegistry.subscribe(environmentServerConfigsAtom, refresh),
+    appAtomRegistry.subscribe(queuedThreadKeysAtom, refresh),
   );
   return {
     isPending: () => {

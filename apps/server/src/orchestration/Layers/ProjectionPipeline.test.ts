@@ -8,6 +8,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  type ThreadPullRequestSnapshot,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
@@ -411,7 +412,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         FROM projection_state
         ORDER BY projector ASC
       `;
-      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length + 1);
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
@@ -681,6 +682,242 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
             sizeBytes: 5,
           },
         ]);
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-pull-requests-")))(
+  "OrchestrationProjectionPipeline pull request links",
+  (it) => {
+    it.effect("projects link, sync, unlink, legacy replay and delete into the link table", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-pr");
+        const projectId = ProjectId.make("project-pr");
+        const t0 = "2026-01-01T00:00:00.000Z";
+        let counter = 0;
+        const base = (occurredAt: string) => {
+          counter += 1;
+          return {
+            eventId: EventId.make(`evt-pr-${counter}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: CommandId.make(`cmd-pr-${counter}`),
+            causationEventId: null,
+            correlationId: CommandId.make(`cmd-pr-${counter}`),
+            metadata: {},
+          } as const;
+        };
+        const readLinks = () =>
+          sql<{
+            readonly host: string;
+            readonly repository: string;
+            readonly number: number;
+            readonly source: string;
+            readonly linkedAt: string;
+            readonly snapshotJson: string | null;
+            readonly stackJson: string | null;
+          }>`
+            SELECT
+              host,
+              repository,
+              number,
+              source,
+              linked_at AS "linkedAt",
+              snapshot_json AS "snapshotJson",
+              stack_json AS "stackJson"
+            FROM projection_thread_pull_requests
+            WHERE thread_id = ${threadId}
+            ORDER BY number ASC
+          `;
+        const readThreadUpdatedAt = () =>
+          sql<{ readonly updatedAt: string }>`
+            SELECT updated_at AS "updatedAt" FROM projection_threads WHERE thread_id = ${threadId}
+          `;
+
+        yield* eventStore.append({
+          ...base(t0),
+          type: "thread.created",
+          payload: {
+            threadId,
+            projectId,
+            title: "Thread PR",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: t0,
+            updatedAt: t0,
+          },
+        });
+
+        // Legacy single-link event replays into a manual row with the URL host.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:01.000Z"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId,
+            linkedPullRequest: {
+              projectId,
+              repository: "web",
+              number: 41,
+              url: "https://org-a.visualstudio.com/DefaultCollection/project/_git/web/pullrequest/41",
+            },
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:02.000Z"),
+          type: "thread.pull-request-linked",
+          payload: {
+            threadId,
+            link: {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 42,
+              url: "https://github.com/pingdotgg/t3code/pull/42",
+              source: "created",
+              linkedAt: "2026-01-01T00:00:02.000Z",
+              snapshot: null,
+              stack: null,
+            },
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        assert.deepEqual(yield* readLinks(), [
+          {
+            host: "dev.azure.com",
+            repository: "org-a/project/_git/web",
+            number: 41,
+            source: "manual",
+            linkedAt: "2026-01-01T00:00:01.000Z",
+            snapshotJson: null,
+            stackJson: null,
+          },
+          {
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 42,
+            source: "created",
+            linkedAt: "2026-01-01T00:00:02.000Z",
+            snapshotJson: null,
+            stackJson: null,
+          },
+        ]);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:02.000Z" }]);
+
+        // Sync fills snapshot/stack on the matching row; a sync for an unknown
+        // link is ignored.
+        const snapshot: ThreadPullRequestSnapshot = {
+          state: "open",
+          title: "Add links",
+          headBranch: "feat/links",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: "2026-01-01T00:00:02.500Z",
+          syncedAt: "2026-01-01T00:00:03.000Z",
+        };
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:03.000Z"),
+          type: "thread.pull-request-synced",
+          payload: {
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 42,
+            snapshot,
+            stack: null,
+            updatedAt: "2026-01-01T00:00:03.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:03.500Z"),
+          type: "thread.pull-request-synced",
+          payload: {
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 99,
+            snapshot,
+            stack: null,
+            updatedAt: "2026-01-01T00:00:03.500Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        const synced = yield* readLinks();
+        assert.equal(synced.length, 2);
+        assert.equal(synced[0]?.snapshotJson, null);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.deepEqual(JSON.parse(synced[1]?.snapshotJson ?? "null"), snapshot);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:03.000Z" }]);
+
+        // A legacy null clears only the manual row; created/agent/stack rows stay.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:04.000Z"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId,
+            linkedPullRequest: null,
+            updatedAt: "2026-01-01T00:00:04.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(
+          (yield* readLinks()).map((row) => row.number),
+          [42],
+        );
+
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:05.000Z"),
+          type: "thread.pull-request-unlinked",
+          payload: {
+            threadId,
+            host: "GitHub.COM",
+            repository: "PingDotGG/T3Code",
+            number: 42,
+            updatedAt: "2026-01-01T00:00:05.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(yield* readLinks(), []);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:05.000Z" }]);
+
+        // Deleting the thread clears whatever links it still had.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:06.000Z"),
+          type: "thread.pull-request-linked",
+          payload: {
+            threadId,
+            link: {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 43,
+              url: "https://github.com/pingdotgg/t3code/pull/43",
+              source: "agent",
+              linkedAt: "2026-01-01T00:00:06.000Z",
+              snapshot: null,
+              stack: null,
+            },
+            updatedAt: "2026-01-01T00:00:06.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:07.000Z"),
+          type: "thread.deleted",
+          payload: {
+            threadId,
+            deletedAt: "2026-01-01T00:00:07.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(yield* readLinks(), []);
       }),
     );
   },
@@ -1164,14 +1401,18 @@ it.layer(
 
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
-      assert.deepEqual(
-        yield* projectionState.listAll(),
-        cursorsBeforeFailure.map((cursor) => ({
+      assert.deepEqual(yield* projectionState.listAll(), [
+        {
+          projector: "projection.attachment-cleanup",
+          lastAppliedSequence: pendingEvent.sequence,
+          updatedAt: pendingEvent.occurredAt,
+        },
+        ...cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
           lastAppliedSequence: pendingEvent.sequence,
           updatedAt: pendingEvent.occurredAt,
         })),
-      );
+      ]);
       const replayedMessages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE message_id = 'message-rollback'
       `;
@@ -1364,10 +1605,53 @@ it.layer(
         },
       });
 
+      const answerKeepId = "thread-revert-files-00000000-0000-4000-8000-000000000006-txt";
+      const answerRemoveId = "thread-revert-files-00000000-0000-4000-8000-000000000007-txt";
+      for (const [id, turnId] of [
+        [answerKeepId, "turn-keep"],
+        [answerRemoveId, "turn-remove"],
+      ] as const) {
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make(`answer-${id}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make(`answer-${id}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`answer-${id}`),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make(`answer-${id}`),
+              kind: "user-input.answer-submitted",
+              tone: "info",
+              summary: "Answer with file",
+              createdAt: now,
+              turnId: TurnId.make(turnId),
+              payload: {
+                requestId: ApprovalRequestId.make(id),
+                answers: { q: "See file" },
+                attachmentsByQuestionId: {
+                  q: [
+                    { type: "file", id, name: "answer.txt", mimeType: "text/plain", sizeBytes: 6 },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
       const keepPath = path.join(attachmentsDir, `${keepAttachmentId}.png`);
       const keepFilePath = path.join(attachmentsDir, `${keepFileAttachmentId}.pdf`);
       const removePath = path.join(attachmentsDir, `${removeAttachmentId}.png`);
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(attachmentsDir, `${answerKeepId}.txt`), "answer");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
       yield* fileSystem.writeFileString(keepPath, "keep");
       yield* fileSystem.writeFileString(keepFilePath, "keep");
       yield* fileSystem.writeFileString(removePath, "remove");
@@ -1460,9 +1744,33 @@ it.layer(
 
       assert.isTrue(yield* exists(keepPath));
       assert.isTrue(yield* exists(keepFilePath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
+
+      // Replay message and activity history from different cursors, as during a projection rebuild.
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+      yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${threadId}`;
+      yield* sql`UPDATE projection_state SET last_applied_sequence = 0
+        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities', 'projection.threads')`;
+      yield* fileSystem.writeFileString(removePath, "remove");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
+      yield* sql`CREATE TRIGGER fail_bootstrap_thread BEFORE UPDATE ON projection_threads
+        BEGIN SELECT RAISE(FAIL, 'forced bootstrap failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      assert.isTrue(yield* exists(removePath));
+      yield* sql`DROP TRIGGER fail_bootstrap_thread`;
+      yield* projectionPipeline.bootstrap;
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(laterPath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(removePath));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
     }),
   );
 });
@@ -1934,6 +2242,15 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* sql`CREATE TRIGGER fail_later_stream_projector BEFORE UPDATE ON projection_state
+        WHEN NEW.projector = 'projection.threads'
+        BEGIN SELECT RAISE(FAIL, 'forced later projector failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      const committedMessage = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE message_id = 'message-a'
+      `;
+      assert.deepEqual(committedMessage, [{ text: "hello world" }]);
+      yield* sql`DROP TRIGGER fail_later_stream_projector`;
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
 
@@ -3884,7 +4201,7 @@ const engineLayer = it.layer(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provideMerge(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
@@ -4236,7 +4553,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         yield* readCursors,
         cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
-          lastAppliedSequence: result.sequence,
+          lastAppliedSequence:
+            cursor.projector === "projection.attachment-cleanup"
+              ? cursor.lastAppliedSequence
+              : result.sequence,
         })),
       );
       assert.isFalse(yield* exists(attachmentPath));
@@ -4266,6 +4586,25 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         WHERE command_id = ${cleanupFailureCommandId}
       `;
       assert.deepEqual(cleanupFailureReceipts, [{ status: "accepted" }]);
+
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const cleanupCursor = sql<{ readonly lastAppliedSequence: number }>`
+        SELECT last_applied_sequence AS "lastAppliedSequence" FROM projection_state
+        WHERE projector = 'projection.attachment-cleanup'
+      `;
+      const cursorBeforeRetry = yield* cleanupCursor;
+      yield* pipeline.bootstrap;
+      assert.deepEqual(yield* cleanupCursor, cursorBeforeRetry);
+      assert.isTrue(yield* exists(blockedAttachmentPath));
+
+      yield* fileSystem.remove(blockedAttachmentPath, { recursive: true });
+      yield* fileSystem.writeFileString(blockedAttachmentPath, "retry this attachment");
+      yield* pipeline.bootstrap;
+      assert.isFalse(yield* exists(blockedAttachmentPath));
+      assert.isAbove(
+        (yield* cleanupCursor)[0]!.lastAppliedSequence,
+        cursorBeforeRetry[0]!.lastAppliedSequence,
+      );
     }),
   );
 });

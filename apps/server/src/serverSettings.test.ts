@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ModelSelection,
+  ProjectId,
+  ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -1059,6 +1062,128 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("keeps the inline value on disk when secret migration fails", () => {
+    const cause = new ServerSecretStore.SecretStorePersistError({
+      resource: "provider environment secret",
+      cause: new Error("Secret storage unavailable"),
+    });
+    const secretLayer = Layer.effect(
+      ServerSecretStore.ServerSecretStore,
+      Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+        ...store,
+        set: () => Effect.fail(cause),
+      })),
+    ).pipe(Layer.provide(ServerSecretStore.layer));
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(secretLayer),
+      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-inline-secret-failure-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const original =
+        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}';
+      yield* fs.writeFileString(config.settingsPath, original);
+      const error = yield* Effect.flip(
+        service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true }],
+              config: {},
+            },
+          },
+        }),
+      );
+      assert.equal(error.operation, "write-secret");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(yield* fs.readFileString(config.settingsPath), original);
+      const settings = yield* service.getSettings;
+      assert.equal(
+        settings.providerInstances[instanceId]?.environment?.[0]?.value,
+        "inline-test-token",
+      );
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
+  for (const { label, variable, expected, duplicate } of [
+    {
+      label: "preserves an inline secret on a redacted settings save",
+      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+      expected: "inline-test-token",
+    },
+    {
+      label: "preserves the effective last inline secret when names are duplicated",
+      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+      expected: "last-inline-test-token",
+      duplicate: true,
+    },
+    {
+      label: "replaces an inline secret with an explicit value",
+      variable: { name: "API_TOKEN", value: "replacement-test-token", sensitive: true },
+      expected: "replacement-test-token",
+    },
+    {
+      label: "clears an inline secret with an explicit empty value",
+      variable: { name: "API_TOKEN", value: "", sensitive: true },
+      expected: "",
+    },
+  ]) {
+    it.effect(label, () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          duplicate
+            ? '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true},{"name":"API_TOKEN","value":"last-inline-test-token","sensitive":true}],"config":{}}}}'
+            : '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
+        );
+        const initial = yield* serverSettings.getSettings;
+        assert.equal(
+          initial.providerInstances[instanceId]?.environment?.[0]?.value,
+          "inline-test-token",
+        );
+
+        const next = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              displayName: "Renamed provider",
+              environment: duplicate ? [variable, variable] : [variable],
+              config: {},
+            },
+          },
+        });
+        assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "inline-test-token");
+        assert.notInclude(raw, "replacement-test-token");
+
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+          ),
+        );
+        assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1155,6 +1280,115 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
       assert.notInclude(persisted, "sk-terminal-secret");
       assert.include(persisted, '"valueRedacted": true');
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const legacyProject = ProjectId.make("project-legacy");
+      const scriptedProject = ProjectId.make("project-scripted");
+      const script: ProjectScript = {
+        id: "check",
+        name: "Check",
+        command: "npm test",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      };
+      const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+      const modelJson = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelection))(model);
+      const scriptsJson = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Array(ProjectScript)),
+      )([script]);
+      for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
+        // The legacy project also carries aggregate scripts, but its stored
+        // null override reset them; the fold must not bring them back.
+        [legacyProject, modelJson, "worktree", 1, scriptsJson],
+        [scriptedProject, null, null, 0, scriptsJson],
+      ] as const) {
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, default_model_selection_json,
+            default_thread_env_mode, auto_pull, scripts_json, created_at, updated_at
+          )
+          VALUES (
+            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelColumn},
+            ${envMode}, ${autoPull}, ${scripts},
+            ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+          )
+        `;
+      }
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{"projectAgentBrowserAccessOverrides":{"${legacyProject}":false},"projectAutoPullOverrides":{"${scriptedProject}":true},"projectScriptOverrides":{"${legacyProject}":null}}`,
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isTrue(settings.projectSettingsFolded);
+      assert.deepEqual<ServerSettings["projectSettingsOverrides"]>(
+        settings.projectSettingsOverrides,
+        {
+          [legacyProject]: {
+            enableAgentBrowserAccess: false,
+            defaultModelSelection: model,
+            defaultThreadEnvMode: "worktree",
+            defaultAutoPull: true,
+          },
+          [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },
+        },
+      );
+      // Derived legacy views keep older clients reading the same values.
+      assert.deepEqual<ServerSettings["projectAutoPullOverrides"]>(
+        settings.projectAutoPullOverrides,
+        {
+          [legacyProject]: true,
+          [scriptedProject]: true,
+        },
+      );
+      assert.deepEqual<ServerSettings["projectScriptOverrides"]>(settings.projectScriptOverrides, {
+        [scriptedProject]: [script],
+      });
+
+      // A reset survives the next load: the fold does not run again.
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: { [legacyProject]: null },
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      const persisted = yield* decodeServerSettings(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.parse(raw),
+      );
+      assert.isTrue(persisted.projectSettingsFolded);
+      assert.isUndefined(persisted.projectSettingsOverrides[legacyProject]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, auto_pull, scripts_json, created_at, updated_at
+        )
+        VALUES (
+          ${"project-broken"}, ${"Project"}, ${"/tmp/project-broken"}, ${1}, ${"[]"},
+          ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+        )
+      `;
+      const broken = '{"defaultAutoPull": tru';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isFalse(settings.projectSettingsFolded);
+      assert.deepEqual(settings.projectSettingsOverrides, {});
+      // The user's file is still there to repair; nothing was written over it.
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

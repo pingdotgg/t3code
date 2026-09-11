@@ -78,8 +78,8 @@ export interface LifecycleEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Lifecycle Events
- * @example Customize Newly Provisioned Accounts
+ * ### Consuming Lifecycle Events
+ * **Example:** Customize Newly Provisioned Accounts
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

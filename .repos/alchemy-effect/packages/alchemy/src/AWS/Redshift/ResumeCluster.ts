@@ -11,9 +11,8 @@ import type { Cluster } from "./Cluster.ts";
  * overnight pause schedule. The cluster identifier is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.Redshift.ResumeClusterHttp)`.
- * @binding
- * @section Operating a Cluster
- * @example Resume the Warehouse in the Morning
+ * ### Operating a Cluster
+ * **Example:** Resume the Warehouse in the Morning
  * ```typescript
  * // init — bind the operation to the cluster
  * const resumeCluster = yield* AWS.Redshift.ResumeCluster(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * // runtime
  * yield* resumeCluster();
  * ```
+ *
+ * @binding
  */
 export interface ResumeCluster extends Binding.Service<
   ResumeCluster,

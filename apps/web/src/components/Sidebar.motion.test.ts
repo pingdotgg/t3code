@@ -70,6 +70,7 @@ function fixture(rows: TestRow[]) {
   const parent = {
     children: rows,
     ownerDocument: { defaultView: { matchMedia: () => media } },
+    getBoundingClientRect: () => ({ top: 0 }),
     append(node: TestRow) {
       parent.children.push(node);
       node.remove.mockImplementation(() => {
@@ -147,6 +148,42 @@ describe("sidebar list motion", () => {
     expectMove(c, 166);
     expectMove(b, -83);
     expectMove(a, -83);
+  });
+
+  it("glides every row from its released position into its committed slot", () => {
+    const [a, b, c] = [new TestRow("a"), new TestRow("b"), new TestRow("c")];
+    const { motion, layout } = fixture([a, b, c]);
+    motion.update(true);
+    motion.suspend();
+    // a is lifted 130px below its slot; b previews upward into a's place
+    // and c holds a 16px label gap open below the divider.
+    a.dragTranslate = 130;
+    b.dragTranslate = -83;
+    c.dragTranslate = 16;
+    motion.update(false);
+    motion.release();
+    layout([b, a, c]);
+    a.dragTranslate = b.dragTranslate = c.dragTranslate = 0;
+    motion.update(true);
+    // Lifted top 138, committed slot top 91: glide the remaining 47px.
+    expectMove(a, 47);
+    // b already sits where it lands; c closes its 16px gap.
+    expect(b.animations).toHaveLength(0);
+    expectMove(c, 16);
+  });
+
+  it("does not glide on release when motion is reduced", () => {
+    const [a, b] = [new TestRow("a"), new TestRow("b")];
+    const { motion, layout, media } = fixture([a, b]);
+    motion.update(true);
+    media.matches = true;
+    a.dragTranslate = 100;
+    motion.release();
+    layout([b, a]);
+    a.dragTranslate = 0;
+    motion.update(true);
+    expect(a.animations).toHaveLength(0);
+    expect(b.animations).toHaveLength(0);
   });
 
   it("does not carry a canceled drag's transformed position into the next move", () => {
@@ -319,6 +356,31 @@ describe("sidebar list motion", () => {
     motion.update(false);
     expect(parent.children).toEqual([]);
     expect(clone.animations[0]!.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("skips fades when a large list change would clone too many rows", () => {
+    const rows = Array.from({ length: 41 }, (_, index) => new TestRow(`row-${index}`));
+    const { motion, layout, parent } = fixture(rows);
+    motion.update(true);
+    layout([]);
+    motion.update(true);
+    expect(rows.every((row) => row.clones.length === 0)).toBe(true);
+    expect(parent.children).toHaveLength(0);
+    const entering = Array.from({ length: 41 }, (_, index) => new TestRow(`new-${index}`));
+    layout(entering);
+    motion.update(true);
+    expect(entering.every((row) => row.animate.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("still slides rows when one removal displaces a large list", () => {
+    const rows = Array.from({ length: 60 }, (_, index) => new TestRow(`row-${index}`));
+    const { motion, layout } = fixture(rows);
+    motion.update(true);
+    const [removed, ...rest] = rows;
+    layout(rest);
+    motion.update(true);
+    expect(removed!.clones).toHaveLength(1);
+    expect(rest.every((row) => row.animations.length === 1)).toBe(true);
   });
 
   it("respects reduced motion while keeping the next baseline fresh", () => {

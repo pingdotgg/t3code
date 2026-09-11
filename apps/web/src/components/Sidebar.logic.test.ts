@@ -27,7 +27,7 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
-  searchSidebarThreadsByTitle,
+  searchSidebarThreads,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
   shouldRecedeSidebarThread,
@@ -48,6 +48,7 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -801,7 +802,7 @@ describe("resolveSidebarThreadStatus", () => {
   });
 });
 
-describe("searchSidebarThreadsByTitle", () => {
+describe("searchSidebarThreads", () => {
   const threads = [
     { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
     { id: "thread-2", title: "Review providers", project: "Workspace" },
@@ -809,15 +810,15 @@ describe("searchSidebarThreadsByTitle", () => {
   ];
 
   it("matches thread titles case-insensitively and preserves their order", () => {
-    expect(searchSidebarThreadsByTitle(threads, "work")).toEqual([threads[0], threads[2]]);
+    expect(searchSidebarThreads(threads, "work")).toEqual([threads[0], threads[2]]);
   });
 
   it("does not match project metadata", () => {
-    expect(searchSidebarThreadsByTitle(threads, "workspace")).toEqual([threads[0]]);
+    expect(searchSidebarThreads(threads, "workspace")).toEqual([threads[0]]);
   });
 
   it("returns no results for an empty query", () => {
-    expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
+    expect(searchSidebarThreads(threads, "   ")).toEqual([]);
   });
 });
 
@@ -2132,6 +2133,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branch: null,
     worktreePath: null,
     checkpoints: [],
+    pullRequests: [],
     activities: [],
     ...overrides,
   };
@@ -2467,5 +2469,26 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("resolveSidebarDropVerb", () => {
+  it("names the state change a cross-section drop performs", () => {
+    expect(resolveSidebarDropVerb("active", "pinned")).toBe("pin");
+    expect(resolveSidebarDropVerb("settled", "pinned")).toBe("pin");
+    expect(resolveSidebarDropVerb("snoozed", "pinned")).toBe("pin");
+    expect(resolveSidebarDropVerb("pinned", "active")).toBe("unpin");
+    expect(resolveSidebarDropVerb("settled", "active")).toBe("unsettle");
+    expect(resolveSidebarDropVerb("snoozed", "active")).toBe("wake");
+    expect(resolveSidebarDropVerb("active", "settled")).toBe("settle");
+    expect(resolveSidebarDropVerb("pinned", "settled")).toBe("settle");
+    expect(resolveSidebarDropVerb("snoozed", "settled")).toBe("settle");
+  });
+
+  it("stays silent for same-section reorders, no target, and the snoozed shelf", () => {
+    expect(resolveSidebarDropVerb("active", "active")).toBeNull();
+    expect(resolveSidebarDropVerb("pinned", "pinned")).toBeNull();
+    expect(resolveSidebarDropVerb("active", null)).toBeNull();
+    expect(resolveSidebarDropVerb("active", "snoozed")).toBeNull();
   });
 });

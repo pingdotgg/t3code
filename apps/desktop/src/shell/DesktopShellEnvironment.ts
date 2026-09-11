@@ -36,7 +36,7 @@ const desktopShellEnvironmentCommandFields = {
   argumentCount: Schema.Number,
 };
 
-export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandError>()(
+export class DesktopShellEnvironmentCommandError extends Schema.TaggedError<DesktopShellEnvironmentCommandError>()(
   "DesktopShellEnvironmentCommandError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -48,7 +48,7 @@ export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandTimeoutError>()(
+export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedError<DesktopShellEnvironmentCommandTimeoutError>()(
   "DesktopShellEnvironmentCommandTimeoutError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -533,6 +533,7 @@ const installShellEnvironment = (
   return Effect.void;
 };
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

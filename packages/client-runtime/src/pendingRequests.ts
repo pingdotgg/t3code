@@ -22,6 +22,8 @@ export interface PendingUserInput {
   readonly requestId: ApprovalRequestId;
   readonly createdAt: string;
   readonly questions: ReadonlyArray<UserInputQuestion>;
+  /** Async questions can be dismissed without a reply; native callbacks cannot. */
+  readonly dismissible: boolean;
 }
 
 const isRequestId = Schema.is(ApprovalRequestId);
@@ -160,7 +162,12 @@ export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThr
       if (closedUserInputs.has(requestId)) continue;
       const questions = parseQuestions(payload.questions);
       if (questions.length === 0) continue;
-      userInputs.set(requestId, { requestId, createdAt: activity.createdAt, questions });
+      userInputs.set(requestId, {
+        requestId,
+        createdAt: activity.createdAt,
+        questions,
+        dismissible: payload.responseMode === "message",
+      });
     } else if (
       activity.kind === "approval.resolved" ||
       (activity.kind === "provider.approval.respond.failed" &&
