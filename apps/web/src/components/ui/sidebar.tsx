@@ -591,9 +591,11 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 function SidebarContent({
   className,
   fixedHeader,
+  chainVerticalScroll = false,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  chainVerticalScroll?: boolean;
 }) {
   return (
     <>
@@ -604,6 +606,7 @@ function SidebarContent({
         hideScrollbars
         scrollFade
         scrollFadePadding={false}
+        chainVerticalScroll={chainVerticalScroll}
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
         <div

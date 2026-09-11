@@ -4345,6 +4345,7 @@ export default function Sidebar() {
     >
       <SidebarContent
         className="gap-0 min-h-full"
+        chainVerticalScroll
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
