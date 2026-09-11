@@ -33,10 +33,10 @@ function envOutput(values: Readonly<Record<string, string>>): string {
     .join("\n");
 }
 
-function fullEnvOutput(values: Readonly<Record<string, string>>, delimiter = "\0"): string {
+function fullEnvOutput(values: Readonly<Record<string, string>>): string {
   const body = Object.entries(values)
     .map(([name, value]) => `${name}=${value}`)
-    .join(delimiter);
+    .join("\0");
   return ["__T3CODE_ENV_*_START__", body, "__T3CODE_ENV_*_END__"].join("\n");
 }
 
@@ -581,7 +581,7 @@ describe("DesktopShellEnvironment", () => {
             ? envOutput({ PATH: "C:\\Windows\\System32" })
             : [
                 envOutput({ PATH: "C:\\Windows\\System32", OPENAI_API_KEY: "sk-test" }),
-                fullEnvOutput({ CARGO_HOME: "C:\\Users\\test\\.cargo" }, "\n"),
+                fullEnvOutput({ CARGO_HOME: "C:\\Users\\test\\.cargo" }),
               ].join("\n");
         },
       });
@@ -594,6 +594,109 @@ describe("DesktopShellEnvironment", () => {
         true,
       );
       assert.equal(env.OPENAI_API_KEY, "sk-test");
+      assert.equal(env.CARGO_HOME, "C:\\Users\\test\\.cargo");
+    }),
+  );
+
+  it.effect("clears an inherited value when the login shell exports it empty", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        OPENAI_API_KEY: "sk-stale",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "all", names: [] },
+        handler: () =>
+          [
+            envOutput({ PATH: "/usr/bin" }),
+            fullEnvOutput({ OPENAI_API_KEY: "", CARGO_HOME: "/home/test/.cargo" }),
+          ].join("\n"),
+      });
+
+      assert.equal(env.OPENAI_API_KEY, "");
+      assert.equal(env.CARGO_HOME, "/home/test/.cargo");
+    }),
+  );
+
+  it.effect("keeps parsing the dump when a value contains the terminator marker", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        harvest: { mode: "all", names: [] },
+        handler: () =>
+          [
+            envOutput({ PATH: "/usr/bin" }),
+            fullEnvOutput({
+              SNEAKY: "__T3CODE_ENV_*_END__",
+              CARGO_HOME: "/home/test/.cargo",
+              RUSTUP_HOME: "/home/test/.rustup",
+            }),
+          ].join("\n"),
+      });
+
+      assert.equal(env.SNEAKY, "__T3CODE_ENV_*_END__");
+      assert.equal(env.CARGO_HOME, "/home/test/.cargo");
+      assert.equal(env.RUSTUP_HOME, "/home/test/.rustup");
+    }),
+  );
+
+  it.effect("preserves multiline values in the Windows dump", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        harvest: { mode: "all", names: [] },
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          return command.args.includes("-NoProfile")
+            ? envOutput({ PATH: "C:\\Windows\\System32" })
+            : [
+                envOutput({ PATH: "C:\\Windows\\System32" }),
+                fullEnvOutput({
+                  MULTI: "first\nINJECTED=value",
+                  CARGO_HOME: "C:\\Users\\test\\.cargo",
+                }),
+              ].join("\n");
+        },
+      });
+
+      assert.equal(env.MULTI, "first\nINJECTED=value");
+      assert.equal(env.INJECTED, undefined);
+      assert.equal(env.CARGO_HOME, "C:\\Users\\test\\.cargo");
+    }),
+  );
+
+  it.effect("does not let a differently cased Windows PATH clobber the merged one", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        harvest: { mode: "all", names: [] },
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          return command.args.includes("-NoProfile")
+            ? envOutput({ PATH: "C:\\Windows\\System32" })
+            : [
+                envOutput({ PATH: "C:\\Profile\\Node;C:\\Windows\\System32" }),
+                fullEnvOutput({ Path: "C:\\Injected", CARGO_HOME: "C:\\Users\\test\\.cargo" }),
+              ].join("\n");
+        },
+      });
+
+      assert.equal(env.Path, undefined);
+      assert.equal(env.PATH?.startsWith("C:\\Profile\\Node"), true);
+      assert.equal(env.PATH?.includes("C:\\Injected"), false);
       assert.equal(env.CARGO_HOME, "C:\\Users\\test\\.cargo");
     }),
   );

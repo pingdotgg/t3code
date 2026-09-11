@@ -23,15 +23,25 @@ const RESERVED_ENVIRONMENT_NAMES: ReadonlySet<string> = new Set([
   "_",
 ]);
 
-export function isImportableEnvironmentName(name: string): boolean {
-  return ENVIRONMENT_NAME_PATTERN.test(name) && !RESERVED_ENVIRONMENT_NAMES.has(name);
+export function environmentNameKey(name: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? name.toUpperCase() : name;
+}
+
+export function isImportableEnvironmentName(name: string, platform: NodeJS.Platform): boolean {
+  return (
+    ENVIRONMENT_NAME_PATTERN.test(name) &&
+    !RESERVED_ENVIRONMENT_NAMES.has(environmentNameKey(name, platform))
+  );
 }
 
 export function normalizeShellEnvironmentMode(value: unknown): ShellEnvironmentMode {
   return value === "all" ? "all" : "allowlist";
 }
 
-export function normalizeShellEnvironmentNames(value: unknown): ReadonlyArray<string> {
+export function normalizeShellEnvironmentNames(
+  value: unknown,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
   if (!Array.isArray(value)) return [];
 
   const names: string[] = [];
@@ -39,8 +49,11 @@ export function normalizeShellEnvironmentNames(value: unknown): ReadonlyArray<st
   for (const entry of value) {
     if (typeof entry !== "string") continue;
     const name = entry.trim();
-    if (!isImportableEnvironmentName(name) || seen.has(name)) continue;
-    seen.add(name);
+    if (!isImportableEnvironmentName(name, platform)) continue;
+
+    const key = environmentNameKey(name, platform);
+    if (seen.has(key)) continue;
+    seen.add(key);
     names.push(name);
   }
 

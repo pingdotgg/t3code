@@ -27,7 +27,7 @@ const DesktopSettingsPatch = Schema.Struct({
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   shellEnvironmentMode: Schema.optionalKey(Schema.String),
-  shellEnvironmentNames: Schema.optionalKey(Schema.Array(Schema.String)),
+  shellEnvironmentNames: Schema.optionalKey(Schema.Array(Schema.Unknown)),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
@@ -535,13 +535,19 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("falls back to the allowlist for an unrecognized harvest mode", () =>
+  it.effect("keeps unrelated settings when the harvest values are invalid", () =>
     withSettings(
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({ shellEnvironmentMode: "everything" });
+        yield* writeSettingsPatch({
+          serverExposureMode: "network-accessible",
+          shellEnvironmentMode: "everything",
+          shellEnvironmentNames: [42, "OPENAI_API_KEY"],
+        });
         const loaded = yield* settings.load;
         assert.equal(loaded.shellEnvironmentMode, "allowlist");
+        assert.deepEqual(loaded.shellEnvironmentNames, ["OPENAI_API_KEY"]);
+        assert.equal(loaded.serverExposureMode, "network-accessible");
       }),
     ),
   );
