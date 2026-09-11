@@ -2535,6 +2535,11 @@ struct FeatureMessageView: View {
                         skills: skills
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if message.state != .streaming {
+                        FeatureResponseCopyButton(text: message.text)
+                            .id(message.id)
+                            .accessibilityIdentifier("copy-response-\(message.id)")
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2587,6 +2592,36 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureResponseCopyButton: View {
+    let text: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+            UIAccessibility.post(notification: .announcement, argument: "Response copied")
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(T3Typography.control)
+                .foregroundStyle(T3Colors.textSecondary)
+                .frame(minWidth: T3Metrics.minimumTapTarget, minHeight: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Copy response")
+        .accessibilityHint("Copies the full response as Markdown")
+        .sensoryFeedback(.success, trigger: copied) { _, isCopied in isCopied }
+        .task(id: copied) {
+            guard copied else { return }
+            do {
+                try await Task.sleep(for: .seconds(2))
+                copied = false
+            } catch {}
+        }
     }
 }
 
