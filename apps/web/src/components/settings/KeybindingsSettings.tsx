@@ -1285,7 +1285,10 @@ export function KeybindingsSettingsPanel() {
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs T3 Code on.
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
-  const canOpenKeybindingsFile = useEnvironmentScope(primaryEnvironment?.environmentId ?? null, AuthOrchestrationOperateScope);
+  const canOpenKeybindingsFile = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
   const canWriteSettings = connectedEnvironments.length > 0 && connectedEnvironments.every((target) => writableIds.has(target.environmentId));
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
@@ -1383,7 +1386,9 @@ export function KeybindingsSettingsPanel() {
     (input: ServerUpsertKeybindingInput) => {
       if (
         !primaryEnvironment ||
-        !connectedEnvironments.every((target) => readEnvironmentScope(target.environmentId, AuthSettingsWriteScope))
+        !connectedEnvironments.every((target) =>
+          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
+        )
       )
         return;
       setSavingCommand(input.command);
@@ -1422,7 +1427,9 @@ export function KeybindingsSettingsPanel() {
     (row: KeybindingRow) => {
       if (
         !primaryEnvironment ||
-        !connectedEnvironments.every((target) => readEnvironmentScope(target.environmentId, AuthSettingsWriteScope))
+        !connectedEnvironments.every((target) =>
+          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
+        )
       )
         return;
       setSavingCommand(row.command);

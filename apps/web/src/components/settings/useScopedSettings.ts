@@ -1,6 +1,9 @@
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
-import { requiredScopesForServerSettingsPatch, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import {
+  requiredScopesForServerSettingsPatch,
+  EnvironmentAuthorizationError,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -69,23 +72,33 @@ function useRunScopedPlan() {
         });
         return;
       }
-      void persistScopedSettingsPatch(plan, async (request) => {
-        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find((scope) => !readEnvironmentScope(request.environmentId, scope));
-        if (missing) return AsyncResult.failure(Cause.fail(new EnvironmentAuthorizationError({ requiredScope: missing, message: "This connection cannot change these settings." })));
-        return persistServer(request);
-      }, persistClientSettingsPatch).then(
-        ({ failedEnvironments, savedEnvironmentCount }) => {
-          if (failedEnvironments.length === 0) return;
-          toastManager.add({
-            type: "error",
-            title:
-              savedEnvironmentCount > 0
-                ? "Setting saved on some environments"
-                : "Setting not saved",
-            description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
-          });
+      void persistScopedSettingsPatch(
+        plan,
+        async (request) => {
+          const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+            (scope) => !readEnvironmentScope(request.environmentId, scope),
+          );
+          if (missing)
+            return AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  requiredScope: missing,
+                  message: "This connection cannot change these settings.",
+                }),
+              ),
+            );
+          return persistServer(request);
         },
-      );
+        persistClientSettingsPatch,
+      ).then(({ failedEnvironments, savedEnvironmentCount }) => {
+        if (failedEnvironments.length === 0) return;
+        toastManager.add({
+          type: "error",
+          title:
+            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
+        });
+      });
     },
     [persistServer],
   );
@@ -133,5 +146,8 @@ export function useClearProjectOverrides() {
 export function useScopedSettingsWriteAllowed() {
   const { connectedEnvironments } = useSettingsScope();
   const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
-  return connectedEnvironments.length > 0 && connectedEnvironments.every((target) => writable.has(target.environmentId));
+  return (
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((target) => writable.has(target.environmentId))
+  );
 }
