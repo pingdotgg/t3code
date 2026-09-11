@@ -741,7 +741,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               cwd: input.cwd,
               args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
             });
+            const { mtime } = yield* fileSystem.stat(indexPath.stdout.trim());
+            if (Option.isNone(mtime)) return false;
+            // Stay below the source timestamp even if Date rounded up, preserving Git's racy check.
+            const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
+            if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             // Retain stat data only where the copied index already matches HEAD.
             yield* execute({
               operation,

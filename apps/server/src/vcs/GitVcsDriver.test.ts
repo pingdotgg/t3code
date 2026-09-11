@@ -119,6 +119,38 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+for (const timestamp of [1_700_000_000, 1_700_000_000.9999]) {
+  it.effect(
+    `checkpoint capture preserves same-size edits with racy index timestamps (${timestamp})`,
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-racy-" });
+        const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+        const filePath = path.join(cwd, "file.txt");
+        const indexPath = path.join(cwd, ".git", "index");
+        yield* git(["config", "core.trustctime", "false"]);
+        yield* fileSystem.writeFileString(filePath, "before\n");
+        yield* fileSystem.utimes(filePath, timestamp, timestamp);
+        yield* git(["add", "file.txt"]);
+        yield* git(["commit", "-m", "record racy file"]);
+        yield* fileSystem.utimes(indexPath, timestamp, timestamp);
+        const originalIndex = yield* fileSystem.readFile(indexPath);
+        const originalIndexMtime = (yield* fileSystem.stat(indexPath)).mtime;
+        yield* fileSystem.writeFileString(filePath, "after!\n");
+        yield* fileSystem.utimes(filePath, timestamp, timestamp);
+
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+        assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "after!\n");
+        assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
+        assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
+      }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  );
+}
+
 for (const nested of [false, true]) {
   for (const indexMode of ["normal", "flags", "split"] as const) {
     it.effect(
