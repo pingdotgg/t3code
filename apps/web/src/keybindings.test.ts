@@ -1,4 +1,5 @@
 import { assert, describe, it } from "vite-plus/test";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   type KeybindingCommand,
@@ -219,6 +220,28 @@ describe("settle thread shortcut", () => {
     );
   });
 });
+
+it.each(["MacIntel", "Win32", "Linux"])(
+  "resolves the mark unread default on %s without intercepting the terminal",
+  (platform) => {
+    const input = event({
+      key: "u",
+      metaKey: platform === "MacIntel",
+      ctrlKey: platform !== "MacIntel",
+      shiftKey: true,
+    });
+    assert.equal(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+      "thread.markUnread",
+    );
+    assert.isNull(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform,
+        context: { terminalFocus: true },
+      }),
+    );
+  },
+);
 
 describe("copy thread reference shortcut", () => {
   it("resolves Cmd+Shift+C on macOS and Ctrl+Shift+C elsewhere", () => {
