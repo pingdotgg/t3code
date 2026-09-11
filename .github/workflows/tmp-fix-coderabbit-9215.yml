@@ -159,6 +159,12 @@ jobs:
               test_path.write_text(test)
           PY
 
+      - name: Format generated changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          vp fmt apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+
       - name: Validate
         shell: bash
         run: |
