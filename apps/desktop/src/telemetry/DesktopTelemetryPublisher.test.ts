@@ -429,6 +429,7 @@ describe("DesktopTelemetryPublisher", () => {
             enabled: true,
             status: "up-to-date",
             channel: "latest",
+            repository: null,
             currentVersion: "1.2.3",
             hostArch: "arm64",
             appArch: "arm64",

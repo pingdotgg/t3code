@@ -2,6 +2,7 @@ import {
   DesktopUpdateActionResultSchema,
   DesktopUpdateChannelSchema,
   DesktopUpdateCheckResultSchema,
+  DesktopUpdateRepositorySchema,
   DesktopUpdateStateSchema,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,16 @@ export const setUpdateChannel = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.updates.setChannel")(function* (channel) {
     const updates = yield* DesktopUpdates.DesktopUpdates;
     return yield* updates.setChannel(channel);
+  }),
+});
+
+export const setUpdateRepository = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.UPDATE_SET_REPOSITORY_CHANNEL,
+  payload: DesktopUpdateRepositorySchema,
+  result: DesktopUpdateStateSchema,
+  handler: Effect.fn("desktop.ipc.updates.setRepository")(function* (repository) {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.setRepository(repository);
   }),
 });
 

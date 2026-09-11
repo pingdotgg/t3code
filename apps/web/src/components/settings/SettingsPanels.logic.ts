@@ -1,6 +1,9 @@
+import { normalizeDesktopUpdateRepository } from "@t3tools/contracts";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
+  DesktopUpdateChannel,
+  DesktopUpdateRepository,
   ProviderDriverKind,
   ProviderInstanceConfig,
   PreviewViewportSetting,
@@ -18,6 +21,33 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+
+export type DesktopUpdateTrack = DesktopUpdateChannel | "custom";
+
+/** Empty restores the bundled source; malformed non-empty values stay invalid. */
+export function parseDesktopUpdateRepositoryInput(
+  value: string,
+): DesktopUpdateRepository | undefined {
+  if (value.trim().length === 0) return null;
+  return normalizeDesktopUpdateRepository(value) ?? undefined;
+}
+
+export function resolveDesktopUpdateTrack(
+  channel: DesktopUpdateChannel,
+  repository: DesktopUpdateRepository,
+  isCustomDraftSelected = false,
+): DesktopUpdateTrack {
+  return repository !== null || isCustomDraftSelected ? "custom" : channel;
+}
+
+export async function setDesktopUpdateChannelAfterPendingRepositoryChange(input: {
+  readonly channel: DesktopUpdateChannel;
+  readonly pendingRepositoryChange: Promise<unknown> | null;
+  readonly setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<unknown>;
+}): Promise<void> {
+  await input.pendingRepositoryChange?.catch(() => undefined);
+  await input.setUpdateChannel(input.channel);
+}
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
