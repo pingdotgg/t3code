@@ -13,32 +13,174 @@ import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
+  selectEffectOverrides,
+  truncateProcessOutputTail,
 } from "./pinnedRuntime.ts";
+
+const effectOverridesJson = JSON.stringify({
+  effect: "4.0.0-rc.112",
+  "@effect/platform-node": "4.0.0-rc.112",
+  "@effect/platform-node-shared": "4.0.0-rc.112",
+  vite: "npm:@voidzero-dev/vite-plus-core@0.3.0",
+});
+
+const okResult = (stdout = "", stderr = "") => ({
+  stdout,
+  stderr,
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+const failedResult = (stderr: string, stdout = "") => ({
+  ...okResult(stdout, stderr),
+  code: ChildProcessSpawner.ExitCode(1),
+});
+
+const isNpmView = (input: ProcessRunner.ProcessRunInput) =>
+  input.args[0] === "view" || (input.command === "pnpm" && input.args.includes("view"));
+
+const isNpmInstall = (input: ProcessRunner.ProcessRunInput) =>
+  input.args[0] === "install" || (input.command === "pnpm" && input.args.includes("install"));
+
+const stagingPrefix = (input: ProcessRunner.ProcessRunInput) => {
+  const prefixIndex = input.args.indexOf("--prefix");
+  return input.args[prefixIndex + 1];
+};
 
 const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
   ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
-        const prefixIndex = input.args.indexOf("--prefix");
-        const stagingDir = input.args[prefixIndex + 1];
+        if (isNpmView(input)) {
+          return okResult(effectOverridesJson);
+        }
+        if (!isNpmInstall(input)) {
+          return yield* Effect.die(`unexpected command: ${input.command} ${input.args.join(" ")}`);
+        }
+        const stagingDir = stagingPrefix(input);
         if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
+        assert.isUndefined(
+          input.args.find((arg) => arg.startsWith("t3@")),
+          "install must use the staging manifest, not a positional t3@version",
+        );
         const entry = path.join(stagingDir, "node_modules", "t3", "dist", "bin.mjs");
         yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
         yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);
-        return {
-          stdout: "",
-          stderr: "",
-          code: ChildProcessSpawner.ExitCode(0),
-          timedOut: false,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-          stdoutInvalidUtf8: false,
-          stderrInvalidUtf8: false,
-        };
+        return okResult();
       }),
   });
 
+it("selectEffectOverrides keeps only effect and @effect/* string pins", () => {
+  assert.deepEqual(
+    selectEffectOverrides({
+      effect: "4.0.0-rc.112",
+      "@effect/platform-node": "4.0.0-rc.112",
+      vite: "1.0.0",
+      "@clerk/react": "6.0.0",
+      "@effect/broken": 12,
+    }),
+    {
+      effect: "4.0.0-rc.112",
+      "@effect/platform-node": "4.0.0-rc.112",
+    },
+  );
+});
+
+it("truncateProcessOutputTail keeps a bounded suffix", () => {
+  assert.equal(truncateProcessOutputTail(""), undefined);
+  assert.equal(truncateProcessOutputTail("short"), "short");
+  const long = "x".repeat(3000);
+  const tail = truncateProcessOutputTail(long);
+  assert.equal(tail?.length, 2048);
+  assert.equal(tail, long.slice(long.length - 2048));
+});
+
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+  it.effect("writes Effect overrides into the staging manifest before install", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-manifest-" });
+      const commands: Array<ProcessRunner.ProcessRunInput> = [];
+      let manifestBeforeInstall: unknown;
+
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            Effect.gen(function* () {
+              commands.push(input);
+              if (isNpmView(input)) {
+                assert.deepEqual(input.args, ["view", "t3@1.2.3", "overrides", "--json"]);
+                return okResult(effectOverridesJson);
+              }
+              const stagingDir = stagingPrefix(input);
+              if (stagingDir === undefined) return yield* Effect.die("missing npm --prefix");
+              manifestBeforeInstall = JSON.parse(
+                yield* fs.readFileString(path.join(stagingDir, "package.json")).pipe(Effect.orDie),
+              );
+              return yield* successfulRunner(fs, path).run(input);
+            }),
+        }),
+        validate: () => Effect.void,
+      });
+
+      assert.equal(commands[0]?.args[0], "view");
+      assert.equal(commands[1]?.args[0], "install");
+      assert.deepEqual(commands[1]?.args, [
+        "install",
+        "--prefix",
+        stagingPrefix(commands[1]!),
+        "--no-fund",
+        "--no-audit",
+      ]);
+      assert.deepEqual(manifestBeforeInstall, {
+        dependencies: { t3: "1.2.3" },
+        overrides: {
+          effect: "4.0.0-rc.112",
+          "@effect/platform-node": "4.0.0-rc.112",
+          "@effect/platform-node-shared": "4.0.0-rc.112",
+        },
+      });
+    }),
+  );
+
+  it.effect("surfaces a truncated npm stderr tail when install fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stderr-" });
+      const stderr = `npm warn ERESOLVE overriding peer dependency\n${"x".repeat(2500)}`;
+
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner: ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            isNpmView(input)
+              ? Effect.succeed(okResult(effectOverridesJson))
+              : Effect.succeed(failedResult(stderr)),
+        }),
+        validate: () => Effect.die("must not validate a failed install"),
+      }).pipe(Effect.flip);
+
+      assert.equal(error._tag, "PinnedRuntimeInstallError");
+      assert.equal(error.exitCode, 1);
+      assert.isTrue(error.message.includes("exit code 1"));
+      assert.equal(error.outputTail, truncateProcessOutputTail(stderr));
+      assert.isTrue(error.message.endsWith(error.outputTail!));
+    }),
+  );
+
   it.effect("installs through pnpm when its Node runtime has no npm executable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -77,9 +219,10 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       });
       assert.deepEqual(
         commands.map((command) => command.command),
-        ["npm", "pnpm"],
+        ["npm", "pnpm", "npm", "pnpm"],
       );
       assert.deepEqual(commands[1]!.args, ["--package=npm@11", "dlx", "npm", ...commands[0]!.args]);
+      assert.deepEqual(commands[3]!.args, ["--package=npm@11", "dlx", "npm", ...commands[2]!.args]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), "1.2.3\n");
     }),
   );
@@ -113,6 +256,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         }),
         validate: () => Effect.die("must not validate a failed install"),
       }).pipe(Effect.flip);
+      // Fails on the first npm (view) without falling back to pnpm.
       assert.deepEqual(commands, ["npm"]);
     }),
   );

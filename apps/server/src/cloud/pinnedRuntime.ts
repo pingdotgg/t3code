@@ -19,6 +19,9 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+const PINNED_RUNTIME_VIEW_TIMEOUT = Duration.seconds(60);
+/** Keep failures diagnosable without dumping an entire npm log into the CLI. */
+const PINNED_RUNTIME_OUTPUT_TAIL_CHARS = 2048;
 // Boot-service setup and remote update can construct separate layers. Serialize
 // the complete install transaction across every caller in this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
@@ -49,13 +52,18 @@ export class PinnedRuntimeInstallError extends Schema.TaggedError<PinnedRuntimeI
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    outputTail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return this.exitCode === undefined
-      ? `Pinned runtime install failed while ${this.step}.`
-      : `Pinned runtime install failed while ${this.step} (exit code ${this.exitCode}).`;
+    const base =
+      this.exitCode === undefined
+        ? `Pinned runtime install failed while ${this.step}.`
+        : `Pinned runtime install failed while ${this.step} (exit code ${this.exitCode}).`;
+    return this.outputTail === undefined || this.outputTail.length === 0
+      ? base
+      : `${base}\n${this.outputTail}`;
   }
 }
 
@@ -69,6 +77,36 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
   override get message(): string {
     return this.reason;
   }
+}
+
+/**
+ * npm only honors `overrides` on the root project. Published `t3` carries Effect
+ * pins, but they are ignored when `t3` is installed as a dependency into an empty
+ * staging directory — caret ranges then float onto incompatible Effect RCs.
+ * Re-apply only the Effect-related pins at the staging root before install.
+ */
+export function selectEffectOverrides(overrides: Record<string, unknown>): Record<string, string> {
+  const selected: Record<string, string> = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    if ((key === "effect" || key.startsWith("@effect/")) && typeof value === "string") {
+      selected[key] = value;
+    }
+  }
+  return selected;
+}
+
+export function truncateProcessOutputTail(text: string): string | undefined {
+  if (text.length === 0) return undefined;
+  if (text.length <= PINNED_RUNTIME_OUTPUT_TAIL_CHARS) return text;
+  return text.slice(text.length - PINNED_RUNTIME_OUTPUT_TAIL_CHARS);
+}
+
+function installOutputTail(result: {
+  readonly stdout: string;
+  readonly stderr: string;
+}): string | undefined {
+  const combined = [result.stderr.trim(), result.stdout.trim()].filter((part) => part.length > 0);
+  return truncateProcessOutputTail(combined.join("\n"));
 }
 
 /**
@@ -88,6 +126,75 @@ interface PinnedRuntimeInstallInput {
     paths: PinnedRuntimePaths,
   ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
 }
+
+const runNpm = (
+  runner: ProcessRunner.ProcessRunner["Service"],
+  args: ReadonlyArray<string>,
+  timeout: Duration.Input,
+) =>
+  runner.run({ command: "npm", args, timeout }).pipe(
+    Effect.catchTags({
+      ProcessSpawnError: (error) =>
+        error.cause instanceof PlatformError.PlatformError && error.cause.reason._tag === "NotFound"
+          ? // pnpm-managed Node installations do not include npm. Keep npm
+            // installation semantics for the pinned runtime and native builds.
+            runner.run({
+              command: "pnpm",
+              args: ["--package=npm@11", "dlx", "npm", ...args],
+              timeout,
+            })
+          : Effect.fail(error),
+    }),
+  );
+
+const resolveTargetEffectOverrides = Effect.fn("cloud.pinned_runtime.resolve_effect_overrides")(
+  function* (input: {
+    readonly version: string;
+    readonly runner: ProcessRunner.ProcessRunner["Service"];
+  }) {
+    const viewStep = "resolving Effect overrides for the pinned t3 runtime";
+    const viewArgs = ["view", `t3@${input.version}`, "overrides", "--json"];
+    const result = yield* runNpm(input.runner, viewArgs, PINNED_RUNTIME_VIEW_TIMEOUT).pipe(
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: viewStep, cause })),
+      Effect.filterOrFail(
+        (output) => output.code === 0,
+        (output) =>
+          new PinnedRuntimeInstallError({
+            step: viewStep,
+            exitCode: Number(output.code),
+            stdoutLength: output.stdout.length,
+            stderrLength: output.stderr.length,
+            outputTail: installOutputTail(output),
+          }),
+      ),
+    );
+
+    let parsed: unknown;
+    try {
+      const trimmed = result.stdout.trim();
+      parsed = trimmed.length === 0 ? {} : JSON.parse(trimmed);
+    } catch (cause) {
+      return yield* new PinnedRuntimeInstallError({
+        step: "decoding Effect overrides for the pinned t3 runtime",
+        cause,
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+        outputTail: installOutputTail(result),
+      });
+    }
+
+    if (parsed === null || parsed === undefined) return {};
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      return yield* new PinnedRuntimeInstallError({
+        step: "decoding Effect overrides for the pinned t3 runtime",
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+        outputTail: installOutputTail(result),
+      });
+    }
+    return selectEffectOverrides(parsed as Record<string, unknown>);
+  },
+);
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,
@@ -152,48 +259,45 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
+    const overrides = yield* resolveTargetEffectOverrides({
+      version: input.version,
+      runner,
+    });
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed npm install manifest.
+    const stagingManifest = `${JSON.stringify(
+      {
+        dependencies: { t3: input.version },
+        overrides,
+      },
+      null,
+      2,
+    )}\n`;
+    yield* fs.writeFileString(input.path.join(stagingDir, "package.json"), stagingManifest).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PinnedRuntimeInstallError({
+            step: "writing the pinned runtime install manifest",
+            cause,
+          }),
+      ),
+    );
+
     const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
-    const installArgs = [
-      "install",
-      "--prefix",
-      stagingDir,
-      "--no-fund",
-      "--no-audit",
-      `t3@${input.version}`,
-    ];
-    yield* runner
-      .run({
-        command: "npm",
-        args: installArgs,
-        // Native dependencies may compile from source on slower machines.
-        timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
-      })
-      .pipe(
-        Effect.catchTags({
-          ProcessSpawnError: (error) =>
-            error.cause instanceof PlatformError.PlatformError &&
-            error.cause.reason._tag === "NotFound"
-              ? // pnpm-managed Node installations do not include npm. Keep npm
-                // installation semantics for the pinned runtime and native builds.
-                runner.run({
-                  command: "pnpm",
-                  args: ["--package=npm@11", "dlx", "npm", ...installArgs],
-                  timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
-                })
-              : Effect.fail(error),
-        }),
-        Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
-        Effect.filterOrFail(
-          (result) => result.code === 0,
-          (result) =>
-            new PinnedRuntimeInstallError({
-              step: installStep,
-              exitCode: Number(result.code),
-              stdoutLength: result.stdout.length,
-              stderrLength: result.stderr.length,
-            }),
-        ),
-      );
+    const installArgs = ["install", "--prefix", stagingDir, "--no-fund", "--no-audit"];
+    yield* runNpm(runner, installArgs, PINNED_RUNTIME_INSTALL_TIMEOUT).pipe(
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step: installStep, cause })),
+      Effect.filterOrFail(
+        (result) => result.code === 0,
+        (result) =>
+          new PinnedRuntimeInstallError({
+            step: installStep,
+            exitCode: Number(result.code),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+            outputTail: installOutputTail(result),
+          }),
+      ),
+    );
 
     yield* input.validate(stagingPaths);
     yield* fs
