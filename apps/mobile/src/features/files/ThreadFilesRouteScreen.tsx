@@ -49,6 +49,9 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -570,6 +573,12 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly mode: FileViewMode;
   } | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const markdownPreviewEnabled =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.markdownPreviewEnabled === true;
+  const primaryColor = useUniwindTheme()["--color-primary"];
   const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
@@ -577,14 +586,29 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
   const isImageFile =
     relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
+  const isMarkdownFile = relativePath !== null && isMarkdownPreviewFile(relativePath);
   const canPreview =
     relativePath !== null &&
     (isMarkdownPreviewFile(relativePath) || isBrowserFile || isImageFile || isVideoFile);
   const activeMode =
-    relativePath !== null && modeOverride?.path === relativePath
-      ? modeOverride.mode
-      : defaultViewMode(relativePath);
+    relativePath !== null && targetLine !== null
+      ? "source"
+      : relativePath !== null && modeOverride?.path === relativePath
+        ? modeOverride.mode
+        : isMarkdownFile && markdownPreviewEnabled
+          ? "preview"
+          : defaultViewMode(relativePath);
   const resolvedActiveMode = isVideoFile ? "preview" : canPreview ? activeMode : "source";
+  const handleToggleMarkdownMode = useCallback(() => {
+    if (relativePath === null || targetLine !== null) return;
+    const next: FileViewMode = resolvedActiveMode === "preview" ? "source" : "preview";
+    setModeOverride({ path: relativePath, mode: next });
+    void savePreferences({ markdownPreviewEnabled: next === "preview" });
+  }, [relativePath, resolvedActiveMode, savePreferences, targetLine]);
+  const markdownToggleLabel =
+    isMarkdownFile && resolvedActiveMode === "preview"
+      ? "Show markdown source"
+      : "Show rendered markdown";
   const assetPreviewPath = isBrowserFile || isImageFile || isVideoFile ? relativePath : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
@@ -866,6 +890,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           onBack={handleBack}
           trailing={
             <>
+              {isMarkdownFile && targetLine === null ? (
+                <AndroidHeaderIconButton
+                  accessibilityLabel={markdownToggleLabel}
+                  icon={resolvedActiveMode === "preview" ? "doc.text" : "eye"}
+                  onPress={handleToggleMarkdownMode}
+                  filled={resolvedActiveMode === "preview"}
+                />
+              ) : null}
               {fileInspector.supported ? (
                 <AndroidHeaderIconButton
                   accessibilityLabel={
@@ -905,6 +937,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             icon="sidebar.right"
             onPress={toggleAuxiliaryPane}
             separateBackground
+          />
+        ) : null}
+        {isMarkdownFile && targetLine === null ? (
+          <NativeHeaderToolbar.Button
+            accessibilityLabel={markdownToggleLabel}
+            icon={resolvedActiveMode === "preview" ? "doc.text" : "eye"}
+            onPress={handleToggleMarkdownMode}
+            separateBackground
+            tintColor={resolvedActiveMode === "preview" ? primaryColor : undefined}
           />
         ) : null}
         <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
