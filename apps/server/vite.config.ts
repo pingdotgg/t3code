@@ -21,7 +21,7 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = packageJson.version.includes("-nightly.") ? "nightly" : "latest";
+const cliBuildChannel = /-(?:nightly|preview)\./.test(packageJson.version) ? "nightly" : "latest";
 
 // `build:exe` wraps the same bundle in a Node single-executable. tsdown's exe
 // step refuses multi-chunk output and counts the sourcemap as a chunk, and the

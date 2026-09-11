@@ -43,9 +43,10 @@ it("treats stable installs as direct invocations", () => {
   }
 });
 
-it("re-suggests the nightly channel only for nightly builds", () => {
+it("re-suggests the prerelease channel only for prerelease builds", () => {
   for (const [version, expected] of [
     ["0.0.31-nightly.20260729", "npx t3@nightly serve"],
+    ["0.0.31-preview.20260729.1", "npx t3@preview serve"],
     ["0.0.31", "npx t3 serve"],
   ] as const) {
     assert.equal(

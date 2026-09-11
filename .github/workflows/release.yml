@@ -18,6 +18,7 @@ on:
         options:
           - stable
           - nightly
+          - preview
       version:
         description: "Stable version override (for example 1.2.3). Defaults to the version the latest nightly previewed."
         required: false
@@ -30,7 +31,7 @@ on:
 # newest-wins single slot, so a queued stable tag can never be silently
 # dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
-  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
+  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -72,7 +73,7 @@ jobs:
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
-            } else if (context.eventName === 'workflow_dispatch' && process.env.DISPATCH_CHANNEL !== 'nightly') {
+            } else if (context.eventName === 'workflow_dispatch' && process.env.DISPATCH_CHANNEL !== 'nightly' && process.env.DISPATCH_CHANNEL !== 'preview') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
               core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
               core.setOutput('ref', sha);
@@ -142,6 +143,23 @@ jobs:
 
             echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "preview" ]]; then
+            # Temporary channel for dogfooding the archive-based CLI runtime.
+            # Same versioning as nightly under its own prerelease identifier, so
+            # nightly and stable clients never see these releases as updates.
+            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+
+            node scripts/resolve-nightly-release.ts \
+              --channel preview \
+              --date "$nightly_date" \
+              --run-number "$NIGHTLY_RUN_NUMBER" \
+              --sha "$NIGHTLY_SHA" \
+              --github-output
+
+            echo "release_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=preview" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -710,6 +728,94 @@ jobs:
 
           vp run dist:desktop:artifact "${args[@]}"
 
+      # The single-executable is built with a Node that supports --build-sea
+      # (25.7+); the repo itself stays on the engines.node version.
+      - name: Build CLI single-executable
+        shell: bash
+        env:
+          VP_NODE_VERSION: "26"
+        run: vp run --filter t3 build:exe
+
+      - name: Import macOS signing certificate for the CLI archive
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "macOS CLI signing disabled (missing CSC_LINK); the archive is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/t3-cli-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          cert_path="$RUNNER_TEMP/t3-cli-signing.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity found in CSC_LINK." >&2
+            exit 1
+          fi
+          echo "::add-mask::$keychain_password"
+          echo "T3CODE_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "macOS CLI signing enabled."
+
+      - name: Stage resource monitor for the CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
+
+      - name: Build CLI archive
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == "mac" && -n "${APPLE_API_KEY:-}" ]]; then
+            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            export APPLE_API_KEY="$key_path"
+          fi
+          node scripts/build-cli-archive.ts \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Upload CLI archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-cli/*
+          if-no-files-found: error
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -887,6 +993,29 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download all CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      # Installers verify archives against this file, so it is written from the
+      # signed bytes that get uploaded, never from an earlier stage.
+      - name: Write CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Merge macOS updater manifests
         run: |
           shopt -s nullglob
@@ -916,6 +1045,8 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
+            release-assets/*.tar.gz
+            release-assets/SHA256SUMS
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
@@ -936,13 +1067,15 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
+            release-assets/*.tar.gz
+            release-assets/SHA256SUMS
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -952,7 +1085,7 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -1206,6 +1339,7 @@ jobs:
     if: |
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
+      needs.preflight.outputs.release_channel != 'preview' &&
       needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
