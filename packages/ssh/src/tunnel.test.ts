@@ -150,6 +150,10 @@ describe("ssh tunnel scripts", () => {
     );
     assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
     assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
+    assert.isBelow(
+      script.indexOf('"$T3_STAGING/t3" --version'),
+      script.indexOf('> "$T3_STAGING/.install-complete"'),
+    );
     // The archive branch execs before any of the Node discovery runs.
     assert.isBelow(
       script.indexOf('exec "$T3_RUNTIME_DIR/t3"'),

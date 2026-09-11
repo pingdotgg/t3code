@@ -477,6 +477,11 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     fi
     tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
     rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
+    # Prove the binary runs here (libc, arch) before marking it ready, or every
+    # later launch would exec a broken install instead of retrying.
+    if ! "$T3_STAGING/t3" --version >/dev/null 2>&1; then
+      printf 'The t3 %s executable does not run on this host.\\n' "$T3_ARCHIVE_VERSION" >&2; exit 1
+    fi
     printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
     rm -rf "$T3_RUNTIME_DIR"
     mv "$T3_STAGING" "$T3_RUNTIME_DIR"
