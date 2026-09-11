@@ -25,7 +25,7 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -242,17 +242,6 @@ export function useThreadComposerState() {
     [selectedThreadProjection, selectedThreadShell?.latestRun],
   );
 
-  const selectedThreadSessionActivity = useMemo(() => {
-    if (!selectedThreadRuntime) {
-      return null;
-    }
-
-    return {
-      orchestrationStatus: selectedThreadRuntime.status,
-      activeRunId: selectedThreadRuntime.activeRunId ?? undefined,
-    };
-  }, [selectedThreadRuntime]);
-
   const isCompacting = useMemo(() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
       (message) =>
@@ -288,12 +277,11 @@ export function useThreadComposerState() {
     if (!selectedThreadShell) {
       return null;
     }
-    return deriveActiveWorkStartedAt(
-      selectedThreadActivityRun,
-      selectedThreadSessionActivity,
-      null,
-    );
-  }, [selectedThreadActivityRun, selectedThreadSessionActivity, selectedThreadShell]);
+    return resolveThreadWorkingStartedAt({
+      latestRun: selectedThreadActivityRun,
+      runtime: selectedThreadRuntime,
+    });
+  }, [selectedThreadActivityRun, selectedThreadRuntime, selectedThreadShell]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
