@@ -986,12 +986,16 @@ const make = Effect.gen(function* () {
           cause: Cause.pretty(cause),
         }).pipe(
           Effect.andThen(
-            reportTextGenerationFailure(
-              input.threadId,
-              "provider.branch-name.failed",
-              "Could not generate or rename the worktree branch",
-              cause,
-            ),
+            Effect.gen(function* () {
+              const thread = yield* resolveThreadShell(input.threadId);
+              if (!thread || thread.branch !== oldBranch || thread.worktreePath !== cwd) return;
+              yield* reportTextGenerationFailure(
+                input.threadId,
+                "provider.branch-name.failed",
+                "Could not generate or rename the worktree branch",
+                cause,
+              );
+            }),
           ),
         ),
       ),
@@ -1046,12 +1050,16 @@ const make = Effect.gen(function* () {
             cause: Cause.pretty(cause),
           }).pipe(
             Effect.andThen(
-              reportTextGenerationFailure(
-                input.threadId,
-                "provider.thread-title.failed",
-                "Could not generate the thread title",
-                cause,
-              ),
+              Effect.gen(function* () {
+                const thread = yield* resolveThreadShell(input.threadId);
+                if (!thread || !canReplaceThreadTitle(thread.title, input.titleSeed)) return;
+                yield* reportTextGenerationFailure(
+                  input.threadId,
+                  "provider.thread-title.failed",
+                  "Could not generate the thread title",
+                  cause,
+                );
+              }),
             ),
           ),
         ),
@@ -1175,25 +1183,33 @@ const make = Effect.gen(function* () {
         return;
       }
       const result = yield* regenerateThreadTitle(event, requestId).pipe(
-        Effect.catchCause((cause) => {
-          if (Cause.hasInterruptsOnly(cause)) {
-            return Effect.failCause(cause);
-          }
-          return Effect.logWarning("provider command reactor failed to regenerate thread title", {
-            threadId: event.payload.threadId,
-            cause: Cause.pretty(cause),
-          }).pipe(
-            Effect.andThen(
-              reportTextGenerationFailure(
-                event.payload.threadId,
-                "provider.thread-title.failed",
-                "Could not regenerate the thread title",
-                cause,
-              ),
-            ),
-            Effect.as({ _tag: "Completed", title: undefined } as const),
-          );
-        }),
+        Effect.catchCause(
+          Effect.fnUntraced(function* (cause) {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return yield* Effect.failCause(cause);
+            }
+            yield* Effect.logWarning("provider command reactor failed to regenerate thread title", {
+              threadId: event.payload.threadId,
+              cause: Cause.pretty(cause),
+            });
+            const thread = yield* resolveThreadShell(event.payload.threadId);
+            if (
+              !thread ||
+              thread.titleRegeneration?.requestId !== requestId ||
+              (event.payload.previousTitle !== undefined &&
+                thread.title !== event.payload.previousTitle)
+            ) {
+              return { _tag: "Superseded" } as const;
+            }
+            yield* reportTextGenerationFailure(
+              event.payload.threadId,
+              "provider.thread-title.failed",
+              "Could not regenerate the thread title",
+              cause,
+            );
+            return { _tag: "Completed", title: undefined } as const;
+          }),
+        ),
       );
       if (result._tag === "Superseded") {
         return;

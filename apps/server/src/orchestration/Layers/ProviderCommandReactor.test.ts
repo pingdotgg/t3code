@@ -1512,6 +1512,145 @@ describe("ProviderCommandReactor", () => {
     ).toEqual([]);
   });
 
+  effectIt.effect.each(["title", "branch"] as const)(
+    "ignores a stale automatic %s failure after a manual rename",
+    (kind) =>
+      Effect.gen(function* () {
+        const clock = yield* Clock.Clock;
+        const harness = yield* Effect.promise(() => createHarness({ clock }));
+        const started = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+        const release = yield* Deferred.make<void>();
+        const attempts = yield* Queue.unbounded<number>();
+        let attempt = 0;
+        const failure = Effect.gen(function* () {
+          yield* Deferred.succeed(started, yield* Effect.fiber);
+          yield* Queue.offer(attempts, ++attempt);
+          yield* Deferred.await(release);
+          return yield* new TextGenerationError({
+            operation: kind === "title" ? "generateThreadTitle" : "generateBranchName",
+            detail: "Obsolete generation failed",
+          });
+        });
+        if (kind === "title") harness.generateThreadTitle.mockReturnValue(failure);
+        else harness.generateBranchName.mockReturnValue(failure);
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("stale-generation-setup"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Thread",
+          branch: "t3code/1234abcd",
+          worktreePath: "/tmp/provider-project-worktree",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("stale-generation-turn"),
+          threadId: ThreadId.make("thread-1"),
+          titleSeed: "Thread",
+          message: {
+            messageId: asMessageId("stale-generation-message"),
+            role: "user",
+            text: "Investigate reconnects",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const fiber = yield* Deferred.await(started);
+        expect(yield* Queue.take(attempts)).toBe(1);
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("manual-rename-during-generation"),
+          threadId: ThreadId.make("thread-1"),
+          ...(kind === "title" ? { title: "My chosen title" } : { branch: "my-chosen-branch" }),
+        });
+        yield* Deferred.succeed(release, undefined);
+        if (kind === "title") {
+          yield* TestClock.adjust("2 seconds");
+          expect(yield* Queue.take(attempts)).toBe(2);
+          yield* TestClock.adjust("4 seconds");
+          expect(yield* Queue.take(attempts)).toBe(3);
+        }
+        expect(Exit.isSuccess(yield* Fiber.await(fiber))).toBe(true);
+        yield* Effect.promise(() => harness.drain());
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads[0]!;
+        expect(
+          thread.activities.filter(
+            (a) =>
+              a.kind === `provider.${kind === "title" ? "thread-title" : "branch-name"}.failed`,
+          ),
+        ).toEqual([]);
+        expect(kind === "title" ? thread.title : thread.branch).toBe(
+          kind === "title" ? "My chosen title" : "my-chosen-branch",
+        );
+      }),
+  );
+
+  it.each(["rename", "replace"] as const)(
+    "ignores a failed manual regeneration after %s",
+    async (change) => {
+      const harness = await createHarness();
+      const started = await harness.runEffect(Deferred.make<void>());
+      const release = await harness.runEffect(Deferred.make<void>());
+      harness.generateThreadTitle
+        .mockReturnValueOnce(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(
+              Effect.fail(
+                new TextGenerationError({
+                  operation: "generateThreadTitle",
+                  detail: "Obsolete regeneration failed",
+                }),
+              ),
+            ),
+          ),
+        )
+        .mockReturnValue(Effect.succeed({ title: "Replacement title" }));
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("stale-regeneration-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("stale-regeneration-message"),
+            role: "user",
+            text: "Investigate reconnects",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("stale-regeneration-request"),
+          threadId: ThreadId.make("thread-1"),
+          regenerateTitle: true,
+        }),
+      );
+      await harness.runEffect(Deferred.await(started));
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("stale-regeneration-change"),
+          threadId: ThreadId.make("thread-1"),
+          ...(change === "rename" ? { title: "My chosen title" } : { regenerateTitle: true }),
+        }),
+      );
+      await harness.runEffect(Deferred.succeed(release, undefined));
+      await harness.drain();
+      const thread = (await harness.readModel()).threads[0]!;
+      expect(thread.activities.filter((a) => a.kind === "provider.thread-title.failed")).toEqual(
+        [],
+      );
+      expect(thread.title).toBe(change === "rename" ? "My chosen title" : "Replacement title");
+      expect(thread.titleRegeneration).toBeNull();
+    },
+  );
+
   it("retries thread title generation after a transient failure", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
