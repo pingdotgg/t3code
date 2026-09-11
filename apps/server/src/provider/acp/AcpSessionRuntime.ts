@@ -93,6 +93,9 @@ export interface AcpSessionRuntimeOptions {
     readonly version: string;
   };
   readonly authMethodId: string;
+  /** Some ACP agents (jcode) manage auth in their own daemon and reject the
+   * `authenticate` method; set false to skip the post-initialize handshake. */
+  readonly sendsAuthenticate?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
@@ -241,6 +244,14 @@ export class AcpSessionRuntime extends Context.Service<
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: { readonly dispatched?: Deferred.Deferred<void> },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Interrupts the active `session/prompt` fiber, if one is running, and
+     * sends the ACP `session/cancel` notification. Together with drainEvents
+     * this is what a stalled-turn watchdog needs: drainEvents alone cannot
+     * unblock a prompt fiber that is waiting on a silent agent, so the
+     * joined `sendTurn` would stay pending after settlement.
+     */
+    readonly interruptActivePrompt: Effect.Effect<void>;
     /**
      * Sends a real ACP `session/cancel` notification for the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
@@ -703,11 +714,13 @@ export const make = (
         methodId: options.authMethodId,
       } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+      if (options.sendsAuthenticate !== false) {
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -975,6 +988,20 @@ export const make = (
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents,
+      interruptActivePrompt: Effect.gen(function* () {
+        const activePrompt = yield* Ref.get(activePromptRef);
+        if (Option.isSome(activePrompt)) {
+          yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
+        }
+        // cancel expects a started runtime; a stalled-turn watchdog can fire
+        // before start completes, and that case has nothing to cancel.
+        const started = yield* Ref.get(startStateRef).pipe(
+          Effect.map((state) => (state._tag === "Started" ? state.result : undefined)),
+        );
+        if (started !== undefined) {
+          yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
+        }
+      }),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload, promptOptions?) =>

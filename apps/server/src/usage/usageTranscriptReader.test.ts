@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { MAX_JCODE_SESSION_BYTES, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +206,54 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("readTranscriptRecords jcode sessions", () => {
+  afterEach(async () => {
+    await NodeFSP.rm(dir, { recursive: true, force: true });
+  });
+
+  function jcodeSessionFile(overrides: {
+    readonly id: string;
+    readonly model: string;
+    readonly messageCount: number;
+  }): string {
+    return JSON.stringify({
+      id: overrides.id,
+      model: overrides.model,
+      working_dir: "/tmp/project",
+      messages: Array.from({ length: overrides.messageCount }, (_, index) => ({
+        id: `m_${index}`,
+        role: "assistant",
+        timestamp: "2026-09-10T13:17:32.045037100Z",
+        token_usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 20 },
+      })),
+    });
+  }
+
+  it("extracts one record per assistant message with session attribution", async () => {
+    const filePath = NodePath.join(dir, "session_test_1.json");
+    await NodeFSP.writeFile(
+      filePath,
+      jcodeSessionFile({ id: "session_test_1", model: "omen-alpha", messageCount: 2 }),
+    );
+
+    const parsed = await readTranscriptRecords(filePath, "jcode");
+    assert(parsed !== null);
+    assert.equal(parsed.records.length, 2);
+    for (const record of parsed.records) {
+      assert.equal(record.provider, "jcode");
+      assert.equal(record.model, "omen-alpha");
+      assert.equal(record.sessionId, "session_test_1");
+    }
+  });
+
+  it("returns null instead of parsing sessions past the byte limit", async () => {
+    const filePath = NodePath.join(dir, "session_big.json");
+    await NodeFSP.writeFile(filePath, "0".repeat(MAX_JCODE_SESSION_BYTES + 1));
+
+    const records = await readTranscriptRecords(filePath, "jcode");
+    assert.equal(records, null);
   });
 });

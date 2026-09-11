@@ -26,6 +26,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parseJcodeMessage,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -118,9 +119,13 @@ export async function listTranscriptFiles(
         await walk(child);
         continue;
       }
+      if (entry.name.startsWith("session_") && entry.name.endsWith(".bak")) {
+        // Jcode rotates its session file; the .bak copy double counts.
+        continue;
+      }
       if (fileName !== undefined) {
         if (entry.name !== fileName) continue;
-      } else if (!entry.name.endsWith(".jsonl")) {
+      } else if (!entry.name.endsWith(".jsonl") && !entry.name.endsWith(".json")) {
         continue;
       }
       try {
@@ -174,6 +179,64 @@ async function guardMatches(
 }
 
 /**
+ * Jcode keeps one JSON object per session file. Reparse whole; records come
+ * from messages that carry `token_usage`. A `resumeFrom` guard pass still
+ * skips the reparse when the file is byte-identical at its tail, because the
+ * file cache in UsageService already holds the parsed records for that case.
+ */
+/** Bounded sessions only: usage scans walk everything under `sessions/`, so
+ * skipping oversized files keeps a multi-gigabyte stale session from stalling
+ * every scan. Recorder writes land within this budget in practice; anything
+ * larger is not a usable usage source anyway. Matches the AgentSessionScanner
+ * cap for the same file family. */
+export const MAX_JCODE_SESSION_BYTES = 16 * 1024 * 1024;
+
+async function readJcodeSessionRecords(
+  handle: NodeFSP.FileHandle,
+): Promise<TranscriptParseResult | null> {
+  // Whole-session parse allocates the full file, so a size check comes
+  // before the read.
+  let size: number;
+  try {
+    size = (await handle.stat()).size;
+  } catch {
+    return null;
+  }
+  if (size > MAX_JCODE_SESSION_BYTES) return null;
+  try {
+    const contents = await handle.readFile("utf8");
+    const session = JSON.parse(contents) as unknown;
+    if (typeof session !== "object" || session === null) return null;
+    const sessionRecord = session as Record<string, unknown>;
+    const messages = sessionRecord["messages"];
+    if (!Array.isArray(messages)) return null;
+    const sessionModel = typeof sessionRecord["model"] === "string" ? sessionRecord["model"] : "";
+    const sessionId = typeof sessionRecord["id"] === "string" ? sessionRecord["id"] : "";
+    const records: UsageRecord[] = [];
+    for (const message of messages) {
+      const record = parseJcodeMessage(message, sessionModel, sessionId);
+      if (record !== null) records.push(record);
+    }
+    // Whole-session reparse: mark the position as consumed through EOF. The
+    // mtime in UsageService's cache still gates the next scan, and a changed
+    // file fails the guard and reparses fully, which is correct.
+    return {
+      records,
+      tailRecords: [],
+      position: {
+        resumeOffset: size,
+        guardLength: 0,
+        guardHash: 0,
+        codexState: null,
+      },
+      resumed: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
  *
@@ -200,6 +263,18 @@ export async function readTranscriptRecords(
     handle = await NodeFSP.open(filePath, "r");
   } catch {
     return null;
+  }
+
+  // Jcode session files are a single JSON object, not JSONL, so the line
+  // reader below cannot apply. Parse whole instead; the helper honors
+  // `resumeFrom` only through its guard, since a whole-object reparse is
+  // cheap relative to correctness.
+  if (provider === "jcode") {
+    try {
+      return await readJcodeSessionRecords(handle);
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
   }
 
   try {

@@ -67,6 +67,8 @@ const setup = Effect.gen(function* () {
       providers: {
         claudeAgent: { homePath: NodePath.join(home, "claude") },
         codex: { homePath: NodePath.join(home, "codex") },
+        // Keep the scan inside the test home instead of the real `~/.jcode`.
+        jcode: { homePath: NodePath.join(home, "jcode") },
       },
     },
   };

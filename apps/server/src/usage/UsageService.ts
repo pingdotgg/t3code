@@ -17,6 +17,7 @@ import * as NodeOS from "node:os";
 import {
   ClaudeSettings,
   CodexSettings,
+  JcodeSettings,
   type ProviderInstanceConfig,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
@@ -84,6 +85,7 @@ const CACHE_RETENTION_DAYS = 90;
 
 const decodeCodexSettings = Schema.decodeOption(CodexSettings);
 const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
+const decodeJcodeSettings = Schema.decodeOption(JcodeSettings);
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -244,7 +246,7 @@ export const make = Effect.gen(function* () {
   ) {
     const dirs: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+    for (const driver of ["claudeAgent", "codex", "grok", "jcode"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
       const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
@@ -274,6 +276,15 @@ export const make = Effect.gen(function* () {
           home = configured
             ? expandHomePath(configured)
             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else if (driver === "jcode") {
+          const decoded = decodeJcodeSettings(instance.config ?? {});
+          if (Option.isNone(decoded)) continue;
+          // Jcode Settings exposes `homePath` exactly like Claude: overridden
+          // in sandboxed homes, default `~/.jcode` otherwise.
+          const configured = decoded.value.homePath.trim();
+          home = configured
+            ? expandHomePath(configured)
+            : path.join(NodeOS.homedir(), ".jcode");
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),

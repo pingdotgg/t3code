@@ -1,6 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, JcodeIcon, OpenAI } from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -29,6 +29,12 @@ export const PROVIDER_PRESENTATION = {
     // Contrast-aware neutral between the Codex series and muted chart chrome.
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     mark: GrokIcon,
+  },
+  jcode: {
+    label: "Jcode",
+    // Contrast-aware neutral between Claude's orange and muted chart chrome.
+    color: "color-mix(in oklab, var(--contrast-foreground) 88%, var(--background))",
+    mark: JcodeIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 

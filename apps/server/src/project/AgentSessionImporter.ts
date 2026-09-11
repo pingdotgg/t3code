@@ -233,7 +233,11 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
               resumeCursor:
                 thread.source === "codex"
                   ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                  : thread.source === "jcode"
+                    ? // The Jcode adapter resumes an ACP session by its
+                      // provider session id; see parseJcodeResume.
+                      { schemaVersion: 1, sessionId: thread.providerSessionId }
+                    : { threadId, resume: thread.providerSessionId },
               runtimePayload: { cwd: workspaceRoot },
             },
             { onConflict: "ignore" },
