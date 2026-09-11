@@ -59,12 +59,18 @@ export function resolveDeviceMiniPlayerSourceSize(
 }
 
 /**
- * Simulators and emulators stream a rectangular framebuffer with the display's
- * rounded corners filled black. Clipping the player at a phone-like radius,
- * scaled with its short side, keeps those corners out of the frame; the sliver
- * of screen lost under the curve is status-bar padding on every current phone.
+ * The Android emulator composites the skin's rounded corners into its
+ * framebuffer as black wedges (measured at ~13% of the short side on a
+ * Pixel 9), so its player clips at a matching phone-like radius; the sliver
+ * lost under the curve is status-bar padding. iOS simulators stream an
+ * edge-to-edge rectangle and keep the frame radius, which matters for iPads
+ * whose real corners are far tighter than a phone's.
  */
-export function resolveDeviceMiniPlayerCornerRadius(player: PreviewMiniPlayerSize): number {
+export function resolveDeviceMiniPlayerCornerRadius(
+  platform: DevicePlatform,
+  player: PreviewMiniPlayerSize,
+): number {
+  if (platform !== "android") return PREVIEW_MINI_PLAYER_CORNER_RADIUS;
   return Math.max(
     PREVIEW_MINI_PLAYER_CORNER_RADIUS,
     Math.round(Math.min(player.width, player.height) * 0.14),

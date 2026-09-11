@@ -64,10 +64,15 @@ describe("resolveDeviceMiniPlayerSourceSize", () => {
 });
 
 describe("resolveDeviceMiniPlayerCornerRadius", () => {
-  it("scales with the player's short side and never drops below the frame radius", () => {
-    expect(resolveDeviceMiniPlayerCornerRadius({ width: 240, height: 520 })).toBe(34);
-    expect(resolveDeviceMiniPlayerCornerRadius({ width: 520, height: 240 })).toBe(34);
-    expect(resolveDeviceMiniPlayerCornerRadius({ width: 60, height: 130 })).toBe(12);
+  it("rounds an Android player like a phone, scaled with its short side", () => {
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 240, height: 520 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 520, height: 240 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 60, height: 130 })).toBe(12);
+  });
+
+  it("keeps the frame radius for iOS, whose stream has square corners", () => {
+    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 240, height: 520 })).toBe(12);
+    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 720, height: 1_000 })).toBe(12);
   });
 });
 

@@ -5,6 +5,7 @@ import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -209,6 +210,10 @@ function DeviceMiniPlayer({
   );
   const hostLabel =
     deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
+  const cornerRadius = useCallback(
+    (player: PreviewMiniPlayerSize) => resolveDeviceMiniPlayerCornerRadius(source.platform, player),
+    [source.platform],
+  );
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -228,7 +233,7 @@ function DeviceMiniPlayer({
       bottomInset={bottomInset}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
-      cornerRadius={resolveDeviceMiniPlayerCornerRadius}
+      cornerRadius={cornerRadius}
     >
       {() => (
         // The stream is DOM, so it takes the band the browser's native webview would.
