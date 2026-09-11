@@ -52,12 +52,23 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
-    // JSON drops undefined, so inherit (absent) and never (null) need distinct marks.
-    Object.entries(settings.projectSettingsOverrides).map(([projectId, entry]) => [
-      projectId,
-      entry.sidebarAutoSettleOnMerge ?? "inherit",
-      entry.sidebarAutoSettleAfterDays === undefined ? "inherit" : entry.sidebarAutoSettleAfterDays,
-    ]),
+    // Only entries that touch settlement, in a stable order, so a project
+    // override on an unrelated key does not queue a sweep. JSON drops
+    // undefined, so inherit (absent) and never (null) need distinct marks.
+    Object.entries(settings.projectSettingsOverrides)
+      .filter(
+        ([, entry]) =>
+          entry.sidebarAutoSettleOnMerge !== undefined ||
+          entry.sidebarAutoSettleAfterDays !== undefined,
+      )
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([projectId, entry]) => [
+        projectId,
+        entry.sidebarAutoSettleOnMerge ?? "inherit",
+        entry.sidebarAutoSettleAfterDays === undefined
+          ? "inherit"
+          : entry.sidebarAutoSettleAfterDays,
+      ]),
   ]);
 }
 

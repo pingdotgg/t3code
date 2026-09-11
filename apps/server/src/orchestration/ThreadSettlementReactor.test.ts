@@ -316,6 +316,21 @@ describe("ThreadSettlementReactor", () => {
     assert.notStrictEqual(inherits, never);
   });
 
+  it("ignores project overrides that do not touch settlement", () => {
+    const base = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: false } },
+    });
+    const unrelated = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [LINKED_PROJECT_ID]: { defaultThreadEnvMode: "worktree" },
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: false, defaultAutoPull: true },
+      },
+    });
+    assert.strictEqual(base, unrelated);
+  });
+
   it.effect(
     "settles all-terminal links from snapshots and keeps open or unsynced links active",
     () =>
