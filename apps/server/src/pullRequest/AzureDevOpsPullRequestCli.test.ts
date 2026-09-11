@@ -97,6 +97,46 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads an Azure pull request page larger than the VCS default output limit", () =>
+    Effect.gen(function* () {
+      const rows = pullRequestRows(100, 1).map((row) => ({
+        ...row,
+        description: "x".repeat(10_000),
+      }));
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const response = JSON.stringify(rows);
+      expect(Buffer.byteLength(response)).toBeGreaterThan(1_000_000);
+
+      mockedExecute.mockImplementationOnce((input) => {
+        const maxOutputBytes =
+          "maxOutputBytes" in input && typeof input.maxOutputBytes === "number"
+            ? input.maxOutputBytes
+            : 1_000_000;
+        return Effect.succeed(
+          maxOutputBytes >= Buffer.byteLength(response)
+            ? output(response)
+            : {
+                ...output(response.slice(0, maxOutputBytes)),
+                stdoutTruncated: true,
+              },
+        );
+      });
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "web",
+        state: "merged",
+        involvement: "all",
+        viewer: "bilal@acme.dev",
+        limit: 99,
+      });
+
+      assert.strictEqual(batch.items.length, 99);
+      assert.isTrue(batch.truncated);
+    }),
+  );
+
   it.effect("reads the page unnarrowed when asked to search, having nothing to search with", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
@@ -342,7 +382,40 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("stores the squash choice with an auto-completion, as a merge now does", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        number: 42,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "repos",
+        "pr",
+        "update",
+        "--detect",
+        "true",
+        "--id",
+        "42",
+        "--auto-complete",
+        "true",
+        "--squash",
+        "true",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+    }),
+  );
+
   it.effect.each([
+    { action: "enable-auto-merge", expected: ["--auto-complete", "true"] },
+    { action: "disable-auto-merge", expected: ["--auto-complete", "false"] },
     { action: "draft", expected: ["--draft", "true"] },
     { action: "ready", expected: ["--draft", "false"] },
     { action: "close", expected: ["--status", "abandoned"] },
@@ -367,6 +440,79 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         "--output",
         "json",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    { name: "a title", rewrite: { title: "Add the page" }, expected: ["--title=Add the page"] },
+    {
+      name: "a description",
+      rewrite: { body: "Why the page changed" },
+      expected: ["--description=Why the page changed"],
+    },
+    {
+      name: "both",
+      rewrite: { title: "Add the page", body: "Why the page changed" },
+      expected: ["--title=Add the page", "--description=Why the page changed"],
+    },
+  ] as const)("rewrites $name, sending nothing it was not given", ({ rewrite, expected }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.updatePullRequest({ cwd: "/w", number: 42, ...rewrite });
+
+      expect(argsOfCall(0)).toEqual([
+        "repos",
+        "pr",
+        "update",
+        "--detect",
+        "true",
+        "--id",
+        "42",
+        ...expected,
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+    }),
+  );
+
+  it.effect("sends a description that starts with a dash as one value, not as a flag", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.updatePullRequest({
+        cwd: "/w",
+        number: 42,
+        body: "- rewrote the page\n- kept the rest",
+      });
+
+      // One argument, so the leading dash of an ordinary bullet list never reaches az as a flag,
+      // and the whole text stays together where `--description` would otherwise take several.
+      expect(argsOfCall(0)).toContain("--description=- rewrote the page\n- kept the rest");
+    }),
+  );
+
+  it.effect("rewrites through the provider, which says it takes one", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+
+      // False for a remark because nothing here can post one, so there is none to rewrite.
+      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: false });
+      assert.isDefined(provider.updateChangeRequest);
+      yield* provider.updateChangeRequest({
+        cwd: "/w",
+        repository: "web",
+        host: "dev.azure.com",
+        number: 42,
+        title: "Add the page",
+      });
+
+      expect(argsOfCall(0)).toContain("--title=Add the page");
+      expect(argsOfCall(0)).not.toContain("--description");
     }),
   );
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   buildKeybindingRows,
@@ -12,6 +13,7 @@ import {
   shortcutToKeybindingInput,
   unknownWhenVariables,
   whenAstToExpression,
+  whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
@@ -52,16 +54,52 @@ describe("KeybindingsSettings.logic", () => {
   it("captures platform-specific mod shortcuts", () => {
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
         "MacIntel",
       ),
     ).toBe("mod+shift+k");
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it.each([
+    ["@", "Digit2", "mod+shift+2"],
+    ['"', "Digit2", "mod+shift+2"],
+    ["@", "Quote", "mod+shift+'"],
+  ])("captures %s at %s by physical key", (key, code, expected) => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key,
+          code,
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
+        "MacIntel",
+      ),
+    ).toBe(expected);
+  });
+
+  it("captures Latin layout keys instead of their punctuation position", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "m",
+          code: "Semicolon",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("mod+m");
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {
@@ -120,6 +158,19 @@ describe("KeybindingsSettings.logic", () => {
     });
   });
 
+  it("describes the scope of each visual expression removal", () => {
+    const condition = { type: "identifier", name: "terminalFocus" } as const;
+    const negatedCondition = { type: "not", node: condition } as const;
+    const group = { type: "and", left: condition, right: negatedCondition } as const;
+    const negatedGroup = { type: "not", node: group } as const;
+
+    expect(whenNodeRemoveLabel(group, 0)).toBe("Clear all conditions");
+    expect(whenNodeRemoveLabel(condition, 1)).toBe("Remove condition");
+    expect(whenNodeRemoveLabel(negatedCondition, 1)).toBe("Remove condition");
+    expect(whenNodeRemoveLabel(group, 1)).toBe("Remove group and its conditions");
+    expect(whenNodeRemoveLabel(negatedGroup, 1)).toBe("Remove group and its conditions");
+  });
+
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
@@ -135,7 +186,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).not.toContain("customModeActive");
   });
 
-  it("builds command options from defaults and resolved project bindings", () => {
+  it("builds command options from all static commands and resolved project bindings", () => {
     const options = buildKeybindingCommandOptions([
       {
         command: "script.setup-db.run",
@@ -150,7 +201,17 @@ describe("KeybindingsSettings.logic", () => {
       },
     ] satisfies ResolvedKeybindingsConfig);
 
-    expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
+    expect(options).toEqual(
+      expect.arrayContaining([
+        "chat.new",
+        "rightPanel.toggleMaximized",
+        "thread.stop",
+        "script.setup-db.run",
+      ]),
+    );
+    expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
+      false,
+    );
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

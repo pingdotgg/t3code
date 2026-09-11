@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.ListDelegatedAdminAccountsHttp)`.
- * @binding
- * @section Organization & Members
- * @example List Delegated Administrators
+ * ### Organization & Members
+ * **Example:** List Delegated Administrators
  * ```typescript
  * // init
  * const listDelegatedAdminAccounts = yield* AWS.Inspector2.ListDelegatedAdminAccounts();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { delegatedAdminAccounts } = yield* listDelegatedAdminAccounts();
  * ```
+ *
+ * @binding
  */
 export interface ListDelegatedAdminAccounts extends Binding.Service<
   ListDelegatedAdminAccounts,

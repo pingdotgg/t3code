@@ -5,6 +5,7 @@ import {
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
+  DesktopPreviewAutomationStatusSchema,
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
@@ -13,18 +14,26 @@ import {
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
+  DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  BrowserImportResult,
+  BrowserImportSource,
+  DesktopPreviewClearDataInputSchema,
+  DesktopPreviewImportCookiesInputSchema,
+  DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
-  PreviewAutomationStatus,
+  DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
@@ -48,11 +57,15 @@ export const installPreviewEventForwarding = Effect.fn(
 
 export const createTab = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CREATE_TAB_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewCreateTabInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({
+    tabId,
+    zoomFactor,
+    colorScheme,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId);
+    yield* manager.createTab(tabId, { zoomFactor, colorScheme });
   }),
 });
 
@@ -148,6 +161,15 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
     yield* manager.setColorScheme(tabId, colorScheme);
   }),
 });
+export const setAudioMuted = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL,
+  payload: DesktopPreviewSetAudioMutedInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
 export const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -181,36 +203,127 @@ export const closePictureInPicture = tabMethod(
 
 export const clearCookies = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL,
-  payload: Schema.Void,
+  payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* () {
+  handler: Effect.fn("desktop.ipc.preview.clearCookies")(function* ({ environmentId, profileId }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.clearCookies();
+    yield* manager.clearCookies(yield* resolveClearPartitions(manager, environmentId, profileId));
   }),
 });
 
 export const clearCache = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL,
-  payload: Schema.Void,
+  payload: DesktopPreviewClearDataInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.clearCache")(function* () {
+  handler: Effect.fn("desktop.ipc.preview.clearCache")(function* ({ environmentId, profileId }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.clearCache();
+    yield* manager.clearCache(yield* resolveClearPartitions(manager, environmentId, profileId));
   }),
+});
+
+/**
+ * Partition scope for an (environment, profile) pair.
+ *
+ * The default profile keeps the bare environment id it used before profiles
+ * existed, so upgrading does not strand anyone's existing logins in an
+ * orphaned partition. Incognito derives a non-persistent partition.
+ */
+export function resolvePartitionScope(
+  environmentId: string,
+  profileId: string | undefined,
+): {
+  readonly scope: string;
+  readonly persistent: boolean;
+  readonly namespace?: "profile";
+} {
+  if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
+    return { scope: environmentId, persistent: true };
+  }
+  // JSON's tuple framing is injective for strings, including lone UTF-16
+  // surrogates (which it escapes). URI encoding throws on those supported ids,
+  // while replacing them with U+FFFD would collapse distinct identities.
+  return {
+    scope: JSON.stringify([environmentId, profileId]),
+    persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
+    namespace: "profile" as const,
+  };
+}
+
+/**
+ * Clearing without a profile keeps the historical "everything" behaviour for
+ * an explicit all-profiles action; naming a profile confines it to that
+ * profile's partition so one profile's sign-out cannot reach the others.
+ */
+const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartitions")(function* (
+  manager: PreviewManager.PreviewManager["Service"],
+  environmentId: string,
+  profileId: string | undefined,
+) {
+  if (profileId === undefined) return undefined;
+  const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+  // Loading the session is what puts the partition in the map the clear walks.
+  // Deriving the partition string alone leaves nothing to match, so clearing a
+  // profile with no tab open this run — after a restart, or when deleting a
+  // profile — would report success and delete nothing.
+  yield* manager.getBrowserSession(scope, persistent, namespace);
+  return [yield* manager.getBrowserPartition(scope, persistent, namespace)];
 });
 
 export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
-  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId }) {
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.getBrowserSession(environmentId);
+    const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+    // Creating the session first is what installs the UA rewrite and permission
+    // handlers; a guest that attached to an untouched partition would run with
+    // Electron's default UA and Chromium's default permission behaviour.
+    yield* manager.getBrowserSession(scope, persistent, namespace);
     return {
-      partition: yield* manager.getBrowserPartition(environmentId),
+      partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
+  }),
+});
+
+/**
+ * Registered separately from `methods`: these carry `BrowserImport` in their
+ * context and their own failure type, so they do not unify with the
+ * manager-backed handlers the shared loop iterates.
+ */
+export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(BrowserImportSource),
+  handler: Effect.fn("desktop.ipc.preview.listBrowserImportSources")(function* () {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    return yield* browserImport.listSources;
+  }),
+});
+
+export const importBrowserCookies = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL,
+  payload: DesktopPreviewImportCookiesInputSchema,
+  result: BrowserImportResult,
+  handler: Effect.fn("desktop.ipc.preview.importBrowserCookies")(function* ({
+    environmentId,
+    ...importInput
+  }) {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    // Derived in main from the same helper the webview config uses, so cookies
+    // land in exactly the partition the profile's tabs attach to.
+    const { scope, persistent, namespace } = resolvePartitionScope(
+      environmentId,
+      importInput.targetProfileId,
+    );
+    return yield* browserImport.importCookies({
+      input: importInput,
+      scope,
+      persistent,
+      ...(namespace === undefined ? {} : { namespace }),
+    });
   }),
 });
 
@@ -267,7 +380,7 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
 export const automationStatus = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: PreviewAutomationStatus,
+  result: DesktopPreviewAutomationStatusSchema,
   handler: Effect.fn("desktop.ipc.preview.automationStatus")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.automationStatus(tabId);
@@ -367,6 +480,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setAudioMuted,
   openDevTools,
   clearCookies,
   clearCache,

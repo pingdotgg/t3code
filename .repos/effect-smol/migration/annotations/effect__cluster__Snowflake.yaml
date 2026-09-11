@@ -1,0 +1,9 @@
+"@effect/cluster/Snowflake#Generator":
+  replacement: "effect/unstable/cluster/Snowflake#Generator"
+  note: "Moved into core Effect and changed to Context.Service; its unsafeNext method was renamed to nextUnsafe."
+"@effect/cluster/Snowflake#make":
+  replacement: "effect/unstable/cluster/Snowflake#make"
+  note: "Moved into core Effect with the same timestamp, machine-id, and sequence packing constructor."
+"@effect/cluster/Snowflake#TypeId":
+  replacement: "effect/unstable/cluster/Snowflake#TypeId"
+  note: "Moved into core Effect; the public marker is now the string literal ~effect/cluster/Snowflake."

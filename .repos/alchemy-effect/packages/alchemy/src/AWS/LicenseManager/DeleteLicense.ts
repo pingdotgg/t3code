@@ -15,9 +15,8 @@ export interface DeleteLicenseRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.DeleteLicenseHttp)`.
- * @binding
- * @section Issuing Licenses
- * @example Delete a License on Cancellation
+ * ### Issuing Licenses
+ * **Example:** Delete a License on Cancellation
  * ```typescript
  * // init
  * const deleteLicense = yield* AWS.LicenseManager.DeleteLicense();
@@ -29,6 +28,8 @@ export interface DeleteLicenseRequest
  *   SourceVersion: License!.Version!,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteLicense extends Binding.Service<
   DeleteLicense,

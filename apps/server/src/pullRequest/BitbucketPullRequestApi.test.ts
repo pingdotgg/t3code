@@ -510,6 +510,74 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("rewrites a title alone, without touching anything else", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({ repository: "acme/web", number: 7, title: "A new title" });
+
+      const call = callAt(0);
+      expect(call.method).toBe("PUT");
+      expect(call.url).toBe("/repositories/acme/web/pullrequests/7");
+      // Bitbucket's PUT is a partial update, so a field left out of the body is left as it was.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(call.body ?? "")).toEqual({ title: "A new title" });
+    }),
+  );
+
+  it.effect("leaves out the half of the pull request it was not asked about", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({ repository: "acme/web", number: 7, body: "New body." });
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).body ?? "")).toEqual({ description: "New body." });
+    }),
+  );
+
+  it.effect("writes both fields when both were rewritten", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateChangeRequest({
+        repository: "acme/web",
+        number: 7,
+        title: "A new title",
+        body: "New body.",
+      });
+
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).body ?? "")).toEqual({
+        title: "A new title",
+        description: "New body.",
+      });
+    }),
+  );
+
+  it.effect("rewrites a comment where it stands, whichever kind it is", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      yield* api.updateComment({
+        repository: "acme/web",
+        number: 7,
+        commentId: "10",
+        body: "Edited.",
+      });
+
+      expect(callAt(0)).toMatchObject({
+        method: "PUT",
+        url: "/repositories/acme/web/pullrequests/7/comments/10",
+        body: '{"content":{"raw":"Edited."}}',
+      });
+    }),
+  );
+
   it.effect("fails the read when Bitbucket answers with something unreadable", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -708,7 +776,13 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         number: 7,
         verdict: "request-changes",
         body: "Two things.",
-        comments: [{ path: "src/a.ts", line: 12, side: "left", body: "why remove?" }],
+        comments: [
+          {
+            path: "src/a.ts",
+            position: { kind: "deleted", oldLine: 12 },
+            body: "why remove?",
+          },
+        ],
       });
 
       expect(callAt(0).url).toContain("/pullrequests/7/comments");
@@ -796,6 +870,46 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       // A quote would otherwise end the literal and leave the rest standing as filter syntax.
       assert.strictEqual(filterOfCall(0), 'repository.full_name="acme/we\\"b"');
+    }),
+  );
+
+  it.effect(
+    "reads a removed permissions endpoint as granted rather than failing the merge on it",
+    () =>
+      Effect.gen(function* () {
+        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
+        // gets HTTP 410 here, whatever it may do.
+        mockedRequest.mockReturnValue(
+          Effect.fail(
+            new BitbucketApi.BitbucketResponseError({
+              operation: "request",
+              status: 410,
+              responseBodyLength: 0,
+            }),
+          ),
+        );
+        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+        assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+      }),
+  );
+
+  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.fail(
+          new BitbucketApi.BitbucketResponseError({
+            operation: "request",
+            status: 401,
+            responseBodyLength: 0,
+          }),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
+
+      assert.strictEqual(error._tag, "BitbucketResponseError");
     }),
   );
 

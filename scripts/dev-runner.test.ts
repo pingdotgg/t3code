@@ -17,7 +17,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   checkPortAvailabilityOnHosts,
@@ -35,6 +35,7 @@ const emptyConfigLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }
 const netServiceLayer = Layer.succeed(NetService.NetService, {
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
+  hasListenerOnHost: () => Effect.succeed(false),
   reserveLoopbackPort: () => Effect.succeed(49_152),
   findAvailablePort: (port) => Effect.succeed(port),
 });
@@ -73,6 +74,20 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  it.effect("accepts a dry run without the optional browser flag", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const output = yield* spawner.string(
+        ChildProcess.make(process.execPath, ["scripts/dev-runner.ts", "dev", "--dry-run"], {
+          cwd: path.resolve(import.meta.dirname, ".."),
+        }),
+      );
+
+      assert.include(output, "[dev-runner] mode=dev");
+    }),
+  );
+
   describe("getDevRunnerModeArgs", () => {
     it.effect("lets Vite+ honor the desktop dev task graph", () =>
       Effect.sync(() => {

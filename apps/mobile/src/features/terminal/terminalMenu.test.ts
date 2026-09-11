@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import {
+  EMPTY_TERMINAL_BUFFER_STATE,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -8,7 +11,6 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
-  nextTerminalId,
   previousLiveTerminalId,
   resolveProjectScriptTerminalId,
   type TerminalMenuSession,
@@ -56,12 +58,13 @@ function makeKnownSession(input: {
             updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
           }
         : null,
-      buffer: "",
+      output: EMPTY_TERMINAL_BUFFER_STATE.output,
       status: input.status,
       error: null,
       hasRunningSubprocess: false,
       updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
       version: 1,
+      lifecycleVersion: 1,
     },
   };
 }
@@ -122,16 +125,6 @@ describe("buildTerminalMenuSessions", () => {
         updatedAt: "2026-04-15T20:07:00.000Z",
       },
     ]);
-  });
-});
-
-describe("nextTerminalId", () => {
-  it("uses the primary id when no terminals are listed yet", () => {
-    expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
-  });
-
-  it("allocates term-2 when only the primary shell exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
   });
 });
 

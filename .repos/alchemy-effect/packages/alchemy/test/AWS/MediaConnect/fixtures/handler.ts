@@ -18,7 +18,7 @@ export class MediaConnectTestFunction extends Lambda.Function<Lambda.Function>()
 export default MediaConnectTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The gated /start-stop roundtrip waits for the flow to accept StopFlow.
     timeout: Duration.seconds(120),
   },

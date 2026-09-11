@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -138,6 +138,12 @@ describe("mergeUsage", () => {
       "claude",
       "codex",
     ]);
+    expect(merged.sessions).toBe(2);
+    expect(
+      Object.fromEntries(
+        merged.providers.map((provider) => [provider.provider, provider.sessions]),
+      ),
+    ).toEqual({ claude: 1, codex: 1 });
   });
 
   it("excludes an environment reporting an older contract version", () => {
@@ -152,7 +158,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 1,
+            USAGE_CONTRACT_VERSION - 2,
           ),
         ),
       ],
@@ -161,6 +167,32 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.staleEnvironments).toEqual(["env-b"]);
+  });
+
+  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ costUsd: 10 })],
+            [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ costUsd: 4, provider: "codex", model: "gpt-5.6-sol" })],
+            [{ provider: "codex", hostId: "linux", homePath: "/b" }],
+            USAGE_CONTRACT_VERSION - 1,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(14);
+    expect(merged.staleEnvironments).toEqual([]);
   });
 
   it("derives provider shares and cost quality", () => {
@@ -187,6 +219,38 @@ describe("mergeUsage", () => {
     expect(merged.providers[0]?.costShare).toBeCloseTo(0.75, 5);
     expect(merged.costQuality.unpricedShare).toBeCloseTo(0.5, 5);
     expect(merged.costQuality.cacheSavingsUsd).toBe(4);
+  });
+
+  it("marks a model with no known rates as unpriced rather than free", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ costUsd: 75 }),
+              bucket({
+                provider: "codex",
+                model: "unknown-model",
+                costUsd: 0,
+                costSource: "unpriced",
+                unpricedRecords: 5,
+              }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.models.find((model) => model.model === "unknown-model")?.unpricedRecords).toBe(5);
+    expect(merged.models.filter(isModelCostUnknown).map((model) => model.model)).toEqual([
+      "unknown-model",
+    ]);
   });
 
   it("keeps two machines apart when hostname and home path collide", () => {
@@ -248,6 +312,7 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.sessions).toBe(1);
+    expect(merged.providers[0]?.sessions).toBe(1);
   });
 
   it("returns empty totals with no environments", () => {
@@ -255,6 +320,30 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(0);
     expect(merged.daily).toHaveLength(0);
     expect(merged.hourly).toHaveLength(0);
+  });
+
+  it("omits providers with no sessions or usage", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [],
+            [
+              {
+                provider: "claude",
+                hostId: "mac",
+                homePath: "/a/.claude",
+                distinctSessions: 0,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.providers).toEqual([]);
   });
 
   it("derives hourly totals without losing the daily rollup", () => {

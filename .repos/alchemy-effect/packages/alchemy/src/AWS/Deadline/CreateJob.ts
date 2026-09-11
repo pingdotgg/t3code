@@ -11,9 +11,8 @@ import type { Queue } from "./Queue.ts";
  * (OJD) document (`JSON` or `YAML`). The queue's `farmId`/`queueId` are
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Deadline.CreateJobHttp)`.
- * @binding
- * @section Submitting Jobs
- * @example Submit A Job From A Template
+ * ### Submitting Jobs
+ * **Example:** Submit A Job From A Template
  * ```typescript
  * // init — bind the operation to the queue
  * const createJob = yield* AWS.Deadline.CreateJob(queue);
@@ -25,6 +24,8 @@ import type { Queue } from "./Queue.ts";
  *   priority: 50,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateJob extends Binding.Service<
   CreateJob,

@@ -144,6 +144,49 @@ describe("decodePullRequestJson", () => {
     ]);
   });
 
+  it("reads auto-complete from whoever armed it, and its absence as nobody", () => {
+    const armed = expectSuccess(
+      decodePullRequestJson(
+        asJson(pullRequest({ autoCompleteSetBy: { displayName: "Bilal Hassan" } })),
+      ),
+    );
+    expect(armed?.autoMergeEnabled).toBe(true);
+
+    // Azure leaves the field out entirely rather than sending it empty, so its absence is the
+    // whole of what it says about auto-complete being off.
+    expect(expectSuccess(decodePullRequestJson(asJson(pullRequest())))?.autoMergeEnabled).toBe(
+      false,
+    );
+  });
+
+  it("keeps the strategy stored with auto-complete", () => {
+    const armed = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            autoCompleteSetBy: { displayName: "Bilal Hassan" },
+            completionOptions: { mergeStrategy: "squash" },
+          }),
+        ),
+      ),
+    );
+
+    expect(armed).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+
+    const unspecified = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            autoCompleteSetBy: { displayName: "Bilal Hassan" },
+            completionOptions: { squashMerge: false },
+          }),
+        ),
+      ),
+    );
+    expect(unspecified?.autoMergeEnabled).toBe(true);
+    expect(unspecified?.autoMergeMethod).toBeUndefined();
+  });
+
   it("works out where the conversation lives from what Azure returned", () => {
     const detail = expectSuccess(decodePullRequestJson(asJson(pullRequest())));
 

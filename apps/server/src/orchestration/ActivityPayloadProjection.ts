@@ -1,8 +1,11 @@
+import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
 import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -91,36 +94,97 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
     projectedItem.command = item.command;
   }
 
+  const aggregatedOutput = asTrimmedString(item.aggregatedOutput);
+  if (aggregatedOutput) {
+    const summary = summarizeToolTextOutput(aggregatedOutput);
+    if (summary) {
+      projectedItem.aggregatedOutput = summary;
+    }
+  }
+
   const input = asRecord(item.input);
   if (input && "command" in input) {
     projectedItem.input = { command: input.command };
   }
 
   const result = asRecord(item.result);
-  if (result && "command" in result) {
-    projectedItem.result = { command: result.command };
+  if (result) {
+    const projectedResult: Record<string, unknown> = {};
+    if ("command" in result) {
+      projectedResult.command = result.command;
+    }
+    const content = asTrimmedString(result.content);
+    if (content) {
+      const summary = summarizeToolTextOutput(content);
+      if (summary) {
+        projectedResult.content = summary;
+      }
+    }
+    if (Object.keys(projectedResult).length > 0) {
+      projectedItem.result = projectedResult;
+    }
   }
 
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
-function summarizeToolTextOutput(value: string): string | null {
-  const lines: string[] = [];
-  for (const rawLine of value.split(/\r?\n/u)) {
-    const line = rawLine.replace(/\s+/g, " ").trim();
-    if (line.length > 0) {
-      lines.push(line);
-    }
+function projectCommandValue(data: Record<string, unknown>): unknown {
+  if (data.command !== undefined) {
+    return data.command;
   }
 
-  const firstLine = lines.find((line) => line !== "```");
-  if (firstLine) {
-    return firstLine.length <= 84 ? firstLine : `${firstLine.slice(0, 83).trimEnd()}…`;
+  const input = asRecord(data.input);
+  if (input?.command !== undefined) {
+    return input.command;
   }
-  if (lines.length > 1) {
-    return `${lines.length.toLocaleString()} lines`;
+
+  const stateInput = asRecord(asRecord(data.state)?.input);
+  if (stateInput?.command !== undefined) {
+    return stateInput.command;
   }
-  return null;
+
+  return undefined;
+}
+
+function projectViewedImagePath(data: Record<string, unknown>): string | undefined {
+  const directPath = asTrimmedString(data.imagePath);
+  if (directPath && isWorkspaceImagePreviewPath(directPath)) {
+    return directPath;
+  }
+
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (toolName !== "read" && toolName !== "read file") {
+    return undefined;
+  }
+  const input = asRecord(data.input);
+  const inputPath = asTrimmedString(input?.file_path) ?? asTrimmedString(input?.path);
+  return inputPath && isWorkspaceImagePreviewPath(inputPath) ? inputPath : undefined;
+}
+
+function summarizeToolTextOutput(value: string): string | null {
+  let meaningfulLineCount = 0;
+  let offset = 0;
+
+  while (offset <= value.length) {
+    const newlineIndex = value.indexOf("\n", offset);
+    const lineEnd = newlineIndex === -1 ? value.length : newlineIndex;
+    const line = value.slice(offset, lineEnd).replace(/\s+/g, " ").trim();
+    if (line.length > 0) {
+      meaningfulLineCount += 1;
+      if (line !== "```") {
+        const summary = line.length <= 84 ? line : `${line.slice(0, 83).trimEnd()}…`;
+        // V8 can retain the full tool output behind a short sliced string.
+        // Join a tiny character array so the returned preview owns its bytes.
+        return Array.from(summary).join("");
+      }
+    }
+    if (newlineIndex === -1) {
+      break;
+    }
+    offset = newlineIndex + 1;
+  }
+
+  return meaningfulLineCount > 1 ? `${meaningfulLineCount.toLocaleString()} lines` : null;
 }
 
 /**
@@ -178,6 +242,70 @@ function summarizeMcpResult(result: unknown): Record<string, unknown> | undefine
   return summary ? { content: summary } : undefined;
 }
 
+/** Reuse the page URL already returned by preview tools before slimming their output. */
+function projectPreviewToolMetadata(data: Record<string, unknown>, status: unknown) {
+  const item = asRecord(data.item);
+  const name = item ? `mcp__${item.server}__${item.tool}` : (data.toolName ?? data.tool);
+  if (
+    typeof name !== "string" ||
+    !/^(?:mcp__)?(?:t3-code|t3_code|t3code)_{1,2}preview_(?:open|navigate|status|snapshot|click|type|press|scroll|resize|set_appearance|evaluate|wait_for|recording_start|recording_stop)$/.test(
+      name,
+    )
+  )
+    return {};
+  const state = asRecord(data.state);
+  const result = item?.result ?? data.result ?? state?.output;
+  const record = asRecord(result);
+  if (
+    status === "failed" ||
+    status === "declined" ||
+    state?.status === "error" ||
+    item?.error != null ||
+    record?.isError === true ||
+    record?.is_error === true
+  )
+    return {};
+
+  let page = record;
+  let output: unknown = result;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (page?.isError === true || page?.is_error === true) return {};
+    const structured = asRecord(page?.structuredContent);
+    if (structured) {
+      page = structured;
+      break;
+    }
+    const text = extractMcpResultText(output)?.slice(0, 2 * 1024 * 1024);
+    if (!text) break;
+    try {
+      page = asRecord(JSON.parse(extractJsonObject(text)));
+    } catch {
+      // A truncated MCP envelope can still contain a complete first text block.
+      const firstBlock = /^\s*\{\s*"content"\s*:\s*\[\s*/.exec(text);
+      if (!firstBlock) return {};
+      try {
+        const block = asRecord(JSON.parse(extractJsonObject(text.slice(firstBlock[0].length))));
+        page = block?.type === "text" ? { content: [block] } : null;
+      } catch {
+        return {};
+      }
+    }
+    output = page;
+  }
+  const rawUrl = asTrimmedString(
+    asRecord(page?.toolIcon)?.pageUrl ??
+      (/preview_(?:open|navigate|status|snapshot)$/.test(name) ? page?.url : undefined),
+  );
+  if (!rawUrl || rawUrl.length > 4096) return {};
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return {};
+    return { toolIcon: { _tag: "website", pageUrl: url.href } };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * MCP tool calls carry full tool results (`data.item.result` on Codex,
  * `data.result` on Claude/OpenCode) that used to bypass slimming entirely to
@@ -232,6 +360,12 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
 }
 
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
+  const direct = asTrimmedString(value);
+  if (direct) {
+    const summary = summarizeToolTextOutput(direct);
+    return summary ? { content: summary } : undefined;
+  }
+
   const rawOutput = asRecord(value);
   if (!rawOutput) {
     return undefined;
@@ -256,7 +390,32 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
     return summary ? { content: summary } : undefined;
   }
 
+  const stderr = asTrimmedString(rawOutput.stderr);
+  if (stderr) {
+    const summary = summarizeToolTextOutput(stderr);
+    return summary ? { content: summary } : undefined;
+  }
+
   return undefined;
+}
+
+function projectAcpContent(value: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const text = value
+    .map((entryValue) => {
+      const entry = asRecord(entryValue);
+      const content = asRecord(entry?.content);
+      return entry?.type === "content" && content?.type === "text"
+        ? asTrimmedString(content.text)
+        : null;
+    })
+    .filter((entry): entry is string => entry !== null)
+    .join("\n");
+  const summary = summarizeToolTextOutput(text);
+  return summary ? { content: summary } : undefined;
 }
 
 /**
@@ -272,23 +431,39 @@ export function projectActivityPayload(
     return activity;
   }
 
+  const itemStatus = asRecord(data.item)?.status;
+  const statusPayload =
+    payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
+      ? { ...payload, status: itemStatus }
+      : payload;
+  const projectedPayload = {
+    ...projectPreviewToolMetadata(data, statusPayload.status),
+    ...statusPayload,
+  };
+  const questionInput = projectQuestionToolInput(data, payload.title);
+
   if (payload.itemType === "mcp_tool_call") {
     return {
       ...activity,
       payload: {
-        ...payload,
-        data: projectMcpToolCallData(data),
+        ...projectedPayload,
+        data: { ...projectMcpToolCallData(data), ...questionInput },
       },
     };
   }
 
-  const projectedData: Record<string, unknown> = {};
+  const projectedData: Record<string, unknown> = { ...questionInput };
   const item = projectCommandData(data);
   if (item) {
     projectedData.item = item;
   }
-  if ("command" in data) {
-    projectedData.command = data.command;
+  const command = projectCommandValue(data);
+  if (command !== undefined) {
+    projectedData.command = command;
+  }
+  const imagePath = projectViewedImagePath(data);
+  if (imagePath) {
+    projectedData.imagePath = imagePath;
   }
 
   const changedFiles: string[] = [];
@@ -304,8 +479,14 @@ export function projectActivityPayload(
   if ("kind" in data) {
     projectedData.kind = data.kind;
   }
+  if ("toolName" in data) {
+    projectedData.toolName = data.toolName;
+  }
 
-  const rawOutput = projectRawOutput(data.rawOutput);
+  const rawOutput =
+    projectRawOutput(data.rawOutput) ??
+    projectAcpContent(data.content) ??
+    (payload.itemType === "command_execution" ? summarizeMcpResult(data.result) : undefined);
   if (rawOutput) {
     projectedData.rawOutput = rawOutput;
   }
@@ -313,7 +494,7 @@ export function projectActivityPayload(
   return {
     ...activity,
     payload: {
-      ...payload,
+      ...projectedPayload,
       data: projectedData,
     },
   };
@@ -366,12 +547,10 @@ function dropStaleContextWindowActivities(
 }
 
 /**
- * Identity both clients use to fold a tool lifecycle row into the call it
- * belongs to (`deriveToolLifecycleCollapseKey` in web's `session-logic` and
- * mobile's `threadActivity`): an explicit `data.toolCallId` when the adapter
- * emits one, otherwise the itemType/title/detail triple. Returns null for rows
- * with no identity at all — those never collapse on the client either, so they
- * must not be dropped here.
+ * Identity used to retain only the newest lifecycle row for each call in a
+ * thread snapshot. Prefer the runtime item id, then the legacy nested id, and
+ * finally the itemType/title/detail triple. Rows without any identity remain
+ * untouched.
  */
 function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | null {
   const payload = asRecord(activity.payload);
@@ -379,7 +558,8 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
     return null;
   }
 
-  const toolCallId = asTrimmedString(asRecord(payload.data)?.toolCallId);
+  const toolCallId =
+    asTrimmedString(payload.toolCallId) ?? asTrimmedString(asRecord(payload.data)?.toolCallId);
   if (toolCallId) {
     return `id:${toolCallId}`;
   }
@@ -412,9 +592,6 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
  * update within the turn — a later update belongs to a subsequent call that
  * reuses the same identity and is still in flight. Rows without a lifecycle
  * identity pass through, matching the clients, which never collapse them.
- * Live `thread.activity-appended` events are untouched: updates still stream
- * in real time and the completion supersedes them on the client as before.
- *
  * Deliberate divergence from client collapse: clients fold only *adjacent*
  * lifecycle rows, so a superseded update separated from its completion by an
  * interleaved parallel call renders as its own row today, and this drop
@@ -441,7 +618,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       continue;
     }
-    const key = `${activity.turnId ?? ""} ${identity}`;
+    const key = `${activity.turnId ?? ""}\u0000${identity}`;
     const indices = completionIndicesByKey.get(key);
     if (indices) {
       indices.push(index);
@@ -461,7 +638,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       return true;
     }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""} ${identity}`);
+    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
     return !indices?.some((completionIndex) => completionIndex > index);
   });
 }

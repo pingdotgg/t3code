@@ -23,10 +23,10 @@ import {
   FlatList,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   type NativeSyntheticEvent,
   StyleSheet,
-  useColorScheme,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,9 +38,11 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAdaptiveWorkspaceLayout,
   useAdaptiveWorkspacePaneRole,
@@ -72,20 +74,16 @@ import { resolveReviewAvailability } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import type { ReviewSectionItem } from "./reviewModel";
-import { markNativeShowcaseReady } from "../showcase/nativeShowcaseScene";
+import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 
 const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
   return (
-    <View className="border-b border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-950/40">
-      <Text className="text-xs font-t3-bold uppercase text-amber-700 dark:text-amber-300">
-        Partial diff
-      </Text>
-      <Text className="text-xs leading-normal text-amber-800 dark:text-amber-200">
-        {props.notice}
-      </Text>
+    <View className="border-b border-warning-border bg-warning px-4 py-3">
+      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">Partial diff</Text>
+      <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>
     </View>
   );
 });
@@ -105,10 +103,10 @@ function ReviewSelectionActionBar(props: {
       <SymbolView
         name={props.onOpenComment ? "text.bubble" : "line.3.horizontal.decrease.circle"}
         size={16}
-        tintColor="#ffffff"
+        tintColorClassName={"accent-primary-foreground"}
         type="monochrome"
       />
-      <Text className="text-base font-t3-bold text-white">{props.title}</Text>
+      <Text className="text-base font-t3-bold text-primary-foreground">{props.title}</Text>
     </>
   );
 
@@ -127,22 +125,27 @@ function ReviewSelectionActionBar(props: {
     >
       {props.onOpenComment ? (
         <Pressable
-          className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-blue-600 px-5"
+          className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5"
           onPress={props.onOpenComment}
         >
           {content}
         </Pressable>
       ) : (
-        <View className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-blue-600 px-5">
+        <View className="h-12 flex-1 flex-row items-center justify-center gap-2 rounded-full bg-primary px-5">
           {content}
         </View>
       )}
 
       <Pressable
-        className="h-12 w-12 items-center justify-center rounded-full bg-blue-600"
+        className="h-12 w-12 items-center justify-center rounded-full bg-primary"
         onPress={props.onClear}
       >
-        <SymbolView name="xmark" size={16} tintColor="#ffffff" type="monochrome" />
+        <SymbolView
+          name="xmark"
+          size={16}
+          tintColorClassName={"accent-primary-foreground"}
+          type="monochrome"
+        />
       </Pressable>
     </View>
   );
@@ -215,8 +218,9 @@ function ReviewFileNavigator({
   ref,
 }: ReviewFileNavigatorProps) {
   const insets = useSafeAreaInsets();
-  const sheetColor = String(useThemeColor("--color-sheet"));
-  const foregroundColor = String(useThemeColor("--color-foreground"));
+  const theme = useUniwindTheme();
+  const sheetColor = theme["--color-sheet"];
+  const foregroundColor = theme["--color-foreground"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const [fileSelection, setFileSelection] = useState<{
     readonly sectionId: string | null;
@@ -277,9 +281,11 @@ function ReviewFileNavigator({
         // The nested native header is translucent; start the list below it so
         // the scroll-edge effect can sample the content (same treatment as
         // FileTreeBrowser in the Files pane).
-        paddingTop: Platform.OS === "ios" ? insets.top + 44 + 8 : 8,
+        paddingTop: Platform.OS === "ios" ? insets.top + IOS_NAV_BAR_HEIGHT + 8 : 8,
       }}
-      scrollIndicatorInsets={Platform.OS === "ios" ? { top: insets.top + 44 } : undefined}
+      scrollIndicatorInsets={
+        Platform.OS === "ios" ? { top: insets.top + IOS_NAV_BAR_HEIGHT } : undefined
+      }
       renderItem={renderFile}
     />
   );
@@ -343,8 +349,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
-  const headerIcon = String(useThemeColor("--color-icon"));
+  const { themeAppearance: selectedTheme } = useAppearancePreferences();
+  const headerIcon = String(useUniwindTheme()["--color-icon"]);
   const { environmentId, threadId } = props.route.params;
   const environment = useEnvironmentPresentation(environmentId);
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
@@ -368,7 +374,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
   // selected thread (it always does when reached from the thread's toolbar).
   const gitMenuAvailable =
     selectedThread !== null && String(selectedThread.id) === String(threadId);
-  const selectedTheme = colorScheme === "dark" ? "dark" : "light";
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)
@@ -395,7 +400,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
       selectedSection,
       draftMessage,
     });
-  const NativeReviewDiffView = resolveNativeReviewDiffView()!;
+  // Resolution returns null while Expo registers the native view (or forever
+  // when the binary lacks it). Rendering a null component type crashes the
+  // app, so callers must fall back — ThreadFeed's ReviewCommentCard does the
+  // same check.
+  const NativeReviewDiffView = resolveNativeReviewDiffView();
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   // Native pull-to-refresh on the diff surface (replaces the old Refresh menu item).
@@ -433,7 +442,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     sectionId: selectedSection?.id ?? null,
     diff: selectedSection?.diff,
     data: nativeReviewDiffData,
-    scheme: selectedTheme,
     collapsedFileIds,
     viewedFileIds,
     selectedRowIds: commentSelection.selectedRowIds,
@@ -441,7 +449,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   });
   const showcaseReviewKey =
     SHOWCASE_ENABLED && parsedDiff.kind === "files" && selectedSection
-      ? `${reviewCache.threadKey}:${selectedSection.id}:${nativeBridge.tokensResetKey}`
+      ? `${reviewCache.threadKey}:${selectedSection.id}:${nativeBridge.tokensResetKey}:${nativeBridge.themeId}`
       : null;
   const handleNativeDebug = useCallback(
     (event: NativeSyntheticEvent<Record<string, unknown>>) => {
@@ -454,9 +462,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
         return;
       }
       showcasedReviewDrawRef.current = showcaseReviewKey;
-      markNativeShowcaseReady("review");
+      reportShowcaseSceneRendered({ scene: "review", themeId: nativeBridge.themeId });
     },
-    [nativeBridge.onDebug, showcaseReviewKey],
+    [nativeBridge.onDebug, nativeBridge.themeId, showcaseReviewKey],
   );
 
   const handleSelectFile = useCallback(
@@ -594,11 +602,27 @@ export function ReviewSheet(props: ReviewSheetProps) {
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
-  // The changed-files navigator lives in the workspace inspector column —
-  // the single right-hand pane per route — instead of an in-screen panel.
+  // The changed-files navigator drives the native diff surface via
+  // scrollToFile, so it is only useful when that surface resolved. In raw
+  // fallback mode the ref is necessarily null and the raw patch neither
+  // scrolls nor filters — registering the navigator would present working
+  // controls that cannot navigate.
   const showChangedFilesPane =
-    !showConnectionNotice && selectedSection !== null && parsedDiff.kind === "files";
+    !showConnectionNotice &&
+    selectedSection !== null &&
+    parsedDiff.kind === "files" &&
+    NativeReviewDiffView !== null;
   useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
+  // Raw fallback renders the patch inline with no inspector content, so the
+  // pane toggle would open an empty column — hide it in exactly that case.
+  const showChangedFilesToggle =
+    panes.supportsAuxiliaryPane &&
+    !(
+      !showConnectionNotice &&
+      selectedSection !== null &&
+      parsedDiff.kind === "files" &&
+      NativeReviewDiffView === null
+    );
 
   const listHeader = useMemo(() => {
     const children: ReactElement[] = [];
@@ -685,7 +709,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
       {!isAndroid && (showSectionToolbar || panes.supportsAuxiliaryPane || gitMenuAvailable) ? (
         <NativeHeaderToolbar placement="right">
-          {panes.supportsAuxiliaryPane ? (
+          {showChangedFilesToggle ? (
             <NativeHeaderToolbar.Button
               accessibilityLabel={
                 panes.auxiliaryPaneVisible ? "Hide changed files" : "Show changed files"
@@ -778,7 +802,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
               onRetry={handleRetryEnvironment}
             />
           </View>
-        ) : selectedSection && parsedDiff.kind === "files" ? (
+        ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
           <View
             className="flex-1"
             style={{
@@ -832,6 +856,16 @@ export function ReviewSheet(props: ReviewSheetProps) {
             }}
             showsVerticalScrollIndicator={false}
             className="flex-1"
+            refreshControl={
+              // The native diff surface owns pull-to-refresh via onPullToRefresh;
+              // the raw fallback (and empty states) need an explicit control —
+              // iOS has no other refresh affordance here (the explicit
+              // "Refresh current diff" menu is Android-only).
+              <RefreshControl
+                refreshing={isPullRefreshing}
+                onRefresh={() => void handlePullToRefresh()}
+              />
+            }
           >
             {listHeader}
             {!selectedSection ? (
@@ -861,6 +895,19 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                   <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
                     {parsedDiff.text}
+                  </Text>
+                </ScrollView>
+              </View>
+            ) : parsedDiff.kind === "files" ? (
+              // The native diff surface could not be resolved on this binary;
+              // degrade to the raw patch instead of crashing the app.
+              <View className="gap-3 border-b border-border bg-card px-4 py-4">
+                <Text className="text-xs leading-normal text-foreground-muted">
+                  Native diff view unavailable. Showing the raw patch.
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
+                  <Text selectable className="font-mono text-xs leading-relaxed text-foreground">
+                    {selectedSection?.diff ?? ""}
                   </Text>
                 </ScrollView>
               </View>

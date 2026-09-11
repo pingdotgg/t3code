@@ -119,19 +119,6 @@ export const decodeJsonResult = <S extends Schema.Codec<unknown, unknown, never,
   };
 };
 
-export const decodeUnknownJsonResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
-  schema: S,
-) => {
-  const decode = Schema.decodeUnknownExit(Schema.fromJsonString(schema));
-  return (input: unknown) => {
-    const result = decode(input);
-    if (Exit.isFailure(result)) {
-      return Result.fail(result.cause);
-    }
-    return Result.succeed(result.value);
-  };
-};
-
 export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
   const issues: Array<SchemaDiagnosticIssue> = [];
   let issueCount = 0;
@@ -212,12 +199,12 @@ const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
  * strips trailing commas and JS-style comments before parsing.
  * Encoding produces strict JSON via `JSON.stringify`.
  */
-export const fromLenientJsonString = new SchemaTransformation.Transformation(
+const fromLenientJsonString = new SchemaTransformation.Transformation(
   parseLenientJsonGetter,
   SchemaGetter.stringifyJson(),
 );
 
-export const prettyJsonString = SchemaGetter.parseJson<string>().compose(
+const prettyJsonString = SchemaGetter.parseJson<string>().compose(
   SchemaGetter.stringifyJson({ space: 2 }),
 );
 

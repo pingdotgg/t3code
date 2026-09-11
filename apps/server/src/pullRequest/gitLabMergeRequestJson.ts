@@ -11,6 +11,9 @@ import type {
   PullRequestLabel,
   PullRequestMergeability,
   PullRequestMergeCapabilities,
+  PullRequestMergeMethod,
+  PullRequestReaction,
+  PullRequestReactionContent,
   PullRequestReviewThread,
   PullRequestReviewerCandidate,
   PullRequestState,
@@ -70,6 +73,24 @@ const RawMergeRequestSchema = Schema.Struct({
   user: Schema.optional(
     Schema.NullOr(Schema.Struct({ can_merge: Schema.optional(Schema.Boolean) })),
   ),
+  /**
+   * Whether GitLab is holding this merge request to merge it once its pipeline goes green.
+   * `merge_when_pipeline_succeeds` is the field every version answers with; newer ones also
+   * carry `auto_merge_enabled`, which is the same fact under the name GitLab settled on, so
+   * either one saying yes is a yes.
+   */
+  merge_when_pipeline_succeeds: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** The merge request's stored squash choice, including project-policy overrides. */
+  squash_on_merge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /**
+   * How far the target branch has moved on since this one left it, which is the same number
+   * GitLab's own "out of date" wording counts. It costs a walk of the two branches, so GitLab
+   * withholds it unless `include_diverged_commits_count` asks for it, and answers it only for a
+   * single merge request — a list never carries it, however it is asked for.
+   */
+  diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
 const RawNoteSchema = Schema.Struct({
@@ -209,6 +230,15 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly viewerCanMerge: boolean;
   /** The reviewers as GitLab addresses them, which is what writing the set back takes. */
   readonly reviewerIds: ReadonlyArray<number>;
+  /** Absent where GitLab named neither auto-merge field, which is not the same as off. */
+  readonly autoMergeEnabled?: boolean;
+  /** GitLab only exposes the stored strategy separately when that strategy is squash. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+  /**
+   * Absent where GitLab did not count, which is not the same as a branch that has nothing behind
+   * it: an install too old to answer must not be read as saying the branch is current.
+   */
+  readonly divergedCommits?: number;
 }
 
 function trimmed(value: string | null | undefined): string | null {
@@ -334,6 +364,10 @@ function toListItem(
 
 function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLabMergeRequestDetail {
   const listItem = toListItem(raw);
+  const autoMerge =
+    raw.merge_when_pipeline_succeeds == null && raw.auto_merge_enabled == null
+      ? undefined
+      : raw.merge_when_pipeline_succeeds === true || raw.auto_merge_enabled === true;
   return {
     ...listItem,
     body: raw.description ?? "",
@@ -350,6 +384,11 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
+    ...(autoMerge === undefined ? {} : { autoMergeEnabled: autoMerge }),
+    ...(autoMerge === true && raw.squash_on_merge === true
+      ? { autoMergeMethod: "squash" as const }
+      : {}),
+    ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
   };
 }
 
@@ -695,4 +734,216 @@ export function decodeMergeRequestDiffsJson(
     truncated,
     rawCount: decoded.success.length,
   });
+}
+
+/** GitLab's award names for the eight reactions the contract carries. */
+const GITLAB_AWARD_BY_CONTENT: Readonly<Record<PullRequestReactionContent, string>> = {
+  "thumbs-up": "thumbsup",
+  "thumbs-down": "thumbsdown",
+  laugh: "laughing",
+  hooray: "tada",
+  confused: "confused",
+  heart: "heart",
+  rocket: "rocket",
+  eyes: "eyes",
+};
+
+const CONTENT_BY_GITLAB_AWARD: Readonly<Record<string, PullRequestReactionContent>> =
+  Object.fromEntries(
+    Object.entries(GITLAB_AWARD_BY_CONTENT).map(([content, name]) => [name, content]),
+  ) as Readonly<Record<string, PullRequestReactionContent>>;
+
+export function gitLabAwardName(content: PullRequestReactionContent): string {
+  return GITLAB_AWARD_BY_CONTENT[content];
+}
+
+/**
+ * Awards on the merge request and on every note of it, in one read. The REST notes endpoint the
+ * conversation comes from carries no award at all, and asking per note would be a request each.
+ *
+ * `currentUser` rides along because GitLab names who awarded but never says whether that is the
+ * reader — so the comparison is made here rather than paid for with a request of its own.
+ */
+export const AWARD_EMOJI_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!, $cursor: String) {
+  currentUser { username }
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      awardEmoji { nodes { name user { username } } }
+      notes(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { id awardEmoji { nodes { name user { username } } } }
+      }
+    }
+  }
+}`;
+
+const RawAwardEmojiNodesSchema = Schema.optional(
+  Schema.NullOr(
+    Schema.Struct({
+      nodes: Schema.optional(
+        Schema.NullOr(
+          Schema.Array(
+            Schema.NullOr(
+              Schema.Struct({
+                name: Schema.optional(Schema.NullOr(Schema.String)),
+                user: Schema.optional(
+                  Schema.NullOr(
+                    Schema.Struct({ username: Schema.optional(Schema.NullOr(Schema.String)) }),
+                  ),
+                ),
+              }),
+            ),
+          ),
+        ),
+      ),
+    }),
+  ),
+);
+
+const RawAwardEmojiPageSchema = Schema.Struct({
+  data: Schema.Struct({
+    currentUser: Schema.optional(
+      Schema.NullOr(Schema.Struct({ username: Schema.optional(Schema.NullOr(Schema.String)) })),
+    ),
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequest: Schema.NullOr(
+          Schema.Struct({
+            awardEmoji: RawAwardEmojiNodesSchema,
+            notes: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  pageInfo: Schema.optional(
+                    Schema.Struct({
+                      hasNextPage: Schema.optional(Schema.Boolean),
+                      endCursor: Schema.optional(Schema.NullOr(Schema.String)),
+                    }),
+                  ),
+                  nodes: Schema.Array(
+                    Schema.NullOr(
+                      Schema.Struct({
+                        id: Schema.optional(Schema.NullOr(Schema.String)),
+                        awardEmoji: RawAwardEmojiNodesSchema,
+                      }),
+                    ),
+                  ),
+                }),
+              ),
+            ),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeAwardEmojiPage = decodeJsonResult(RawAwardEmojiPageSchema);
+
+/**
+ * The awards on one subject, grouped the way a reaction pill is drawn. The viewer's own username
+ * is left out of `actors` — the page names them "You" instead, and leaving it in would name them
+ * twice — but `count` still counts them along with everyone else.
+ */
+function toReactions(
+  nodes: Schema.Schema.Type<typeof RawAwardEmojiNodesSchema>,
+  viewer: string | null,
+): ReadonlyArray<PullRequestReaction> {
+  const normalizedViewer = viewer?.toLowerCase() ?? null;
+  const groups = new Map<
+    PullRequestReactionContent,
+    { count: number; actors: string[]; viewer: boolean }
+  >();
+  for (const node of nodes?.nodes ?? []) {
+    // An award outside the eight is left out rather than shown under a name the picker has no
+    // way to take back: GitLab accepts any emoji, and the other hosts accept none of them.
+    const content = CONTENT_BY_GITLAB_AWARD[trimmed(node?.name)?.toLowerCase() ?? ""];
+    if (content === undefined) continue;
+    const username = trimmed(node?.user?.username);
+    if (username === null) continue;
+    const group = groups.get(content) ?? { count: 0, actors: [], viewer: false };
+    group.count++;
+    if (normalizedViewer !== null && username.toLowerCase() === normalizedViewer) {
+      group.viewer = true;
+    } else {
+      group.actors.push(username);
+    }
+    groups.set(content, group);
+  }
+  return [...groups].flatMap(([content, group]) =>
+    group.count === 0
+      ? []
+      : [{ content, count: group.count, actors: group.actors, viewerHasReacted: group.viewer }],
+  );
+}
+
+/** `gid://gitlab/DiffNote/42` is note 42, which is the id the REST conversation carries. */
+function noteIdOf(gid: string | null | undefined): string | null {
+  const id = trimmed(gid)?.split("/").at(-1);
+  return id !== undefined && /^\d+$/.test(id) ? id : null;
+}
+
+export interface GitLabAwardEmojiPage {
+  /** The merge request's own awards, which are the ones on its description. */
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly reactionsByNoteId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly nextCursor: string | null;
+}
+
+export function decodeAwardEmojiJson(
+  raw: string,
+): Result.Result<GitLabAwardEmojiPage, DecodeFailure> {
+  const decoded = decodeAwardEmojiPage(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const data = decoded.success.data;
+  const viewer = trimmed(data.currentUser?.username);
+  const mergeRequest = data.project?.mergeRequest;
+  const reactionsByNoteId = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  for (const node of mergeRequest?.notes?.nodes ?? []) {
+    const id = noteIdOf(node?.id);
+    if (id === null) continue;
+    const reactions = toReactions(node?.awardEmoji, viewer);
+    if (reactions.length > 0) reactionsByNoteId.set(id, reactions);
+  }
+  const pageInfo = mergeRequest?.notes?.pageInfo;
+  return Result.succeed({
+    reactions: toReactions(mergeRequest?.awardEmoji, viewer),
+    reactionsByNoteId,
+    nextCursor: pageInfo?.hasNextPage === true ? (trimmed(pageInfo.endCursor) ?? null) : null,
+  });
+}
+
+const RawAwardSchema = Schema.Struct({
+  id: Schema.Int,
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  user: Schema.optional(
+    Schema.NullOr(Schema.Struct({ username: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
+});
+
+const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
+
+/**
+ * The reader's own award of one name on a subject, which is what taking a reaction back is
+ * addressed by: GitLab deletes an award by its id and has no way to name one by its emoji.
+ */
+export function decodeOwnAwardIdJson(
+  raw: string,
+  input: { readonly content: PullRequestReactionContent; readonly viewer: string },
+): Result.Result<number | null, DecodeFailure> {
+  const decoded = decodeUnknownList(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const name = gitLabAwardName(input.content);
+  for (const entry of decoded.success) {
+    const award = decodeAward(entry);
+    if (Exit.isFailure(award)) continue;
+    const value = award.value;
+    if (trimmed(value.name)?.toLowerCase() !== name) continue;
+    if (trimmed(value.user?.username) !== input.viewer) continue;
+    return Result.succeed(value.id);
+  }
+  return Result.succeed(null);
 }

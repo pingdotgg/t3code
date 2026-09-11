@@ -46,7 +46,9 @@ const stack = beforeAll(
   }),
   { timeout: 240_000 },
 );
-afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 60_000 });
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
+  timeout: 300_000,
+});
 
 // Lambda Function URLs cold-start (DNS, init) and a fresh role's IAM grants
 // (eventual consistency) can both take a while on the first hit. Retrying on

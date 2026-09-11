@@ -1,0 +1,101 @@
+/**
+ * Public route inventory pinned from prisma/pdp-control-plane at the commit
+ * below. Keep this fixture in-tree so CI never depends on an ambient sibling
+ * checkout. Refresh it deliberately when the Management API changes.
+ */
+export const managementApiContract = {
+  repository: "prisma/pdp-control-plane",
+  commit: "4a71a1f3500c02c6d6914f86435c251f95fda536",
+  routes: [
+    "DELETE /v1/apps/{appId}",
+    "DELETE /v1/branches/{branchId}",
+    "DELETE /v1/buckets/{bucketId}",
+    "DELETE /v1/buckets/{bucketId}/keys/{keyId}",
+    "DELETE /v1/connections/{id}",
+    "DELETE /v1/databases/{databaseId}",
+    "DELETE /v1/deployments/{deploymentId}",
+    "DELETE /v1/domains/{domainId}",
+    "DELETE /v1/environment-variables/{envVarId}",
+    "DELETE /v1/integrations/{id}",
+    "DELETE /v1/projects/{id}",
+    "DELETE /v1/source-repositories/{id}",
+    "DELETE /v1/workspaces/{workspaceId}/integrations/{clientId}",
+    "GET /v1/apps",
+    "GET /v1/apps/{appId}",
+    "GET /v1/apps/{appId}/deployments",
+    "GET /v1/apps/{appId}/domains",
+    "GET /v1/branches/{branchId}",
+    "GET /v1/builds/{buildId}/logs",
+    "GET /v1/buckets",
+    "GET /v1/buckets/{bucketId}",
+    "GET /v1/buckets/{bucketId}/keys",
+    "GET /v1/connections",
+    "GET /v1/connections/{id}",
+    "GET /v1/databases",
+    "GET /v1/databases/{databaseId}",
+    "GET /v1/databases/{databaseId}/backups",
+    "GET /v1/databases/{databaseId}/connections",
+    "GET /v1/databases/{databaseId}/usage",
+    "GET /v1/deployments/{deploymentId}",
+    "GET /v1/deployments/{deploymentId}/logs",
+    "GET /v1/domains/{domainId}",
+    "GET /v1/environment-variables",
+    "GET /v1/environment-variables/{envVarId}",
+    "GET /v1/integrations",
+    "GET /v1/integrations/{id}",
+    "GET /v1/me",
+    "GET /v1/projects",
+    "GET /v1/projects/{id}",
+    "GET /v1/projects/{projectId}/branches",
+    "GET /v1/projects/{projectId}/databases",
+    "GET /v1/regions",
+    "GET /v1/regions/accelerate",
+    "GET /v1/regions/postgres",
+    "GET /v1/scm-installations",
+    "GET /v1/scm-installations/{installationId}/repositories",
+    "GET /v1/source-repositories",
+    "GET /v1/source-repositories/{id}",
+    "GET /v1/workspaces",
+    "GET /v1/workspaces/{id}",
+    "GET /v1/workspaces/{workspaceId}/integrations",
+    "PATCH /v1/apps/{appId}",
+    "PATCH /v1/branches/{branchId}",
+    "PATCH /v1/databases/{databaseId}",
+    "PATCH /v1/environment-variables/{envVarId}",
+    "PATCH /v1/projects/{id}",
+    "POST /v1/apps",
+    "POST /v1/apps/{appId}/deployments",
+    "POST /v1/apps/{appId}/domains",
+    "POST /v1/apps/{appId}/promote",
+    "POST /v1/apps/{appId}/rollback",
+    "POST /v1/buckets",
+    "POST /v1/buckets/{bucketId}/keys",
+    "POST /v1/connections",
+    "POST /v1/connections/{id}/rotate",
+    "POST /v1/databases",
+    "POST /v1/databases/{databaseId}/connections",
+    "POST /v1/databases/{targetDatabaseId}/restore",
+    "POST /v1/deployments/{deploymentId}/start",
+    "POST /v1/deployments/{deploymentId}/stop",
+    "POST /v1/domains/{domainId}/retry",
+    "POST /v1/environment-variables",
+    "POST /v1/projects",
+    "POST /v1/projects/{id}/transfer",
+    "POST /v1/projects/{projectId}/branches",
+    "POST /v1/projects/{projectId}/databases",
+    "POST /v1/scm-installations/install-intents",
+    "POST /v1/source-repositories",
+  ],
+  /**
+   * Routes that are intentionally not mapped by this provider revision.
+   * Keep any entries visible in the pinned contract so an omission cannot
+   * be mistaken for API coverage. Currently every pinned route is mapped.
+   */
+  deferredRoutes: [],
+} as const;
+
+const deferredRouteSet = new Set<string>(managementApiContract.deferredRoutes);
+
+/** Canonical production routes that Alchemy must map. */
+export const productionManagementApiRoutes =
+  managementApiContract.routes.filter((route) => !deferredRouteSet.has(route));

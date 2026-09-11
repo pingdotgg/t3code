@@ -1,19 +1,13 @@
-import {
-  Platform,
-  ScrollView,
-  type StyleProp,
-  type TextStyle,
-  View,
-  useColorScheme,
-} from "react-native";
+import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/AppText";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
-import { useThemeColor } from "../../../../lib/useThemeColor";
-import { getPierreTerminalTheme } from "../../../terminal/terminalTheme";
+import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
+import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
+import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
 const CODE_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
@@ -53,8 +47,8 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
  * on the shared card background so it reads like the other previews.
  */
 export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
-  const scheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = getPierreTerminalTheme(scheme);
+  const { themeAppearance: scheme, themeId } = useAppearancePreferences();
+  const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
   const lineStyle = {
     fontFamily: "Menlo",
@@ -144,8 +138,9 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
-  const lineNumberColor = useThemeColor("--color-icon-subtle");
-  const keywordColor = useThemeColor("--color-md-link");
+  const theme = useUniwindTheme();
+  const lineNumberColor = theme["--color-icon-subtle"];
+  const keywordColor = theme["--color-md-link"];
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text

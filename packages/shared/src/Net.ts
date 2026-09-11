@@ -40,6 +40,12 @@ export interface NetServiceShape {
   readonly isPortAvailableOnLoopback: (port: number) => Effect.Effect<boolean>;
 
   /**
+   * Returns true when something accepts TCP connections on {host, port}.
+   * Unlike the bind-side checks this works for privileged ports (<1024).
+   */
+  readonly hasListenerOnHost: (port: number, host: string) => Effect.Effect<boolean>;
+
+  /**
    * Reserve an ephemeral loopback port and release it immediately.
    */
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
@@ -57,6 +63,7 @@ export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = () => {
   /**
    * Returns true when a TCP server can bind to {host, port}.
@@ -183,6 +190,7 @@ export const make = () => {
   return {
     canListenOnHost,
     isPortAvailableOnLoopback,
+    hasListenerOnHost,
     reserveLoopbackPort,
     findAvailablePort: (preferred) =>
       Effect.gen(function* () {

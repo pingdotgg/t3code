@@ -25,7 +25,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestReadError>()(
+export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
     command: Schema.Literal("az"),
@@ -44,7 +44,7 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedErrorClass<Azu
 }
 
 /** Not a decode failure: az answered, the account it answered for just has no name. */
-export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<AzureDevOpsViewerUnavailableError>()(
+export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
     command: Schema.Literal("az"),
@@ -64,7 +64,7 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedErrorClass<A
  * Not a decode failure either: az answered with a well-formed pull request that simply carries
  * no branch or link, which is a response this cannot place rather than one it cannot read.
  */
-export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorClass<AzureDevOpsPullRequestIncompleteError>()(
+export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
     command: Schema.Literal("az"),
@@ -86,7 +86,7 @@ export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedErrorCla
  * reviewers travel as argv rather than in a request body — `az repos pr reviewer` takes them no
  * other way — so anything that could leave the value position is refused rather than sent.
  */
-export class AzureDevOpsReviewerNameError extends Schema.TaggedErrorClass<AzureDevOpsReviewerNameError>()(
+export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOpsReviewerNameError>()(
   "AzureDevOpsReviewerNameError",
   {
     command: Schema.Literal("az"),
@@ -111,6 +111,7 @@ export type AzureDevOpsPullRequestCliError =
 
 /** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
+const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export class AzureDevOpsPullRequestCli extends Context.Service<
   AzureDevOpsPullRequestCli,
@@ -157,6 +158,14 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+
+    /** Rewrites the pull request's own words, through the same command that moves it. */
+    readonly updatePullRequest: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
     /**
@@ -212,14 +221,33 @@ function actionArgs(
   switch (action) {
     case "merge":
       return ["--status", "completed", "--squash", mergeMethod === "squash" ? "true" : "false"];
+    // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
+    // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
+    case "enable-auto-merge":
+      return [
+        "--auto-complete",
+        "true",
+        ...(mergeMethod === undefined
+          ? []
+          : ["--squash", mergeMethod === "squash" ? "true" : "false"]),
+      ];
+    case "disable-auto-merge":
+      return ["--auto-complete", "false"];
     case "ready":
       return ["--draft", "false"];
     case "draft":
       return ["--draft", "true"];
     case "close":
       return ["--status", "abandoned"];
+    // Never reached: this host does not declare the action, so nothing offers it.
+    case "update-branch":
+      return [];
     case "reopen":
       return ["--status", "active"];
+    // Never reached: this host does not declare the action, so the service refuses it first.
+    case "revert":
+    case "approve-workflows":
+      throw new Error(`Azure DevOps pull request action ${action} is unsupported`);
   }
 }
 
@@ -233,6 +261,7 @@ function isReviewerName(value: string): boolean {
   return name.length > 0 && !name.startsWith("-");
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
@@ -241,10 +270,15 @@ export const make = Effect.gen(function* () {
   // how to read all of them.
   const detectArgs = ["--detect", "true"] as const;
 
-  const executeJson = (input: { readonly cwd: string; readonly args: ReadonlyArray<string> }) =>
+  const executeJson = (input: {
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+    readonly maxOutputBytes?: number;
+  }) =>
     azure.execute({
       cwd: input.cwd,
       args: [...input.args, "--only-show-errors", "--output", "json"],
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
   /**
@@ -273,6 +307,7 @@ export const make = Effect.gen(function* () {
     const top = remaining + 1;
     return executeJson({
       cwd: input.cwd,
+      maxOutputBytes: PULL_REQUEST_LIST_MAX_OUTPUT_BYTES,
       args: [
         "repos",
         "pr",
@@ -475,6 +510,29 @@ export const make = Effect.gen(function* () {
             "--id",
             String(input.number),
             ...actionArgs(input.action, input.mergeMethod),
+            "--only-show-errors",
+            "--output",
+            "json",
+          ],
+        })
+        .pipe(Effect.asVoid),
+
+    updatePullRequest: (input) =>
+      azure
+        .execute({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "update",
+            ...detectArgs,
+            "--id",
+            String(input.number),
+            // One argument rather than a flag and a value beside it: a description usually opens
+            // with a bullet, and az reads a dash in the next argv slot as a flag of its own.
+            // `--description` also takes several strings, and this keeps the whole text as one.
+            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
+            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
             "--only-show-errors",
             "--output",
             "json",

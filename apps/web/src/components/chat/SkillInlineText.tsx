@@ -1,7 +1,7 @@
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 
-import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
@@ -10,7 +10,8 @@ import {
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
