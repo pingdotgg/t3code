@@ -1089,16 +1089,16 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(pullRequest).toBeNull();
 
-yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
+      yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
 
-expect(
-  yield* manager.branchPullRequest({
-    cwd: repoDir,
-    branch: "feature/unknown-branch-provider",
-  }),
-).toBeNull();
+      expect(
+        yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/unknown-branch-provider",
+        }),
+      ).toBeNull();
 
-expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
     }),
   );
 
