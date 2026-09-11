@@ -38,26 +38,31 @@ export const CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES = {
   citation: "text-current",
 } as const;
 
-/** Context kinds keep one restrained color identity in both composer and sent messages. */
+/**
+ * Context kinds keep one restrained color identity in both composer and sent messages.
+ * Every accent shares a lightness so no kind reads heavier than another; only hue carries
+ * identity. Chroma is capped, then clamped to what each hue can hold in sRGB, which keeps
+ * the set inside the range the themes use for their own accents rather than above it.
+ */
 export const CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES = {
-  image: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-rose-500)]`,
-  video: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-orange-500)]`,
-  file: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-sky-500)]`,
-  mention: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-cyan-500)]`,
-  terminal: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-emerald-500)]`,
-  element: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-amber-500)]`,
-  "preview-annotation": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-amber-500)]`,
-  "review-comment": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-violet-500)]`,
-  "pull-request": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-indigo-500)]`,
-  skill: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-fuchsia-500)]`,
-  citation: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-blue-500)]`,
+  image: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_16)]`,
+  video: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_48)]`,
+  file: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.136_237)]`,
+  mention: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.11_215)]`,
+  terminal: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.134_163)]`,
+  element: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.134_70)]`,
+  "preview-annotation": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.134_70)]`,
+  "review-comment": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_292)]`,
+  "pull-request": `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_277)]`,
+  skill: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_322)]`,
+  citation: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_259)]`,
 } as const;
 
 export const PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES = {
-  open: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-emerald-500)]`,
-  draft: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-slate-500)]`,
-  merged: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-violet-500)]`,
-  closed: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:var(--color-red-500)]`,
+  open: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.134_163)]`,
+  draft: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.02_259)]`,
+  merged: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_292)]`,
+  closed: `${CONTEXT_INLINE_CHIP_TONE_CLASS_NAME} [--context-chip-accent:oklch(0.62_0.16_16)]`,
   unknown: CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["pull-request"],
 } as const;
 

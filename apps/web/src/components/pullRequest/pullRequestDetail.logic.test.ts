@@ -1,3 +1,5 @@
+import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   PullRequestAction,
   type PullRequestCheck,
@@ -8,7 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
-import { reviewCommentContextReference } from "~/lib/composerContextRecords";
+import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -1053,6 +1055,27 @@ describe("asking about a change rather than working on it", () => {
     state: "open" as const,
     isDraft: false,
   };
+
+  it.each(["", "Please consider "])("preserves PR plan feedback with prose %j", (prose) => {
+    const comment = buildPullRequestReferenceContext(base);
+    const draftText = prose + formatInlineContextReference(reviewCommentContextReference(comment));
+    const submission = resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" });
+    const context = buildMessageContext({
+      terminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [comment],
+    });
+    expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
+    expect(context?.records[0]).toMatchObject({ pullRequest: base });
+    const legacyText = serializeLegacyContextMessage({
+      text: submission.text,
+      records: context!.records,
+    });
+    expect(legacyText).toContain(base.url);
+    expect(legacyText).toContain(prose);
+    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
+    expect(legacyText).not.toContain("t3-context://");
+  });
 
   it("builds a neutral composer reference without prescribing an action", () => {
     const context = buildPullRequestReferenceContext(base);

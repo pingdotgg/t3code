@@ -1,3 +1,6 @@
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { elementContextToPreviewAnnotation } from "../lib/elementContext";
+import { previewAnnotationContextRecord } from "../lib/composerContextRecords";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -13,7 +16,10 @@ import {
   PASTE_COMMAND,
 } from "lexical";
 
-import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  registerComposerInlineTokenPaste,
+} from "./composerInlineTokenPaste";
 import {
   $consumeComposerCitationCommentRequest,
   $createComposerCitationNode,
@@ -492,7 +498,7 @@ describe("registerComposerInlineTokenPaste", () => {
 });
 
 describe("context reference paste", () => {
-  it("imports a structured fragment and rewrites ids the importer changed", () => {
+  it.each(["focused", "blurred"])("imports structured paste when %s", (focus) => {
     vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
     const editor = createEditor({ nodes: [ComposerCitationNode] });
     editor.update(
@@ -504,16 +510,19 @@ describe("context reference paste", () => {
       { discrete: true },
     );
     const imported: string[] = [];
+    const importFragment = (
+      fragment: import("@t3tools/contracts").ComposerContextClipboardFragment,
+    ) => {
+      imported.push(...fragment.records.map((record) => record.contextId));
+      return new Map([["img-old", "img-new"]]);
+    };
     registerComposerInlineTokenPaste(editor, {
       createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
       createCitationNode: $createComposerCitationNode,
       createContextReferenceNode: (reference) =>
         $createTextNode(`<context:${reference.contextId}>`),
       getExpandedAbsoluteOffsetForPoint: () => 0,
-      importContextFragment: (fragment) => {
-        imported.push(...fragment.records.map((record) => record.contextId));
-        return new Map([["img-old", "img-new"]]);
-      },
+      importContextFragment: importFragment,
     });
     const event = new TestClipboardEvent(
       "![shot](t3-context://v1/image/img-old) and [T](t3-context://v1/terminal/ctx-t)",
@@ -557,6 +566,13 @@ describe("context reference paste", () => {
         }),
       },
     );
+    if (focus === "blurred") {
+      expect(importPastedComposerText(event.clipboardData, importFragment)).toBe(
+        "![shot](t3-context://v1/image/img-new) and [T](t3-context://v1/terminal/ctx-t)",
+      );
+      expect(imported).toEqual(["img-old", "ctx-t"]);
+      return;
+    }
     editor.update(
       () => {
         editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
@@ -567,6 +583,47 @@ describe("context reference paste", () => {
     expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
       "<context:img-new> and <context:ctx-t>",
     );
+  });
+
+  it("converts a copied legacy element into a sendable annotation and rewrites its link", () => {
+    const copied = upgradeLegacyContextMessage(
+      [
+        "Fix this",
+        "",
+        "<element_context>",
+        "- <button>:",
+        "  url: https://example.com",
+        "  selector: #save",
+        "  html:",
+        "    <button>Save</button>",
+        "  styles:",
+        "    color: red;",
+        "</element_context>",
+      ].join("\n"),
+    );
+    const event = new TestClipboardEvent(copied.text, {
+      "web application/x-t3-context-fragment+json": JSON.stringify({
+        version: 1,
+        source: { environmentId: "env-1" },
+        records: copied.records,
+      }),
+    });
+    const annotations: ReturnType<typeof previewAnnotationContextRecord>[] = [];
+    const text = importPastedComposerText(event.clipboardData, (fragment) => {
+      const record = fragment.records[0]!;
+      if (record.kind !== "element" || "payload" in record) throw new Error("Expected element");
+      const annotation = previewAnnotationContextRecord(
+        elementContextToPreviewAnnotation(record, "imported", "2026-01-01T00:00:00Z"),
+      );
+      annotations.push(annotation);
+      return new Map([[record.contextId, annotation.contextId]]);
+    });
+    expect(text).toContain("t3-context://v1/preview-annotation/preview-annotation_imported");
+    expect(annotations[0]?.elements?.[0]).toMatchObject({
+      selector: "#save",
+      htmlPreview: "<button>Save</button>",
+      styles: "color: red;",
+    });
   });
 
   it("imports an annotation's dependent screenshot when only its chip is pasted", () => {

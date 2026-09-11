@@ -9,7 +9,10 @@ import {
   type ComposerContextClipboardFragment,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
-import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
@@ -1300,18 +1303,32 @@ function ComposerContextClipboardPlugin(props: {
 
   useEffect(() => {
     if (!build) return;
-    const listener = (event: ClipboardEvent | null) => {
-      if (!event?.clipboardData) return false;
+    const listener = (event: ClipboardEvent | KeyboardEvent | null, cut: boolean) => {
+      if (!event || !("clipboardData" in event) || !event.clipboardData) return false;
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-      const contextIds = collectInlineContextIds(selection.getTextContent());
+      const text = selection.getTextContent();
+      const contextIds = collectInlineContextIds(text);
       if (contextIds.length === 0) return false;
       const fragment = build(contextIds);
-      if (fragment) event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
-      return false;
+      if (!fragment) return false;
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text);
+      event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+      event.clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
+      if (cut) selection.removeText();
+      return true;
     };
-    const unregisterCopy = editor.registerCommand(COPY_COMMAND, listener, COMMAND_PRIORITY_HIGH);
-    const unregisterCut = editor.registerCommand(CUT_COMMAND, listener, COMMAND_PRIORITY_HIGH);
+    const unregisterCopy = editor.registerCommand(
+      COPY_COMMAND,
+      (event) => listener(event, false),
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterCut = editor.registerCommand(
+      CUT_COMMAND,
+      (event) => listener(event, true),
+      COMMAND_PRIORITY_HIGH,
+    );
     return () => {
       unregisterCopy();
       unregisterCut();

@@ -1437,16 +1437,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     [userImages],
   );
   const revertTurnCount = row.revertTurnCount;
-  // Attachments with a chip in the prose need no standalone row; older messages keep theirs.
+  // A file with a chip in the prose needs no standalone row. Media is the exception: the
+  // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
   const chippedAttachmentIds = new Set(
     collectComposerContextReferences(resolvedContext.text).flatMap((occurrence) => {
       const record = asKnownContextRecord(resolvedContext.recordsById.get(occurrence.contextId));
       return record?.kind === "file" || record?.kind === "image" ? [record.attachmentId] : [];
     }),
   );
-  const regularImages = userImages.filter(
-    (image) => !image.name.startsWith("preview-annotation-") && !chippedAttachmentIds.has(image.id),
-  );
+  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   const annotationRecordIds = useMemo(
     () =>
@@ -1554,7 +1553,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         {(regularImages.length > 0 || userVideos.length > 0) && (
-          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+          <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
             {regularImages.map((image) => (
               <div
                 key={image.id}
@@ -2797,6 +2796,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             previewUrl={attachment.previewUrl}
             className={CHAT_INLINE_CHIP_CLASS_NAME}
             labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
+            size={formatAttachmentSize(record.sizeBytes)}
             data-markdown-copy={context.copyMarkdown}
             onClick={() => context.onExpandImage(attachment)}
           />

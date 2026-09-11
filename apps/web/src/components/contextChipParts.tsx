@@ -150,12 +150,15 @@ export function ImageChipButton({
   previewUrl,
   className,
   labelClassName,
+  size,
   suffix,
   ...props
 }: ComponentProps<"button"> & {
   name: string;
   previewUrl: string | undefined;
   labelClassName: string;
+  /** Every attachment chip reports its size; images are no exception. */
+  size: string;
   suffix?: string | null;
 }) {
   return (
@@ -167,7 +170,7 @@ export function ImageChipButton({
         CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
         "cursor-zoom-in",
       )}
-      aria-label={`Image attachment, ${name}`}
+      aria-label={`Image attachment, ${name}, ${size}`}
       {...props}
     >
       {previewUrl ? (
@@ -182,6 +185,7 @@ export function ImageChipButton({
         />
       )}
       <span className={cn(labelClassName, "max-w-72")}>{middleTruncateAttachmentName(name)}</span>
+      <span className="shrink-0 text-[10px] text-current">{size}</span>
       {suffix ? <span className="text-[10px] text-current">{suffix}</span> : null}
     </Button>
   );

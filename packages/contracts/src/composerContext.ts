@@ -34,7 +34,7 @@ const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
 const KNOWN_KIND_PATTERN = new RegExp(`^(?!(?:${COMPOSER_CONTEXT_KINDS.join("|")})$)`);
 
 export const COMPOSER_CONTEXT_LABEL_MAX_CHARS = 200;
-const COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS = 64_000;
+export const COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS = 64_000;
 const COMPOSER_CONTEXT_ELEMENT_HTML_MAX_CHARS = 8_000;
 const COMPOSER_CONTEXT_ELEMENT_STYLES_MAX_CHARS = 8_000;
 /** Exported so producers can clamp to the same boundary the schema enforces, rather than

@@ -1,3 +1,4 @@
+import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -12,7 +13,6 @@ import {
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  filterComposerPullRequestMatches,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,

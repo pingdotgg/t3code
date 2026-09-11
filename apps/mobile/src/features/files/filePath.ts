@@ -119,3 +119,17 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
     })),
   ];
 }
+
+/**
+ * The location line under a file's name: `project · parent/dir`. A host file outside the
+ * workspace is not under the project, so it shows its directory alone.
+ */
+export function fileHeaderSubtitle(projectName: string, relativePath: string): string {
+  const parentDir = relativePath.slice(
+    0,
+    Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"), 0),
+  );
+  return isAbsolutePath(relativePath)
+    ? parentDir
+    : [projectName, parentDir].filter(Boolean).join(" · ");
+}

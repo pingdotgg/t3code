@@ -3,6 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
+  wrapExpandedImageIndex,
   attachVideoThumbnail,
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
@@ -111,4 +112,16 @@ describe("buildExpandedImagePreview", () => {
     detach();
     await expect(fetch(url)).rejects.toThrow();
   });
+});
+
+it("keeps backward media navigation visible beyond a complete cycle", () => {
+  const images = ["first", "second"];
+  expect(
+    Array.from({ length: 7 }, (_, step) => images[wrapExpandedImageIndex(-step, images.length)]),
+  ).toEqual(["first", "second", "first", "second", "first", "second", "first"]);
+  let index = 0;
+  for (let step = 1; step <= 7; step++) {
+    index = wrapExpandedImageIndex(index - 1, images.length);
+    expect(images[index]).toBe(step % 2 === 1 ? "second" : "first");
+  }
 });

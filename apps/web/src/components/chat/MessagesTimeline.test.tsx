@@ -1774,7 +1774,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Image attachment, shot.png"');
+    // Images report their size like every other attachment chip.
+    expect(markup).toContain('aria-label="Image attachment, shot.png, 1 KB"');
     // Selection copy re-emits chips as their canonical links.
     expect(markup).toContain('data-markdown-copy="![shot.png](t3-context://v1/image/img-1)"');
     expect(markup).toContain('aria-label="File attachment, notes.txt, 1 KB"');
@@ -1782,6 +1783,9 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Download notes.txt"');
     expect(markup).toContain("legacy.txt");
     expect(markup).not.toContain('href="t3-context://');
+    // A picture keeps its tile even though it also has a chip: the chip names it, the tile is
+    // the only way to see it. A plain file's row is what a chip replaces.
+    expect(markup).toContain("grid-cols-2");
   });
 
   it("resolves an annotation screenshot through its image context record", () => {

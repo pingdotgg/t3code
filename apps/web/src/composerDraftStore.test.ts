@@ -15,6 +15,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
   type ModelSelection,
+  type PreviewAnnotationPayload,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -902,7 +903,7 @@ describe("composerDraftStore terminal contexts", () => {
     expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
   });
 
-  it("omits terminal context text from persisted drafts", () => {
+  it("persists terminal context snapshot text", () => {
     useComposerDraftStore
       .getState()
       .addTerminalContext(threadRef, makeTerminalContext({ id: "ctx-persist" }));
@@ -927,10 +928,10 @@ describe("composerDraftStore terminal contexts", () => {
     expect(
       persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
         ?.terminalContexts?.[0]?.text,
-    ).toBeUndefined();
+    ).toBe(makeTerminalContext({ id: "ctx-persist" }).text);
   });
 
-  it("hydrates persisted terminal contexts without in-memory snapshot text", () => {
+  it("keeps legacy terminal contexts without saved snapshot text unavailable", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -1008,6 +1009,71 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
     expect(mergedState.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
+  });
+});
+
+describe("composerDraftStore context persistence", () => {
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("context-persistence"));
+  const annotation: PreviewAnnotationPayload = {
+    id: "retry-note",
+    pageUrl: "http://localhost:3000/checkout",
+    pageTitle: "Checkout",
+    comment: "Keep the cart after a failed payment",
+    elements: [],
+    regions: [{ id: "error-region", rect: { x: 10, y: 20, width: 100, height: 50 } }],
+    strokes: [],
+    styleChanges: [],
+    screenshot: null,
+    createdAt: "2026-09-06T10:00:00.000Z",
+  };
+
+  beforeEach(resetComposerDraftStore);
+
+  it("preserves snapshots and inline positions through repeated persistence and hydration", () => {
+    const terminal = {
+      ...makeTerminalContext({ id: "checkout-console" }),
+      threadId: threadRef.threadId,
+    };
+    const store = useComposerDraftStore.getState();
+    store.addTerminalContext(threadRef, terminal);
+    store.addPreviewAnnotation(threadRef, annotation);
+    const terminalLink = formatTerminalContextReference(terminal);
+    const prompt = `Inspect ${terminalLink}. Apply [Retry note](t3-context://v1/preview-annotation/preview-annotation_retry-note). Compare ${terminalLink} again.`;
+    store.setPrompt(threadRef, prompt);
+    let state = useComposerDraftStore.getState();
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+
+    for (let reload = 0; reload < 3; reload++) {
+      state = merge(
+        JSON.parse(JSON.stringify(partializeComposerDraftStoreState(state))),
+        useComposerDraftStore.getInitialState(),
+      );
+      const draft = state.draftsByThreadKey[scopedThreadKey(threadRef)];
+      expect(draft?.prompt).toBe(prompt);
+      expect(draft?.terminalContexts).toEqual([terminal]);
+      expect(draft?.previewAnnotations).toEqual([annotation]);
+    }
+  });
+
+  it("retains annotation-only drafts and filters malformed annotations", () => {
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const state = merge(
+      {
+        draftsByThreadKey: {
+          [scopedThreadKey(threadRef)]: {
+            prompt: "",
+            attachments: [],
+            previewAnnotations: [annotation, { id: "invalid" }, null],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    const draft = state.draftsByThreadKey[scopedThreadKey(threadRef)];
+    expect(draft?.previewAnnotations).toEqual([annotation]);
+    expect(draft?.prompt).toContain(
+      "t3-context://v1/preview-annotation/preview-annotation_retry-note",
+    );
   });
 });
 
@@ -3098,6 +3164,42 @@ describe("composerDraftStore attachment references", () => {
       expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("before after");
     },
   );
+
+  it.each(["", "Fix this"])("migrates saved element context with prompt %j", (prompt) => {
+    const element = {
+      id: "old-element",
+      threadId,
+      pickedAt: "2026-01-01T00:00:00Z",
+      pageUrl: "https://example.com",
+      pageTitle: "Example",
+      tagName: "button",
+      selector: "#save",
+      htmlPreview: "<button>Save</button>",
+      componentName: "SaveButton",
+      source: null,
+      styles: "color: red;",
+    };
+    const merged = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+            prompt,
+            attachments: [],
+            elementContexts: [element],
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    const draft = merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]!;
+    expect(draft.previewAnnotations[0]?.elements[0]?.element).toMatchObject({
+      htmlPreview: element.htmlPreview,
+      styles: element.styles,
+      selector: element.selector,
+    });
+    expect(draft.prompt).toContain("t3-context://v1/preview-annotation/");
+    expect(draft.prompt).toContain(prompt);
+  });
 
   it("appends chips for persisted files that predate references", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {

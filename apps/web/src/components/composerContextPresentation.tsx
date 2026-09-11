@@ -183,6 +183,7 @@ function ImageContextChip(props: {
             previewUrl={props.record.previewUrl}
             className={COMPOSER_INLINE_CHIP_CLASS_NAME}
             labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+            size={formatAttachmentSize(props.record.sizeBytes)}
             suffix={uploadStatusSuffix(props.upload)}
             onClick={() => actions.expandImage(props.record.id)}
           />

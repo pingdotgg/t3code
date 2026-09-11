@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./composerPullRequestMatches": {
+      "types": "./src/composerPullRequestMatches.ts",
+      "import": "./src/composerPullRequestMatches.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
@@ -246,6 +250,10 @@
     "./video": {
       "types": "./src/video.ts",
       "import": "./src/video.ts"
+    },
+    "./image": {
+      "types": "./src/image.ts",
+      "import": "./src/image.ts"
     },
     "./chatList": {
       "types": "./src/chatList.ts",

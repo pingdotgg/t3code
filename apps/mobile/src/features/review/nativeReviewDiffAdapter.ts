@@ -25,6 +25,23 @@ const NATIVE_RGBA_COLOR =
 
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
+/** Render headerless selections without guessing file line numbers from selection indices. */
+export function buildNativeReviewSnippetRows(
+  comment: Pick<ReviewInlineComment, "id" | "diff" | "fenceLanguage">,
+): NativeReviewDiffRow[] {
+  if ((comment.fenceLanguage ?? "diff") !== "diff" || !comment.diff.trim()) return [];
+  const lines = comment.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+  if (lines.some((line) => !/^[ +-]/.test(line) || /^(---|\+\+\+) /.test(line))) return [];
+  return lines.map((line, index) => ({
+    kind: "line",
+    id: `${comment.id}:snippet:${index}`,
+    content: line.slice(1),
+    change: line[0] === "+" ? "add" : line[0] === "-" ? "delete" : "context",
+    oldLineNumber: null,
+    newLineNumber: null,
+  }));
+}
+
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);
   if (hex) return color;

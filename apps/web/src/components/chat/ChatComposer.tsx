@@ -1,3 +1,6 @@
+import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import { importPastedComposerText } from "../composerInlineTokenPaste";
+import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -55,7 +58,6 @@ import {
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  filterComposerPullRequestMatches,
   formatAssistantCitationForComposer,
   replaceTextRange,
 } from "../../composer-logic";
@@ -286,6 +288,7 @@ import {
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { pendingDraftWork } from "./pendingDraftWork";
 import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
@@ -1232,7 +1235,10 @@ export interface ChatComposerHandle {
   restoreAfterTimelineReachedEnd: () => void;
   collapseForTimelineScrollKey: (key: string) => void;
   addDroppedFiles: (files: File[]) => void;
-  insertTextAtEnd: (text: string, options?: { ensureLeadingBoundary?: boolean }) => boolean;
+  insertTextAtEnd: (
+    text: string,
+    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+  ) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -1550,6 +1556,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
   const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
+  // An import that finishes after a draft change must compare against the draft open *now*, not
+  // the one captured in the closure that started it.
+  const attachmentTargetKeyRef = useRef(attachmentTargetKey);
+  attachmentTargetKeyRef.current = attachmentTargetKey;
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
   const composerImages = attachmentDraft.images;
@@ -2704,11 +2714,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * attachment under a fresh id. The pasted chip is rewritten to that id and reads as
    * unresolved until the bytes land; a failed transfer says so and leaves the chip to remove.
    */
-  const importAttachmentRecord = useCallback(
+  const runAttachmentImport = useCallback(
     async (
       record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
       localId: string,
       sourceEnvironmentId: EnvironmentId,
+      importTargetKey: string,
     ) => {
       const fail = (reason: string) => {
         toastManager.add({
@@ -2744,6 +2755,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       const file = new File([blob], record.name, { type: record.mimeType || blob.type });
+      // The draft these bytes belong to may have been sent or switched away from while they
+      // downloaded. Dropping them here keeps them out of whatever draft is open now.
+      if (attachmentTargetKeyRef.current !== importTargetKey) return;
       if (record.kind === "image") {
         const accepted = addComposerImage({
           type: "image",
@@ -2771,7 +2785,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           fail("The draft rejected this attachment (duplicate or attachment limit reached).");
       }
     },
-    [addComposerFilesToDraft, addComposerImage, createAssetUrl],
+    [addComposerFilesToDraft, addComposerImage, attachmentTargetKey, createAssetUrl],
+  );
+  const importAttachmentRecord = useCallback(
+    async (
+      record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
+      localId: string,
+      sourceEnvironmentId: EnvironmentId,
+    ) => {
+      // The chip lands in the draft immediately while these bytes are still downloading. Count
+      // the transfer against its own draft so a send cannot snapshot a message whose chip has no
+      // attachment behind it, and so bytes for an abandoned draft never enter the next one.
+      const importTargetKey = attachmentTargetKey;
+      pendingDraftWork.begin(importTargetKey);
+      try {
+        await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey);
+      } finally {
+        pendingDraftWork.end(importTargetKey);
+      }
+    },
+    [attachmentTargetKey, runAttachmentImport],
   );
   /**
    * Brings records into this draft (paste, stash restore). Binaries are transferred only
@@ -2842,10 +2875,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             rewritten.set(record.contextId, reviewCommentContextId(comment.id));
             break;
           }
+          case "element":
           case "preview-annotation": {
-            const imported = previewAnnotationFromRecord(record);
+            const imported =
+              record.kind === "element"
+                ? elementContextToPreviewAnnotation(record, randomUUID(), new Date().toISOString())
+                : previewAnnotationFromRecord(record);
             const annotation = conflicts ? { ...imported, id: randomUUID() } : imported;
-            if (record.screenshotContextId) {
+            if (record.kind === "preview-annotation" && record.screenshotContextId) {
               dependentAttachmentLocalIds.set(record.screenshotContextId, annotation.id);
             }
             addComposerDraftPreviewAnnotation(composerDraftTarget, annotation, {
@@ -3650,6 +3687,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
+      // A pasted chip's bytes arrive over the network, so the same hazard applies for longer:
+      // sending now would snapshot a chip with no attachment behind it.
+      if (pendingDraftWork.has(attachmentTargetKey)) {
+        event?.preventDefault();
+        toastManager.add({
+          type: "info",
+          title: "Still bringing a pasted attachment into this message.",
+          description: "Send again once its chip resolves.",
+        });
+        return;
+      }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
@@ -3951,7 +3999,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
         const contextId = rewrittenContextIds.get(reference.contextId);
         return contextId
-          ? formatInlineContextReference({ ...reference, contextId })
+          ? formatInlineContextReference({
+              ...reference,
+              contextId,
+              kind: reference.kind === "element" ? "preview-annotation" : reference.kind,
+            })
           : reference.source;
       });
       const currentPrompt = promptRef.current;
@@ -4217,6 +4269,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const stashCurrentPrompt = useCallback(async () => {
+    // Stashing clears the draft. A pasted attachment still downloading would then land in the
+    // emptied composer instead of travelling with the entry it belongs to.
+    if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
+      toastManager.add({
+        type: "info",
+        title: "Still bringing a pasted attachment into this message.",
+        description: "Stash again once its chip resolves.",
+      });
+      return;
+    }
     const prompt = promptRef.current.trim();
     const images = [...composerImagesRef.current];
     const files = [...composerFilesRef.current];
@@ -5253,6 +5315,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       options?: {
         ensureLeadingBoundary?: boolean;
         citationCommentAnchor?: AssistantCitationSourceAnchor;
+        clipboardData?: DataTransfer;
       },
     ): boolean => {
       if (
@@ -5264,6 +5327,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (options?.citationCommentAnchor && !composerEditorRef.current)
       ) {
         return false;
+      }
+      if (options?.clipboardData) {
+        text = importPastedComposerText(options.clipboardData, importContextFragment);
       }
       const prompt = promptRef.current;
       const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
@@ -5295,6 +5361,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       promptRef,
       readComposerSnapshot,
+      importContextFragment,
     ],
   );
 

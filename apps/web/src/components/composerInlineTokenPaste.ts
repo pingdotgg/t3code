@@ -1,10 +1,13 @@
+import { ComposerContextId } from "@t3tools/contracts";
 import type { AssistantCitation, ComposerContextClipboardFragment } from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
+  decodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
+  formatComposerContextReference,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 import {
@@ -56,46 +59,7 @@ export function registerComposerInlineTokenPaste(
       if (pastedText.length === 0) {
         return false;
       }
-      // Only records whose links are in the pasted text get imported; a fragment may carry
-      // more (it was built for a larger copy) and must not start transfers for those.
-      const decodedFragment = options.importContextFragment
-        ? decodeComposerContextFragment(
-            event.clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME),
-          )
-        : null;
-      const pastedIds = new Set<string>(
-        collectComposerContextReferences(pastedText).map((occurrence) => occurrence.contextId),
-      );
-      if (decodedFragment) {
-        for (const record of decodedFragment.records) {
-          if (
-            record.kind === "preview-annotation" &&
-            !("payload" in record) &&
-            pastedIds.has(record.contextId) &&
-            record.screenshotContextId
-          ) {
-            pastedIds.add(record.screenshotContextId);
-          }
-        }
-      }
-      const fragment =
-        decodedFragment === null
-          ? null
-          : {
-              ...decodedFragment,
-              records: decodedFragment.records.filter((record) => pastedIds.has(record.contextId)),
-            };
-      const rewrittenIds =
-        fragment && fragment.records.length > 0 ? options.importContextFragment!(fragment) : null;
-      const text =
-        rewrittenIds && rewrittenIds.size > 0
-          ? replaceComposerContextReferences(pastedText, (occurrence) => {
-              const nextId = rewrittenIds.get(occurrence.contextId);
-              return nextId
-                ? occurrence.source.replace(`/${occurrence.contextId})`, `/${nextId})`)
-                : occurrence.source;
-            })
-          : pastedText;
+      const text = importPastedComposerText(event.clipboardData, options.importContextFragment);
       // Token grammar requires trailing whitespace; a virtual newline lets a
       // mention at the very end of the pasted text still parse.
       const tokens = collectComposerPromptInlineTokens(`${text}\n`).filter(
@@ -178,4 +142,56 @@ export function registerComposerInlineTokenPaste(
     },
     COMMAND_PRIORITY_HIGH,
   );
+}
+
+/** Imports the same structured clipboard payload for focused paste and paste-to-focus. */
+export function importPastedComposerText(
+  clipboardData: Pick<DataTransfer, "getData">,
+  importContextFragment?: ComposerInlineTokenPasteOptions["importContextFragment"],
+): string {
+  const pastedText = clipboardData.getData("text/plain");
+  // Only records whose links are in the pasted text get imported; a fragment may carry
+  // more (it was built for a larger copy) and must not start transfers for those.
+  const decodedFragment = importContextFragment
+    ? (decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
+      decodeComposerContextClipboardHtml(clipboardData.getData("text/html")))
+    : null;
+  const pastedIds = new Set<string>(
+    collectComposerContextReferences(pastedText).map((occurrence) => occurrence.contextId),
+  );
+  if (decodedFragment) {
+    for (const record of decodedFragment.records) {
+      if (
+        record.kind === "preview-annotation" &&
+        !("payload" in record) &&
+        pastedIds.has(record.contextId) &&
+        record.screenshotContextId
+      ) {
+        pastedIds.add(record.screenshotContextId);
+      }
+    }
+  }
+  const fragment =
+    decodedFragment === null
+      ? null
+      : {
+          ...decodedFragment,
+          records: decodedFragment.records.filter((record) => pastedIds.has(record.contextId)),
+        };
+  const rewrittenIds =
+    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+  const text =
+    rewrittenIds && rewrittenIds.size > 0
+      ? replaceComposerContextReferences(pastedText, (occurrence) => {
+          const nextId = rewrittenIds.get(occurrence.contextId);
+          return nextId
+            ? formatComposerContextReference({
+                ...occurrence,
+                contextId: ComposerContextId.make(nextId),
+                kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
+              })
+            : occurrence.source;
+        })
+      : pastedText;
+  return text;
 }

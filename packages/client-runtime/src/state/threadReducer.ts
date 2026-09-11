@@ -844,7 +844,9 @@ function retainMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
+      // `.sort()`, not `.toSorted()`: `.filter()` above already returned a fresh array, and
+      // this is shared with mobile, which runs on Hermes and has no ES2023 array methods.
+      .sort(
         (left, right) =>
           compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.id.localeCompare(right.id),

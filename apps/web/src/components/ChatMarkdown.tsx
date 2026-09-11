@@ -1,6 +1,10 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
+import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -2355,7 +2359,13 @@ function useChatMarkdownState({
     if (!payload) return;
     event.preventDefault();
     event.clipboardData.setData("text/plain", payload.text);
-    event.clipboardData.setData("text/html", payload.html);
+    const fragment = event.clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME);
+    event.clipboardData.setData(
+      "text/html",
+      fragment
+        ? encodeComposerContextClipboardHtml(payload.text, fragment, payload.html)
+        : payload.html,
+    );
   }, []);
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);

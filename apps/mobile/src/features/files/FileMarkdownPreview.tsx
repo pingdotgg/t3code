@@ -194,7 +194,8 @@ export function FileMarkdownPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly relativePath: string;
-  readonly threadId: ThreadId;
+  /** Absent for a file opened from a project draft, which has no thread yet. */
+  readonly threadId: ThreadId | null;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -216,7 +217,7 @@ export function FileMarkdownPreview(props: {
   const renderImage = useCallback<MarkdownImageRenderer>(
     (image) => {
       const media = resolveMediaSource(image.href, {
-        threadId: props.threadId,
+        threadId: props.threadId ?? undefined,
         workspaceRoot: markdownDirectory,
         imageEmbed: true,
       });

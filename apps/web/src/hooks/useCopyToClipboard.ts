@@ -1,5 +1,9 @@
 import * as React from "react";
 import * as Schema from "effect/Schema";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
 
 export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
@@ -48,7 +52,10 @@ export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()
 }
 
 /** Copy fallback for remote web pages served over plain HTTP. */
-function writeTextWithExecCommand(value: string): boolean {
+function writeTextWithExecCommand(
+  value: string,
+  extraFlavors?: Readonly<Record<string, string>>,
+): boolean {
   if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
 
   const textarea = document.createElement("textarea");
@@ -62,7 +69,15 @@ function writeTextWithExecCommand(value: string): boolean {
   textarea.style.fontSize = "16px";
 
   const previouslyFocused = document.activeElement;
+  const copy = (event: ClipboardEvent) => {
+    if (!extraFlavors || !event.clipboardData) return;
+    event.clipboardData.setData("text/plain", value);
+    for (const [type, data] of Object.entries(extraFlavors))
+      event.clipboardData.setData(type, data);
+    event.preventDefault();
+  };
   document.body.appendChild(textarea);
+  textarea.addEventListener("copy", copy);
   try {
     textarea.focus({ preventScroll: true });
     textarea.select();
@@ -71,6 +86,7 @@ function writeTextWithExecCommand(value: string): boolean {
   } catch {
     return false;
   } finally {
+    textarea.removeEventListener("copy", copy);
     textarea.remove();
     const restoreFocus = (previouslyFocused as { focus?: unknown } | null)?.focus;
     if (typeof restoreFocus === "function") {
@@ -96,9 +112,15 @@ export async function writeTextToClipboard(
       Object.entries(extraFlavors).filter(([type]) => type !== "text/plain"),
     );
   }
+  const contextFragment = extraFlavors?.[COMPOSER_CONTEXT_CLIPBOARD_MIME];
+  if (contextFragment)
+    extraFlavors = {
+      ...extraFlavors,
+      "text/html": encodeComposerContextClipboardHtml(value, contextFragment),
+    };
 
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    if (writeTextWithExecCommand(value)) return true;
+    if (writeTextWithExecCommand(value, extraFlavors)) return true;
     throw new ClipboardApiUnavailableError({
       target,
     });
@@ -122,7 +144,21 @@ export async function writeTextToClipboard(
         ]);
         return true;
       } catch {
-        // fall through to plain text
+        // Safari/native bridges may accept HTML but reject Chromium's custom web flavor.
+        const html = extraFlavors["text/html"];
+        if (html) {
+          try {
+            await navigator.clipboard.write([
+              new ClipboardItem({
+                "text/plain": new Blob([value], { type: "text/plain" }),
+                "text/html": new Blob([html], { type: "text/html" }),
+              }),
+            ]);
+            return true;
+          } catch {
+            // Plain text still makes unavailable references visible to the receiver.
+          }
+        }
       }
     }
     await navigator.clipboard.writeText(value);

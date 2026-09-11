@@ -1,4 +1,6 @@
+import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
+  ElementContextDetails,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -76,6 +78,7 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
+const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
@@ -216,6 +219,7 @@ const PersistedTerminalContextDraft = Schema.Struct({
   terminalLabel: Schema.String,
   lineStart: Schema.Number,
   lineEnd: Schema.Number,
+  text: Schema.optionalKey(Schema.String),
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
@@ -1336,6 +1340,7 @@ function normalizePersistedTerminalContextDraft(
     terminalLabel,
     lineStart: normalizedLineStart,
     lineEnd: normalizedLineEnd,
+    ...(typeof candidate.text === "string" ? { text: candidate.text } : {}),
   };
 }
 
@@ -1861,8 +1866,27 @@ function normalizePersistedDraftsByThreadId(
       ? draftCandidate.reviewComments.filter(isReviewCommentContext)
       : [];
     const previewAnnotations = Array.isArray(draftCandidate.previewAnnotations)
-      ? draftCandidate.previewAnnotations.filter(Schema.is(PreviewAnnotationPayloadSchema))
+      ? draftCandidate.previewAnnotations.filter(isPreviewAnnotationPayload)
       : [];
+    const legacyElements =
+      "elementContexts" in draftValue && Array.isArray(draftValue.elementContexts)
+        ? draftValue.elementContexts
+        : [];
+    for (const element of legacyElements) {
+      if (
+        !Schema.is(ElementContextDetails)(element) ||
+        !("id" in element) ||
+        typeof element.id !== "string" ||
+        !("pickedAt" in element) ||
+        typeof element.pickedAt !== "string"
+      )
+        continue;
+      if (!previewAnnotations.some((annotation) => annotation.id === element.id)) {
+        previewAnnotations.push(
+          elementContextToPreviewAnnotation(element, element.id, element.pickedAt),
+        );
+      }
+    }
     const runtimeMode = isRuntimeMode(draftCandidate.runtimeMode)
       ? draftCandidate.runtimeMode
       : null;
@@ -1960,6 +1984,7 @@ function normalizePersistedDraftsByThreadId(
       attachments.length === 0 &&
       files.length === 0 &&
       terminalContexts.length === 0 &&
+      previewAnnotations.length === 0 &&
       reviewComments.length === 0 &&
       previewAnnotations.length === 0 &&
       !hasModelData &&
@@ -1985,6 +2010,7 @@ function normalizePersistedDraftsByThreadId(
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
+      ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
       ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
       ...(hasModelData
@@ -2132,6 +2158,7 @@ export function partializeComposerDraftStoreState(
               terminalLabel: context.terminalLabel,
               lineStart: context.lineStart,
               lineEnd: context.lineEnd,
+              text: context.text,
             })),
           }
         : {}),
@@ -2413,7 +2440,7 @@ function toHydratedThreadDraft(
     terminalContexts:
       persistedDraft.terminalContexts?.map((context) => ({
         ...context,
-        text: "",
+        text: context.text ?? "",
       })) ?? [],
     previewAnnotations:
       persistedDraft.previewAnnotations?.map((annotation) => ({ ...annotation })) ?? [],

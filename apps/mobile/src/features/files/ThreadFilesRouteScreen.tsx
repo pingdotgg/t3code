@@ -61,7 +61,7 @@ import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
-  isAbsolutePath,
+  fileHeaderSubtitle,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
   isVideoPreviewFile,
@@ -116,7 +116,7 @@ function FileContent(props: {
   readonly fileContents: string | null;
   readonly fileError: string | null;
   readonly relativePath: string;
-  readonly threadId: ThreadId;
+  readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
@@ -227,17 +227,26 @@ type ThreadFilesRouteScreenProps = StaticScreenProps<{
 
 type ThreadFileRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
-  readonly threadId: string;
+  /** Absent for a project draft, which has no thread yet. */
+  readonly threadId?: string;
   readonly path: string[];
   readonly line?: string;
+  /** Supplied when there is no thread to resolve the workspace from. */
+  readonly cwd?: string;
+  readonly projectName?: string;
 }>;
 
 function useThreadFilesWorkspace(params: {
   readonly environmentId?: string | string[];
   readonly threadId?: string | string[];
+  readonly cwd?: string | string[];
+  readonly projectName?: string | string[];
 }) {
   const routeEnvironmentId = firstRouteParam(params.environmentId);
   const routeThreadId = firstRouteParam(params.threadId);
+  // A project draft has no thread to resolve a workspace from, so it names one itself.
+  const routeCwd = firstRouteParam(params.cwd);
+  const routeProjectName = firstRouteParam(params.projectName);
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const environmentId =
@@ -251,9 +260,9 @@ function useThreadFilesWorkspace(params: {
   } | null;
 
   return {
-    cwd: selectedThreadCwd ?? project?.workspaceRoot ?? null,
+    cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
-    projectName: project?.title ?? "Files",
+    projectName: routeProjectName ?? project?.title ?? "Files",
     selectedThread,
     threadId,
   };
@@ -818,7 +827,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     handleReturnToThread();
   }, [handleReturnToThread, navigation]);
 
-  if (selectedThread === null || environmentId === null || threadId === null) {
+  // A file opened from a project draft has no thread, and needs none: the thread only supplies
+  // the workspace to read from and the target to navigate back to, both of which a draft names
+  // for itself. Wait only for what this file actually cannot render without.
+  if (environmentId === null || (threadId !== null && selectedThread === null)) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
@@ -835,14 +847,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     );
   }
 
-  const parentDir = relativePath.slice(
-    0,
-    Math.max(relativePath.lastIndexOf("/"), relativePath.lastIndexOf("\\"), 0),
-  );
-  // A host file outside the workspace is not under the project name.
-  const headerSubtitle = isAbsolutePath(relativePath)
-    ? parentDir
-    : [projectName, parentDir].filter(Boolean).join(" · ");
+  const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
 
   return (
     <View className="flex-1 bg-sheet">

@@ -37,6 +37,11 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
+/** Wraps navigation in either direction, including offsets beyond a complete cycle. */
+export function wrapExpandedImageIndex(index: number, imageCount: number): number {
+  return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
+}
+
 /** Resolves a chat media reference on its owning environment, without downloading its bytes. */
 export async function resolveMarkdownMediaPreview(input: {
   source: string;

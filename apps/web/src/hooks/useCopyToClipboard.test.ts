@@ -62,6 +62,8 @@ describe("writeTextToClipboard", () => {
       const setAttribute = vi.fn();
       const setSelectionRange = vi.fn();
       const textarea = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
         focus,
         remove,
         select,

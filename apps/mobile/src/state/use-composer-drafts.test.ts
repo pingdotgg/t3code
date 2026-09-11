@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -159,10 +160,13 @@ import {
   composerDraftsAtom,
   composerCloudDraftsAtom,
   createNewTaskDraft,
+  createComposerDraftContextHistory,
+  setComposerDraftContext,
   decodePersistedComposerState,
   ensureComposerDraftsLoaded,
   type ComposerDraft,
   findNewTaskDraftKeys,
+  findLocalComposerClipboardAttachment,
   flushComposerDrafts,
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
@@ -175,6 +179,8 @@ import {
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
   setComposerDraftText,
+  insertComposerDraftContext,
+  rememberComposerDraftSelection,
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
@@ -210,7 +216,299 @@ afterEach(() => {
   incomingShareStorageMocks.load.mockResolvedValue([]);
 });
 
+function contextDraft(start: number, count: number): ComposerDraft {
+  const records = Array.from({ length: count }, (_, index) => ({
+    version: 1 as const,
+    contextId: ComposerContextId.make(`skill-${start + index}`),
+    kind: "skill" as const,
+    label: "Skill",
+    name: "skill",
+  }));
+  return {
+    text: records.map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`).join(" "),
+    context: { version: 1, records },
+    attachments: [],
+  };
+}
+
 describe("mobile composer drafts", () => {
+  it.each([false, true])(
+    "restores deleted file chips and releases undo history (uploaded: %s)",
+    async (uploaded) => {
+      const key = "environment:undo-file";
+      const file = {
+        type: "file" as const,
+        id: "undo-file",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1,
+        fileUri: "file:///documents/t3-composer-attachments/undo-file.txt",
+        ...(uploaded
+          ? {
+              uploadedAttachmentId: "pending-upload",
+              uploadEnvironmentId: EnvironmentId.make("environment"),
+            }
+          : {}),
+      };
+      appendComposerDraftAttachments(key, [file], { appendReference: true });
+      const original = getComposerDraftSnapshot(key);
+      const history = createComposerDraftContextHistory();
+      const changeText = (text: string) => {
+        const restored = history.restore(text, getComposerDraftSnapshot(key));
+        setComposerDraftText(key, text);
+        setComposerDraftContext(key, restored.context);
+        appendComposerDraftAttachments(key, restored.attachments, { allowOverflow: true });
+      };
+      try {
+        changeText("");
+        expect(getComposerDraftSnapshot(key).attachments).toEqual([]);
+        await releaseUnusedComposerAttachmentFiles([file]);
+        expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(file.fileUri);
+        changeText(original.text);
+        expect(getComposerDraftSnapshot(key).context).toEqual(original.context);
+        expect(getComposerDraftSnapshot(key).attachments).toEqual([
+          { ...file, uploadedAttachmentId: undefined, uploadEnvironmentId: undefined },
+        ]);
+        changeText("");
+      } finally {
+        history.dispose();
+      }
+      await releaseUnusedComposerAttachmentFiles([file]);
+      expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
+    },
+  );
+
+  it("keeps a long attachment filename and a bounded chip label through reload", () => {
+    const key = "environment:long-file";
+    const file = {
+      type: "file" as const,
+      id: "long-file",
+      name: `${"a".repeat(210)}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      fileUri: "file:///long-file.txt",
+    };
+    appendComposerDraftAttachments(key, [file], { appendReference: true });
+    const draft = getComposerDraftSnapshot(key);
+    const reloaded = decodePersistedComposerState(
+      JSON.parse(
+        JSON.stringify({
+          schemaVersion: 1,
+          drafts: { [key]: draft },
+        }),
+      ),
+    ).drafts[key];
+    expect(reloaded?.context?.records[0]).toMatchObject({ name: file.name, attachmentId: file.id });
+    expect(reloaded?.context?.records[0]?.label.length).toBeLessThanOrEqual(200);
+  });
+
+  it.each(["new-task:draft-1", "pending-task:queued-1"])(
+    "finds draft-only local clipboard files in %s",
+    (key) => {
+      const environmentId = EnvironmentId.make("environment-1");
+      const file = {
+        type: "file" as const,
+        id: "local-file",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 4,
+        fileUri: "file:///notes.txt",
+      };
+      appAtomRegistry.set(composerDraftsAtom, {
+        [key]: {
+          text: "",
+          attachments: [file],
+          project: {
+            environmentId,
+            projectId: ProjectId.make("project-1"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      });
+      appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {
+        queued: [
+          {
+            environmentId,
+            threadId: ThreadId.make("thread-1"),
+            messageId: MessageId.make("queued-1"),
+            commandId: CommandId.make("command-1"),
+            text: "Queued",
+            attachments: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      });
+      expect(findLocalComposerClipboardAttachment(environmentId, file.id)).toEqual(file);
+      expect(
+        findLocalComposerClipboardAttachment(EnvironmentId.make("different-environment"), file.id),
+      ).toBeUndefined();
+    },
+  );
+
+  it("keeps over-limit recovery context reloadable without losing other drafts", () => {
+    const key = "environment-1:recovery";
+    const merged = mergeComposerDraftContentState(
+      { [key]: contextDraft(0, 200), other: DRAFT },
+      key,
+      contextDraft(200, 200),
+    );
+    expect(merged[key]?.context?.records).toHaveLength(400);
+    const reloaded = decodePersistedComposerState(
+      JSON.parse(JSON.stringify({ schemaVersion: 1, drafts: merged })),
+    ).drafts;
+    expect(reloaded[key]).toEqual(merged[key]);
+    expect(reloaded.other).toEqual(DRAFT);
+  });
+
+  it("prunes unreferenced context during a content merge", () => {
+    const existing = contextDraft(0, 2);
+    const incoming = contextDraft(2, 2);
+    const merged = mergeComposerDraftContentState(
+      { key: { ...existing, text: "[Skill](t3-context://v1/skill/skill-0)" } },
+      "key",
+      { ...incoming, text: "[Skill](t3-context://v1/skill/skill-2)" },
+    );
+    expect(merged.key?.context?.records.map((record) => record.contextId)).toEqual([
+      "skill-0",
+      "skill-2",
+    ]);
+  });
+
+  it("restores and persists both full cloud and live context drafts", async () => {
+    const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => load.mockRestore());
+    await waitForComposerDraftsLoaded();
+    const key = "environment-1:restored";
+    appAtomRegistry.set(composerDraftsAtom, { [key]: contextDraft(0, 200) });
+    appAtomRegistry.set(composerCloudDraftsAtom, {
+      accountId: null,
+      signedOut: { account: { drafts: { [key]: contextDraft(200, 200) }, queuedMessages: [] } },
+    });
+    await restoreCloudComposerDrafts("account");
+    expect(getComposerDraftSnapshot(key).context?.records).toHaveLength(400);
+    const reloaded = decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument()));
+    expect(reloaded.drafts[key]?.context?.records).toHaveLength(400);
+    expect(reloaded.cloudDrafts.signedOut).toEqual({});
+  });
+
+  it("removes a file only after its last reference is deleted, while retaining images", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
+    const key = "environment-1:remove-context-files";
+    const file = {
+      id: "file-1",
+      type: "file" as const,
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 4,
+      fileUri: "file:///notes.txt",
+    };
+    const image = {
+      ...file,
+      id: "image-1",
+      type: "image" as const,
+      name: "image.png",
+      mimeType: "image/png",
+      fileUri: "file:///image.png",
+      previewUri: "file:///image.png",
+    };
+    appendComposerDraftAttachments(key, [file, image], { appendReference: true });
+    const fileLink = "[notes.txt](t3-context://v1/file/file-1)";
+    setComposerDraftText(key, `${fileLink} ${fileLink}`);
+    expect(getComposerDraftSnapshot(key).attachments).toEqual([file, image]);
+    setComposerDraftText(key, fileLink);
+    expect(getComposerDraftSnapshot(key).attachments).toEqual([file, image]);
+    setComposerDraftText(key, "plain text");
+    expect(getComposerDraftSnapshot(key).attachments).toEqual([image]);
+    await cleanup.promise;
+  });
+
+  it("rejects attachments atomically when no context slots remain", async () => {
+    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => outboxLoad.mockRestore());
+    const cleanup = Promise.withResolvers<void>();
+    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+      cleanup.resolve();
+    });
+    const key = "environment-1:full-context";
+    const records = Array.from({ length: 200 }, (_, index) => ({
+      version: 1 as const,
+      contextId: `ctx-${index}` as never,
+      kind: "skill" as const,
+      label: "Skill",
+      name: "skill",
+    }));
+    appAtomRegistry.set(composerDraftsAtom, {
+      [key]: {
+        text: records
+          .map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`)
+          .join(" "),
+        context: { version: 1, records },
+        attachments: [],
+      },
+    });
+    const before = getComposerDraftSnapshot(key);
+    expect(
+      appendComposerDraftAttachments(
+        key,
+        [
+          {
+            id: "overflow",
+            type: "file",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 4,
+            fileUri: "file:///overflow.txt",
+          },
+        ],
+        { appendReference: true },
+      ),
+    ).toBe(1);
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    await cleanup.promise;
+  });
+  it("inserts context at the saved caret and retains its payload through persistence and restore", () => {
+    const draftKey = "context-environment:context-thread";
+    const record = {
+      version: 1 as const,
+      kind: "terminal" as const,
+      contextId: ComposerContextId.make("context-terminal"),
+      label: "Build output",
+      terminalId: "main",
+      terminalLabel: "Terminal",
+      lineStart: 1,
+      lineEnd: 1,
+      text: "Build failed",
+    };
+    const reference = "[Build output](t3-context://v1/terminal/context-terminal)";
+    setComposerDraftText(draftKey, "Fix this next");
+    rememberComposerDraftSelection(draftKey, "Fix this next", { start: 4, end: 8 });
+    insertComposerDraftContext(draftKey, {
+      text: reference,
+      context: { version: 1, records: [record] },
+    });
+    const draft = getComposerDraftSnapshot(draftKey);
+    expect(draft.text).toBe(`Fix ${reference} next`);
+    const decoded = decodePersistedComposerState(
+      JSON.parse(JSON.stringify({ schemaVersion: 1, drafts: { [draftKey]: draft } })),
+    ).drafts[draftKey];
+    expect(decoded?.context?.records).toEqual([record]);
+    const restored = mergeComposerDraftContentState(
+      { [draftKey]: { text: "Additional work", attachments: [] } },
+      draftKey,
+      decoded!,
+    );
+    expect(restored[draftKey]?.text).toContain(reference);
+    expect(restored[draftKey]?.context?.records).toEqual([record]);
+    expect(clearComposerDraftContentState(restored, draftKey)[draftKey]?.context).toBeUndefined();
+    setComposerDraftText(draftKey, "Fix next");
+    expect(getComposerDraftSnapshot(draftKey).context).toBeUndefined();
+  });
+
   // Hydration is one-shot per module instance and the attachment sweep now
   // triggers it too, so this test must observe it before any sweep test runs.
   it("hydrates generic file attachments from their saved local paths", () => {
