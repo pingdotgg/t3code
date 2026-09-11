@@ -105,7 +105,8 @@ export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<
     /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
     /^import\s+["']([^"']+)["']/gm,
     /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
-    /\bimport\(\s*["']([^"']+)["']\s*[,)]/g,
+    // Rolldown may leave a `/* @vite-ignore */` style comment before the specifier.
+    /\bimport\(\s*(?:\/\*[\s\S]*?\*\/\s*)*["']([^"']+)["']\s*[,)]/g,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) {
