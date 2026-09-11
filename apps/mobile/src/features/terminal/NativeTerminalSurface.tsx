@@ -73,6 +73,18 @@ function useTerminalBufferWrite(output: TerminalOutputState): TerminalBufferWrit
   const cursorRef = useRef(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const committedSeqRef = useRef(IDLE_TERMINAL_BUFFER_WRITE.seq);
 
+  // Order matters: this effect MUST run before the one below. A rendered write
+  // has already reached the native view, so the next update has to start a new
+  // sequence. Reading a stale committedSeq would merge into a sequence number
+  // the native side already consumed, and it would drop the write as a repeat.
+  //
+  // 顺序不能调换：这个 effect 必须排在下面那个之前。已渲染的写入表示原生已经
+  // 收到，下一次更新必须另起序号；读到过期的 committedSeq 会把数据合并进原生
+  // 已消费的序号里，原生会当成重复写入直接丢掉。
+  useEffect(() => {
+    committedSeqRef.current = write.seq;
+  }, [write]);
+
   useEffect(() => {
     const update = readTerminalOutputUpdate(output, cursorRef.current);
     cursorRef.current = update.cursor;
@@ -87,14 +99,6 @@ function useTerminalBufferWrite(output: TerminalOutputState): TerminalBufferWrit
       }),
     );
   }, [output]);
-
-  // A rendered write has reached the native view, so the next update starts a
-  // new sequence instead of merging into it.
-  //
-  // 已渲染的写入意味着原生已收到，下一次更新另起序号而不是继续合并。
-  useEffect(() => {
-    committedSeqRef.current = write.seq;
-  }, [write]);
 
   return write;
 }
@@ -283,11 +287,17 @@ const NativeTerminalSurfaceHost = memo(function NativeTerminalSurfaceHost(
         appearanceScheme={themeAppearance}
         autoFocus={props.autoFocus ?? true}
         backgroundColor={props.theme.background}
+        // terminalKey before bufferWrite: props apply in this order, and the
+        // native key setter clears the reuse state a stale write would be
+        // matched against.
+        //
+        // terminalKey 要排在 bufferWrite 前面：props 按此顺序下发，原生的 key
+        // setter 会先清掉复用状态，避免新写入被旧序号判成重复。
+        terminalKey={props.terminalKey}
         bufferWrite={write}
         focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
         foregroundColor={props.theme.foreground}
         mutedForegroundColor={props.theme.mutedForeground}
-        terminalKey={props.terminalKey}
         fontSize={props.fontSize}
         style={{ flex: 1 }}
         themeConfig={buildGhosttyThemeConfig(props.theme)}

@@ -33,7 +33,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
    * 当前终端已喂入的全部内容，终端重建时（key 变化、尺寸触发的创建）用它重放。
    * 上限与 JS 侧的保留窗口一致。
    */
-  private var replayBuffer = ""
+  private val replayBuffer = StringBuilder()
   private var replayBufferBytes = 0
   private var appliedWriteSeq = 0
   private var hasReplayedIntoTerminal = false
@@ -57,7 +57,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       //
       // 换了终端就不共享历史和写入序号。JS 侧会按身份重挂载，
       // 这里只是复用场景的兜底。
-      replayBuffer = ""
+      replayBuffer.setLength(0)
       replayBufferBytes = 0
       appliedWriteSeq = 0
       recreateTerminal()
@@ -369,7 +369,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     appliedWriteSeq = write.seq
 
     if (write.reset) {
-      replayBuffer = ""
+      replayBuffer.setLength(0)
       replayBufferBytes = 0
       // Clearing the live terminal is cheaper than recreating it, and it keeps
       // the keyboard and scroll position intact.
@@ -389,7 +389,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     // 等 resize 创建终端时一并喂入。
     if (terminalHandle == 0L) return
 
-    feedIntoTerminal(write.data)
+    // A reset carries retained history, not live output: its device-query
+    // replies must not reach the shell either.
+    //
+    // reset 带的是保留历史而不是实时输出，它触发的设备查询回复同样不能发回 shell。
+    feedIntoTerminal(write.data, emitReplies = !write.reset)
     renderSnapshot()
   }
 
@@ -404,7 +408,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private fun replayIntoTerminal() {
     if (terminalHandle == 0L || hasReplayedIntoTerminal) return
     hasReplayedIntoTerminal = true
-    feedIntoTerminal(replayBuffer, emitReplies = false)
+    feedIntoTerminal(replayBuffer.toString(), emitReplies = false)
     renderSnapshot()
   }
 
@@ -422,7 +426,13 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
 
   private fun appendToReplayBuffer(data: String) {
     if (data.isEmpty()) return
-    replayBuffer += data
+    // StringBuilder, not `replayBuffer += data`: the latter copies the whole
+    // retained window on every write, putting the cost this change removed
+    // from JS straight back onto the UI thread.
+    //
+    // 用 StringBuilder 而不是 `replayBuffer += data`：后者每次写入都要拷贝整个
+    // 保留窗口，等于把本次从 JS 侧去掉的开销原样搬到 UI 线程上。
+    replayBuffer.append(data)
     replayBufferBytes += data.toByteArray(Charsets.UTF_8).size
 
     if (replayBufferBytes <= MAX_REPLAY_BUFFER_BYTES + REPLAY_BUFFER_TRIM_SLACK_BYTES) return
@@ -432,12 +442,13 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     //
     // 从头部按 UTF-8 边界裁剪。只损失重放深度，用户看到的滚动历史
     // 由终端自己持有。
-    val bytes = replayBuffer.toByteArray(Charsets.UTF_8)
+    val bytes = replayBuffer.toString().toByteArray(Charsets.UTF_8)
     var start = bytes.size - MAX_REPLAY_BUFFER_BYTES
     while (start < bytes.size && (bytes[start].toInt() and 0xC0) == 0x80) {
       start += 1
     }
-    replayBuffer = String(bytes, start, bytes.size - start, Charsets.UTF_8)
+    replayBuffer.setLength(0)
+    replayBuffer.append(String(bytes, start, bytes.size - start, Charsets.UTF_8))
     replayBufferBytes = bytes.size - start
   }
 

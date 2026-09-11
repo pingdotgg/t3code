@@ -619,6 +619,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       return
     }
 
+    // A reset carries retained history, not live output: its device-query
+    // replies must not reach the shell either.
+    //
+    // reset 带的是保留历史而不是实时输出，它触发的设备查询回复同样不能发回 shell。
+    isReplayingBuffer = write.reset
+    defer { isReplayingBuffer = false }
     feedData(Data(write.data.utf8))
   }
 
