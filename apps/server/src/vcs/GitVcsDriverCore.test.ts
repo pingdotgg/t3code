@@ -3799,6 +3799,84 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("reports line counts for untracked files before and after staging", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const contents = Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join("\n");
+        yield* writeTextFile(cwd, "feature.php", `${contents}\n`);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const unstaged = yield* driver.statusDetails(cwd);
+        assert.deepInclude(unstaged.workingTree.files, {
+          path: "feature.php",
+          insertions: 60,
+          deletions: 0,
+        });
+        assert.equal(unstaged.workingTree.insertions, 60);
+        assert.equal(unstaged.workingTree.deletions, 0);
+
+        yield* git(cwd, ["add", "feature.php"]);
+        const staged = yield* driver.statusDetails(cwd);
+        assert.deepInclude(staged.workingTree.files, {
+          path: "feature.php",
+          insertions: 60,
+          deletions: 0,
+        });
+        assert.equal(staged.workingTree.insertions, 60);
+        assert.equal(staged.workingTree.deletions, 0);
+      }),
+    );
+
+    it.effect("aggregates line counts for an untracked directory", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "feature/one.php", "one\ntwo\n");
+        yield* writeTextFile(cwd, "feature/two.php", "three\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepInclude(status.workingTree.files, {
+          path: "feature/",
+          insertions: 3,
+          deletions: 0,
+        });
+        assert.equal(status.workingTree.insertions, 3);
+        assert.equal(status.workingTree.deletions, 0);
+      }),
+    );
+
+    it.effect("reports untracked line counts relative to a nested cwd", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "nested/tracked.php", "tracked\n");
+        yield* git(cwd, ["add", "nested/tracked.php"]);
+        yield* git(cwd, ["commit", "-m", "add nested directory"]);
+        yield* writeTextFile(cwd, "nested/inside.php", "inside\n");
+        yield* writeTextFile(cwd, "outside.php", "outside\nsecond line\n");
+        const pathService = yield* Path.Path;
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(
+          pathService.join(cwd, "nested"),
+        );
+
+        assert.deepInclude(status.workingTree.files, {
+          path: "inside.php",
+          insertions: 1,
+          deletions: 0,
+        });
+        assert.deepInclude(status.workingTree.files, {
+          path: "../outside.php",
+          insertions: 2,
+          deletions: 0,
+        });
+        assert.equal(status.workingTree.insertions, 3);
+        assert.equal(status.workingTree.deletions, 0);
+      }),
+    );
+
     it.effect("reports changes to a file named HEAD", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

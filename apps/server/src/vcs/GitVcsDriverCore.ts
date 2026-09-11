@@ -226,6 +226,41 @@ function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
 
 // Space-separated fields precede the path in each porcelain v2 record type. The path itself
 // may contain spaces, so it is everything after them.
+/** Parses the separate old/new path records emitted by a NUL-delimited no-index diff. */
+function parseNoIndexNumstatEntries(
+  stdout: string,
+): Array<{ path: string; insertions: number; deletions: number }> {
+  const records = stdout.split("\0");
+  const entries: Array<{ path: string; insertions: number; deletions: number }> = [];
+
+  for (let index = 0; index < records.length;) {
+    const header = records[index++] ?? "";
+    if (header.length === 0) continue;
+    const firstTab = header.indexOf("\t");
+    const secondTab = firstTab < 0 ? -1 : header.indexOf("\t", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) continue;
+
+    const added = Number.parseInt(header.slice(0, firstTab), 10);
+    const deleted = Number.parseInt(header.slice(firstTab + 1, secondTab), 10);
+    let rawPath = header.slice(secondTab + 1);
+    if (rawPath.length === 0) {
+      index += 1;
+      rawPath = records[index++] ?? "";
+    }
+    if (rawPath.length === 0) continue;
+
+    const normalizedPath =
+      rawPath.startsWith("./") || rawPath.startsWith(".\\") ? rawPath.slice(2) : rawPath;
+    entries.push({
+      path: normalizedPath,
+      insertions: Number.isFinite(added) ? added : 0,
+      deletions: Number.isFinite(deleted) ? deleted : 0,
+    });
+  }
+
+  return entries;
+}
+
 const PORCELAIN_V2_FIELDS_BEFORE_PATH: Record<string, number> = {
   "1": 8,
   "2": 9,
@@ -2145,6 +2180,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  /** Gets Git-compatible untracked stats in one process without changing the real index. */
+  const readUntrackedNumstat = Effect.fn("readUntrackedNumstat")(function* (
+    cwd: string,
+    repositoryRoot: string,
+    untrackedPaths: ReadonlyArray<string>,
+  ) {
+    if (untrackedPaths.length === 0) return [];
+
+    const repositoryRelativePaths = untrackedPaths.map((untrackedPath) =>
+      path.relative(repositoryRoot, path.resolve(cwd, untrackedPath)).replaceAll("\\", "/"),
+    );
+
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const emptyDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-git-empty-tree-",
+        });
+        const result = yield* executeGitWithStableDiagnostics(
+          "GitVcsDriver.statusDetails.untrackedNumstat",
+          repositoryRoot,
+          [
+            "diff",
+            "--no-index",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--",
+            emptyDirectory,
+            ".",
+            "--",
+            ...repositoryRelativePaths,
+          ],
+          {
+            allowNonZeroExit: true,
+            env: { GIT_LITERAL_PATHSPECS: "1" },
+          },
+        );
+        const entries = parseNoIndexNumstatEntries(result.stdout).map((entry) => ({
+          ...entry,
+          path: path.relative(cwd, path.resolve(repositoryRoot, entry.path)).replaceAll("\\", "/"),
+        }));
+        return untrackedPaths.map((untrackedPath) => {
+          const normalizedPath = untrackedPath.endsWith("/")
+            ? untrackedPath.slice(0, -1)
+            : untrackedPath;
+          const nestedPrefix = `${normalizedPath}/`;
+          let insertions = 0;
+          let deletions = 0;
+          for (const entry of entries) {
+            if (
+              entry.path !== normalizedPath &&
+              !(untrackedPath.endsWith("/") && entry.path.startsWith(nestedPrefix))
+            ) {
+              continue;
+            }
+            insertions += entry.insertions;
+            deletions += entry.deletions;
+          }
+          return { path: untrackedPath, insertions, deletions };
+        });
+      }),
+    ).pipe(Effect.orElseSucceed(() => []));
+  });
+
   const readStatusDetailsLocal = Effect.fn("readStatusDetailsLocal")(function* (
     cwd: string,
     options?: GitVcsDriver.GitLocalStatusOptions,
@@ -2376,8 +2478,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       aheadOfDefaultCount = baseAheadCount;
     }
 
+    const untrackedNumstatEntries = yield* readUntrackedNumstat(
+      cwd,
+      repositoryPaths?.worktreeRoot ?? cwd,
+      untrackedRoots,
+    );
     const fileStatMap = new Map<string, { insertions: number; deletions: number }>();
-    for (const entry of numstatEntries) {
+    for (const entry of [
+      ...numstatEntries,
+      ...untrackedNumstatEntries.map(({ path, insertions, deletions }) => ({
+        path,
+        additions: insertions,
+        deletions,
+      })),
+    ]) {
       const stat = fileStatMap.get(entry.path) ?? { insertions: 0, deletions: 0 };
       stat.insertions += entry.additions;
       stat.deletions += entry.deletions;
