@@ -6,17 +6,26 @@ import {
 } from "../composerFooterLayout";
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 
-function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?: string }) {
+function measurePicker(input: {
+  clientWidth: number;
+  flexGrow: string;
+  maxWidth?: string;
+  skillModeChipWidth?: number;
+}) {
   const label = { clientWidth: input.clientWidth, scrollWidth: 160 };
   const picker = {
     getBoundingClientRect: () => ({ width: 52 }),
     querySelector: () => label,
   };
+  const skillModeChipWidth = input.skillModeChipWidth;
   const controls = {
     querySelector: (selector: string) => {
       if (selector === "[data-chat-provider-model-picker]") return picker;
       if (selector === "[data-resting-controls-overflow]") {
         return { getBoundingClientRect: () => ({ width: 24 }) };
+      }
+      if (selector === "[data-composer-skill-mode-chip]" && skillModeChipWidth !== undefined) {
+        return { getBoundingClientRect: () => ({ width: skillModeChipWidth }) };
       }
       return null;
     },
@@ -59,6 +68,21 @@ describe("measureRestingComposerControls", () => {
 
     expect(measurement.naturalFixedWidth).toBe(212);
     expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 200 })).toEqual({
+      hiddenCount: 1,
+      visible: true,
+    });
+  });
+
+  it("reserves room for the pinned skill mode chip", () => {
+    const withoutChip = measurePicker({ clientWidth: 0, flexGrow: "0" });
+    const withChip = measurePicker({ clientWidth: 0, flexGrow: "0", skillModeChipWidth: 96 });
+
+    expect(withChip.naturalFixedWidth).toBe(withoutChip.naturalFixedWidth + 100);
+    expect(resolveRestingComposerControlsLayout({ ...withoutChip, hostWidth: 200 })).toEqual({
+      hiddenCount: 0,
+      visible: true,
+    });
+    expect(resolveRestingComposerControlsLayout({ ...withChip, hostWidth: 200 })).toEqual({
       hiddenCount: 1,
       visible: true,
     });

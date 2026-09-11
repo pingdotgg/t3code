@@ -2774,3 +2774,58 @@ describe("createDeferredStorage", () => {
     expect(base.setItem).toHaveBeenCalledWith("key", "s:v2");
   });
 });
+
+describe("composerDraftStore skill mode", () => {
+  const threadId = ThreadId.make("thread-skill-mode");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("persists and clears skill mode through storage round-trips", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setSkillMode(threadRef, {
+        name: "review",
+        label: "Review",
+      });
+      await vi.advanceTimersByTimeAsync(300);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.skillMode).toEqual({
+        name: "review",
+        label: "Review",
+      });
+
+      useComposerDraftStore.getState().setSkillMode(threadRef, null);
+      await vi.advanceTimersByTimeAsync(300);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+  });
+
+  it("does not count a skill mode as user content", async () => {
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setSkillMode(threadRef, {
+        name: "review",
+        label: "Review",
+      });
+
+      expect(
+        composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(threadRef)),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+  });
+});

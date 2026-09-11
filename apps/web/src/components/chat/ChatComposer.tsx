@@ -27,7 +27,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { type ComposerSkillMode, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -188,6 +188,7 @@ import {
   ComposerControlSeparator,
   ComposerSelectControl,
 } from "./ComposerControl";
+import { resolveComposerMenuKeyAction } from "./composerMenuKeyAction";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
   searchSlashCommandItems,
@@ -846,6 +847,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
+  BoxIcon,
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
@@ -996,6 +998,37 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
 
   return { controlsRef, hiddenBlockCount: layout.hiddenCount, controlsVisible: layout.visible };
 }
+
+const ComposerSkillModeChip = memo(function ComposerSkillModeChip(props: {
+  skillMode: ComposerSkillMode;
+  size: "sm" | "xs";
+  onRemove: () => void;
+}) {
+  const removeLabel = `Remove ${props.skillMode.label} skill mode`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={props.size}
+            className="shrink-0 whitespace-nowrap"
+            type="button"
+            onClick={props.onRemove}
+            aria-label={removeLabel}
+            data-composer-skill-mode-chip="true"
+          />
+        }
+      >
+        <ComposerControlIcon icon={BoxIcon} size={props.size} />
+        <span className="max-w-32 truncate">{props.skillMode.label}</span>
+        <ComposerControlIcon icon={XIcon} size={props.size} className="opacity-60" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {`Every message starts with $${props.skillMode.name}. Click to remove.`}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
@@ -1229,6 +1262,7 @@ export interface ChatComposerHandle {
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     interactionMode: ProviderInteractionMode;
     interactionModeEnabled: boolean;
+    skillMode: ComposerSkillMode | null;
   };
   /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
@@ -1603,7 +1637,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
+  const setComposerDraftSkillMode = useComposerDraftStore((store) => store.setSkillMode);
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const composerSkillMode = composerDraft.skillMode;
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
@@ -2850,6 +2886,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [readComposerSnapshot]);
 
+  const pinComposerSkillMode = useCallback(
+    (item: Extract<ComposerCommandItem, { type: "skill" }>) => {
+      const { snapshot, trigger } = resolveActiveComposerTrigger();
+      if (!trigger) return;
+      setComposerDraftSkillMode(composerDraftTarget, {
+        name: item.skill.name,
+        label: formatProviderSkillDisplayName(item.skill),
+      });
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+    },
+    [
+      applyPromptReplacement,
+      composerDraftTarget,
+      resolveActiveComposerTrigger,
+      setComposerDraftSkillMode,
+    ],
+  );
+
+  const clearComposerSkillMode = useCallback(() => {
+    setComposerDraftSkillMode(composerDraftTarget, null);
+  }, [composerDraftTarget, setComposerDraftSkillMode]);
+
   const { onUsageLimitsCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -3230,15 +3293,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (menuIsActive) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
-      if (key === "ArrowDown" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowDown");
+      const action = resolveComposerMenuKeyAction({
+        key,
+        altKey: event.altKey,
+        itemCount: currentItems.length,
+        activeItemType: selectedItem?.type ?? null,
+      });
+      if (action?.kind === "highlight") {
+        nudgeComposerMenuHighlight(action.direction);
         return true;
       }
-      if (key === "ArrowUp" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowUp");
+      if (action?.kind === "pin-mode" && selectedItem?.type === "skill") {
+        pinComposerSkillMode(selectedItem);
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      if (action?.kind === "select" && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
       }
@@ -4121,6 +4190,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-resting-controls-separator="true"
         />
       ) : null}
+      {composerSkillMode ? (
+        <ComposerSkillModeChip
+          skillMode={composerSkillMode}
+          size={composerControlsInStrip ? "xs" : "sm"}
+          onRemove={clearComposerSkillMode}
+        />
+      ) : null}
       <ProviderModelPicker
         isComposerOwned
         disabled={providerCatalogPending}
@@ -4835,6 +4911,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProviderModels,
         interactionMode,
         interactionModeEnabled: planModeUiEnabled,
+        skillMode: composerSkillMode,
       }),
       validateProviderInput: (providerInput: string) => {
         const validationMessage = getComposerSubmissionValidationMessage({
@@ -4883,6 +4960,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderModels,
       interactionMode,
       planModeUiEnabled,
+      composerSkillMode,
       compactThreadContext,
       restoreAfterTimelineReachedEnd,
       getTimelineScrollableNode,

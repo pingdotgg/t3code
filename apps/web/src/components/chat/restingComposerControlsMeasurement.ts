@@ -66,15 +66,22 @@ export function measureRestingComposerControls(
   const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
+  // A pinned skill mode leads the cluster and never moves into overflow, so
+  // its width belongs with the picker rather than the hideable blocks.
+  const skillModeChip = controls.querySelector<HTMLElement>("[data-composer-skill-mode-chip]");
+  const skillModeChipWidth = skillModeChip ? elementOuterWidth(skillModeChip) : 0;
+  const skillModeChipAndGapWidth = skillModeChipWidth > 0 ? skillModeChipWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   return {
     gap,
     naturalFixedWidth:
       (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+      separatorAndGapWidth +
+      skillModeChipAndGapWidth,
     minimumFixedWidth:
       (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+      separatorAndGapWidth +
+      skillModeChipAndGapWidth,
     blockWidths: blocks.map(elementOuterWidth),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
   };

@@ -32,6 +32,7 @@ import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import type { ComposerSkillMode } from "@t3tools/shared/composerTrigger";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -256,6 +257,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  skillMode: Schema.optionalKey(Schema.Struct({ name: Schema.String, label: Schema.String })),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -393,6 +395,7 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  skillMode: ComposerSkillMode | null;
 }
 
 /**
@@ -601,6 +604,10 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setSkillMode: (
+    threadRef: ComposerThreadTarget,
+    skillMode: ComposerSkillMode | null | undefined,
+  ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
@@ -774,6 +781,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  skillMode: null,
 });
 
 /**
@@ -797,6 +805,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    skillMode: null,
   };
 }
 
@@ -890,7 +899,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.skillMode === null
   );
 }
 
@@ -1930,6 +1940,12 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const skillMode =
+      draftCandidate.skillMode &&
+      typeof draftCandidate.skillMode.name === "string" &&
+      typeof draftCandidate.skillMode.label === "string"
+        ? { name: draftCandidate.skillMode.name, label: draftCandidate.skillMode.label }
+        : null;
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
       terminalContexts.length,
@@ -1993,7 +2009,8 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      !skillMode
     ) {
       continue;
     }
@@ -2025,6 +2042,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(skillMode ? { skillMode } : {}),
     };
   }
 
@@ -2063,7 +2081,9 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
         modelSelectionExplicit: _modelSelectionExplicit,
         ...retained
       } = draft;
-      return retained.runtimeMode || retained.interactionMode ? [[threadKey, retained]] : [];
+      return retained.runtimeMode || retained.interactionMode || retained.skillMode
+        ? [[threadKey, retained]]
+        : [];
     }),
   );
 }
@@ -2127,7 +2147,8 @@ export function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.skillMode === null
     ) {
       continue;
     }
@@ -2206,6 +2227,7 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.skillMode ? { skillMode: { ...draft.skillMode } } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2469,6 +2491,7 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    skillMode: persistedDraft.skillMode ? { ...persistedDraft.skillMode } : null,
   };
 }
 
@@ -3263,6 +3286,45 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               interactionMode: nextInteractionMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setSkillMode: (threadRef, skillMode) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          const nextSkillMode =
+            typeof skillMode?.name === "string" && skillMode.name.trim().length > 0
+              ? skillMode
+              : null;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && nextSkillMode === null) {
+              return state;
+            }
+            const base = existing ?? createEmptyThreadDraft();
+            // The picker hands over a fresh object on every pick, so identity
+            // would report a change even when the same skill is re-pinned.
+            const skillModeUnchanged =
+              (base.skillMode === null && nextSkillMode === null) ||
+              (base.skillMode !== null &&
+                nextSkillMode !== null &&
+                base.skillMode.name === nextSkillMode.name &&
+                base.skillMode.label === nextSkillMode.label);
+            if (skillModeUnchanged) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...base,
+              skillMode: nextSkillMode,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

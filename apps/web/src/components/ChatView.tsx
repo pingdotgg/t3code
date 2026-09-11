@@ -59,6 +59,10 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import {
+  type ComposerSkillMode,
+  applyComposerSkillModePrefix,
+} from "@t3tools/shared/composerTrigger";
+import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
   resolvePromptInjectedEffort,
@@ -669,11 +673,17 @@ function formatOutgoingPrompt(params: {
   model: string | null;
   models: ReadonlyArray<ServerProvider["models"][number]>;
   effort: string | null;
+  skillMode: ComposerSkillMode | null;
   text: string;
 }): string {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
-  return applyClaudePromptEffortPrefix(params.text, promptEffort);
+  // The effort prefix has to stay at the very start for Claude to honour it,
+  // so the skill mention goes underneath it.
+  return applyClaudePromptEffortPrefix(
+    applyComposerSkillModePrefix(params.text, params.skillMode),
+    promptEffort,
+  );
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -6752,6 +6762,7 @@ export default function ChatView(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      skillMode: ctxSkillMode,
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
@@ -6878,6 +6889,7 @@ export default function ChatView(props: ChatViewProps) {
         model: ctxSelectedModel,
         models: ctxSelectedProviderModels,
         effort: ctxSelectedPromptEffort,
+        skillMode: ctxSkillMode,
         text: followUp.text.trim(),
       });
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
@@ -6976,6 +6988,7 @@ export default function ChatView(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
+      skillMode: ctxSkillMode,
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
@@ -7704,6 +7717,7 @@ export default function ChatView(props: ChatViewProps) {
         selectedProviderModels: ctxSelectedProviderModels,
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
+        skillMode: ctxSkillMode,
       } = sendCtx;
 
       const threadIdForSend = activeThread.id;
@@ -7714,6 +7728,7 @@ export default function ChatView(props: ChatViewProps) {
         model: ctxSelectedModel,
         models: ctxSelectedProviderModels,
         effort: ctxSelectedPromptEffort,
+        skillMode: ctxSkillMode,
         text: trimmed,
       });
 
@@ -7852,6 +7867,7 @@ export default function ChatView(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      skillMode: ctxSkillMode,
     } = sendCtx;
 
     const createdAt = new Date().toISOString();
@@ -7863,6 +7879,7 @@ export default function ChatView(props: ChatViewProps) {
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
+      skillMode: ctxSkillMode,
       text: implementationPrompt,
     });
     if (composerRef.current?.validateProviderInput(outgoingImplementationPrompt) === false) {

@@ -115,6 +115,52 @@ export function detectComposerTrigger(
   };
 }
 
+export interface ComposerSkillMode {
+  /** Provider skill name — the token body of the `$name` mention. */
+  name: string;
+  /** Display label shown on the composer chip. */
+  label: string;
+}
+
+/**
+ * Whether the text opens with a `/command` the provider expands itself.
+ * Anything prepended to one leaves prose the provider never runs, so every
+ * prompt prefix has to skip it. Command names come from arbitrary file names
+ * ("/deploy.prod", "/plugin:skill"), so any first token without a second
+ * slash counts; an absolute path like "/home/theo/app.ts" does not.
+ */
+export function startsWithProviderSlashCommand(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/u.test(text.trim());
+}
+
+export function applyComposerSkillModePrefix(
+  text: string,
+  mode: ComposerSkillMode | null | undefined,
+): string {
+  const name = mode?.name.trim();
+  if (!name) {
+    return text;
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return text;
+  }
+  // A recalled or resent prompt already carries the mention, so prefixing it
+  // again would double it. The token has to end at a boundary, since
+  // "$reviewer" names a different skill than "$review".
+  const mention = `$${name}`;
+  if (trimmed.startsWith(mention)) {
+    const next = trimmed.charAt(mention.length);
+    if (next === "" || isWhitespace(next)) {
+      return text;
+    }
+  }
+  if (startsWithProviderSlashCommand(trimmed)) {
+    return text;
+  }
+  return `$${name} ${text}`;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

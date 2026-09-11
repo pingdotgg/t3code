@@ -51,7 +51,7 @@ describe("ComposerCommandMenu", () => {
         resolvedTheme="dark"
         isLoading={false}
         triggerKind="skill"
-        activeItemId="skill:codex:browser"
+        activeItemId={null}
         onHighlightedItemChange={() => {}}
         onSelect={() => {}}
       />,
@@ -86,7 +86,7 @@ describe("ComposerCommandMenu", () => {
         resolvedTheme="dark"
         isLoading={false}
         triggerKind="slash-command"
-        activeItemId="skill:codex:ask-matt"
+        activeItemId={null}
         onHighlightedItemChange={() => {}}
         onSelect={() => {}}
       />,
@@ -97,5 +97,39 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("lucide-folder");
     expect(markup).toContain(">Repo</span>");
     expect(markup).toContain("Find the right skill or workflow");
+  });
+
+  it("swaps the source badge for the mode hint on the highlighted skill", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "skill:codex:browser",
+            type: "skill",
+            provider: ProviderDriverKind.make("codex"),
+            skill: {
+              name: "browser",
+              path: "/Users/maria/.codex/plugins/browser/skills/browser/SKILL.md",
+              scope: "user",
+              enabled: true,
+            },
+            label: "Browser",
+            description: "Open and control the in-app browser",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="skill"
+        activeItemId="skill:codex:browser"
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Mode");
+    // The modifier glyph is platform-dependent; the key name is not.
+    expect(markup).toContain("Enter");
+    expect(markup).not.toContain(">App Skill</span>");
+    expect(markup).not.toContain('data-slot="badge"');
   });
 });
