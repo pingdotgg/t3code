@@ -10,6 +10,7 @@ import type { PreviewMiniPlayerPosition, PreviewMiniPlayerSize } from "~/preview
 import type { DeviceScreenSize } from "../device/deviceStream";
 
 export const PREVIEW_MINI_PLAYER_EDGE_GAP = 12;
+export const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
 // The mini-player shell straddles this webview at 47 and 49; dialogs begin at 50.
 export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 // A fresh player is the largest box at the source aspect ratio that fits here.
@@ -55,6 +56,19 @@ export function resolveDeviceMiniPlayerSourceSize(
   const long = Math.max(screen.width, screen.height);
   const short = Math.min(screen.width, screen.height);
   return landscape ? { width: long, height: short } : { width: short, height: long };
+}
+
+/**
+ * Simulators and emulators stream a rectangular framebuffer with the display's
+ * rounded corners filled black. Clipping the player at a phone-like radius,
+ * scaled with its short side, keeps those corners out of the frame; the sliver
+ * of screen lost under the curve is status-bar padding on every current phone.
+ */
+export function resolveDeviceMiniPlayerCornerRadius(player: PreviewMiniPlayerSize): number {
+  return Math.max(
+    PREVIEW_MINI_PLAYER_CORNER_RADIUS,
+    Math.round(Math.min(player.width, player.height) * 0.14),
+  );
 }
 
 const availableArea = (

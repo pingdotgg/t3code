@@ -5,6 +5,7 @@ import {
   clampPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_EDGE_GAP,
   resizePreviewMiniPlayer,
+  resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
@@ -59,6 +60,14 @@ describe("resolveDeviceMiniPlayerSourceSize", () => {
         container,
       }),
     ).toMatchObject({ width: 240, height: 520 });
+  });
+});
+
+describe("resolveDeviceMiniPlayerCornerRadius", () => {
+  it("scales with the player's short side and never drops below the frame radius", () => {
+    expect(resolveDeviceMiniPlayerCornerRadius({ width: 240, height: 520 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius({ width: 520, height: 240 })).toBe(34);
+    expect(resolveDeviceMiniPlayerCornerRadius({ width: 60, height: 130 })).toBe(12);
   });
 });
 

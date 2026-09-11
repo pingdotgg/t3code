@@ -34,9 +34,11 @@ import type { DeviceScreenSize } from "../device/deviceStream";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
+  PREVIEW_MINI_PLAYER_CORNER_RADIUS,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
   resizePreviewMiniPlayer,
+  resolveDeviceMiniPlayerCornerRadius,
   resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
@@ -56,7 +58,7 @@ interface Props {
   readonly bottomInset: number;
 }
 
-const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
+const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
 
 // Invisible grab zones straddling each edge; the cursor is the only affordance.
 const RESIZE_HANDLES: ReadonlyArray<{
@@ -226,6 +228,7 @@ function DeviceMiniPlayer({
       bottomInset={bottomInset}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
+      cornerRadius={resolveDeviceMiniPlayerCornerRadius}
     >
       {() => (
         // The stream is DOM, so it takes the band the browser's native webview would.
@@ -262,6 +265,7 @@ function MiniPlayerShell({
   label,
   onOpenInPanel,
   pillActions,
+  cornerRadius = frameCornerRadius,
   children,
 }: {
   readonly threadRef: ScopedThreadRef;
@@ -271,6 +275,8 @@ function MiniPlayerShell({
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
+  /** The clip radius for a given frame; the pill stays inside the curve. */
+  readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -286,6 +292,10 @@ function MiniPlayerShell({
         bottomInset,
       })
     : null;
+
+  const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
+  // Inside a wide curve the default 8px inset would land on the clipped-away corner.
+  const pillInset = Math.max(8, Math.round(radius * 0.55));
 
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -375,10 +385,13 @@ function MiniPlayerShell({
             top: frame.y,
             width: frame.width,
             height: frame.height,
-            borderRadius: PREVIEW_MINI_PLAYER_CORNER_RADIUS,
+            borderRadius: radius,
           }}
         >
-          <div className="group pointer-events-auto absolute right-2 top-2 z-[49] size-3">
+          <div
+            className="group pointer-events-auto absolute z-[49] size-3"
+            style={{ right: pillInset, top: pillInset }}
+          >
             <div
               aria-hidden="true"
               className="absolute right-0 top-0 size-2 rounded-full bg-foreground/25 shadow-sm ring-1 ring-background/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
