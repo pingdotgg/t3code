@@ -18,10 +18,18 @@ const testState = vi.hoisted(() => {
       router.state.location.href = `/draft/${request.params.draftId}`;
     }),
   };
+  let routeTarget: { readonly kind: "draft"; readonly draftId: string } | null = null;
+  let viewedDraftSession: {
+    readonly draftId: string;
+    readonly logicalProjectKey: string;
+    readonly runtimeMode: string;
+  } | null = null;
   const draftStore = {
     getComposerDraft: vi.fn(() => ({})),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
+    getDraftSession: vi.fn((draftId: string) =>
+      viewedDraftSession?.draftId === draftId ? viewedDraftSession : null,
+    ),
     getDraftThread: vi.fn(() => null),
     getStickyRuntimeMode: vi.fn((): string | null => null),
     setStickyRuntimeMode: vi.fn(),
@@ -41,6 +49,8 @@ const testState = vi.hoisted(() => {
     },
     reset(nextStoredDraft: typeof storedDraft) {
       storedDraft = nextStoredDraft;
+      routeTarget = null;
+      viewedDraftSession = null;
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.getComposerDraft.mockReset();
@@ -56,7 +66,20 @@ const testState = vi.hoisted(() => {
         completeProjectFileRead = resolve;
       });
     },
+    routeTarget: {
+      get current() {
+        return routeTarget;
+      },
+      set(next: typeof routeTarget) {
+        routeTarget = next;
+      },
+    },
     router,
+    viewedDraftSession: {
+      set(next: typeof viewedDraftSession) {
+        viewedDraftSession = next;
+      },
+    },
   };
 });
 
@@ -158,7 +181,9 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({
+  resolveThreadRouteTarget: () => testState.routeTarget.current,
+}));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -263,5 +288,53 @@ describe("useNewThreadHandler", () => {
     await pendingOpen;
 
     expect(testState.draftStore.setStickyRuntimeMode).not.toHaveBeenCalled();
+  });
+
+  it("does not sticky a viewed draft's seeded runtime mode", async () => {
+    testState.reset(null);
+    testState.routeTarget.set({ kind: "draft", draftId: "draft-viewed" });
+    testState.viewedDraftSession.set({
+      draftId: "draft-viewed",
+      logicalProjectKey: "remote-project",
+      runtimeMode: "full-access",
+    });
+    // Composer has no explicit pick — only the draft-session seed exists.
+    testState.draftStore.getComposerDraft.mockImplementation(() => ({}));
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setStickyRuntimeMode).not.toHaveBeenCalled();
+  });
+
+  it("stickies carry from an explicit composer pick on a viewed draft", async () => {
+    testState.reset(null);
+    testState.routeTarget.set({ kind: "draft", draftId: "draft-viewed" });
+    testState.viewedDraftSession.set({
+      draftId: "draft-viewed",
+      logicalProjectKey: "remote-project",
+      runtimeMode: "full-access",
+    });
+    testState.draftStore.getComposerDraft.mockImplementation(() => ({
+      runtimeMode: "approval-required",
+    }));
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setStickyRuntimeMode).toHaveBeenCalledWith(
+      "remote-project",
+      "approval-required",
+    );
   });
 });

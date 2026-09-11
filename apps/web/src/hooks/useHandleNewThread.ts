@@ -233,10 +233,16 @@ export function useNewThreadHandler() {
         stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
       });
-      // Only promote carry into sticky. Seeding from the machine default would
-      // permanently shadow later Default access changes (including Auto).
-      // Explicit composer picks update sticky in ChatView.
-      if (sameProjectCarryRuntimeMode != null) {
+      // Carry still fills the immediate new draft, but only promote into sticky
+      // when the carry came from an explicit composer pick or a real server
+      // thread. A draft session always has a seeded runtimeMode from mint; using
+      // that alone would sticky Full access (or whatever was configured at mint)
+      // and permanently shadow later Default access changes.
+      // Explicit composer picks also update sticky in ChatView.
+      const shouldPersistCarryAsSticky =
+        sameProjectCarryRuntimeMode != null &&
+        (carrySourceComposer?.runtimeMode != null || carrySourceShell != null);
+      if (shouldPersistCarryAsSticky) {
         setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
       }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
