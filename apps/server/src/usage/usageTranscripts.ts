@@ -153,6 +153,48 @@ export function parseClaudeLine(line: string): UsageRecord | null {
 /* Codex                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const CODEX_USAGE_FIELDS = [
+  "input_tokens",
+  "cached_input_tokens",
+  "cache_write_input_tokens",
+  "output_tokens",
+  "reasoning_output_tokens",
+  "total_tokens",
+] as const;
+
+type CodexTokenUsage = Readonly<Record<(typeof CODEX_USAGE_FIELDS)[number], number>>;
+
+/** Decode counters without rounding, clamping, or hiding inconsistent subsets. */
+export function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const input = raw["input_tokens"];
+  const output = raw["output_tokens"];
+  if (typeof input !== "number" || typeof output !== "number") return null;
+  const usage = {
+    input_tokens: input,
+    cached_input_tokens: raw["cached_input_tokens"] === undefined ? 0 : raw["cached_input_tokens"],
+    cache_write_input_tokens:
+      raw["cache_write_input_tokens"] === undefined ? 0 : raw["cache_write_input_tokens"],
+    output_tokens: output,
+    reasoning_output_tokens:
+      raw["reasoning_output_tokens"] === undefined ? 0 : raw["reasoning_output_tokens"],
+    total_tokens: raw["total_tokens"] === undefined ? input + output : raw["total_tokens"],
+  };
+  for (const field of CODEX_USAGE_FIELDS) {
+    const count = usage[field];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+  }
+  const counters = usage as CodexTokenUsage;
+  if (
+    counters.cached_input_tokens + counters.cache_write_input_tokens > input ||
+    counters.reasoning_output_tokens > output ||
+    counters.total_tokens < input + output
+  )
+    return null;
+  return counters;
+}
+
 /**
  * Rolling state for a single Codex rollout file.
  *
@@ -164,6 +206,8 @@ export interface CodexScanState {
   model: string;
   sessionId: string;
   lastUsageSignature: string | null;
+  lastCumulativeUsage: CodexTokenUsage | null;
+  malformedRecords: number;
   sawSessionMeta: boolean;
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
@@ -175,6 +219,8 @@ export function initialCodexScanState(): CodexScanState {
     model: "",
     sessionId: "",
     lastUsageSignature: null,
+    lastCumulativeUsage: null,
+    malformedRecords: 0,
     sawSessionMeta: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
@@ -206,9 +252,8 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
  * Feeds one line of a Codex rollout into `state`, returning a record when the
  * line was a usage event.
  *
- * Deltas come from `last_token_usage`. Summing those across a session
- * reconciles with the session's final `total_token_usage`, provided
- * consecutive duplicate events are dropped, which this does.
+ * Cumulative counters validate each request delta. Legacy events without
+ * cumulative counters retain consecutive-payload deduplication.
  */
 export function parseCodexLine(line: string, state: CodexScanState): UsageRecord | null {
   let parsed: unknown;
@@ -250,48 +295,85 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   const info = payloadRecord["info"];
   if (typeof info !== "object" || info === null) return null;
-  const last = (info as Record<string, unknown>)["last_token_usage"];
-  if (typeof last !== "object" || last === null) return null;
-  const lastRecord = last as Record<string, unknown>;
+  const infoRecord = info as Record<string, unknown>;
 
-  // Only an event that is otherwise eligible may consume the duplicate
-  // signature. A token_count arriving before its turn_context (no model yet)
-  // must not poison it, or the re-emitted copy after the model is known would
-  // be skipped as a duplicate and those tokens never counted.
+  // An ineligible event must not consume the counters: Codex can re-emit it
+  // after the model or timestamp becomes available.
   const timestampMs = parseTimestampMs(record["timestamp"]);
-  if (timestampMs === null) return null;
-  if (state.model.length === 0) return null;
+  if (timestampMs === null || state.model.length === 0) return null;
 
-  // Codex re-emits an unchanged token_count on some stream boundaries. Summing
-  // those would double count, so identical consecutive payloads are skipped.
-  const signature = JSON.stringify(lastRecord);
-  if (signature === state.lastUsageSignature) return null;
-  state.lastUsageSignature = signature;
+  const last = readCodexTokenUsage(infoRecord["last_token_usage"]);
+  const rawCumulative = infoRecord["total_token_usage"];
+  const hasCumulative = rawCumulative !== undefined && rawCumulative !== null;
+  const cumulative = hasCumulative ? readCodexTokenUsage(rawCumulative) : null;
 
-  // In a forked rollout the copied parent history was already counted from the
-  // parent's own file. Drop the leading burst; the first usage event separated
-  // from its predecessor by a real turn's worth of time ends it for good.
+  // Copied parent history still establishes the child's counter baseline.
   if (state.suppressingForkCopies) {
     if (timestampMs - state.forkCopyAnchorMs < FORK_COPY_MAX_GAP_MS) {
       state.forkCopyAnchorMs = timestampMs;
+      state.lastCumulativeUsage = cumulative;
+      state.lastUsageSignature = last === null ? null : JSON.stringify(last);
       return null;
     }
     state.suppressingForkCopies = false;
   }
 
-  const inputTokens = int(lastRecord["input_tokens"]);
-  const cachedInputTokens = int(lastRecord["cached_input_tokens"]);
-  const cacheCreationTokens = int(lastRecord["cache_write_input_tokens"]);
-  const outputTokens = int(lastRecord["output_tokens"]);
+  if (last === null || (hasCumulative && cumulative === null)) {
+    state.malformedRecords += 1;
+    return null;
+  }
+
+  const previous = state.lastCumulativeUsage;
+  // A structurally valid counter is the baseline for the next event even if
+  // this delta is inconsistent, so one bad event does not spoil the whole file.
+  state.lastCumulativeUsage = cumulative;
+
+  // Codex fill_to_context_window replaces usage with zero component counters
+  // and a context estimate in total_tokens. It is not a billable request.
+  if (
+    cumulative !== null &&
+    last.input_tokens + last.output_tokens === 0 &&
+    cumulative.input_tokens + cumulative.output_tokens === 0 &&
+    cumulative.total_tokens === infoRecord["model_context_window"]
+  ) {
+    state.lastUsageSignature = null;
+    return null;
+  }
+
+  if (last.total_tokens !== last.input_tokens + last.output_tokens) {
+    state.malformedRecords += 1;
+    return null;
+  }
+
+  const signature = JSON.stringify(last);
+  if (cumulative !== null) {
+    if (previous !== null && CODEX_USAGE_FIELDS.every((key) => cumulative[key] === previous[key])) {
+      return null;
+    }
+    if (
+      !CODEX_USAGE_FIELDS.every((key) => cumulative[key] - (previous?.[key] ?? 0) === last[key])
+    ) {
+      state.malformedRecords += 1;
+      return null;
+    }
+  } else if (signature === state.lastUsageSignature) {
+    return null;
+  }
+  state.lastUsageSignature = signature;
+
+  const inputTokens = last.input_tokens;
+  const cachedInputTokens = last.cached_input_tokens;
+  const cacheCreationTokens = last.cache_write_input_tokens;
+  const outputTokens = last.output_tokens;
 
   const totals: UsageTokenTotals = {
     // Codex reports `input_tokens` inclusive of the cached portion.
-    uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens - cacheCreationTokens),
+    uncachedInputTokens: inputTokens - cachedInputTokens - cacheCreationTokens,
     cachedInputTokens,
     cacheCreationTokens,
     outputTokens,
     // Reported inside output_tokens, surfaced separately for the token mix.
-    reasoningTokens: Math.min(outputTokens, int(lastRecord["reasoning_output_tokens"])),
+    reasoningTokens: last.reasoning_output_tokens,
   };
 
   if (totalTokens(totals) === 0) return null;
