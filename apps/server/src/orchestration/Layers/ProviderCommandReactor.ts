@@ -2,8 +2,10 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationEvent,
+  type OrchestrationProposedPlanId,
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
@@ -45,6 +47,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import * as CheckpointReactor from "../Services/CheckpointReactor.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -211,6 +214,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
+  const checkpointReactor = yield* CheckpointReactor.CheckpointReactor;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1192,9 +1196,58 @@ const make = Effect.gen(function* () {
     processThreadTitleRegenerationSafely,
   );
 
+  const acknowledgeTurnStartSubmission = Effect.fn("acknowledgeTurnStartSubmission")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly turnId: TurnId;
+      readonly sourceProposedPlan?: {
+        readonly threadId: ThreadId;
+        readonly planId: OrchestrationProposedPlanId;
+      };
+    }) {
+      const command = {
+        type: "thread.turn.start.acknowledge" as const,
+        commandId: yield* serverCommandId("thread-turn-start-acknowledge"),
+        threadId: input.threadId,
+        messageId: input.messageId,
+        turnId: input.turnId,
+        ...(input.sourceProposedPlan !== undefined
+          ? { sourceProposedPlan: input.sourceProposedPlan }
+          : {}),
+      };
+      const dispatch = orchestrationEngine.dispatch(command).pipe(Effect.asVoid);
+      yield* dispatch.pipe(
+        Effect.sandbox,
+        Effect.tapError((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logWarning("provider command reactor retrying turn start acknowledgement", {
+                threadId: input.threadId,
+                messageId: input.messageId,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+        Effect.retry({
+          while: (cause) => !Cause.hasInterrupts(cause),
+          schedule: Schedule.exponential("100 millis").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(5))),
+            ),
+          ),
+        }),
+        Effect.catch((cause) => Effect.failCause(cause)),
+      );
+    },
+  );
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     receivedEvent: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
+    // Checkpoint and provider reactors consume the same ordered domain stream on
+    // independent workers. Cross this sequence barrier before a later turn can
+    // mutate files or provider history that an earlier revert is still restoring.
+    yield* checkpointReactor.awaitDomainSequence(receivedEvent.sequence);
     const resumed =
       receivedEvent.commandId !== null ? resumedTurnStarts.get(receivedEvent.commandId) : undefined;
     const event = resumed ? { ...receivedEvent, payload: resumed.event.payload } : receivedEvent;
@@ -1307,7 +1360,7 @@ const make = Effect.gen(function* () {
           tone: "info",
           kind: "provider.auth.signed-out",
           summary: "Provider signed out",
-          payload: { providerInstanceId: instanceId },
+          payload: { providerInstanceId: instanceId, requestId: event.payload.messageId },
           turnId: null,
           createdAt: event.payload.createdAt,
         },
@@ -1488,9 +1541,20 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const send = providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
+    const send = providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.matchCauseEffect({
+        onFailure: recoverTurnStartFailure,
+        onSuccess: (turn) =>
+          acknowledgeTurnStartSubmission({
+            threadId: event.payload.threadId,
+            messageId: event.payload.messageId,
+            turnId: turn.turnId,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
+          }),
+      }),
+    );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
@@ -1862,6 +1926,11 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.as({ interruptedRegenerations: [], refinementThreadIds: [] }));
       }),
     );
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const handoffSequence = yield* orchestrationEngine.latestSequence;
+    const interruptedTurnStarts = yield* (
+      projectionSnapshotQuery.listPendingTurnStarts?.(handoffSequence) ?? Effect.succeed([])
+    ).pipe(Effect.orDie);
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" &&
@@ -1880,14 +1949,49 @@ const make = Effect.gen(function* () {
       }
     });
 
-    // Subscribe before returning, even while event handling waits for server activation.
-    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
-    yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    const liveDomainEvents = domainEvents.pipe(
+      Stream.filter((event) => event.sequence > handoffSequence),
+    );
 
+    // The domain event stream is hot, so work pending before this reactor
+    // starts cannot be resumed. Correlated completions only clear the request
+    // captured here, leaving any newer request untouched.
+    const clearInterruptedTurnStarts = Effect.forEach(
+      interruptedTurnStarts,
+      (pending) =>
+        appendProviderFailureActivity({
+          threadId: pending.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Provider turn start failed",
+          detail:
+            "The server restarted before this turn could start. Send the message again to continue.",
+          turnId: null,
+          createdAt: pending.requestedAt,
+          requestId: pending.messageId,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning(
+                  "provider command reactor failed to clear interrupted turn start",
+                  {
+                    threadId: pending.threadId,
+                    messageId: pending.messageId,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+          ),
+        ),
+      { concurrency: 1, discard: true },
+    );
     // Earlier events do not replay. Clear interrupted requests by their captured
     // IDs, then schedule persisted refinements after subscribing to their events.
-    const recoverTitles = clearInterruptedThreadTitleRegenerations(
-      pendingTitles.interruptedRegenerations,
+    const recoverStartupWork = Effect.all(
+      [
+        clearInterruptedThreadTitleRegenerations(pendingTitles.interruptedRegenerations),
+        clearInterruptedTurnStarts,
+      ],
+      { concurrency: 1, discard: true },
     ).pipe(
       Effect.andThen(
         Effect.forEach(pendingTitles.refinementThreadIds, maybeRefineThreadTitle, {
@@ -1899,7 +2003,7 @@ const make = Effect.gen(function* () {
           return Effect.interrupt;
         }
         return Effect.logWarning(
-          "provider command reactor failed to recover pending thread titles",
+          "provider command reactor failed to clear interrupted startup work",
           {
             failureKind: Cause.hasDies(cause) ? "defect" : "failure",
             reasonCount: cause.reasons.length,
@@ -1909,9 +2013,12 @@ const make = Effect.gen(function* () {
     );
     const activation = yield* ServerActivation;
     if (activation === undefined) {
-      yield* recoverTitles;
+      yield* recoverStartupWork;
+      yield* forkParked(Stream.runForEach(liveDomainEvents, processEvent));
     } else {
-      yield* forkParked(recoverTitles);
+      yield* forkParked(
+        recoverStartupWork.pipe(Effect.andThen(Stream.runForEach(liveDomainEvents, processEvent))),
+      );
     }
   });
 

@@ -208,6 +208,20 @@ const TurnStartMessageLookupInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
 });
+const PendingTurnStartRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestedAt: IsoDateTime,
+});
+const PendingTurnStartRowsInput = Schema.Struct({
+  throughSequence: NonNegativeInt,
+});
+const SubmittedTurnStartRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+  requestedAt: IsoDateTime,
+});
 const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
   activityKinds: Schema.Array(Schema.String),
@@ -369,6 +383,21 @@ function mapTitleRegeneration(row: Schema.Schema.Type<typeof ProjectionThreadDbR
         startedAt: row.titleRegenerationStartedAt,
       }
     : null;
+}
+
+function groupSubmittedTurnStarts(
+  rows: ReadonlyArray<Schema.Schema.Type<typeof SubmittedTurnStartRowSchema>>,
+) {
+  const grouped = new Map<
+    string,
+    Array<{ readonly messageId: MessageId; readonly turnId: TurnId }>
+  >();
+  for (const row of rows) {
+    const starts = grouped.get(row.threadId) ?? [];
+    starts.push({ messageId: row.messageId, turnId: row.turnId });
+    grouped.set(row.threadId, starts);
+  }
+  return grouped;
 }
 
 function mapSessionRow(
@@ -1309,6 +1338,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND message_id = ${messageId}
       LIMIT 1
+    `,
+  });
+
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: PendingTurnStartRowsInput,
+    Result: PendingTurnStartRowSchema,
+    execute: ({ throughSequence }) => sql`
+      SELECT
+        pending.thread_id AS "threadId",
+        pending.pending_message_id AS "messageId",
+        pending.requested_at AS "requestedAt"
+      FROM projection_turns AS pending
+      WHERE pending.turn_id IS NULL
+        AND pending.state = 'pending'
+        AND pending.pending_message_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM orchestration_events AS requested
+          WHERE requested.aggregate_kind = 'thread'
+            AND requested.stream_id = pending.thread_id
+            AND requested.event_type = 'thread.turn-start-requested'
+            AND requested.sequence <= ${throughSequence}
+            AND json_extract(requested.payload_json, '$.messageId') = pending.pending_message_id
+        )
+      ORDER BY pending.row_id ASC
+    `,
+  });
+
+  const listSubmittedTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: SubmittedTurnStartRowSchema,
+    execute: () => sql`
+      SELECT
+        thread_id AS "threadId",
+        pending_message_id AS "messageId",
+        submitted_turn_id AS "turnId",
+        requested_at AS "requestedAt"
+      FROM projection_turns
+      WHERE turn_id IS NULL
+        AND state = 'submitted'
+        AND pending_message_id IS NOT NULL
+        AND submitted_turn_id IS NOT NULL
+        AND checkpoint_turn_count IS NULL
+      ORDER BY thread_id ASC, row_id ASC
     `,
   });
 
@@ -2386,6 +2459,14 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listSubmittedTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listSubmittedTurnStarts:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listSubmittedTurnStarts:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2405,6 +2486,7 @@ pending_approval_requests AS (
             pullRequestRows,
             sessionRows,
             latestTurnRows,
+            submittedTurnStartRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
@@ -2477,6 +2559,13 @@ pending_approval_requests AS (
                   updatedAt = maxIso(updatedAt, row.completedAt);
                 }
               }
+              for (let index = 0; index < submittedTurnStartRows.length; index += 1) {
+                const row = submittedTurnStartRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.requestedAt);
+              }
               for (let index = 0; index < stateRows.length; index += 1) {
                 const row = stateRows[index];
                 if (!row) {
@@ -2486,6 +2575,7 @@ pending_approval_requests AS (
               }
 
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const submittedTurnStartsByThread = groupSubmittedTurnStarts(submittedTurnStartRows);
               for (let index = 0; index < latestTurnRows.length; index += 1) {
                 const row = latestTurnRows[index];
                 if (!row) {
@@ -2520,6 +2610,7 @@ pending_approval_requests AS (
                 if (!row) {
                   continue;
                 }
+                const submittedTurnStarts = submittedTurnStartsByThread.get(row.threadId) ?? [];
                 threads.push({
                   id: row.threadId,
                   projectId: row.projectId,
@@ -2549,6 +2640,7 @@ pending_approval_requests AS (
                   activeOrderKey: row.activeOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
+                  ...(submittedTurnStarts.length === 0 ? {} : { submittedTurnStarts }),
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -3282,6 +3374,18 @@ pending_approval_requests AS (
     }));
   });
 
+  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = (
+    throughSequence,
+  ) =>
+    listPendingTurnStartRows({ throughSequence }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listPendingTurnStarts:query",
+          "ProjectionSnapshotQuery.listPendingTurnStarts:decodeRow",
+        ),
+      ),
+    );
+
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
@@ -3744,6 +3848,7 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    listPendingTurnStarts,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
