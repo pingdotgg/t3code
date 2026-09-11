@@ -8455,7 +8455,6 @@ export default function ChatView(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={displayedTimeline.displayThreadKey ?? activeThread.id}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
                 isCompacting={isCompacting}
