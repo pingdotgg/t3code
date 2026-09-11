@@ -1583,17 +1583,19 @@ code {
 }
 
 /* Scope text tokens to conversation content; spacing and app chrome keep using rem. */
-.conversation-font-scope {
-  --conversation-text-unit: var(--font-size-conversation, 1rem);
-  --conversation-font-scale: var(--font-scale-conversation, 1);
-  --text-xs: calc(var(--conversation-text-unit) * 0.75);
-  --text-sm: calc(var(--conversation-text-unit) * 0.875);
-  --text-base: var(--conversation-text-unit);
-  --text-lg: calc(var(--conversation-text-unit) * 1.125);
-  --text-xl: calc(var(--conversation-text-unit) * 1.25);
-  --text-2xl: calc(var(--conversation-text-unit) * 1.5);
-  --text-3xl: calc(var(--conversation-text-unit) * 1.875);
-  font-size: var(--conversation-text-unit);
+@layer components {
+  .conversation-font-scope {
+    --conversation-text-unit: var(--font-size-conversation, 1rem);
+    --conversation-font-scale: var(--font-scale-conversation, 1);
+    --text-xs: calc(var(--conversation-text-unit) * 0.75);
+    --text-sm: calc(var(--conversation-text-unit) * 0.875);
+    --text-base: var(--conversation-text-unit);
+    --text-lg: calc(var(--conversation-text-unit) * 1.125);
+    --text-xl: calc(var(--conversation-text-unit) * 1.25);
+    --text-2xl: calc(var(--conversation-text-unit) * 1.5);
+    --text-3xl: calc(var(--conversation-text-unit) * 1.875);
+    font-size: var(--conversation-text-unit);
+  }
 }
 
 /* Code blocks in chat carry the size preference. Scoped to chat markdown
