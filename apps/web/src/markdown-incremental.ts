@@ -34,7 +34,7 @@ function shiftPositions(node: Root | RootContent, offset: number, lines: number)
  * prefix on every token. A closed top-level fence followed by a blank line is a
  * parsing boundary. Definitions are document-wide, so they require a full parse.
  */
-export function createIncrementalMarkdownParser(parse: Parser): Parser {
+function createIncrementalMarkdownParser(parse: Parser): Parser {
   let cached: ParsedPrefix | undefined;
 
   return (source, file) => {
