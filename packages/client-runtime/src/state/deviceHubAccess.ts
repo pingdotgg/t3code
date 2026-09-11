@@ -47,13 +47,14 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
     const ticket = yield* executeAuthenticatedEnvironmentHttpRequest({
+      group: "auth",
       prepared: input.prepared,
       signer,
       remoteAuthorization,
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/websocket-ticket"),
       timeoutMs: TICKET_TIMEOUT_MS,
-      request: ({ client, headers }) => client.auth.webSocketTicket({ headers }),
+      request: ({ client, headers }) => client.webSocketTicket({ headers }),
     });
     return {
       httpBase,
