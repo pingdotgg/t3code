@@ -24,8 +24,10 @@ import {
   TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
@@ -33,8 +35,7 @@ import {
   nextGrokPlanModeActive,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
-import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -212,6 +213,132 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect("emits monitor task.started then post-turn task.completed", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-monitor-post-turn");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const taskCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "task.completed"
+              ? Deferred.succeed(taskCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "watch the unit",
+        attachments: [],
+      });
+      yield* Deferred.await(taskCompleted).pipe(Effect.timeout("3 seconds"));
+
+      const started = runtimeEvents.find(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.started" }> =>
+          event.type === "task.started",
+      );
+      const completed = runtimeEvents.find(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.completed" }> =>
+          event.type === "task.completed",
+      );
+      const turnCompletedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "turn.completed",
+      );
+      const taskCompletedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "task.completed",
+      );
+      const toolEventsAfterTurn = runtimeEvents
+        .slice(turnCompletedIndex + 1)
+        .filter((event) => event.type === "item.updated" || event.type === "item.completed");
+
+      assert.isDefined(started);
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskType, "monitor");
+        assert.equal(String(started.payload.taskId), "01a05f41-5107-7550-821e-79e8d1cd7687");
+      }
+      assert.isDefined(completed);
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.status, "completed");
+        assert.equal(String(completed.payload.taskId), "01a05f41-5107-7550-821e-79e8d1cd7687");
+      }
+      assert.isAtLeast(turnCompletedIndex, 0);
+      assert.isAbove(taskCompletedIndex, turnCompletedIndex);
+      assert.equal(completed?.turnId, undefined);
+      assert.deepEqual(toolEventsAfterTurn, []);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("emits task.started shell from BackgroundTaskStarted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-background-task-started");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const taskStarted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "task.started" ? Deferred.succeed(taskStarted, undefined) : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "sleep then echo",
+        attachments: [],
+      });
+      yield* Deferred.await(taskStarted).pipe(Effect.timeout("3 seconds"));
+
+      const started = runtimeEvents.find(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "task.started" }> =>
+          event.type === "task.started",
+      );
+      assert.isDefined(started);
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskType, "shell");
+        assert.equal(started.payload.description, "sleep 40; echo done-a");
+        assert.equal(String(started.payload.taskId), "call-fb9d0000-0000-0000-0000-000000000026");
+      }
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("sends runtime context with the current model without changing saved prompts", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");
