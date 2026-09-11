@@ -37,7 +37,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+`previewOpen`, `modelPickerOpen`, and `usagePageOpen`. Unknown keys evaluate to `false`.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
