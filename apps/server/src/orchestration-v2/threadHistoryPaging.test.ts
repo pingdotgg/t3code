@@ -175,6 +175,40 @@ describe("threadHistoryPaging", () => {
     expect(item.payloadBudgetExceeded).toBe(false);
   });
 
+  it("keeps background turns with user turns, with main's 150-turn fan-out ceiling", () => {
+    const items = Array.from({ length: 161 }, (_, turn) => {
+      const row = makeRow(turn * 2);
+      if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
+      const prompt: OrchestrationV2ProjectedTurnItem = {
+        ...row,
+        item: {
+          ...row.item,
+          type: "user_message",
+          createdBy: turn === 0 ? "user" : "agent",
+          creationSource: "provider",
+          inputIntent: "turn_start",
+          messageId: MessageId.make(`prompt-${turn}`),
+          text: `Prompt ${turn}`,
+          attachments: [],
+        },
+      };
+      return [prompt, makeRow(turn * 2 + 1)];
+    }).flat();
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    expect(first.items).toHaveLength(300);
+    expect(first.items[0]?.sourceItemId).toBe("item-22");
+    const older = selectHistoryPageFromCursor({
+      items,
+      cursor: first.nextCursor!,
+      snapshotSequence: 1,
+    });
+    expect(older.items).toHaveLength(22);
+    expect(older.hasMoreHistory).toBe(false);
+    expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
+      items.map((row) => row.sourceItemId),
+    );
+  });
+
   it("encodes opaque cursors with stable source identity", () => {
     const cursor = encodeThreadHistoryCursor({
       snapshotSequence: 9,

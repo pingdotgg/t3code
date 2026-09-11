@@ -26,6 +26,8 @@ import {
   InvalidThreadHistoryCursorError,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+  THREAD_HISTORY_PAGE_POLICY,
+  OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { buildActiveShellSnapshot } from "./ShellStream.ts";
@@ -141,9 +143,11 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
-            // The SQL anchor is inclusive. History paging excludes that row,
-            // then needs one more row to prove another page exists.
             rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+            userTurnLimit:
+              anchorItemId === undefined
+                ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
+                : OLDER_THREAD_USER_TURN_LIMIT,
             ...(anchorItemId === undefined ? {} : { anchorItemId }),
             ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
           })
