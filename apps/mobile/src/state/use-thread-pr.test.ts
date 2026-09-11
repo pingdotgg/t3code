@@ -89,9 +89,41 @@ describe("presentThreadLinkedPullRequests", () => {
       kind: "pull-request",
       label: "+2",
       others: 1,
-      textClassName: "text-foreground-muted",
+      state: "open",
+      isDraft: false,
+      textClassName: "text-adaptive-emerald-600-400",
     });
   });
+
+  it.each([
+    ["closed", false, "closed", false, "closed", false, "text-adaptive-rose-600-400"],
+    ["open", true, "open", true, "open", true, "text-foreground-muted"],
+    ["open", true, "open", false, "open", false, "text-adaptive-emerald-600-400"],
+    ["closed", false, "open", false, "open", false, "text-adaptive-emerald-600-400"],
+    ["merged", false, "merged", false, "merged", false, "text-adaptive-violet-600-400"],
+    ["closed", false, "merged", false, "closed", false, "text-adaptive-rose-600-400"],
+  ] as const)(
+    "colors linked %s (draft %s) and %s (draft %s) by their aggregate state",
+    (firstState, firstDraft, secondState, secondDraft, state, isDraft, textClassName) => {
+      const first = linkedPr(1);
+      const second = linkedPr(2);
+      expect(
+        presentThreadLinkedPullRequests([
+          { ...first, snapshot: { ...first.snapshot!, state: firstState, isDraft: firstDraft } },
+          {
+            ...second,
+            snapshot: { ...second.snapshot!, state: secondState, isDraft: secondDraft },
+          },
+        ]),
+      ).toMatchObject({
+        label: "+2",
+        state,
+        isDraft,
+        textClassName,
+        accessibilityLabel: `2 linked pull requests, overall ${isDraft ? "draft" : state}`,
+      });
+    },
+  );
 
   it("uses the top of a derived stack even when its bottom was linked later", () => {
     const bottom = linkedPr(1, { linkedAt: "2026-09-09T00:00:00.000Z" });
