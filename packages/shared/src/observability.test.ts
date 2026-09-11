@@ -474,6 +474,9 @@ describe("otlpHeadersTransportIssue", () => {
     expect(
       otlpHeadersTransportIssue(headers, [
         "http://localhost:4318/v1/traces",
+        "http://127.0.0.1:4318/v1/traces",
+        "http://127.0.0.2:4318/v1/traces",
+        "http://127.255.255.255:4318/v1/traces",
         "http://[::1]:4318/v1/metrics",
       ]),
     ).toBeUndefined();
