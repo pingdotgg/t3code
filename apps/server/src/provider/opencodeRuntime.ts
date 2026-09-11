@@ -438,9 +438,9 @@ export function openCodeQuestionId(
  * puts in the prompt.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
+const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
 
-export function isOpenCodeNativeFilePart(input: {
+function isOpenCodeNativeFilePart(input: {
   readonly mimeType: string;
   readonly sizeBytes: number;
 }): boolean {
@@ -945,10 +945,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...commandContext,
         }).pipe(Effect.exit);
 
-      // First attempt — run all inventory commands in parallel.
+      // Every OpenCode CLI command opens the same shared SQLite database. Running them
+      // concurrently causes "database is locked" failures, so run them one at a time.
       const [initialModelsResult, initialAgentsResult, initialSkillsResult] = yield* Effect.all(
         [runModelsCli(), runAgentsCli(), runSkillsCli()],
-        { concurrency: "unbounded" },
+        { concurrency: 1 },
       );
       let modelsResult = initialModelsResult;
       let agentsResult = initialAgentsResult;
@@ -966,7 +967,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             needsAgentsRetry ? runAgentsCli() : Effect.succeed(agentsResult),
             needsSkillsRetry ? runSkillsCli() : Effect.succeed(skillsResult),
           ],
-          { concurrency: "unbounded" },
+          { concurrency: 1 },
         );
         modelsResult = m2;
         agentsResult = a2;

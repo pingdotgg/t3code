@@ -1,4 +1,10 @@
-import { ProjectId, ThreadId, TurnId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  TurnId,
+  ProviderInstanceId,
+  OrchestrationProposedPlanId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,15 +15,21 @@ import * as Statement from "effect/unstable/sql/Statement";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 import { ProjectionProjectRepositoryLive } from "./ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "./ProjectionThreads.ts";
-import { ProjectionThreadProposedPlanRepositoryLive } from "./ProjectionThreadProposedPlans.ts";
+import * as ProjectionThreadPullRequests from "../ProjectionThreadPullRequests.ts";
 import { ProjectionProjectRepository } from "../Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../Services/ProjectionThreads.ts";
+import {
+  ProjectionThreadPullRequestRepository,
+  type ProjectionThreadPullRequest,
+} from "../ProjectionThreadPullRequests.ts";
+import { ProjectionThreadProposedPlanRepositoryLive } from "./ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadProposedPlanRepository } from "../Services/ProjectionThreadProposedPlans.ts";
 
 const projectionRepositoriesLayer = it.layer(
   Layer.mergeAll(
     ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+    ProjectionThreadPullRequests.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadProposedPlanRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     SqlitePersistenceMemory,
   ),
@@ -229,6 +241,46 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
+  it.effect("reads only the requested plan in its thread", () =>
+    Effect.gen(function* () {
+      const plans = yield* ProjectionThreadProposedPlanRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("plan-query-thread");
+      const planId = OrchestrationProposedPlanId.make("plan-query-target");
+      yield* plans.upsert({
+        planId,
+        threadId,
+        turnId: null,
+        planMarkdown: "Keep this plan",
+        implementedAt: "2026-03-01T00:01:00.000Z",
+        implementationThreadId: ThreadId.make("implementation-thread"),
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:01:00.000Z",
+      });
+      // An unrelated old row must not be loaded or decoded by the exact lookup.
+      yield* sql`
+        INSERT INTO projection_thread_proposed_plans (
+          plan_id, thread_id, turn_id, plan_markdown, implemented_at,
+          implementation_thread_id, created_at, updated_at
+        ) VALUES (
+          'unrelated-plan', ${threadId}, NULL, '', NULL, NULL,
+          '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z'
+        )
+      `;
+      const plan = Option.getOrThrow(yield* plans.getByPlanId({ threadId, planId }));
+      assert.equal(plan.planMarkdown, "Keep this plan");
+      assert.equal(plan.implementedAt, "2026-03-01T00:01:00.000Z");
+      assert.isTrue(
+        Option.isNone(
+          yield* plans.getByPlanId({
+            threadId: ThreadId.make("another-thread"),
+            planId,
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("stores SQL NULL for missing project model options", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectionProjectRepository;
@@ -416,7 +468,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
-  it.effect("round-trips a linked pull request through the thread row", () =>
+  it.effect("round-trips manual and branch pull requests through the thread row", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;
       const linkedPullRequest = {
@@ -424,6 +476,11 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         repository: "pingdotgg/t3code",
         number: 42,
         url: "https://github.com/pingdotgg/t3code/pull/42",
+      };
+      const branchPullRequest = {
+        ...linkedPullRequest,
+        number: 43,
+        url: "https://github.com/pingdotgg/t3code/pull/43",
       };
 
       yield* threads.upsert({
@@ -439,6 +496,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         branch: null,
         worktreePath: null,
         linkedPullRequest,
+        branchPullRequest,
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -458,6 +516,10 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const persisted = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });
       assert.deepStrictEqual(Option.getOrNull(persisted)?.linkedPullRequest, linkedPullRequest);
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.branchPullRequest, branchPullRequest);
+
+      const listed = yield* threads.listByProjectId({ projectId: linkedPullRequest.projectId });
+      assert.deepStrictEqual(listed[0]?.branchPullRequest, branchPullRequest);
 
       const row = Option.getOrNull(persisted);
       if (row === null) return yield* Effect.die("Expected linked thread row to exist.");
@@ -465,6 +527,172 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const cleared = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });
       assert.strictEqual(Option.getOrNull(cleared)?.linkedPullRequest, null);
+      assert.deepStrictEqual(Option.getOrNull(cleared)?.branchPullRequest, branchPullRequest);
+
+      yield* threads.upsert({ ...row, branchPullRequest: null });
+      const branchCleared = yield* threads.getById({ threadId: row.threadId });
+      assert.strictEqual(Option.getOrNull(branchCleared)?.branchPullRequest, null);
+      assert.deepStrictEqual(Option.getOrNull(branchCleared)?.linkedPullRequest, linkedPullRequest);
+    }),
+  );
+
+  it.effect("uses one Azure identity for repository writes, lookups, and deletion", () =>
+    Effect.gen(function* () {
+      const pullRequests = yield* ProjectionThreadPullRequestRepository;
+      const threadId = ThreadId.make("azure-alias-link");
+      const row: ProjectionThreadPullRequest = {
+        threadId,
+        host: "org.visualstudio.com",
+        repository: "project/_git/web",
+        number: 7,
+        url: "https://org.visualstudio.com/project/_git/web/pullrequest/7",
+        source: "manual",
+        linkedAt: "2026-09-09T00:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      yield* pullRequests.upsert(row);
+      yield* pullRequests.upsert({
+        ...row,
+        host: "dev.azure.com",
+        repository: "org/project/_git/web",
+      });
+      const found = yield* pullRequests.listByPullRequest({
+        host: "ssh.dev.azure.com",
+        repository: "v3/org/project/web",
+        number: 7,
+      });
+      assert.deepStrictEqual(found, [
+        { ...row, host: "dev.azure.com", repository: "org/project/_git/web" },
+      ]);
+      assert.deepStrictEqual(
+        yield* pullRequests.listByPullRequest({
+          host: "dev.azure.com",
+          repository: "other/project/_git/web",
+          number: 7,
+        }),
+        [],
+      );
+      yield* pullRequests.delete({
+        threadId,
+        host: "vs-ssh.visualstudio.com",
+        repository: "v3/org/project/web",
+        number: 7,
+      });
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId }), []);
+    }),
+  );
+
+  it.effect("round-trips pull request links with JSON snapshot and stack columns", () =>
+    Effect.gen(function* () {
+      const pullRequests = yield* ProjectionThreadPullRequestRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-pr-links");
+      const otherThreadId = ThreadId.make("thread-pr-links-other");
+
+      const unsynced: ProjectionThreadPullRequest = {
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        source: "manual",
+        linkedAt: "2026-03-24T00:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const synced: ProjectionThreadPullRequest = {
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+        url: "https://github.com/pingdotgg/t3code/pull/7",
+        source: "stack",
+        linkedAt: "2026-03-23T00:00:00.000Z",
+        snapshot: {
+          state: "open",
+          title: "Add links",
+          headBranch: "feat/links",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: "2026-03-23T01:00:00.000Z",
+          syncedAt: "2026-03-23T02:00:00.000Z",
+        },
+        stack: {
+          kind: "native",
+          id: "stack-1",
+          number: 1,
+          url: "https://github.com/pingdotgg/t3code/stack/1",
+          base: "main",
+          layers: [
+            { number: 7, headBranch: "feat/links", state: "open" },
+            { number: 42, headBranch: "feat/links-ui", state: "open" },
+          ],
+        },
+      };
+      const sharedOnOtherThread: ProjectionThreadPullRequest = {
+        ...unsynced,
+        threadId: otherThreadId,
+        source: "agent",
+        linkedAt: "2026-03-25T00:00:00.000Z",
+      };
+
+      yield* pullRequests.upsert(unsynced);
+      yield* pullRequests.upsert(synced);
+      yield* pullRequests.upsert(sharedOnOtherThread);
+
+      const rawRows = yield* sql<{
+        readonly number: number;
+        readonly snapshotJson: string | null;
+        readonly stackJson: string | null;
+      }>`
+        SELECT number, snapshot_json AS "snapshotJson", stack_json AS "stackJson"
+        FROM projection_thread_pull_requests
+        WHERE thread_id = ${threadId}
+        ORDER BY number ASC
+      `;
+      assert.strictEqual(rawRows[0]?.number, 7);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepStrictEqual(JSON.parse(rawRows[0]?.snapshotJson ?? "null"), synced.snapshot);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      assert.deepStrictEqual(JSON.parse(rawRows[0]?.stackJson ?? "null"), synced.stack);
+      assert.strictEqual(rawRows[1]?.snapshotJson, null);
+      assert.strictEqual(rawRows[1]?.stackJson, null);
+
+      // Ordered by linked_at, then number.
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId }), [synced, unsynced]);
+
+      // One pull request across threads, ordered by linked_at.
+      assert.deepStrictEqual(
+        yield* pullRequests.listByPullRequest({
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 42,
+        }),
+        [unsynced, sharedOnOtherThread],
+      );
+
+      // Upsert on the composite key replaces snapshot and stack in place.
+      const resynced = { ...unsynced, snapshot: synced.snapshot, stack: null } as const;
+      yield* pullRequests.upsert(resynced);
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId }), [synced, resynced]);
+
+      yield* pullRequests.delete({
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+      });
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId }), [resynced]);
+
+      yield* pullRequests.deleteByThreadIdAndSource({ threadId, source: "manual" });
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId }), []);
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId: otherThreadId }), [
+        sharedOnOtherThread,
+      ]);
+
+      yield* pullRequests.deleteByThreadId({ threadId: otherThreadId });
+      assert.deepStrictEqual(yield* pullRequests.listByThreadId({ threadId: otherThreadId }), []);
     }),
   );
 });

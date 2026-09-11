@@ -1,0 +1,112 @@
+---
+title: Fly
+description: Deploy Effect programs to Fly.io as Apps, Machines, Services, and Sprites.
+---
+
+An App is a globally unique namespace. A Machine is a Firecracker VM
+running a container. A Service is an Effect program running in a Fly
+Machine. A Sprite is an Effect program in an org-scoped sandbox that
+hibernates when idle.
+
+Disks, managed data, secrets, IPs, and certificates are declared in
+the same TypeScript program.
+
+[Set up your org and API token](/fly/setup), then start the
+[tutorial](/fly/tutorial/part-1).
+
+## Compute
+
+- **[Apps](/fly/compute/apps)** — the parent for every other
+  resource except Sprites, Postgres, Redis, and Tigris. Alchemy
+  generates a globally unique name unless you pass one.
+  `https://{appName}.fly.dev` is the public URL.
+- **[Machines](/fly/compute/machines)** — a Firecracker VM running a
+  container image. Use this when you already have an image
+  (`nginx:alpine`, a registry tag). Region, guest size, proxy
+  services, env, and mounts are all props.
+- **[Services](/fly/compute/services)** — an Effect program running
+  in a Machine. Alchemy bundles `main`, builds the image, and
+  updates in place when the hash changes. Set `count` to scale.
+- **[Sprites](/fly/compute/sprites)** — an Effect program in a Fly
+  Sprite. Org-scoped, no parent App. Hibernates when idle. Alchemy
+  writes the bundle onto the Sprite. No Docker image.
+- **[Regions](/fly/compute/regions)** — the datacenter a Machine,
+  Volume, Postgres cluster, or Redis primary lives in. Default
+  `iad`. Changing `region` replaces the resource.
+
+## Frontend
+
+- **[Websites](/fly/frontend/websites)** — Vite, Astro, Next.js,
+  Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku,
+  Octane, Foldkit, Vocs, and StaticSite. Each builds your app and
+  deploys a Node [Service](/fly/compute/services) on a Fly App
+  (`https://{app}.fly.dev`).
+- [`Vite`](/fly/frontend/vite), [`Astro`](/fly/frontend/astro),
+  [`Next.js`](/fly/frontend/nextjs), [`Nuxt`](/fly/frontend/nuxt),
+  [`React Router`](/fly/frontend/react-router),
+  [`SolidStart`](/fly/frontend/solidstart),
+  [`SvelteKit`](/fly/frontend/sveltekit),
+  [`TanStack Start`](/fly/frontend/tanstack-start),
+  [`Waku`](/fly/frontend/waku),
+  [`Octane`](/fly/frontend/octane), [`Foldkit`](/fly/frontend/foldkit),
+  [`Vocs`](/fly/frontend/vocs),
+  [`StaticSite`](/fly/frontend/static-site).
+
+## Data
+
+- **[Volumes](/fly/data/volumes)** — region-local block storage.
+  Mount one into a Service with `MountVolume({ path, sizeGb })`, or
+  pass `mounts` on a Machine. A Volume attaches to **one** Machine;
+  `count: N` creates N disks, not one shared disk.
+- **[Postgres](/fly/data/postgres)** — billed Managed Postgres.
+  Bind `ConnectPostgres` on a Service; pass the connection string
+  to Drizzle or SQL. `migrations` is the same surface as Neon.
+- **[Redis](/fly/data/redis)** — Upstash Redis. Bind
+  `ReadWriteRedis` on a Service.
+- **[Tigris](/fly/data/tigris)** — S3-compatible object storage
+  (`Fly.Bucket`). Bind `PutObject` / `GetObject` on a Service.
+
+## Secrets
+
+- **[Secrets](/fly/data/secrets)** — `Config.redacted` in a Service
+  for values from `.env`. `Fly.Secret` when Fly should own a value
+  shared across Machines. KMS keys are `SecretKey` plus `Encrypt` /
+  `Decrypt` / `Sign` / `Verify`.
+
+## Networking
+
+- **[IPs & certificates](/fly/networking)** — shared or dedicated
+  addresses (`IpAssignment`) so `{app}.fly.dev` answers over IPv4,
+  plus ACME or uploaded TLS certificates for your own hostname.
+
+## What are you building?
+
+| You're building              | Reach for                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| An HTTP API on Fly           | [App](/fly/compute/apps) + [Service](/fly/compute/services)               |
+| A Vite SPA                   | [`Website.Vite`](/fly/frontend/vite)                                      |
+| An SSR site (Astro, Next, Nuxt, …) | [`Website`](/fly/frontend/websites)                                 |
+| A sandbox that can sleep     | [Sprite](/fly/compute/sprites)                                            |
+| A raw container              | [Machine](/fly/compute/machines) with an `image`                          |
+| A background worker          | [Service](/fly/compute/services) with `ServerHost.run`                    |
+| Persistent disk              | [MountVolume](/fly/data/volumes) or Machine `mounts`                      |
+| Managed Postgres             | [Postgres](/fly/data/postgres) + `ConnectPostgres`                        |
+| Upstash Redis                | [Redis](/fly/data/redis) + `ReadRedis` / `WriteRedis` / `ReadWriteRedis`  |
+| Object storage               | [Tigris](/fly/data/tigris) + `PutObject` / `GetObject`                     |
+| N replicas behind fly.dev    | Service `count`, or more [Machine](/fly/compute/machines) resources       |
+| Restore a disk               | [VolumeSnapshot](/fly/data/volumes#snapshots) + mount `snapshotId`        |
+| Config / API tokens          | [`Config.redacted`](/fly/data/secrets). [`Fly.Secret`](/fly/data/secrets) when Fly should own it |
+| Sign / encrypt in-app        | [SecretKey](/fly/data/secrets#kms-keys) + `Encrypt` / `Sign`              |
+| `{app}.fly.dev` over IPv4    | [IpAssignment](/fly/networking) `type: "shared_v4"`                       |
+| Your own domain              | [Certificate](/fly/networking#certificates) (ACME)                        |
+
+## Where next
+
+- [Setup](/fly/setup) — create a Fly org, generate an API token, and
+  connect alchemy.
+- [Tutorial](/fly/tutorial/part-1) — from empty directory to an App
+  running an HTTP Service with a mounted Volume and a secret.
+- [Websites](/fly/frontend/websites) — Vite, Astro, Next.js, and
+  other framework sites as a Node Service.
+- [Providers reference](/providers) — generated API docs for every
+  Fly resource Alchemy ships.

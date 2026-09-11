@@ -31,10 +31,13 @@ const sampleEnv = () =>
     stack: { name: "test", stage: "dev" },
   });
 
-for (const runtime of runtimes()) {
-  describe.skipIf(!runtime.available)(
-    `Local.RpcServer (${runtime.name})`,
-    () => {
+// Concurrent at both levels: every test spawns its own isolated child
+// process, and two of them deliberately wait out the sidecar's ~10s
+// parent-connect self-termination. Run serially (the file default) those
+// two waits alone would stack to ~20s of wall clock.
+describe.concurrent("Local.RpcServer", () => {
+  for (const runtime of runtimes()) {
+    describe.concurrent.skipIf(!runtime.available)(runtime.name, () => {
       const [bin, ...args] = runtime.argv(FIXTURE_TS);
       const launch = ChildProcess.make(bin, args, {
         env: {
@@ -116,6 +119,6 @@ for (const runtime of runtimes()) {
           }).pipe(Effect.scoped, Effect.provide(PlatformServices)),
         { timeout: 30_000 },
       );
-    },
-  );
-}
+    });
+  }
+});

@@ -1,0 +1,331 @@
+---
+title: React SPA
+description: Deploy a React single-page app to AWS with AWS.Website.Vite — the Vite build on S3 + CloudFront, deep links answered by index.html out of the box, and Vite's own dev server under alchemy dev.
+sidebar:
+  order: 5
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+export const routerDep = "react-router-dom";
+
+This is the walkthrough for a plain React single-page app on
+[`AWS.Website.Vite`](/aws/frontend/vite): scaffold the project, run
+its own `vite build`, and serve the output from a private S3 bucket
+through CloudFront. The composite is assets-only — it never creates a
+Lambda — and `spa` defaults on, so client-side routes deep-link
+correctly with nothing to configure. For the resource itself and
+every prop, see the
+[Vite resource page](/aws/frontend/vite).
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/vite` and
+`/vite/aws` exports from your project at deploy time. It is only used
+at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Scaffold the app
+
+Start from Vite's official React + TypeScript template:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun create vite@latest web -- --template react-ts\ncd web && bun install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm create vite@latest web -- --template react-ts\ncd web && npm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm create vite web --template react-ts\ncd web && pnpm install && cd ..`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn create vite web --template react-ts\ncd web && yarn install && cd ..`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+That drops a complete project into `./web/` with its own
+`index.html`, `package.json`, and `vite.config.ts`.
+
+## Configure Vite
+
+Your `vite.config.*` loads natively — plugins, aliases, and every
+other non-serializable option work exactly as they do outside
+Alchemy. The React template already registers the React plugin:
+
+```typescript
+// web/vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+});
+```
+
+There is no adapter to install and no build command to wire up:
+Alchemy runs this config programmatically.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack). `rootDir` points at the project directory — the one holding
+`index.html` and `vite.config.ts`:
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Vite("Website", {
+  rootDir: "./web",
+});
+```
+
+`rootDir` defaults to `"."`, so you only set it when the app isn't
+next to your `alchemy.run.ts`.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyReactApp",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+Alchemy runs `vite build` in `rootDir`, uploads `dist/` to a private
+S3 bucket, and serves it through CloudFront. `site.url` is the
+distribution's URL (or `https://<your-domain>` once you pass
+`domain`).
+
+## Client-side routing
+
+Deep links work with no configuration. `spa` defaults to `true`, so a
+request that matches no uploaded file is answered with the index page
+and a `200` — the client router then handles the path.
+
+Add React Router and route on the client:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${routerDep}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+```tsx
+// web/src/main.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Link to="/about">About</Link>
+      <Routes>
+        <Route path="/" element={<h1>Home</h1>} />
+        <Route path="/about" element={<h1>About</h1>} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+```
+
+Loading `https://<your-site>/about` directly serves `index.html` and
+React Router renders the About page — no rewrite rule, no edge
+function to write.
+
+Pretty URLs still win over the fallback: `/about` serves
+`about.html` or `about/index.html` when the build produced one.
+
+## Serve a real 404 instead
+
+Multi-page Vite projects (an `index.html` per route) want a status
+code, not the shell. Set `errorPage` and turn the SPA fallback off —
+the two are mutually exclusive:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Website", {
+  rootDir: "./web",
++  spa: false,
++  errorPage: "404.html",
+});
+```
+
+## Environment variables
+
+A pure SPA has no server, so anything the client reads is inlined
+into the bundle at build time. That is plain Vite: put `VITE_`-prefixed
+keys in a `.env` file at the project root and read them from
+`import.meta.env`.
+
+```sh
+# web/.env
+VITE_API_URL=https://api.example.com
+```
+
+```tsx
+// web/src/api.ts
+const apiUrl = import.meta.env.VITE_API_URL;
+
+export const hello = () => fetch(`${apiUrl}/hello`);
+```
+
+Only `VITE_`-prefixed keys reach the client bundle. A committed
+`.env` is hashed with the rest of the project, so editing one re-runs
+the build on the next deploy. A gitignored one (`.env.local`) is not
+— see [Skip unchanged builds](#skip-unchanged-builds) for how to
+widen the hash.
+
+## Inject another resource's URL
+
+`AWS.Website.Vite` takes no server environment (there is no server),
+so a value that only exists after another resource deploys — an API's
+Function URL, a bucket name — can't be passed to the build through
+the composite. Deploy those apps with
+[`AWS.Website.StaticSite`](/aws/frontend/static-site) instead, which
+runs the build as a command and passes `build.env` to it:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* AWS.Website.StaticSite("Website", {
+    path: "./web",
+    build: {
+      command: "npm run build",
+      output: "dist",
+      env: {
+        VITE_API_URL: api.url,
+      },
+    },
+    spa: true,
+  });
+
+  return { url: site.url };
+});
+```
+
+Outputs like `api.url` resolve before the build command runs, so Vite
+inlines the deployed URL exactly as it would a `.env` value.
+
+## Skip unchanged builds
+
+Every file under `rootDir` (gitignore rules applied) plus the nearest
+lockfile is content-hashed. A deploy whose inputs are unchanged skips
+the build and the upload entirely. Narrow or widen the hash with
+`memo`, or set `memo: false` to rebuild on every deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Website", {
+  rootDir: "./web",
++  memo: {
++    include: ["src/**", "index.html", "package.json"],
++    lockfile: true,
++  },
+});
+```
+
+Setting `include` (or `exclude`) drops the lockfile from the hash —
+pass `lockfile: true` to keep rebuilding when dependencies change.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Vite's own dev server — native HMR, instant module
+updates — instead of deploying. `site.url` is the local address and
+no AWS resources are created at all: no bucket, no distribution.
+
+The dev server picks an ephemeral port. Pin it when you want the
+local URL stable across runs:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Website", {
+  rootDir: "./web",
++  dev: { port: 3000 },
+});
+```
+
+Wrap the site in `Alchemy.remote()` to deploy the real S3 +
+CloudFront infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Website", {
+  rootDir: "./web",
+  domain: { name: "app.example.com" },
+});
+```
+
+The certificate and Route 53 records are managed for you — the hosted
+zone is inferred from the hostname, and `hostedZoneId` pins it when
+several zones could match. To serve
+several sites from one front door, attach to an
+[`AWS.Website.Router`](/aws/frontend/static-site#compose-sites-with-a-router)
+with `domain: { router, path: "/app" }` instead.
+
+## Where next
+
+- [Vite on AWS](/aws/frontend/vite) — the resource reference: every
+  prop, the `vite` override bag, invalidation, and Router composition
+- [Websites on AWS](/aws/frontend/websites) — the full websites
+  surface, including server-side rendering
+- [Static sites](/aws/frontend/static-site) — the build-command path
+  for any pre-built output

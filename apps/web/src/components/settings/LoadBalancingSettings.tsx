@@ -27,14 +27,21 @@ export function LoadBalancingSettings({
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();
 
+  if (environments.length < 2) {
+    return (
+      <SettingsSection {...searchableSetting("load-balancing")} variant="plain">
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Connect another machine to automatically balance load across environments.
+        </p>
+      </SettingsSection>
+    );
+  }
+
   return (
-    <SettingsSection
-      {...searchableSetting("load-balancing")}
-      description="Choose how often each machine is used. Prefer gives a machine more work when it has capacity; Less often gives it less. Manual only excludes it from automatic selection. Preferences are saved for this client."
-    >
+    <SettingsSection {...searchableSetting("load-balancing")}>
       <SettingsRow
         title="Automatically balance load"
-        description="Automatically choose a connected machine for new threads in shared projects. You can choose a machine in the composer."
+        description="Choose a machine automatically for new threads in shared projects."
         control={
           <Switch
             aria-label="Automatically balance load"

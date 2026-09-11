@@ -24,12 +24,18 @@
         "scripts/cli.ts",
         "src/provider/testFixtures/*.mjs",
       ],
+      // Keep the transitive Effect runtime pinned for standalone npm installs.
       // Native msgpack acceleration and the Vite+ web build prerequisite.
-      "ignoreDependencies": ["msgpackr-extract", "@t3tools/web"],
+      "ignoreDependencies": ["@effect/platform-node-shared", "msgpackr-extract", "@t3tools/web"],
     },
     "apps/desktop": {
       // Electron loads these bundles by filename rather than importing them.
       "entry": [
+        "gnome-extension/extension.js!",
+        "src/electron/WindowsForegroundFocusWorker.ts!",
+        "src/snapShot/GlobalShiftShortcutWorker.ts!",
+        "src/snapShot/RegionSnapShotWorker.ts!",
+        "src/snapShot/SnapShotAccessibilityWorker.ts!",
         "src/main.ts!",
         "src/preload.ts!",
         "src/preview-pick-preload.ts!",

@@ -37,6 +37,7 @@ const baseThread: OrchestrationThread = {
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
+  pullRequests: [],
   deletedAt: null,
   messages: [],
   proposedPlans: [],
@@ -178,24 +179,28 @@ describe("applyThreadDetailEvent", () => {
   describe("thread.settled / thread.unsettled", () => {
     it("sets the settled override and timestamp", () => {
       const settledAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: settledAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.settled",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          settledAt,
-          updatedAt: settledAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: settledAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.settled",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            settledAt,
+            updatedAt: settledAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe("settled");
         expect(result.thread.settledAt).toBe(settledAt);
+        expect(result.thread.activeOrderKey).toBeNull();
       }
     });
 
@@ -234,23 +239,27 @@ describe("applyThreadDetailEvent", () => {
   describe("thread.pinned / thread.unpinned", () => {
     it("sets pinnedAt", () => {
       const pinnedAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: pinnedAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.pinned",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          pinnedAt,
-          updatedAt: pinnedAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: pinnedAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.pinned",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            pinnedAt,
+            updatedAt: pinnedAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.pinnedAt).toBe(pinnedAt);
+        expect(result.thread.activeOrderKey).toBe("m");
       }
     });
 
@@ -281,74 +290,238 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.meta-updated", () => {
+    it.each(["f", null] as const)(
+      "updates the active key to %s without activity",
+      (activeOrderKey) => {
+        const result = applyThreadDetailEvent(
+          { ...baseThread, activeOrderKey: "m" },
+          {
+            ...baseEventFields,
+            sequence: 5,
+            occurredAt: "2026-04-01T05:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: baseThread.id,
+            type: "thread.meta-updated",
+            payload: {
+              threadId: baseThread.id,
+              activeOrderKey,
+              updatedAt: baseThread.updatedAt,
+            },
+          },
+        );
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") {
+          expect(result.thread.activeOrderKey).toBe(activeOrderKey);
+          expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+        }
+      },
+    );
+
     it("patches title and branch", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: "2026-04-01T05:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.meta-updated",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          title: "Updated Title",
-          branch: "feature/demo",
-          updatedAt: "2026-04-01T05:00:00.000Z",
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: "2026-04-01T05:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            title: "Updated Title",
+            branch: "feature/demo",
+            updatedAt: "2026-04-01T05:00:00.000Z",
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.title).toBe("Updated Title");
         expect(result.thread.branch).toBe("feature/demo");
+        expect(result.thread.activeOrderKey).toBe("m");
         // Model selection should be unchanged since it wasn't in the payload
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
     });
 
-    it("sets and clears a linked pull request", () => {
-      const linkedPullRequest = {
-        projectId: ProjectId.make("project-1"),
-        repository: "pingdotgg/t3code",
-        number: 42,
-        url: "https://github.com/pingdotgg/t3code/pull/42",
-      };
-      const linked = applyThreadDetailEvent(baseThread, {
+    it.each(["linkedPullRequest", "branchPullRequest"] as const)(
+      "sets and clears %s without changing the other link",
+      (field) => {
+        const linkedPullRequest = {
+          projectId: ProjectId.make("project-1"),
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+        };
+        const otherField =
+          field === "linkedPullRequest" ? "branchPullRequest" : "linkedPullRequest";
+        const otherPullRequest = {
+          ...linkedPullRequest,
+          number: 43,
+          url: "https://github.com/pingdotgg/t3code/pull/43",
+        };
+        const linked = applyThreadDetailEvent(
+          { ...baseThread, [otherField]: otherPullRequest },
+          {
+            ...baseEventFields,
+            sequence: 5,
+            occurredAt: "2026-04-01T05:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-1"),
+            type: "thread.meta-updated",
+            payload: {
+              threadId: ThreadId.make("thread-1"),
+              [field]: linkedPullRequest,
+              updatedAt: "2026-04-01T05:00:00.000Z",
+            },
+          },
+        );
+
+        expect(linked.kind).toBe("updated");
+        if (linked.kind !== "updated") return;
+        expect(linked.thread[field]).toEqual(linkedPullRequest);
+        expect(linked.thread[otherField]).toEqual(otherPullRequest);
+
+        const cleared = applyThreadDetailEvent(linked.thread, {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T06:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            [field]: null,
+            updatedAt: "2026-04-01T06:00:00.000Z",
+          },
+        });
+
+        expect(cleared.kind).toBe("updated");
+        if (cleared.kind === "updated") {
+          expect(cleared.thread[field]).toBeNull();
+          expect(cleared.thread[otherField]).toEqual(otherPullRequest);
+        }
+      },
+    );
+  });
+
+  describe("thread pull request links", () => {
+    const link = {
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      source: "manual" as const,
+      linkedAt: "2026-04-01T05:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    };
+    const key = { host: "github.com", repository: "pingdotgg/t3code", number: 42 };
+    const linkEvent = (sequence: number) =>
+      ({
         ...baseEventFields,
-        sequence: 5,
+        sequence,
         occurredAt: "2026-04-01T05:00:00.000Z",
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-1"),
-        type: "thread.meta-updated",
+        type: "thread.pull-request-linked",
         payload: {
           threadId: ThreadId.make("thread-1"),
-          linkedPullRequest,
+          link,
           updatedAt: "2026-04-01T05:00:00.000Z",
         },
-      });
+      }) as const;
 
+    it("links without inventing a legacy route and replaces by key", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
       expect(linked.kind).toBe("updated");
       if (linked.kind !== "updated") return;
-      expect(linked.thread.linkedPullRequest).toEqual(linkedPullRequest);
+      expect(linked.thread.pullRequests).toEqual([link]);
+      expect(linked.thread.linkedPullRequest).toBeNull();
 
-      const cleared = applyThreadDetailEvent(linked.thread, {
+      const relinked = applyThreadDetailEvent(linked.thread, {
+        ...linkEvent(6),
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          link: { ...link, host: "GitHub.com", source: "agent" },
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+      if (relinked.kind !== "updated") throw new Error("expected update");
+      expect(relinked.thread.pullRequests).toHaveLength(1);
+      expect(relinked.thread.pullRequests[0]?.source).toBe("agent");
+    });
+
+    it("syncs snapshot and stack onto the matching link only", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
+      if (linked.kind !== "updated") throw new Error("expected update");
+      const snapshot = {
+        state: "merged" as const,
+        title: "Ship it",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: "2026-04-02T00:00:00.000Z",
+        syncedAt: "2026-04-02T00:01:00.000Z",
+      };
+      const synced = applyThreadDetailEvent(linked.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-02T00:01:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-synced",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          ...key,
+          snapshot,
+          stack: null,
+          updatedAt: "2026-04-02T00:01:00.000Z",
+        },
+      });
+      if (synced.kind !== "updated") throw new Error("expected update");
+      expect(synced.thread.pullRequests[0]?.snapshot).toEqual(snapshot);
+
+      const unknown = applyThreadDetailEvent(synced.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-02T00:02:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pull-request-synced",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          ...key,
+          number: 99,
+          snapshot,
+          stack: null,
+          updatedAt: "2026-04-02T00:02:00.000Z",
+        },
+      });
+      expect(unknown.kind).toBe("unchanged");
+    });
+
+    it("unlinks and clears the compat field", () => {
+      const linked = applyThreadDetailEvent(baseThread, linkEvent(5));
+      if (linked.kind !== "updated") throw new Error("expected update");
+      const unlinked = applyThreadDetailEvent(linked.thread, {
         ...baseEventFields,
         sequence: 6,
         occurredAt: "2026-04-01T06:00:00.000Z",
         aggregateKind: "thread",
         aggregateId: ThreadId.make("thread-1"),
-        type: "thread.meta-updated",
+        type: "thread.pull-request-unlinked",
         payload: {
           threadId: ThreadId.make("thread-1"),
-          linkedPullRequest: null,
+          ...key,
           updatedAt: "2026-04-01T06:00:00.000Z",
         },
       });
-
-      expect(cleared.kind).toBe("updated");
-      if (cleared.kind === "updated") {
-        expect(cleared.thread.linkedPullRequest).toBeNull();
-      }
+      if (unlinked.kind !== "updated") throw new Error("expected update");
+      expect(unlinked.thread.pullRequests).toEqual([]);
+      expect(unlinked.thread.linkedPullRequest).toBeNull();
     });
   });
 

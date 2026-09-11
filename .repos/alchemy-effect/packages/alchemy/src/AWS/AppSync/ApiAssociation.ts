@@ -39,12 +39,13 @@ export interface AppSyncApiAssociation extends Resource<
 /**
  * Associates a GraphQL API with a custom {@link DomainName}
  * (existence-only resource — a domain serves exactly one API).
- * @resource
- * @section Associating an API
- * @example Serve an API at a custom domain
+ * ### Associating an API
+ * **Example:** Serve an API at a custom domain
  * ```typescript
  * yield* AppSync.ApiAssociation("Assoc", { domain, api });
  * ```
+ *
+ * @resource
  */
 export const ApiAssociationResource = Resource<AppSyncApiAssociation>(
   "AWS.AppSync.ApiAssociation",

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
-import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
+import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   EventId,
   MessageId,
   ProjectId,
@@ -16,8 +17,6 @@ import {
   agentSpawnSummary,
   buildPendingUserInputAnswers,
   buildThreadFeed,
-  derivePendingApprovals,
-  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -28,32 +27,19 @@ import {
   type WorkLogEntry,
 } from "./threadActivity";
 
-describe("Codex feedback pseudo-messages", () => {
-  it("keeps pending and completed feedback messages in the mobile thread body", () => {
-    const pending = {
-      id: MessageId.make("feedback-command"),
-      command: "/feedback The agent stopped early.",
-      createdAt: "2026-08-23T00:00:00.000Z",
-      status: "uploading" as const,
-    };
-    const entries = [codexFeedbackMessage(pending), codexFeedbackMessage(pending, "assistant")].map(
-      (message) => ({
-        type: "message" as const,
-        id: message.id,
-        createdAt: message.createdAt,
-        message,
-      }),
-    );
-
-    expect(deriveThreadFeedPresentation(entries, null, new Set())).toEqual(entries);
-    expect(entries[1]?.message.text).toBe("Sending feedback to OpenAI...");
-
-    const completed = codexFeedbackMessage(
-      { ...pending, status: "sent", feedbackId: "codex-thread-1" },
-      "assistant",
-    );
-    expect(completed.text).toContain("codex-thread-1");
-  });
+// Match Hermes: these ES2023 array methods are absent on mobile.
+beforeEach(() => {
+  const methods = ["toSorted", "toReversed"] as const;
+  const descriptors = methods.map((method) =>
+    Object.getOwnPropertyDescriptor(Array.prototype, method),
+  );
+  for (const method of methods) Reflect.deleteProperty(Array.prototype, method);
+  return () => {
+    for (const [index, method] of methods.entries()) {
+      const descriptor = descriptors[index];
+      if (descriptor) Reflect.defineProperty(Array.prototype, method, descriptor);
+    }
+  };
 });
 
 const singleSelectQuestion = {
@@ -107,7 +93,7 @@ describe("pending user input answers", () => {
       createdAt: "2026-09-03T00:00:00.000Z",
       payload: { requestId: "async-1", responseMode: "message", questions: [question] },
     });
-    const questions = derivePendingUserInputs([requested])[0]?.questions;
+    const questions = derivePendingRequests([requested]).userInputs[0]?.questions;
     expect(questions).toEqual([question]);
     expect(buildPendingUserInputAnswers(questions!, { "0": { customAnswer: "Example" } })).toEqual({
       "0": "Example",
@@ -126,10 +112,11 @@ describe("pending user input answers", () => {
       },
     });
 
-    expect(derivePendingUserInputs([requested])).toEqual([
+    expect(derivePendingRequests([requested]).userInputs).toEqual([
       {
         requestId: "interaction_1",
         createdAt: requested.createdAt,
+        dismissible: false,
         questions: [nativeQuestion, singleSelectQuestion],
       },
     ]);
@@ -265,121 +252,6 @@ describe("pending user input answers", () => {
   });
 });
 
-describe("pending approvals", () => {
-  it.each([{}, { requestType: "unknown" }])(
-    "exposes legacy OpenCode approvals without a known request kind: %j",
-    (legacyPayload) => {
-      const requested = makeActivity({
-        id: EventId.make("approval-legacy"),
-        kind: "approval.requested",
-        summary: "Approval requested",
-        createdAt: "2026-08-24T00:00:00.000Z",
-        payload: { requestId: "per-legacy", detail: "*", ...legacyPayload },
-      });
-
-      expect(derivePendingApprovals([requested])).toEqual([
-        {
-          requestId: "per-legacy",
-          requestKind: "command",
-          createdAt: requested.createdAt,
-          detail: "*",
-        },
-      ]);
-    },
-  );
-
-  it.each(["tool_user_input", "auth_tokens_refresh"])(
-    "does not turn %s into an approval",
-    (requestType) => {
-      const activity = makeActivity({
-        id: EventId.make("approval-non-approval"),
-        kind: "approval.requested",
-        summary: "Approval requested",
-        createdAt: "2026-08-24T00:00:00.000Z",
-        payload: { requestId: "not-an-approval", requestType },
-      });
-
-      expect(derivePendingApprovals([activity])).toEqual([]);
-    },
-  );
-
-  it.each(["approval.resolved", "provider.approval.respond.failed"])(
-    "removes legacy approvals after %s",
-    (kind) => {
-      const requested = makeActivity({
-        id: EventId.make("approval-legacy-open"),
-        kind: "approval.requested",
-        summary: "Approval requested",
-        createdAt: "2026-08-24T00:00:00.000Z",
-        payload: { requestId: "per-legacy", requestType: "unknown" },
-      });
-      const resolved = makeActivity({
-        id: EventId.make("approval-legacy-resolved"),
-        kind,
-        summary: "Approval resolved",
-        createdAt: "2026-08-24T00:00:01.000Z",
-        payload: {
-          requestId: "per-legacy",
-          detail: "Unknown pending permission request: per-legacy",
-        },
-      });
-
-      expect(derivePendingApprovals([requested, resolved])).toEqual([]);
-    },
-  );
-
-  it("keeps app access approvals and persistence choices from remote environments", () => {
-    const options = [
-      { decision: "decline", label: "Decline" },
-      { decision: "acceptAlways", label: "Always allow Safari" },
-      { decision: "accept", label: "Approve" },
-    ];
-    const activity = makeActivity({
-      id: EventId.make("approval-safari"),
-      kind: "approval.requested",
-      summary: "App access approval requested",
-      createdAt: "2026-08-24T00:00:00.000Z",
-      payload: {
-        requestId: "req-safari",
-        requestType: "mcp_elicitation_approval",
-        detail: "Allow ChatGPT to use Safari?",
-        appName: "Safari",
-        options,
-      },
-    });
-
-    expect(derivePendingApprovals([activity])).toEqual([
-      {
-        requestId: "req-safari",
-        requestKind: "mcp-elicitation",
-        createdAt: "2026-08-24T00:00:00.000Z",
-        detail: "Allow ChatGPT to use Safari?",
-        appName: "Safari",
-        options,
-      },
-    ]);
-  });
-
-  it("removes an app access approval after a remote client rejects it", () => {
-    const requested = makeActivity({
-      id: EventId.make("approval-safari-open"),
-      kind: "approval.requested",
-      summary: "App access approval requested",
-      createdAt: "2026-08-24T00:00:00.000Z",
-      payload: { requestId: "req-safari", requestKind: "mcp-elicitation" },
-    });
-    const resolved = makeActivity({
-      id: EventId.make("approval-safari-resolved"),
-      kind: "approval.resolved",
-      summary: "Approval resolved",
-      createdAt: "2026-08-24T00:00:01.000Z",
-      payload: { requestId: "req-safari", decision: "decline" },
-    });
-
-    expect(derivePendingApprovals([requested, resolved])).toEqual([]);
-  });
-});
-
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
     Pick<OrchestrationThreadActivity, "id" | "kind" | "summary" | "createdAt">,
@@ -401,6 +273,7 @@ function makeThread(
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
@@ -705,8 +578,8 @@ describe("buildThreadFeed", () => {
     const [row] = group.activities;
     expect(row?.workEntry.detail).toBe(command);
     expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
-    // Opening it would only repeat the command the row already shows.
-    expect(row?.canExpand).toBe(false);
+    expect(row?.canExpand).toBe(true);
+    expect(workEntryRowLabel(row!.workEntry, true)).toBe("Command");
   });
 
   it.each([
@@ -738,7 +611,7 @@ describe("buildThreadFeed", () => {
         payload: { detail: "Bash is unusable in this environment" },
       },
       label: "Bash is unusable in this environment",
-      canExpand: false,
+      canExpand: true,
     },
     {
       name: "a multi-line task report",
@@ -774,7 +647,7 @@ describe("buildThreadFeed", () => {
       label: "printf hello",
       canExpand: true,
     },
-  ])("only lets $name expand when the body adds something: $canExpand", (input) => {
+  ])("sets expansion availability for $name: $canExpand", (input) => {
     const thread = makeThread({
       id: ThreadId.make("thread-expand-rule"),
       projectId: ProjectId.make("project-1"),
@@ -794,6 +667,107 @@ describe("buildThreadFeed", () => {
     const [row] = group.activities;
     expect(workEntryRowLabel(row!.workEntry)).toBe(input.label);
     expect(row?.canExpand).toBe(input.canExpand);
+  });
+
+  it.each(["runtime.error", "runtime.warning"] as const)(
+    "shows and copies the message of %s without a duplicate expanded body",
+    (kind) => {
+      const message =
+        "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 5:21 AM.";
+      const thread = makeThread({
+        id: ThreadId.make("runtime-message"),
+        projectId: ProjectId.make("project-1"),
+        title: "Runtime message",
+        activities: [
+          makeActivity({
+            id: EventId.make("runtime-message"),
+            createdAt: "2026-09-01T00:00:00.000Z",
+            kind,
+            tone: "error",
+            summary: "Runtime error",
+            payload: { message },
+          }),
+        ],
+      });
+      const [group] = buildThreadFeed(thread);
+      expect(group?.type).toBe("activity-group");
+      if (group?.type !== "activity-group") return;
+      const row = group.activities[0]!;
+      expect(row.canExpand).toBe(true);
+      expect(workEntryRowLabel(row.workEntry, true)).toBe(message);
+      expect(row.getFullDetail()).toBeNull();
+      expect(row.getCopyText()).toBe(`Runtime error\n${message}`);
+    },
+  );
+
+  it.each([
+    {
+      message: "fallback message",
+      detail: "More specific detail",
+      expected: "More specific detail",
+    },
+    { message: "  ", expected: undefined },
+    { message: { error: "not a string" }, expected: undefined },
+  ])("preserves existing runtime details and ignores invalid messages: $message", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("runtime-detail"),
+      projectId: ProjectId.make("project-1"),
+      title: "Runtime detail",
+      activities: [
+        makeActivity({
+          id: EventId.make("runtime-detail"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: "runtime.error",
+          tone: "error",
+          summary: "Runtime error",
+          payload: { message: input.message, detail: input.detail },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    expect(group.activities[0]?.workEntry.detail).toBe(input.expected);
+    expect(group.activities[0]?.canExpand).toBe(Boolean(input.expected));
+  });
+
+  it.each([
+    {
+      summary: "Runtime error",
+      kind: "runtime.error" as const,
+      detail:
+        "Request failed.\nThe service returned an unexpected response.\nRetry after checking the connection.",
+    },
+    {
+      summary: "Web search",
+      kind: "tool.completed" as const,
+      detail: "https://itanium-cxx-abi.github.io/cxx-abi/abi.html",
+      itemType: "web_search",
+    },
+  ])("expands the full $summary label once, retaining its formatting and copy text", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("expanded-label"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expanded label",
+      activities: [
+        makeActivity({
+          id: EventId.make("expanded-label"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: input.kind,
+          summary: input.summary,
+          payload: { detail: input.detail, itemType: input.itemType },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(row.canExpand).toBe(true);
+    expect(workEntryRowLabel(row.workEntry)).toBe(input.detail.replace(/\s+/g, " "));
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(input.detail);
+    expect(row.getFullDetail()).toBeNull();
+    expect(row.getCopyText()).toBe(`${input.summary}\n${input.detail}`);
   });
 
   it("drops a truncated Claude echo of a long command", () => {
@@ -994,44 +968,6 @@ describe("buildThreadFeed", () => {
       ]);
     },
   );
-
-  it("keeps older local feedback before newer messages returned by the server", () => {
-    const submission = {
-      id: MessageId.make("feedback-command-ordering"),
-      command: "/feedback The agent stopped early.",
-      createdAt: "2026-08-23T00:00:01.000Z",
-      status: "sent" as const,
-      feedbackId: "codex-thread-1",
-    };
-    const laterMessage = {
-      id: MessageId.make("later-server-message"),
-      role: "assistant" as const,
-      text: "Newer server response",
-      turnId: null,
-      createdAt: "2026-08-23T00:00:02.000Z",
-      updatedAt: "2026-08-23T00:00:02.000Z",
-      streaming: false,
-    };
-    const thread = makeThread({
-      id: ThreadId.make("thread-feedback-ordering"),
-      projectId: ProjectId.make("project-1"),
-      title: "Feedback ordering",
-      messages: [laterMessage],
-    });
-
-    const feed = buildThreadFeed(thread, {
-      localMessages: [
-        codexFeedbackMessage(submission),
-        codexFeedbackMessage(submission, "assistant"),
-      ],
-    });
-
-    expect(feed.map((entry) => entry.id)).toEqual([
-      "feedback-command-ordering",
-      "feedback-command-ordering:feedback",
-      "later-server-message",
-    ]);
-  });
 
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
@@ -1241,6 +1177,11 @@ describe("buildThreadFeed", () => {
         },
       ],
     });
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(row.canExpand).toBe(true);
+    expect(row.getFullDetail()).toBeNull();
+    expect(workEntryRowLabel(row.workEntry, true)).toBe(`${imagePath.slice(0, 177)}...`);
   });
 
   it("keeps MCP inputs available to expanded mobile work rows", () => {
@@ -1318,7 +1259,8 @@ describe("buildThreadFeed", () => {
       },
     });
     expect(group.activities[0]?.getFullDetail()).toContain('"query": "work log"');
-    expect(group.activities[0]?.getFullDetail()).toContain("repository.search");
+    expect(workEntryRowLabel(group.activities[0]!.workEntry, true)).toBe("repository.search");
+    expect(group.activities[0]?.getFullDetail()).not.toContain("repository.search");
   });
 
   it.each([
@@ -3388,4 +3330,73 @@ describe("quiet timeline: nested agents", () => {
       },
     ]);
   });
+});
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+it("makes attachment-only question answers expandable in the mobile feed", () => {
+  const answer = {
+    requestId: ApprovalRequestId.make("question-request"),
+    answers: { q: "" },
+    questionTextById: { q: "Attach the specification" },
+    attachmentsByQuestionId: {
+      q: [
+        {
+          type: "file" as const,
+          id: "question-file",
+          name: "spec.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        },
+      ],
+    },
+  };
+  const thread = makeThread({
+    id: ThreadId.make("thread-answer"),
+    projectId: ProjectId.make("project-answer"),
+    title: "Answer history",
+    activities: [
+      makeActivity({
+        id: EventId.make("answer-submitted"),
+        createdAt: "2026-09-08T00:00:00.000Z",
+        kind: "user-input.answer-submitted",
+        summary: "Answered questions",
+        payload: answer,
+      }),
+    ],
+  });
+  const [group] = buildThreadFeed(thread);
+  expect(group?.type).toBe("activity-group");
+  if (group?.type !== "activity-group") return;
+  expect(group.activities[0]).toMatchObject({
+    canExpand: true,
+    workEntry: { questionAnswer: answer },
+  });
+  expect(group.activities[0]?.getFullDetail()).toBeNull();
 });

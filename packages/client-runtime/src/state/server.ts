@@ -88,7 +88,7 @@ const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
   ),
 );
 
-export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<ServerUpdateResumeTimeoutError>()(
+export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpdateResumeTimeoutError>()(
   "ServerUpdateResumeTimeoutError",
   {
     environmentId: Schema.String,
@@ -100,7 +100,7 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedErrorClass<Serv
   }
 }
 
-export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass<ServerUpdateProgressIncompleteError>()(
+export class ServerUpdateProgressIncompleteError extends Schema.TaggedError<ServerUpdateProgressIncompleteError>()(
   "ServerUpdateProgressIncompleteError",
   {
     targetVersion: Schema.String,
@@ -111,7 +111,7 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedErrorClass
   }
 }
 
-export class ServerUpdateTerminalError extends Schema.TaggedErrorClass<ServerUpdateTerminalError>()(
+export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTerminalError>()(
   "ServerUpdateTerminalError",
   {
     targetVersion: Schema.String,
@@ -975,7 +975,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.providerAuthStart,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
     completeProviderAuth: createEnvironmentRpcCommand(runtime, {
@@ -1021,6 +1021,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     hostResources: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:server:host-resources",
+      idleTtlMs: 0,
       staleTimeMs: 5_000,
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
@@ -1055,7 +1056,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         // Both ids are free-form strings; a delimiter could collide.
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {

@@ -21,14 +21,14 @@
     "@tanstack/solid-router": "^1.170.4",
     "@tanstack/solid-start": "^1.168.6",
     "alchemy": "workspace:*",
-    "effect": "catalog:",
+    "effect": "catalog:effect",
     "solid-js": "^1.9.12"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
-    "@types/bun": "latest",
-    "typescript": "catalog:",
-    "vite": "catalog:",
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@types/bun": "catalog:tooling",
+    "typescript": "catalog:build",
+    "vite": "catalog:build",
     "vite-plugin-solid": "^2.11.12"
   }
 }

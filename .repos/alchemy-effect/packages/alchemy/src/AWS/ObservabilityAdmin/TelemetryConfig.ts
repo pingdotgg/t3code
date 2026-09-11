@@ -50,21 +50,22 @@ export interface TelemetryConfig extends Resource<
  * deploying it onboards the account, and destroying it restores whatever
  * onboarding state the account had before the stack first managed it.
  *
- * @resource
- * @section Managing telemetry config
- * @example Onboard the account
+ * ### Managing telemetry config
+ * **Example:** Onboard the account
  * ```typescript
  * import * as ObservabilityAdmin from "alchemy/AWS/ObservabilityAdmin";
  *
  * const telemetry = yield* ObservabilityAdmin.TelemetryConfig("Telemetry");
  * ```
  *
- * @example Keep the resource but switch the feature off
+ * **Example:** Keep the resource but switch the feature off
  * ```typescript
  * const telemetry = yield* ObservabilityAdmin.TelemetryConfig("Telemetry", {
  *   enabled: false,
  * });
  * ```
+ *
+ * @resource
  */
 export const TelemetryConfig = Resource<TelemetryConfig>(
   "AWS.ObservabilityAdmin.TelemetryConfig",

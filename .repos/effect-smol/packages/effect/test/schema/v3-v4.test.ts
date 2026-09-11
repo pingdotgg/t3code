@@ -38,7 +38,7 @@ describe("v3 -> v4 migration tests", () => {
       )
       await encoding.fail(
         { a: undefined },
-        `Expected number, got undefined
+        `Expected number
   at ["a"]`
       )
     })
@@ -68,7 +68,7 @@ describe("v3 -> v4 migration tests", () => {
       await decoding.succeed({}, { a: -1 })
       await decoding.fail(
         { a: undefined },
-        `Expected string, got undefined
+        `Expected string
   at ["a"]`
       )
 
@@ -81,7 +81,7 @@ describe("v3 -> v4 migration tests", () => {
       )
       await encoding.fail(
         { a: undefined },
-        `Expected number, got undefined
+        `Expected number
   at ["a"]`
       )
     })
@@ -118,7 +118,7 @@ describe("v3 -> v4 migration tests", () => {
       await encoding.succeed({})
       await encoding.fail(
         { a: null },
-        `Expected number | undefined, got null
+        `Expected number | undefined
   at ["a"]`
       )
     })
@@ -149,7 +149,7 @@ describe("v3 -> v4 migration tests", () => {
       await decoding.succeed({ a: null }, {})
       await decoding.fail(
         { a: undefined },
-        `Expected string | null, got undefined
+        `Expected string | null
   at ["a"]`
       )
 
@@ -158,7 +158,7 @@ describe("v3 -> v4 migration tests", () => {
       await encoding.succeed({})
       await encoding.fail(
         { a: undefined },
-        `Expected number, got undefined
+        `Expected number
   at ["a"]`
       )
     })
@@ -229,7 +229,7 @@ describe("v3 -> v4 migration tests", () => {
       await decoding.succeed({ a: null }, { a: -1 })
       await decoding.fail(
         { a: undefined },
-        `Expected string | null, got undefined
+        `Expected string | null
   at ["a"]`
       )
 
@@ -237,7 +237,7 @@ describe("v3 -> v4 migration tests", () => {
       await encoding.succeed({ a: 1 }, { a: "1" })
       await encoding.fail(
         { a: undefined },
-        `Expected number, got undefined
+        `Expected number
   at ["a"]`
       )
       await encoding.fail(

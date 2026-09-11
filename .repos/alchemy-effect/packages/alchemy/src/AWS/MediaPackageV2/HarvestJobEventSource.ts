@@ -72,8 +72,8 @@ export interface HarvestJobEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Harvest Job Events
- * @example Publish a Clip When Its Harvest Job Completes
+ * ### Consuming Harvest Job Events
+ * **Example:** Publish a Clip When Its Harvest Job Completes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

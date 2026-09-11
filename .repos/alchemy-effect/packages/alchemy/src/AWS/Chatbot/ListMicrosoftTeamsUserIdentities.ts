@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * optionally filtered to one channel configuration — the read half of
  * identity offboarding automation. Provide the implementation with
  * `Effect.provide(AWS.Chatbot.ListMicrosoftTeamsUserIdentitiesHttp)`.
- * @binding
- * @section Microsoft Teams Identity Management
- * @example List linked Teams user identities
+ * ### Microsoft Teams Identity Management
+ * **Example:** List linked Teams user identities
  * ```typescript
  * const listMicrosoftTeamsUserIdentities =
  *   yield* AWS.Chatbot.ListMicrosoftTeamsUserIdentities();
  * const result = yield* listMicrosoftTeamsUserIdentities();
  * const users = (result.TeamsUserIdentities ?? []).map((u) => u.UserId);
  * ```
+ *
+ * @binding
  */
 export interface ListMicrosoftTeamsUserIdentities extends Binding.Service<
   ListMicrosoftTeamsUserIdentities,

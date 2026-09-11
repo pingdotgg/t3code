@@ -262,6 +262,78 @@ const treeCommand = Command.make(
   ),
 );
 
+const optionalStackFlag = Flag.string("stack").pipe(
+  Flag.withDescription(
+    "Stack name to export. Omit to export ALL stacks in the store.",
+  ),
+  Flag.optional,
+  Flag.map(Option.getOrUndefined),
+);
+
+const optionalStageFlag = Flag.string("stage").pipe(
+  Flag.withDescription(
+    "Stage to export within the stack. Omit to export all stages.",
+  ),
+  Flag.optional,
+  Flag.map(Option.getOrUndefined),
+);
+
+/**
+ * Bulk state read: every matching resource record as one JSON
+ * document, so a whole estate is read in a single CLI invocation
+ * instead of `state resources` + one `state get` per FQN per
+ * stack/stage. Filter locally, e.g.:
+ *
+ * ```sh
+ * alchemy state export | jq '.resources[] | select(.state.resourceType == "AWS.EC2.Instance")'
+ * ```
+ */
+const exportCommand = Command.make(
+  "export",
+  {
+    stack: optionalStackFlag,
+    stageName: optionalStageFlag,
+    main: script,
+    envFile,
+    profile,
+    local: localFlag,
+  },
+  instrumentCommand("state.export")(
+    Effect.fn(function* ({ stack: stackName, stageName, ...rest }) {
+      if (stageName !== undefined && stackName === undefined) {
+        yield* Console.log(
+          "Error: cannot specify --stage without --stack. Pass the stack name via --stack.",
+        );
+        return yield* Effect.fail(new Error("missing stack"));
+      }
+
+      yield* withStateService(rest, (state) =>
+        Effect.gen(function* () {
+          const exported = yield* State.exportState(state, {
+            stack: stackName,
+            stage: stageName,
+          });
+          // Same JSON-friendly view `state get` prints: redacted
+          // secrets become `{ __redacted__: ... }`, Resources are
+          // flattened, etc.
+          yield* Console.log(
+            JSON.stringify(
+              {
+                resources: exported.resources.map((r) => ({
+                  ...r,
+                  state: encodeState(r.state),
+                })),
+              },
+              null,
+              2,
+            ),
+          );
+        }),
+      );
+    }),
+  ),
+);
+
 const clearStackFlag = Flag.string("stack").pipe(
   Flag.withDescription(
     "Stack name to clear. Omit to clear ALL stacks in the store.",
@@ -365,6 +437,7 @@ export const stateCommand = Command.make("state", {}).pipe(
     stagesCommand,
     resourcesCommand,
     getCommand,
+    exportCommand,
     treeCommand,
     clearCommand,
   ]),

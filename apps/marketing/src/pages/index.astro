@@ -17,6 +17,16 @@ const screenshot = await getImage({
   quality: 90,
 });
 
+const desktopEndorsementRows = [
+  tweets.filter((_, index) => index % 2 === 0),
+  tweets.filter((_, index) => index % 2 === 1),
+];
+
+const mobileEndorsementRows = [
+  tweets.filter((_, index) => index % 3 === 0),
+  tweets.filter((_, index) => index % 3 === 1),
+  tweets.filter((_, index) => index % 3 === 2),
+];
 ---
 
 <Layout>
@@ -111,29 +121,80 @@ const screenshot = await getImage({
       </div>
     </div>
 
-    <div class="endorsement-carousel" role="region" aria-label="Developer endorsements" tabindex="0">
-      {tweets.map((tweet) => (
-        <a
-          class="endorsement-card"
-          href={tweet.link}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Read ${tweet.handle}'s post on X`}
-        >
-          <div class="endorsement-author">
-            <img
-              src={`/pfps/${tweet.handle}.webp`}
-              alt=""
-              width="28"
-              height="28"
-              loading="lazy"
-              decoding="async"
-            />
-            <div class="endorsement-handle">@{tweet.handle}</div>
-          </div>
-          <p>{tweet.excerpt ?? tweet.content}</p>
-        </a>
-      ))}
+    <div class="endorsement-carousel endorsement-carousel--desktop" aria-label="Developer endorsements">
+        {
+          desktopEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.webp`}
+                            alt=""
+                            width="28"
+                            height="28"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        }
+    </div>
+
+    <div class="endorsement-carousel endorsement-carousel--mobile" aria-label="Developer endorsements">
+        {
+          mobileEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.webp`}
+                            alt=""
+                            width="28"
+                            height="28"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        }
     </div>
   </section>
 
@@ -427,10 +488,10 @@ const screenshot = await getImage({
 
   const hero = document.querySelector<HTMLElement>(".hero");
   const field = document.querySelector<HTMLElement>(".hero-float");
-  const endorsements = document.querySelector<HTMLElement>(".endorsement-carousel");
+  const tracks = Array.from(document.querySelectorAll<HTMLElement>(".endorsement-track"));
   const caret = document.querySelector<HTMLElement>(".caret");
-  if (hero && field && endorsements && caret) {
-    startHomeMotion({ hero, field, endorsements, caret });
+  if (hero && field && caret) {
+    startHomeMotion({ hero, field, tracks, caret });
   }
 </script>
 
@@ -822,23 +883,81 @@ const screenshot = await getImage({
     letter-spacing: -0.005em;
   }
 
+  /* Two marquee rows scrolling in opposite directions. Each track holds the
+     row twice so a -50% translate loops seamlessly. The animation only runs
+     while a track is on screen (see homeMotion), and pauses on hover/focus. */
   .endorsement-carousel {
-    display: grid;
-    grid-auto-flow: column;
-    grid-template-rows: repeat(2, 132px);
-    grid-auto-columns: clamp(264px, 22vw, 308px);
+    position: relative;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    /* Percentages resolve against this element's own box rather than the
-       viewport, so the first card lines up with the heading's .container edge
-       even when a classic scrollbar makes 100vw wider than the layout. */
-    padding: 4px max(32px, calc((100% - 1240px) / 2 + 32px));
-    scroll-padding-inline: max(32px, calc((100% - 1240px) / 2 + 32px));
+  }
+
+  .endorsement-carousel--mobile {
+    display: none;
+  }
+
+  .endorsement-carousel::before,
+  .endorsement-carousel::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    width: max(48px, calc((100vw - 1240px) / 2 + 56px));
+    pointer-events: none;
+  }
+
+  .endorsement-carousel::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--bg), transparent);
+  }
+
+  .endorsement-carousel::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--bg), transparent);
+  }
+
+  .endorsement-row {
+    overflow: hidden;
+  }
+
+  .endorsement-track {
+    width: max-content;
+    display: flex;
+    animation: endorsementMarquee 76s linear infinite;
+    animation-play-state: var(--home-motion-state, paused);
+    will-change: transform;
+  }
+
+  .endorsement-track-group {
+    display: flex;
+    gap: 12px;
+    padding-right: 12px;
+  }
+
+  .endorsement-row.is-reverse .endorsement-track {
+    animation-direction: reverse;
+    animation-duration: 84s;
+  }
+
+  .endorsement-carousel:hover .endorsement-track,
+  .endorsement-carousel:focus-within .endorsement-track {
+    animation-play-state: paused;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .endorsement-track { animation: none; }
+  }
+
+  @keyframes endorsementMarquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
   }
 
   .endorsement-card {
     position: relative;
+    width: clamp(264px, 22vw, 308px);
     height: 132px;
     padding: 14px 16px;
     display: flex;
@@ -1175,13 +1294,24 @@ const screenshot = await getImage({
     .endorsements-head {
       margin-bottom: 40px;
     }
-    .endorsement-carousel {
-      grid-template-rows: repeat(3, 132px);
-      grid-auto-columns: 268px;
-      padding-inline: 20px;
-      scroll-padding-inline: 20px;
+    .endorsement-carousel--desktop {
+      display: none;
+    }
+    .endorsement-carousel--mobile {
+      display: flex;
+    }
+    .endorsement-carousel::before,
+    .endorsement-carousel::after {
+      width: 28px;
+    }
+    .endorsement-track {
+      animation-duration: 68s;
+    }
+    .endorsement-row.is-reverse .endorsement-track {
+      animation-duration: 76s;
     }
     .endorsement-card {
+      width: 268px;
       padding: 14px;
     }
     .endorsement-card p {

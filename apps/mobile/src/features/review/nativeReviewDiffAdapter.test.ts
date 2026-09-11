@@ -66,7 +66,7 @@ function filesPatch(paths: ReadonlyArray<string>) {
 }
 
 function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
-  return themeId === DEFAULT_MOBILE_THEME_ID
+  return themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you"
     ? readDefaultMobileThemeVariables(appearance)
     : getMobileThemeVariables(themeId, appearance);
 }

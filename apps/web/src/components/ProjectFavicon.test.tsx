@@ -66,7 +66,14 @@ vi.mock("../state/assets", () => ({
   },
 }));
 
-import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
+
+function makeProject(
+  overrides: Partial<ProjectFaviconProject> &
+    Pick<ProjectFaviconProject, "workspaceRoot" | "title">,
+): ProjectFaviconProject {
+  return { environmentId: "environment-test" as EnvironmentId, ...overrides };
+}
 
 type ProjectFaviconImageProps = {
   readonly cacheKey: string;
@@ -91,9 +98,7 @@ function resolveImageComponent(): {
 } {
   hooks.beginRender();
   const element = ProjectFavicon({
-    environmentId: "environment-test" as EnvironmentId,
-    cwd: "/workspace-test",
-    projectName: "workspace-test",
+    project: makeProject({ workspaceRoot: "/workspace-test", title: "workspace-test" }),
   }) as ReactElement<ProjectFaviconImageProps>;
   hooks.reset();
 
@@ -121,9 +126,7 @@ describe("ProjectFavicon", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
     const element = ProjectFavicon({
-      environmentId: "environment-test" as EnvironmentId,
-      cwd: "/workspace/analytics-db",
-      projectName: "analytics-db",
+      project: makeProject({ workspaceRoot: "/workspace/analytics-db", title: "analytics-db" }),
     }) as ReactElement<{
       readonly colorClassName?: string;
       readonly emoji?: string;
@@ -139,9 +142,7 @@ describe("ProjectFavicon", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
 
     const element = ProjectFavicon({
-      environmentId: "environment-test" as EnvironmentId,
-      cwd: "/workspace/agent-runtime",
-      projectName: "agent-runtime",
+      project: makeProject({ workspaceRoot: "/workspace/agent-runtime", title: "agent-runtime" }),
     }) as ReactElement<{
       readonly colorClassName?: string;
       readonly emoji?: string;
@@ -155,11 +156,12 @@ describe("ProjectFavicon", () => {
 
   it("renders a saved Lucide icon and color ahead of an uploaded favicon", () => {
     const element = ProjectFavicon({
-      environmentId: "environment-test" as EnvironmentId,
-      cwd: "/workspace/test",
-      projectName: "test",
-      faviconPath: "brand/icon.svg",
-      projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+      project: makeProject({
+        workspaceRoot: "/workspace/test",
+        title: "test",
+        faviconPath: "brand/icon.svg",
+        projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+      }),
     }) as ReactElement<{
       readonly children: ReactElement<{
         readonly children: ReactElement<{ readonly name: string; readonly className: string }>;
@@ -174,11 +176,12 @@ describe("ProjectFavicon", () => {
 
   it("renders a saved emoji ahead of an uploaded favicon", () => {
     const element = ProjectFavicon({
-      environmentId: "environment-test" as EnvironmentId,
-      cwd: "/workspace/test",
-      projectName: "test",
-      faviconPath: "brand/icon.svg",
-      projectIcon: { kind: "emoji", emoji: "🦄" },
+      project: makeProject({
+        workspaceRoot: "/workspace/test",
+        title: "test",
+        faviconPath: "brand/icon.svg",
+        projectIcon: { kind: "emoji", emoji: "🦄" },
+      }),
     }) as ReactElement<{ readonly emoji: string }>;
 
     expect(element.props.emoji).toBe("🦄");
@@ -208,10 +211,11 @@ describe("ProjectFavicon", () => {
 
   it("requests a saved favicon path when one is set", () => {
     ProjectFavicon({
-      environmentId: "environment-test" as EnvironmentId,
-      cwd: "/workspace-test",
-      projectName: "workspace-test",
-      faviconPath: "brand/icon.svg",
+      project: makeProject({
+        workspaceRoot: "/workspace-test",
+        title: "workspace-test",
+        faviconPath: "brand/icon.svg",
+      }),
     });
 
     expect(testState.lastTarget).toMatchObject({

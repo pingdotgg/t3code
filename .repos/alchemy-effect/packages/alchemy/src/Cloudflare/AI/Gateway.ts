@@ -314,16 +314,13 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * `LanguageModel` Layer so you use the standard `generateText` / `streamText`
  * APIs — provider-agnostic, with caching, rate limiting, retries, and a
  * unified request log handled by the gateway.
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Creating a Gateway
- * @example Basic gateway
+ * ### Creating a Gateway
+ * **Example:** Basic gateway
  * ```typescript
  * const gateway = yield* Cloudflare.AI.Gateway("Gateway");
  * ```
  *
- * @example Gateway with caching and rate limiting
+ * **Example:** Gateway with caching and rate limiting
  * ```typescript
  * const gateway = yield* Cloudflare.AI.Gateway("Gateway", {
  *   id: "my-gateway",
@@ -335,8 +332,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * });
  * ```
  *
- * @section Logging
- * @example Gateway with log retention
+ * ### Logging
+ * **Example:** Gateway with log retention
  * ```typescript
  * const gateway = yield* Cloudflare.AI.Gateway("Gateway", {
  *   collectLogs: true,
@@ -345,8 +342,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * });
  * ```
  *
- * @section Binding into a Worker
- * @example Bind the gateway and provide the runtime layer
+ * ### Binding into a Worker
+ * **Example:** Bind the gateway and provide the runtime layer
  * `Cloudflare.AI.QueryGateway(gateway)` returns a typed, Effect-native client during the
  * Worker's Init phase. Provide `Cloudflare.AI.QueryGatewayBinding` once at the
  * bottom of the Init layer chain so every `QueryGateway(...)` resolves at runtime.
@@ -370,8 +367,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * ) {}
  * ```
  *
- * @section Building a LanguageModel
- * @example `aiGateway.model(...)` -> Effect AI `LanguageModel`
+ * ### Building a LanguageModel
+ * **Example:** `aiGateway.model(...)` -> Effect AI `LanguageModel`
  * Call `aiGateway.model({...})` with a Workers AI model id. It returns a
  * `Layer<LanguageModel, never, RuntimeContext>` directly — no API key and no
  * `Layer.unwrap`, since the binding handles auth and the gateway URL. Build it
@@ -385,8 +382,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * });
  * ```
  *
- * @section Generating Text
- * @example Generate text on a route
+ * ### Generating Text
+ * **Example:** Generate text on a route
  * Provide the `languageModel` layer to the handler and call
  * `LanguageModel.generateText` like any other Effect. `Effect.orDie` collapses
  * `AiError` to a defect (a 500); use `Effect.catchTag("AiError", …)` for typed
@@ -409,8 +406,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * }).pipe(Effect.provide(languageModel));
  * ```
  *
- * @section Streaming Text
- * @example Stream tokens as Server-Sent Events
+ * ### Streaming Text
+ * **Example:** Stream tokens as Server-Sent Events
  * `LanguageModel.streamText` returns a `Stream` of typed response parts.
  * `Stream.provide(languageModel)` keeps the model available for the whole
  * stream lifetime; pipe through `Sse.encode` for an SSE response.
@@ -433,8 +430,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * });
  * ```
  *
- * @section Tuning the Gateway
- * @example Production-grade caching, rate limits, and DLP
+ * ### Tuning the Gateway
+ * **Example:** Production-grade caching, rate limits, and DLP
  * Every prop maps to an in-place update — no replacement, no downtime.
  * ```typescript
  * export const Gateway = Cloudflare.AI.Gateway("Gateway", {
@@ -451,8 +448,8 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  * });
  * ```
  *
- * @section Spend Limits
- * @example Cap cost per rolling window
+ * ### Spend Limits
+ * **Example:** Cap cost per rolling window
  * Per-gateway spend limits replace the deprecated account-level spending
  * limit. Each rule caps cumulative cost (in cents) over a rolling `window`
  * (in seconds), optionally scoped to specific models or providers.
@@ -466,6 +463,10 @@ export const isAiGateway = (value: unknown): value is Gateway =>
  *   },
  * });
  * ```
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const Gateway = Resource<Gateway>("Cloudflare.AI.Gateway", {
   aliases: ["Cloudflare.AiGateway"],
@@ -674,16 +675,14 @@ const mapGateway = (
   logpushPublicKey: gateway.logpushPublicKey ?? undefined,
   // The wire shape uses explicit nulls and an open content-type union —
   // normalize into our prop shape so attributes diff cleanly against props.
-  otel: gateway.otel?.map(
-    (o): GatewayOtel => ({
-      url: o.url,
-      headers: o.headers,
-      ...(o.authorization != null ? { authorization: o.authorization } : {}),
-      ...(o.contentType != null
-        ? { contentType: o.contentType as "json" | "protobuf" }
-        : {}),
-    }),
-  ),
+  otel: gateway.otel?.map((o): GatewayOtel => ({
+    url: o.url,
+    headers: o.headers,
+    ...(o.authorization != null ? { authorization: o.authorization } : {}),
+    ...(o.contentType != null
+      ? { contentType: o.contentType as "json" | "protobuf" }
+      : {}),
+  })),
   storeId: gateway.storeId ?? "",
   stripe: gateway.stripe ?? undefined,
   spendLimits: normalizeSpendLimits(gateway.spendLimits),
@@ -719,23 +718,21 @@ const normalizeSpendLimits = (
   if (spendLimits == null) return undefined;
   return {
     enabled: spendLimits.enabled ?? false,
-    rules: (spendLimits.rules ?? []).map(
-      (rule): GatewaySpendLimitRule => ({
-        limit: rule.limit,
-        limitType: rule.limitType,
-        window: rule.window,
-        enabled: rule.enabled ?? true,
-        ...(rule.id != null ? { id: rule.id } : {}),
-        ...(rule.metadata != null && Object.keys(rule.metadata).length > 0
-          ? { metadata: rule.metadata }
-          : {}),
-        ...(rule.model != null ? { model: rule.model } : {}),
-        ...(rule.provider != null ? { provider: rule.provider } : {}),
-        ...(rule.technique != null
-          ? { technique: rule.technique as GatewayRateLimitingTechnique }
-          : {}),
-      }),
-    ),
+    rules: (spendLimits.rules ?? []).map((rule): GatewaySpendLimitRule => ({
+      limit: rule.limit,
+      limitType: rule.limitType,
+      window: rule.window,
+      enabled: rule.enabled ?? true,
+      ...(rule.id != null ? { id: rule.id } : {}),
+      ...(rule.metadata != null && Object.keys(rule.metadata).length > 0
+        ? { metadata: rule.metadata }
+        : {}),
+      ...(rule.model != null ? { model: rule.model } : {}),
+      ...(rule.provider != null ? { provider: rule.provider } : {}),
+      ...(rule.technique != null
+        ? { technique: rule.technique as GatewayRateLimitingTechnique }
+        : {}),
+    })),
   };
 };
 
