@@ -2,6 +2,7 @@ import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePull
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
@@ -89,7 +90,6 @@ import {
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
@@ -3161,9 +3161,9 @@ export default function LegacySidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const routeTerminalOpen = useTerminalUiStateStore((state) =>
+  const routeTerminalOpen = useRightPanelStore((state) =>
     routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "terminal"
       : false,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

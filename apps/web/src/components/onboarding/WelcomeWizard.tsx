@@ -60,7 +60,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
-import { TerminalViewport } from "../ThreadTerminalDrawer";
+import { TerminalViewport } from "../ThreadTerminalPanel";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ClaudeAI, OpenAI } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
@@ -896,7 +896,10 @@ function AgentInstallTerminal({
   ]);
 
   return (
-    <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground">
+    <div
+      data-terminal-owner="right-panel"
+      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
+    >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-[11px] font-medium text-muted-foreground">
           {setupState === "writeFailed" ? (
@@ -937,8 +940,6 @@ function AgentInstallTerminal({
             focusRequestId={1}
             autoFocus
             visible
-            resizeEpoch={0}
-            drawerHeight={256}
             keybindings={keybindings}
           />
         ) : null}

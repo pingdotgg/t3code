@@ -4,7 +4,7 @@
  * Settings → Integrations → Browser lets the user choose between the OS
  * default browser and a tab in the in-app browser. This module turns that
  * preference plus the click itself into one answer, so chat markdown and the
- * terminal drawer make the same decision and offer the same escape hatch.
+ * terminal panel make the same decision and offer the same escape hatch.
  *
  * @module browserLinkTarget
  */

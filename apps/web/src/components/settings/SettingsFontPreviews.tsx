@@ -1,7 +1,7 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
-import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
+import { terminalThemeFromApp } from "../ThreadTerminalPanel";
 import { useTheme } from "../../hooks/useTheme";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
@@ -177,7 +177,7 @@ function previewTerminalFont(family: string, size: number): { family?: string; s
  * The real Ghostty canvas renderer against a local echo loop instead of a
  * PTY: keys print, Enter starts a new prompt line, Backspace erases. That
  * exercises the same glyph atlas, cell metrics, and monospace gate the
- * terminal drawer uses.
+ * terminal panel uses.
  */
 export function TerminalFontPreview({ family, size }: { family: string; size: number }) {
   const mountRef = useRef<HTMLDivElement>(null);

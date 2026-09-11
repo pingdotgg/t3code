@@ -7,7 +7,7 @@ import {
   terminalSelectionLineRange,
   terminalSelectionMenuItems,
   terminalThemeFromApp,
-} from "./ThreadTerminalDrawer";
+} from "./ThreadTerminalPanel";
 
 describe("terminal selection menus", () => {
   it("omits Add to chat when the terminal has no chat target", () => {
@@ -35,7 +35,7 @@ describe("terminalThemeFromApp", () => {
   it("uses terminal colors inherited by the mount instead of a light document theme", () => {
     const root = { classList: { contains: () => false } };
     const body = {};
-    const drawer = {};
+    const panel = {};
     let canvasColor = "#000";
     const colors: Record<string, [number, number, number, number]> = {
       "#000": [0, 0, 0, 255],
@@ -47,7 +47,7 @@ describe("terminalThemeFromApp", () => {
     vi.stubGlobal("document", {
       documentElement: root,
       body,
-      querySelector: () => drawer,
+      querySelector: () => panel,
       createElement: () => ({
         width: 0,
         height: 0,
@@ -65,7 +65,7 @@ describe("terminalThemeFromApp", () => {
       }),
     });
     vi.stubGlobal("getComputedStyle", (element: object) => {
-      const local = element === drawer;
+      const local = element === panel;
       const values = local
         ? {
             "--terminal-background": "#000",

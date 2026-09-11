@@ -3,6 +3,14 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+`Cmd+J` on macOS (`Ctrl+J` elsewhere) focuses a terminal in the sidebar for the current
+thread. It reuses an existing terminal, including one in a hidden panel, or creates one
+when none exists. Project scripts also open their terminal in the sidebar.
+
+The command ID remains `terminal.toggle`, so existing custom shortcuts keep working.
+`terminal.new` always creates a new terminal. Close a focused terminal with `Cmd+W` /
+`Ctrl+W`, or use its close button.
+
 ## Edit the configuration file
 
 Keybindings live on the environment's machine, in

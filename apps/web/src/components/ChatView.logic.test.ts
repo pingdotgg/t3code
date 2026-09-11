@@ -27,7 +27,6 @@ import {
 } from "../previewMiniPlayerStore";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-  MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
@@ -45,7 +44,6 @@ import {
   hasServerAcknowledgedLocalDispatch,
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
-  reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -1799,35 +1797,6 @@ describe("session branch mismatch dismissal", () => {
     expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
     expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
     expect(isBranchMismatchDismissedForSession(null)).toBe(false);
-  });
-});
-
-describe("reconcileMountedTerminalThreadIds", () => {
-  it("keeps open threads and makes the active thread most recent", () => {
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: ["thread-a", "thread-b", "thread-c"],
-        openThreadIds: ["thread-a", "thread-b", "thread-c"],
-        activeThreadId: "thread-a",
-        activeThreadTerminalOpen: true,
-        maxHiddenThreadCount: 2,
-      }),
-    ).toEqual(["thread-b", "thread-c", "thread-a"]);
-  });
-
-  it("drops closed threads and enforces the hidden mounted cap", () => {
-    const ids = Array.from(
-      { length: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS + 2 },
-      (_, index) => `thread-${index}`,
-    );
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: ids,
-        openThreadIds: ids.slice(1),
-        activeThreadId: null,
-        activeThreadTerminalOpen: false,
-      }),
-    ).toEqual(ids.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
   });
 });
 

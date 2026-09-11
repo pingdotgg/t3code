@@ -51,17 +51,17 @@ describe("isTerminalFocused", () => {
     expect(isTerminalFocused()).toBe(false);
   });
 
-  it("returns the drawer owner for connected xterm helper textareas", () => {
+  it("returns the right-panel owner for connected xterm helper textareas", () => {
     const attached = new MockHTMLElement();
     attached.className = "xterm-helper-textarea";
     attached.isConnected = true;
-    attached.terminalOwner = "drawer";
-    attached.dataset.terminalOwner = "drawer";
+    attached.terminalOwner = "right-panel";
+    attached.dataset.terminalOwner = "right-panel";
 
     globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
     globalThis.document = { activeElement: attached } as unknown as Document;
 
-    expect(getTerminalFocusOwner()).toBe("drawer");
+    expect(getTerminalFocusOwner()).toBe("right-panel");
     expect(isTerminalFocused()).toBe(true);
   });
 

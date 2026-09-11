@@ -615,9 +615,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       openTerminal: (ref, terminalId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, terminalSurface(terminalId)),
-          ),
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const existing = current.surfaces.find(
+              (surface) => surface.kind === "terminal" && surface.terminalIds.includes(terminalId),
+            );
+            if (!existing) return upsertSurface(current, terminalSurface(terminalId));
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: existing.id,
+              surfaces: current.surfaces.map((surface) =>
+                surface.id === existing.id && surface.kind === "terminal"
+                  ? { ...surface, activeTerminalId: terminalId }
+                  : surface,
+              ),
+            };
+          }),
         ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
         set((state) =>
@@ -908,4 +921,17 @@ export function selectSelectedRightPanelSurface(
 ): RightPanelSurface | null {
   const state = selectThreadRightPanelState(byThreadKey, ref);
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+}
+
+/** Prefer the selected terminal, including when its panel is hidden. */
+export function selectPreferredTerminalId(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  const surface =
+    state.surfaces.find(
+      (entry) => entry.id === state.activeSurfaceId && entry.kind === "terminal",
+    ) ?? state.surfaces.find((entry) => entry.kind === "terminal");
+  return surface?.kind === "terminal" ? surface.activeTerminalId : null;
 }

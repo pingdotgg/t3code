@@ -7,6 +7,7 @@ import {
   pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
+  selectPreferredTerminalId,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
@@ -206,6 +207,42 @@ describe("rightPanelStore", () => {
 
     expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("prefers the selected terminal even while hidden and falls back within the same thread", () => {
+    const store = useRightPanelStore.getState();
+    const preferred = (ref = refA) =>
+      selectPreferredTerminalId(useRightPanelStore.getState().byThreadKey, ref);
+    expect(preferred()).toBeNull();
+    store.openTerminal(refA, "term-1");
+    store.openTerminal(refA, "term-2");
+    store.splitTerminal(refA, "terminal:term-2", "term-3");
+    store.close(refA);
+    expect(preferred()).toBe("term-3");
+    expect(preferred(refB)).toBeNull();
+    store.open(refA, "diff");
+    expect(preferred()).toBe("term-1");
+  });
+
+  it("reopens an existing split terminal without creating a duplicate tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.splitTerminal(refA, "terminal:term-1", "term-2", "vertical");
+    store.openTerminal(refA, "term-3");
+    store.close(refA);
+
+    store.openTerminal(refA, "term-2");
+    store.openTerminal(refA, "term-2");
+
+    const state = useRightPanelStore.getState();
+    expect(selectActiveRightPanelSurface(state.byThreadKey, refA)).toMatchObject({
+      id: "terminal:term-1",
+      terminalIds: ["term-1", "term-2"],
+      activeTerminalId: "term-2",
+      splitDirection: "vertical",
+    });
+    expect(selectThreadRightPanelState(state.byThreadKey, refA).surfaces).toHaveLength(2);
+    expect(selectActiveRightPanel(state.byThreadKey, refB)).toBeNull();
   });
 
   it("drops the legacy singleton terminal surface during migration", () => {
