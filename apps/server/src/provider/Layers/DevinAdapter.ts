@@ -470,7 +470,11 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
               yield* Scope.close(scope, Exit.void);
             }),
           ),
-          Effect.mapError((cause) => requestError("session/start", cause)),
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterSessionClosedError"
+              ? cause
+              : requestError("session/start", cause),
+          ),
         );
         return started;
       }),

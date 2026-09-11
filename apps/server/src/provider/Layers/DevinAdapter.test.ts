@@ -295,12 +295,16 @@ for (const operation of ["startSession", "sendTurn"] as const) {
       );
       const h = yield* makeHarness();
       if (operation === "sendTurn") yield* h.start();
-      const result = yield* (
+      const error = yield* (
         operation === "startSession"
           ? h.start().pipe(Effect.asVoid)
           : h.adapter.sendTurn({ threadId, input: "Hello" }).pipe(Effect.asVoid)
-      ).pipe(Effect.result);
-      expect(result._tag).toBe("Failure");
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "ProviderAdapterSessionClosedError",
+        provider: "devin",
+        threadId,
+      });
       expect(yield* h.adapter.hasSession(threadId)).toBe(false);
     }).pipe(Effect.provide(layer)),
   );
