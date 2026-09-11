@@ -1,3 +1,4 @@
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -200,18 +201,16 @@ export function isLatestRunSettled(
 }
 
 export function deriveActiveWorkStartedAt(
-  latestRun: Pick<ThreadRunSummary, "runId" | "startedAt" | "completedAt" | "status"> | null,
-  runtime: Pick<ThreadRuntimeSummary, "status" | "activeRunId"> | null,
+  latestRun: Pick<
+    ThreadRunSummary,
+    "runId" | "startedAt" | "requestedAt" | "completedAt" | "status"
+  > | null,
+  runtime: Pick<ThreadRuntimeSummary, "status" | "activeRunId" | "activityStartedAt"> | null,
   sendStartedAt: string | null,
 ): string | null {
-  if (runtime?.activeRunId !== null && runtime?.activeRunId !== undefined) {
-    return latestRun?.runId === runtime.activeRunId
-      ? (latestRun.startedAt ?? sendStartedAt)
-      : sendStartedAt;
-  }
-  return isLatestRunSettled(latestRun, runtime)
-    ? sendStartedAt
-    : (latestRun?.startedAt ?? sendStartedAt);
+  const startedAt = resolveThreadWorkingStartedAt({ latestRun, runtime });
+  // Local dispatch has a clock only until the server supplies the owning run.
+  return startedAt ?? (runtime?.activeRunId == null ? sendStartedAt : null);
 }
 
 export function derivePendingApprovals(
