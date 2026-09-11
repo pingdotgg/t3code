@@ -2,7 +2,13 @@
 
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
@@ -15,17 +21,23 @@ import { cn } from "~/lib/utils";
 import { useThreadPreviewState } from "~/previewStateStore";
 import {
   type PreviewMiniPlayerSize,
-  selectThreadPreviewMiniPlayer,
+  type PreviewMiniPlayerSource,
+  type PreviewMiniPlayerState,
+  previewMiniPlayerSourceKey,
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useDeviceState } from "~/state/device";
 
+import { DeviceStreamView } from "../device/DeviceStreamView";
+import type { DeviceScreenSize } from "../device/deviceStream";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
   PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX,
   type PreviewMiniPlayerFrame,
   resizePreviewMiniPlayer,
+  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
   resolvePreviewMiniPlayerSourceSize,
 } from "./previewMiniPlayerLayout";
@@ -40,7 +52,7 @@ interface PointerGesture {
 
 interface Props {
   readonly threadRef: ScopedThreadRef;
-  readonly tabId: string;
+  readonly miniPlayer: PreviewMiniPlayerState;
   readonly bottomInset: number;
 }
 
@@ -61,17 +73,34 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/**
- * Floats the thread's browser surface over chat. Native clipping and the DOM
- * frame use the same radius so their separately composited edges stay aligned.
- */
-export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const gestureRef = useRef<PointerGesture | null>(null);
-  const [container, setContainer] = useState<PreviewMiniPlayerSize | null>(null);
-  const miniPlayer = usePreviewMiniPlayerStore((state) =>
-    selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
+/** Floats the thread's browser tab or device stream over chat. */
+export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, bottomInset }: Props) {
+  const { source } = miniPlayer;
+  return source.kind === "browser" ? (
+    <BrowserMiniPlayer
+      key={source.tabId}
+      threadRef={threadRef}
+      tabId={source.tabId}
+      miniPlayer={miniPlayer}
+      bottomInset={bottomInset}
+    />
+  ) : (
+    <DeviceMiniPlayer
+      key={previewMiniPlayerSourceKey(source)}
+      threadRef={threadRef}
+      source={source}
+      miniPlayer={miniPlayer}
+      bottomInset={bottomInset}
+    />
   );
+}
+
+function BrowserMiniPlayer({
+  threadRef,
+  tabId,
+  miniPlayer,
+  bottomInset,
+}: Props & { readonly tabId: string }) {
   const previewState = useThreadPreviewState(threadRef);
   const snapshot = previewState.sessions[tabId] ?? null;
   const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
@@ -79,25 +108,11 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const fittedSourceContent = useBrowserSurfaceStore(
     (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
   );
-  const source = resolvePreviewMiniPlayerSourceSize(
+  const sourceSize = resolvePreviewMiniPlayerSourceSize(
     snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
     fittedSourceContent,
     desktopOverlay?.zoomFactor ?? 1,
   );
-  const frame =
-    container && miniPlayer?.tabId === tabId
-      ? resolvePreviewMiniPlayerFrame({
-          width: miniPlayer.width,
-          position: miniPlayer.position,
-          source,
-          container,
-          bottomInset,
-        })
-      : null;
-
-  const close = () => {
-    usePreviewMiniPlayerStore.getState().close(threadRef);
-  };
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -116,6 +131,164 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
+  };
+
+  if (!snapshot) return null;
+
+  return (
+    <MiniPlayerShell
+      threadRef={threadRef}
+      miniPlayer={miniPlayer}
+      sourceSize={sourceSize}
+      bottomInset={bottomInset}
+      label="Floating browser preview"
+      onOpenInPanel={openInPanel}
+      pillActions={
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
+                size="icon-xs"
+                aria-label={
+                  desktopOverlay?.pictureInPicture
+                    ? "Close popped-out preview"
+                    : "Pop preview into separate window"
+                }
+                disabled={!desktopOverlay?.hasWebContents}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={toggleNativePictureInPicture}
+              />
+            }
+          >
+            <PictureInPicture2 />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {desktopOverlay?.pictureInPicture
+              ? "Close separate window"
+              : "Pop into separate window"}
+          </TooltipPopup>
+        </Tooltip>
+      }
+    >
+      {(frame) => (
+        <>
+          <BrowserSurfaceSlot
+            tabId={runtimeTabId}
+            visible={Boolean(desktopOverlay?.hasWebContents)}
+            cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
+            zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
+            fitSourceContent
+            layoutVersion={`${frame.x}:${frame.y}`}
+            className="absolute inset-0"
+          />
+          {!desktopOverlay?.hasWebContents ? (
+            <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
+              Reconnecting preview…
+            </div>
+          ) : null}
+        </>
+      )}
+    </MiniPlayerShell>
+  );
+}
+
+function DeviceMiniPlayer({
+  threadRef,
+  source,
+  miniPlayer,
+  bottomInset,
+}: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
+  const { state: deviceState } = useDeviceState(threadRef.environmentId);
+  const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
+  const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
+  const device = deviceState.devices.find(
+    (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
+  );
+  const hostLabel =
+    deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
+
+  const openInPanel = () => {
+    usePreviewMiniPlayerStore.getState().close(threadRef);
+    useRightPanelStore.getState().openDevice(threadRef, {
+      hostId: source.hostId,
+      deviceId: source.deviceId,
+      platform: source.platform,
+      name: source.name,
+    });
+  };
+
+  return (
+    <MiniPlayerShell
+      threadRef={threadRef}
+      miniPlayer={miniPlayer}
+      sourceSize={sourceSize}
+      bottomInset={bottomInset}
+      label="Floating device preview"
+      onOpenInPanel={openInPanel}
+    >
+      {() => (
+        // The stream is DOM, so it takes the band the browser's native webview would.
+        <div
+          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
+          style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+        >
+          <DeviceStreamView
+            environmentId={threadRef.environmentId}
+            platform={source.platform}
+            deviceId={source.deviceId}
+            hostId={source.hostId}
+            deviceName={device?.name ?? source.name}
+            deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
+            visible
+            onScreen={setScreen}
+          />
+        </div>
+      )}
+    </MiniPlayerShell>
+  );
+}
+
+/**
+ * The frame, drag/resize gestures, and hover pill shared by every floating
+ * source. Native clipping and the DOM frame use the same radius so their
+ * separately composited edges stay aligned.
+ */
+function MiniPlayerShell({
+  threadRef,
+  miniPlayer,
+  sourceSize,
+  bottomInset,
+  label,
+  onOpenInPanel,
+  pillActions,
+  children,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly miniPlayer: PreviewMiniPlayerState;
+  readonly sourceSize: PreviewMiniPlayerSize;
+  readonly bottomInset: number;
+  readonly label: string;
+  readonly onOpenInPanel: () => void;
+  readonly pillActions?: ReactNode;
+  readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const gestureRef = useRef<PointerGesture | null>(null);
+  const [container, setContainer] = useState<PreviewMiniPlayerSize | null>(null);
+  const sourceKey = previewMiniPlayerSourceKey(miniPlayer.source);
+  const frame = container
+    ? resolvePreviewMiniPlayerFrame({
+        width: miniPlayer.width,
+        position: miniPlayer.position,
+        source: sourceSize,
+        container,
+        bottomInset,
+      })
+    : null;
+
+  const close = () => {
+    usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
   useLayoutEffect(() => {
@@ -160,7 +333,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     if (gesture.direction === null) {
       store.move(
         threadRef,
-        tabId,
+        sourceKey,
         clampPreviewMiniPlayerPosition(
           { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
           container,
@@ -174,12 +347,12 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       start: gesture.frame,
       direction: gesture.direction,
       delta,
-      source,
+      source: sourceSize,
       container,
       bottomInset,
     });
-    store.resize(threadRef, tabId, next.width);
-    store.move(threadRef, tabId, { x: next.x, y: next.y });
+    store.resize(threadRef, sourceKey, next.width);
+    store.move(threadRef, sourceKey, { x: next.x, y: next.y });
   };
 
   const endGesture = (event: ReactPointerEvent<HTMLElement>) => {
@@ -190,14 +363,12 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     }
   };
 
-  if (!snapshot || miniPlayer?.tabId !== tabId) return null;
-
   return (
     <div ref={containerRef} className="pointer-events-none absolute inset-0">
       {frame ? (
         <section
-          aria-label="Floating browser preview"
-          data-preview-mini-player={tabId}
+          aria-label={label}
+          data-preview-mini-player={sourceKey}
           className="pointer-events-none absolute select-none"
           style={{
             left: frame.x,
@@ -227,7 +398,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                       size="icon-xs"
                       aria-label="Open preview in right panel"
                       onPointerDown={(event) => event.stopPropagation()}
-                      onClick={openInPanel}
+                      onClick={onOpenInPanel}
                     />
                   }
                 >
@@ -235,31 +406,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                 </TooltipTrigger>
                 <TooltipPopup side="top">Open in right panel</TooltipPopup>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant={desktopOverlay?.pictureInPicture ? "secondary" : "ghost"}
-                      size="icon-xs"
-                      aria-label={
-                        desktopOverlay?.pictureInPicture
-                          ? "Close popped-out preview"
-                          : "Pop preview into separate window"
-                      }
-                      disabled={!desktopOverlay?.hasWebContents}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={toggleNativePictureInPicture}
-                    />
-                  }
-                >
-                  <PictureInPicture2 />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {desktopOverlay?.pictureInPicture
-                    ? "Close separate window"
-                    : "Pop into separate window"}
-                </TooltipPopup>
-              </Tooltip>
+              {pillActions}
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -280,21 +427,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           </div>
 
           <div className="absolute inset-0 z-[47] rounded-[inherit] bg-muted shadow-2xl/35" />
-          <BrowserSurfaceSlot
-            tabId={runtimeTabId}
-            visible={Boolean(desktopOverlay?.hasWebContents)}
-            cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}
-            zIndex={PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}
-            fitSourceContent
-            layoutVersion={`${frame.x}:${frame.y}`}
-            className="absolute inset-0"
-          />
+          {children(frame)}
           <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border/80" />
-          {!desktopOverlay?.hasWebContents ? (
-            <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-              Reconnecting preview…
-            </div>
-          ) : null}
           {RESIZE_HANDLES.map(({ direction, className }) => (
             <div
               key={direction}

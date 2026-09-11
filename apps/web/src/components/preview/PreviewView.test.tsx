@@ -171,7 +171,7 @@ vi.mock("~/previewMiniPlayerStore", () => {
         byThreadKey: mocks.miniPlayerTabId
           ? {
               "environment-1:thread-1": {
-                tabId: mocks.miniPlayerTabId,
+                source: { kind: "browser", tabId: mocks.miniPlayerTabId },
                 position: null,
               },
             }
@@ -185,9 +185,10 @@ vi.mock("~/previewMiniPlayerStore", () => {
     },
   );
   return {
-    selectThreadPreviewMiniPlayer: (
-      byThreadKey: Record<string, { tabId: string; position: null }>,
-    ) => byThreadKey["environment-1:thread-1"] ?? null,
+    browserMiniPlayerSource: (tabId: string) => ({ kind: "browser", tabId }),
+    selectThreadPreviewMiniPlayerTabId: (
+      byThreadKey: Record<string, { source: { tabId: string }; position: null }>,
+    ) => byThreadKey["environment-1:thread-1"]?.source.tabId ?? null,
     usePreviewMiniPlayerStore,
   };
 });
@@ -485,7 +486,10 @@ describe("PreviewView navigation", () => {
     renderToStaticMarkup(<PreviewView {...props} />);
     expect(mocks.pictureInPicturePressed).toBe(false);
     mocks.togglePictureInPicture?.();
-    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, "tab-1");
+    expect(mocks.openMiniPlayer).toHaveBeenCalledWith(props.threadRef, {
+      kind: "browser",
+      tabId: "tab-1",
+    });
     expect(mocks.closeRightPanel).toHaveBeenCalledWith(props.threadRef);
 
     mocks.miniPlayerTabId = "tab-1";
