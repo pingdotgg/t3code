@@ -37,7 +37,11 @@ import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
-const projectFaviconColors = new Map<string, string | null | Promise<string | null>>();
+// One entry per favicon resource; a new src replaces the old sample so data URLs are not retained.
+const projectFaviconColors = new Map<
+  string,
+  { readonly src: string; readonly color: string | null | Promise<string | null> }
+>();
 
 const DynamicIcon = lazy(() =>
   import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
@@ -189,33 +193,35 @@ export function useProjectFaviconColor(input: {
 }) {
   const assetUrl = useAtomValue(projectFaviconUrlAtom(input));
   const src = assetUrl && !isProjectFaviconFallbackUrl(assetUrl) ? assetUrl : null;
-  const cacheKey =
-    src === null
-      ? null
-      : `${getProjectFaviconResourceKey(input.environmentId, input.cwd, input.faviconPath)}:${src}`;
-  const [sample, setSample] = useState<{ cacheKey: string; color: string | null } | null>(() => {
-    if (cacheKey === null) return null;
-    const cached = projectFaviconColors.get(cacheKey);
-    return typeof cached === "string" || cached === null ? { cacheKey, color: cached } : null;
+  const resourceKey = getProjectFaviconResourceKey(
+    input.environmentId,
+    input.cwd,
+    input.faviconPath,
+  );
+  const [sample, setSample] = useState<{ src: string; color: string | null } | null>(() => {
+    const cached = projectFaviconColors.get(resourceKey);
+    return cached !== undefined && cached.src === src && !(cached.color instanceof Promise)
+      ? { src: cached.src, color: cached.color }
+      : null;
   });
 
   useEffect(() => {
-    if (cacheKey === null || src === null) return;
+    if (src === null) return;
     let cancelled = false;
-    void loadProjectFaviconColor(cacheKey, src).then((color) => {
-      if (!cancelled) setSample({ cacheKey, color });
+    void loadProjectFaviconColor(resourceKey, src).then((color) => {
+      if (!cancelled) setSample({ src, color });
     });
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, src]);
+  }, [resourceKey, src]);
 
-  return sample !== null && sample.cacheKey === cacheKey ? sample.color : null;
+  return src !== null && sample !== null && sample.src === src ? sample.color : null;
 }
 
-function loadProjectFaviconColor(cacheKey: string, src: string): Promise<string | null> {
-  const cached = projectFaviconColors.get(cacheKey);
-  if (cached !== undefined) return Promise.resolve(cached);
+function loadProjectFaviconColor(resourceKey: string, src: string): Promise<string | null> {
+  const cached = projectFaviconColors.get(resourceKey);
+  if (cached?.src === src) return Promise.resolve(cached.color);
 
   const pending = new Promise<string | null>((resolve) => {
     const image = new Image();
@@ -241,9 +247,11 @@ function loadProjectFaviconColor(cacheKey: string, src: string): Promise<string 
     image.addEventListener("error", () => resolve(null));
     image.src = src;
   });
-  projectFaviconColors.set(cacheKey, pending);
+  projectFaviconColors.set(resourceKey, { src, color: pending });
   void pending.then((color) => {
-    if (projectFaviconColors.get(cacheKey) === pending) projectFaviconColors.set(cacheKey, color);
+    if (projectFaviconColors.get(resourceKey)?.color === pending) {
+      projectFaviconColors.set(resourceKey, { src, color });
+    }
   });
   return pending;
 }
