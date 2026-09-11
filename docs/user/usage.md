@@ -6,6 +6,9 @@
 environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost. These estimates are not your subscription bill.
 
+Claude estimates price each model-fallback attempt under the model that ran it, and price
+five-minute and one-hour cache writes at their own rates when the transcript reports them.
+
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart. Changing dates reuses a source snapshot from the last minute when it already
@@ -30,6 +33,7 @@ Rows that map to a thread carry a link that opens it.
 The **Estimated cache writes** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
 writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker

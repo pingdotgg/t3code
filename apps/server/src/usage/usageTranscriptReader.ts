@@ -236,8 +236,7 @@ export async function readTranscriptRecords(
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
         return;
       }
-      const record = parseClaudeLine(line);
-      if (record !== null) out.push(record);
+      for (const record of parseClaudeLine(line)) out.push(record);
     };
 
     const toLineString = (lineBuffer: Buffer): string => {

@@ -180,7 +180,9 @@ export const make = Effect.gen(function* () {
   const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
-  let cacheDirty = false;
+  let cacheRevision = 0;
+  let persistedCacheRevision = 0;
+  const cachePersistSemaphore = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -369,19 +371,19 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
-    // the next scan instead of leaving disk permanently stale.
+  const persistScanCacheUnlocked = Effect.fn("UsageService.persistScanCacheUnlocked")(function* () {
+    if (cacheRevision === persistedCacheRevision) return;
+    const revision = cacheRevision;
     yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
       Effect.map(() => {
-        cacheDirty = false;
+        persistedCacheRevision = revision;
       }),
       // A cache we cannot write is a slower next start, not a failed read.
       Effect.catchCause(() => Effect.void),
     );
   });
+  const persistScanCache = () => cachePersistSemaphore.withPermits(1)(persistScanCacheUnlocked());
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -441,7 +443,7 @@ export const make = Effect.gen(function* () {
         tailRecords,
         position: parsed.position,
       });
-      cacheDirty = true;
+      cacheRevision += 1;
       return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
     });
 
@@ -626,8 +628,8 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      ...(resolveProject === undefined ? {} : { resolveProject }),
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
     });
 
     const sources: UsageSource[] = [];
@@ -669,6 +671,8 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
+        // Read from the settled records so a progressive snapshot replacement
+        // cannot leave the source count attached to the superseded session.
         distinctSessions: aggregator.distinctSessions(provider),
         message: null,
       });
@@ -684,7 +688,7 @@ export const make = Effect.gen(function* () {
         windowStartMs,
         retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
       });
-      if (pruned > 0) cacheDirty = true;
+      if (pruned > 0) cacheRevision += 1;
       yield* persistScanCache();
     }
 
@@ -935,7 +939,7 @@ export const make = Effect.gen(function* () {
         windowStartMs,
         retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
       });
-      if (pruned > 0) cacheDirty = true;
+      if (pruned > 0) cacheRevision += 1;
       // A thread-only client must warm and bound the same durable cache as the
       // summary RPC, otherwise restarts repeat parsing and stale entries grow.
       yield* persistScanCache();

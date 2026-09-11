@@ -21,6 +21,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
       cacheCreationTokens: 10,
+      cacheCreation5mTokens: 10,
       outputTokens: 50,
       reasoningTokens: 0,
     },
@@ -99,6 +100,25 @@ describe("scan cache round trip", () => {
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
   });
 
+  it("preserves partial TTL classification and its unclassified remainder", () => {
+    const partial = record({
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 10,
+        cacheCreationTokens: 60,
+        cacheCreation5mTokens: 20,
+        cacheCreation1hTokens: 10,
+        outputTokens: 12,
+        reasoningTokens: 0,
+      },
+    });
+    const original = cacheWith([["/partial.jsonl", 100, [partial]]]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.get("/partial.jsonl")?.records[0]?.totals).toEqual(partial.totals);
+  });
+
   it("drops an entry whose persisted parse state is corrupt", () => {
     // Resuming with a bad reducer state would attach appended usage to the
     // wrong model or replay fork-copied history; that entry must cold parse.
@@ -127,7 +147,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 2 };
+    const previous = { ...encoded, version: 5 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
@@ -197,7 +217,27 @@ describe("scan cache round trip", () => {
       files: {
         "/a.jsonl": {
           ...encoded.files["/a.jsonl"]!,
-          r: [[...row.slice(0, 10), cwdIndex]],
+          r: [[...row.slice(0, 10), cwdIndex, ...row.slice(11)]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([
+    [20, 0],
+    [-1, 11],
+    [5.5, 4.5],
+  ])("drops an entry with invalid cache TTL counters %s + %s", (fiveMinute, oneHour) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 11), fiveMinute, oneHour]],
         },
       },
     };

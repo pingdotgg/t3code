@@ -188,6 +188,8 @@ export class UsageAggregator {
       return inWindow;
     }
     if (this.#recordsByKey.has(record.dedupeKey)) {
+      // Claude writes progressive snapshots for one response. The final copy
+      // is complete, so replace the earlier one without counting it twice.
       this.#recordsByKey.set(record.dedupeKey, record);
       this.#duplicatesDropped += 1;
       return inWindow;
