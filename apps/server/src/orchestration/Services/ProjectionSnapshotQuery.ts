@@ -248,6 +248,9 @@ export interface ProjectionSnapshotQueryShape {
    * Without a window the full thread is returned with no `page` field —
    * pagination is strictly opt-in.
    *
+   * `includeShell` reads shell-only attention and liveness fields in the same
+   * transaction for callers that combine history with a thread summary.
+   *
    * Activity payloads are projected for clients as they are read in small
    * sequential batches. Callers still apply the full snapshot projector for
    * collection-level activity pruning.
@@ -255,7 +258,13 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,
     window?: OrchestrationThreadDetailWindow,
-  ) => Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>, ProjectionRepositoryError>;
+    includeShell?: boolean,
+  ) => Effect.Effect<
+    Option.Option<
+      OrchestrationThreadDetailSnapshot & { readonly shell?: OrchestrationThreadShell }
+    >,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

@@ -132,7 +132,7 @@ const seed = Effect.gen(function* () {
 });
 
 describe("peer thread MCP", () => {
-  it.effect("retries a read when projection changes between shell and detail", () =>
+  it.effect("reads shell and detail together after a concurrent projection change", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -153,7 +153,7 @@ describe("peer thread MCP", () => {
           const read = result(yield* call("read_thread", { threadId: callerId }));
           expect(read.thread.title).toBe("New title");
           expect(read.thread.hasPendingApprovals).toBe(false);
-          expect(detailReads).toBe(2);
+          expect(detailReads).toBe(1);
         }).pipe(
           Effect.provide(
             makeLayer(`${directory}/state.sqlite`, (query) => ({

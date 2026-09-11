@@ -156,43 +156,43 @@ const make = Effect.gen(function* () {
     read_thread: (input) =>
       Effect.gen(function* () {
         const caller = yield* source();
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const before = yield* snapshots.getSnapshotSequence().pipe(Effect.mapError(failed));
-          const thread = yield* target(input.threadId, caller);
-          const detail = yield* snapshots
-            .getThreadDetailSnapshot(thread.id, {
+        const detail = yield* snapshots
+          .getThreadDetailSnapshot(
+            input.threadId,
+            {
               turnLimit: input.turnLimit ?? 10,
               ...(input.beforeCursor === undefined ? {} : { beforeCursor: input.beforeCursor }),
-            })
-            .pipe(Effect.mapError(failed));
-          if (Option.isNone(detail)) return yield* failed();
-          // Detail pages omit shell-only attention/liveness fields. A matching sequence
-          // keeps those fields and the paginated history on the same projection version.
-          if (before.snapshotSequence !== detail.value.snapshotSequence) continue;
-          return {
-            thread: summary(
-              thread,
-              detail.value.thread.activities
-                .filter(
-                  (activity) =>
-                    activity.kind === "approval.requested" ||
-                    activity.kind === "user-input.requested",
-                )
-                .map((activity) => activity.id)
-                .sort(),
-            ),
-            snapshotSequence: detail.value.snapshotSequence,
-            ...(detail.value.page === undefined ? {} : { page: detail.value.page }),
-            messages: detail.value.thread.messages.map((message) => ({
-              id: message.id,
-              role: message.role,
-              text: message.text.slice(0, 8000),
-              truncated: message.text.length > 8000,
-              createdAt: message.createdAt,
-            })),
-          };
+            },
+            true,
+          )
+          .pipe(Effect.mapError(failed));
+        if (Option.isNone(detail) || detail.value.shell === undefined) return yield* failed();
+        const thread = detail.value.shell;
+        if (thread.projectId !== caller.projectId || thread.archivedAt !== null) {
+          return yield* new ThreadToolError({ message: "Thread is unavailable in this project." });
         }
-        return yield* failed();
+        return {
+          thread: summary(
+            thread,
+            detail.value.thread.activities
+              .filter(
+                (activity) =>
+                  activity.kind === "approval.requested" ||
+                  activity.kind === "user-input.requested",
+              )
+              .map((activity) => activity.id)
+              .sort(),
+          ),
+          snapshotSequence: detail.value.snapshotSequence,
+          ...(detail.value.page === undefined ? {} : { page: detail.value.page }),
+          messages: detail.value.thread.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.text.slice(0, 8000),
+            truncated: message.text.length > 8000,
+            createdAt: message.createdAt,
+          })),
+        };
       }),
 
     send_message_to_thread: (input) =>
