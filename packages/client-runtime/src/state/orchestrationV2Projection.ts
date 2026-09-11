@@ -3,7 +3,10 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+import {
+  createOrchestrationV2TurnItemVisibility,
+  isOrchestrationV2TurnItemVisible,
+} from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly partialTimeline?: boolean;
@@ -52,10 +55,15 @@ function activeVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
+  const isVisible = createOrchestrationV2TurnItemVisibility({
+    runs: projection.runs,
+    attempts: projection.attempts,
+    items: projection.turnItems,
+  });
   let next: Array<(typeof rows)[number]> | null = null;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index]!;
-    const keep = row.visibility !== "local" || shouldShowLocalTurnItem(projection, row.item);
+    const keep = row.visibility !== "local" || isVisible(row.item);
     if (!keep) {
       next ??= rows.slice(0, index);
       continue;
@@ -236,7 +244,13 @@ export function applyOrchestrationV2ProjectionEvent(
         return projection;
       }
       const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
-      const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
+      // Only interrupt requests can change another item's visibility. Streaming
+      // text/tool updates must not recheck every row against every run.
+      const previous = projection.turnItems.find((item) => item.id === event.payload.id);
+      const visible =
+        event.payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
+          ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }
+          : next;
       return {
         ...next,
         visibleTurnItems: shouldShowLocalTurnItem(next, event.payload)
