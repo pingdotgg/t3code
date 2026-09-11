@@ -208,6 +208,7 @@ import {
   transferBudgetViolations,
 } from "../integration/TransferBudgetReport.integration.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { otlpSerializationLayer } from "@t3tools/shared/observability";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -1049,6 +1050,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.browserTraceCollector,
         }),
       ),
+      Layer.provide(otlpSerializationLayer(config.otlpProtocol)),
       Layer.provide(
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
@@ -5202,6 +5204,110 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           contentType: "application/json",
         },
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("forwards browser OTLP traces as protobuf when the protocol is http/protobuf", () =>
+    Effect.gen(function* () {
+      const upstreamRequests: Array<{
+        readonly body: string;
+        readonly contentType: string | null;
+      }> = [];
+      const localTraceRecords: Array<unknown> = [];
+      // Produced by effect's own tracer, so enum fields are numeric and the
+      // protobuf encoder accepts them. The hand-written payload in the JSON
+      // test uses enum names, which only the JSON path tolerates.
+      const payload = yield* makeBrowserOtlpPayload("client.protobuf.test");
+
+      const collector = yield* Effect.acquireRelease(
+        Effect.promise(async () => {
+          const NodeHttp = await import("node:http");
+
+          return await new Promise<{
+            readonly close: () => Promise<void>;
+            readonly url: string;
+          }>((resolve, reject) => {
+            const server = NodeHttp.createServer((request, response) => {
+              const chunks: Buffer[] = [];
+              request.on("data", (chunk) => {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+              });
+              request.on("end", () => {
+                upstreamRequests.push({
+                  body: Buffer.concat(chunks).toString("utf8"),
+                  contentType: request.headers["content-type"] ?? null,
+                });
+                response.statusCode = 204;
+                response.end();
+              });
+            });
+
+            server.on("error", reject);
+            server.listen(0, "127.0.0.1", () => {
+              const address = server.address();
+              if (!address || typeof address === "string") {
+                reject(new Error("Expected TCP collector address"));
+                return;
+              }
+
+              resolve({
+                url: `http://127.0.0.1:${address.port}/v1/traces`,
+                close: () =>
+                  new Promise<void>((resolveClose, rejectClose) => {
+                    server.close((error) => {
+                      if (error) {
+                        rejectClose(error);
+                        return;
+                      }
+                      resolveClose();
+                    });
+                  }),
+              });
+            });
+          });
+        }),
+        ({ close }) => Effect.promise(close),
+      );
+
+      yield* buildAppUnderTest({
+        config: {
+          otlpTracesUrl: collector.url,
+          otlpProtocol: "http/protobuf",
+        },
+        layers: {
+          browserTraceCollector: {
+            record: (records) =>
+              Effect.sync(() => {
+                localTraceRecords.push(...records);
+              }),
+          },
+        },
+      });
+
+      const response = yield* HttpClient.post("/api/observability/v1/traces", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          "content-type": "application/json",
+        },
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        body: HttpBody.text(JSON.stringify(payload), "application/json"),
+      });
+
+      assert.equal(response.status, 204);
+      // The local collector still decodes the browser's JSON before forwarding.
+      assert.equal(localTraceRecords.length, 1);
+      assert.equal(upstreamRequests.length, 1);
+      const forwarded = upstreamRequests[0];
+      assert.notEqual(forwarded, undefined);
+      if (!forwarded) {
+        return;
+      }
+      assert.equal(forwarded.contentType, "application/x-protobuf");
+      // Protobuf strings are raw UTF-8, so the span and service names survive
+      // the stub's utf8 decode even though the surrounding bytes don't.
+      assert.notEqual(forwarded.body[0], "{");
+      assert.include(forwarded.body, "client.protobuf.test");
+      assert.include(forwarded.body, "t3-web");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
