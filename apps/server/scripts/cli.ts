@@ -185,6 +185,12 @@ const buildExeCmd = Command.make(
   "build-exe",
   {
     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
+    target: Flag.string("target").pipe(
+      Flag.withDescription(
+        "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
+      ),
+      Flag.optional,
+    ),
   },
   (config) =>
     Effect.gen(function* () {
@@ -198,7 +204,14 @@ const buildExeCmd = Command.make(
       yield* runCommand(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: serverDir,
-          env: { ...process.env, T3CODE_PACK_EXE: "1" },
+          env: {
+            ...process.env,
+            T3CODE_PACK_EXE: "1",
+            ...Option.match(config.target, {
+              onNone: () => ({}),
+              onSome: (target) => ({ T3CODE_PACK_EXE_TARGET: target }),
+            }),
+          },
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
           shell: spawnCommand.shell,

@@ -2613,7 +2613,10 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
 });
 
 export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-(?:nightly|preview)\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
+  // Preview builds must never appear in the nightly updater feed, so they
+  // publish under the latest channel metadata (which no stable client picks
+  // up either, since the release is a prerelease).
+  return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
 
 function isDesktopPreviewVersion(version: string): boolean {

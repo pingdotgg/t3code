@@ -5,6 +5,7 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
+      - "!v*-preview.*"
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
     - cron: "8,38 * * * *"
@@ -730,11 +731,18 @@ jobs:
 
       # The single-executable is built with a Node that supports --build-sea
       # (25.7+); the repo itself stays on the engines.node version.
+      # The macOS x64 archive is cross-built on the arm64 runner: tsdown
+      # downloads the x64 Node and injects the bundle into it.
       - name: Build CLI single-executable
         shell: bash
         env:
           VP_NODE_VERSION: "26"
-        run: vp run --filter t3 build:exe
+        run: |
+          case "${{ matrix.platform }}" in
+            mac) target="darwin-${{ matrix.arch }}" ;;
+            *) target="${{ matrix.platform }}-${{ matrix.arch }}" ;;
+          esac
+          node apps/server/scripts/cli.ts build-exe --target "$target" --verbose
 
       - name: Import macOS signing certificate for the CLI archive
         if: matrix.platform == 'mac'

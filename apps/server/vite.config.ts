@@ -21,13 +21,29 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = /-(?:nightly|preview)\./.test(packageJson.version) ? "nightly" : "latest";
+const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
+  ? "nightly"
+  : "latest";
 
 // `build:exe` wraps the same bundle in a Node single-executable. tsdown's exe
 // step refuses multi-chunk output and counts the sourcemap as a chunk, and the
 // executable needs a host Node that supports `--build-sea` (25.7+), so this is
 // a separate mode rather than a second entry in the default build.
 const packExecutable = process.env.T3CODE_PACK_EXE === "1";
+// `<platform>-<arch>` in nodejs.org naming (darwin-x64, linux-arm64, win-x64).
+// When set, tsdown injects the bundle into a downloaded Node of that target
+// instead of the host Node, which is how the arm64 macOS runner produces the
+// x64 archive. Cross-building is safe because the code cache is off.
+const packExecutableTarget = process.env.T3CODE_PACK_EXE_TARGET?.trim();
+const packExecutableTargets = packExecutableTarget
+  ? [
+      {
+        platform: packExecutableTarget.split("-")[0] as "darwin" | "linux" | "win",
+        arch: packExecutableTarget.split("-")[1] as "arm64" | "x64",
+        nodeVersion: process.versions.node,
+      },
+    ]
+  : undefined;
 
 export default mergeConfig(
   baseConfig,
@@ -53,6 +69,7 @@ export default mergeConfig(
             exe: {
               fileName: "t3",
               outDir: "dist-exe",
+              ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
               // Node's SEA docs: `import()` does not work when useCodeCache is
               // true, and the server reaches several modules that way. The
               // cache is also platform-bound, so leaving it off keeps the

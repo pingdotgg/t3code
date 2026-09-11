@@ -375,13 +375,26 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   const repoRoot = yield* RepoRoot;
   const serverDir = path.join(repoRoot, "apps/server");
   const executableName = input.platform === "win" ? "t3.exe" : "t3";
-  const builtExecutable = path.join(serverDir, "dist-exe", executableName);
+  // tsdown suffixes cross-built executables with their target (t3-darwin-x64);
+  // a host build is plain t3. Prefer the exact target when both exist.
+  const targetKey = `${input.platform === "mac" ? "darwin" : input.platform}-${input.arch}`;
+  const targetExecutable = path.join(
+    serverDir,
+    "dist-exe",
+    `t3-${targetKey}${input.platform === "win" ? ".exe" : ""}`,
+  );
+  const builtExecutable = (yield* fs.exists(targetExecutable))
+    ? targetExecutable
+    : path.join(serverDir, "dist-exe", executableName);
   const webClient = path.join(serverDir, "dist/client");
   const resourceMonitorDir = Option.getOrElse(input.resourceMonitorDir, () =>
     path.join(serverDir, "dist/resource-monitor"),
   );
 
-  yield* requireInput(builtExecutable, "Run `vp run --filter t3 build:exe` first.");
+  yield* requireInput(
+    builtExecutable,
+    `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
+  );
   yield* requireInput(path.join(webClient, "index.html"), "Run `vp run --filter t3 build` first.");
   yield* requireInput(
     resourceMonitorDir,

@@ -8,7 +8,9 @@
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -18,7 +20,9 @@ import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
   "CliArchiveSmokeError",
@@ -47,8 +51,9 @@ const runExecutable = Effect.fn("runExecutable")(function* (
   const child = yield* spawner.spawn(
     ChildProcess.make(executable, args, {
       cwd,
-      // The service launcher context must not leak in from a developer shell.
-      env: { PATH: process.env.PATH ?? "", HOME: cwd, USERPROFILE: cwd, TMPDIR: cwd, TEMP: cwd },
+      // Empty PATH: the archive must not reach a system node, and the
+      // launcher context must not leak in from a developer shell.
+      env: { PATH: "", HOME: cwd, USERPROFILE: cwd, TMPDIR: cwd, TEMP: cwd },
       extendEnv: false,
     }),
   );
@@ -104,26 +109,65 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     });
   }
 
-  // The preflight loads the persistence and terminal stacks, which is where
-  // native addons (sqlite, node-pty, msgpackr-extract) actually get resolved.
-  const preflight = yield* runExecutable(
-    executable,
-    [
-      "__service-preflight",
-      "--database-path",
-      path.join(scratch, "state.sqlite"),
-      "--launcher-protocol",
-      "0",
-    ],
-    contentDir,
+  // Starting the server is what actually opens sqlite, loads the terminal
+  // and search stacks (node-pty, fff, msgpackr-extract), and serves the
+  // client, so probe a real `serve` in a scratch home rather than a
+  // command that only reads package metadata.
+  const net = yield* NetService.NetService;
+  const port = yield* net.findAvailablePort(47700);
+  const home = path.join(scratch, "home");
+  const server = yield* spawner.spawn(
+    ChildProcess.make(
+      executable,
+      ["serve", "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
+      {
+        cwd: contentDir,
+        env: {
+          PATH: "",
+          HOME: home,
+          USERPROFILE: home,
+          TMPDIR: scratch,
+          TEMP: scratch,
+          T3CODE_HOME: home,
+        },
+        extendEnv: false,
+      },
+    ),
   );
-  if (preflight.exitCode !== 0 || !preflight.stdout.includes('"version"')) {
+  const output = yield* Effect.forkScoped(
+    Effect.all([collect(server.stdout), collect(server.stderr)]),
+  );
+  const httpClient = yield* HttpClient.HttpClient;
+  // A request that connects while the server is still initializing can hang,
+  // so each probe gets its own deadline, like the SSH readiness probe.
+  const probe = httpClient.execute(HttpClientRequest.get(`http://127.0.0.1:${String(port)}/`)).pipe(
+    Effect.map((response) => response.status === 200),
+    Effect.timeout(Duration.seconds(2)),
+    Effect.orElseSucceed(() => false),
+  );
+  const pollUntilReady = Effect.gen(function* () {
+    while (!(yield* probe)) {
+      yield* Effect.sleep(Duration.millis(250));
+    }
+    return true;
+  });
+  const ready = yield* pollUntilReady.pipe(
+    Effect.timeout(Duration.seconds(30)),
+    Effect.orElseSucceed(() => false),
+  );
+  yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
+  yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
+  const [stdout, stderr] = yield* Fiber.join(output).pipe(
+    Effect.timeout(Duration.seconds(5)),
+    Effect.orElseSucceed(() => ["", ""] as const),
+  );
+  if (!ready) {
     return yield* new CliArchiveSmokeError({
-      step: "running the service preflight",
-      detail: `exit ${String(preflight.exitCode)}\n${preflight.stdout}${preflight.stderr}`,
+      step: "serving from the extracted archive",
+      detail: `no 200 from / within 30s\n${stdout}${stderr}`,
     });
   }
-  yield* Effect.log(`[cli-smoke] ${root}: --version and preflight passed.`);
+  yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);
 });
 
 const command = Command.make(
@@ -137,7 +181,14 @@ const command = Command.make(
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(
-    Effect.provide(Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        Logger.layer([Logger.consolePretty()]),
+        NodeServices.layer,
+        NetService.layer,
+        FetchHttpClient.layer,
+      ),
+    ),
     NodeRuntime.runMain,
   );
 }
