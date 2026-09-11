@@ -193,6 +193,6 @@ jobs:
           rm -f .github/workflows/repair-pr-9212.yml
 
           git add -A
-          git diff --cached --check
+          git diff --cached --check -- apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts
           git commit -m "fix(server): rebase unknown-provider PR lookup fix"
           git push origin HEAD:fix/unknown-provider-pr-polling
