@@ -1,7 +1,8 @@
+import { toHtml } from "hast-util-to-html";
 import { getSharedHighlighter } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createIncrementalHighlighter } from "./incrementalHighlighting";
+import { createIncrementalHighlightedDocument } from "./incrementalHighlighting";
 
 const samples = {
   typescript: "/* multi\nline comment */\nconst x = `template\n${1 + 2}`;\nconst re = /abc/;\n",
@@ -29,10 +30,10 @@ describe("incremental code highlighting", () => {
     async (language, code) => {
       const highlighter = await highlighterPromise;
       for (const theme of ["pierre-dark", "pierre-light"] as const) {
-        const highlight = createIncrementalHighlighter(highlighter, language, theme);
+        const highlight = createIncrementalHighlightedDocument(highlighter, language, theme);
         for (let end = 0; end <= code.length; end++) {
           const text = code.slice(0, end);
-          expect(highlight(text), `${theme}, prefix ${end}`).toBe(
+          expect(toHtml(highlight(text)), `${theme}, prefix ${end}`).toBe(
             highlighter.codeToHtml(text, { lang: language, theme }),
           );
         }
@@ -42,7 +43,11 @@ describe("incremental code highlighting", () => {
 
   it("resets after edits and truncation, including edits to a completed line", async () => {
     const highlighter = await highlighterPromise;
-    const highlight = createIncrementalHighlighter(highlighter, "typescript", "pierre-dark");
+    const highlight = createIncrementalHighlightedDocument(
+      highlighter,
+      "typescript",
+      "pierre-dark",
+    );
     const inputs = [
       "/* open\ncomment\n",
       "/* open\ncomment\n*/\nconst x = 1;",
@@ -53,7 +58,7 @@ describe("incremental code highlighting", () => {
       "\n\n\nconst fresh = true;\n",
     ];
     for (const text of inputs) {
-      expect(highlight(text)).toBe(
+      expect(toHtml(highlight(text))).toBe(
         highlighter.codeToHtml(text, { lang: "typescript", theme: "pierre-dark" }),
       );
     }
@@ -63,9 +68,9 @@ describe("incremental code highlighting", () => {
     "preserves %s without requesting grammar state",
     async (language) => {
       const highlighter = await highlighterPromise;
-      const highlight = createIncrementalHighlighter(highlighter, language, "pierre-dark");
+      const highlight = createIncrementalHighlightedDocument(highlighter, language, "pierre-dark");
       for (const text of ["plain\ntext", "\u001b[31mred\ncontinued", "\n"]) {
-        expect(highlight(text)).toBe(
+        expect(toHtml(highlight(text))).toBe(
           highlighter.codeToHtml(text, { lang: language, theme: "pierre-dark" }),
         );
       }
@@ -74,11 +79,15 @@ describe("incremental code highlighting", () => {
 
   it("preserves partial CRLF and CR line endings", async () => {
     const highlighter = await highlighterPromise;
-    const highlight = createIncrementalHighlighter(highlighter, "typescript", "pierre-dark");
+    const highlight = createIncrementalHighlightedDocument(
+      highlighter,
+      "typescript",
+      "pierre-dark",
+    );
     const code = "/* multi\r\nline */\r\nconst x = 1;\r\n";
     for (let end = 0; end <= code.length; end++) {
       const text = code.slice(0, end);
-      expect(highlight(text)).toBe(
+      expect(toHtml(highlight(text))).toBe(
         highlighter.codeToHtml(text, { lang: "typescript", theme: "pierre-dark" }),
       );
     }
