@@ -77,3 +77,169 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     ),
   ),
 );
+
+it.effect("rolls back earlier question claims when a later pending upload is missing", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-q-fail");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    const existingId = ChatAttachmentId.make("thread-q-fail-00000000-0000-4000-8000-000000000001");
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${existingId}.png`),
+      new Uint8Array([9, 9, 9, 9]),
+    );
+    const captured: OrchestrationV2Command[] = [];
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-missing-pending"),
+      threadId,
+      requestId: RuntimeRequestId.make("request-missing-pending"),
+      answers: { q1: ["one"], q2: ["two"] },
+      attachmentsByQuestionId: {
+        q1: [
+          {
+            type: "image",
+            id: existingId,
+            name: "keep.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          },
+          {
+            type: "image",
+            id: pendingId,
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+        q2: [
+          {
+            type: "image",
+            id: ChatAttachmentId.make(createPendingAttachmentId()!),
+            name: "gone.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService)({
+          dispatch: (command) => {
+            captured.push(command);
+            return Effect.fail(
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "Stop after intake",
+              }),
+            );
+          },
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure._tag).toBe("AttachmentClaimError");
+    }
+    expect(captured).toHaveLength(0);
+    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toEqual(
+      Buffer.from([1, 2, 3]),
+    );
+    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${existingId}.png`))).toEqual(
+      Buffer.from([9, 9, 9, 9]),
+    );
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-q-fail-"),
+      ),
+    ).toEqual([`${existingId}.png`]);
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-question-intake-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect(
+  "rolls back earlier question claims when a later claimed attachment path is missing",
+  () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+      NodeFS.writeFileSync(
+        NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+        new Uint8Array([1, 2, 3]),
+      );
+      const captured: OrchestrationV2Command[] = [];
+      const result = yield* dispatchCommand({
+        type: "runtime-request.respond",
+        commandId: CommandId.make("answer-missing-claimed"),
+        threadId: ThreadId.make("thread-path-fail"),
+        requestId: RuntimeRequestId.make("request-missing-claimed"),
+        answers: { q1: ["one"], q2: ["two"] },
+        attachmentsByQuestionId: {
+          q1: [
+            {
+              type: "image",
+              id: pendingId,
+              name: "screen.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+          ],
+          q2: [
+            {
+              type: "image",
+              id: ChatAttachmentId.make("thread-path-fail-00000000-0000-4000-8000-000000000099"),
+              name: "missing.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+          ],
+        },
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService)({
+            dispatch: (command) => {
+              captured.push(command);
+              return Effect.fail(
+                new OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Stop after intake",
+                }),
+              );
+            },
+          }),
+        ),
+        Effect.result,
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure._tag).toBe("AttachmentClaimError");
+      }
+      expect(captured).toHaveLength(0);
+      expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toEqual(
+        Buffer.from([1, 2, 3]),
+      );
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+          entry.startsWith("thread-path-fail-"),
+        ),
+      ).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-question-intake-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
