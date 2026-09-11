@@ -12,11 +12,11 @@ import {
   composerAttachmentsStillUploading,
 } from "./composer-attachment-uploads";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { type ProviderApprovalDecision, type RuntimeRequestId } from "@t3tools/contracts";
 import {
-  derivePendingThreadRequests,
+  type PendingThreadRequests,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { Atom } from "effect/unstable/reactivity";
@@ -30,9 +30,11 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../lib/threadActivity";
 import { appAtomRegistry } from "./atom-registry";
-import { useSelectedThreadProjection } from "./use-thread-detail";
+import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
+
+const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
 const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
@@ -90,29 +92,22 @@ export function useSelectedThreadRequests() {
     "thread user input dismissal",
   );
   const { selectedThread: selectedThreadShell } = useThreadSelection();
-  const selectedThread = useSelectedThreadProjection();
+  const pendingRequests = useSelectedThreadPendingRequests();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
   const userInputResponsesInFlight = useRef(new Set<string>());
   const [respondingApprovalId, setRespondingApprovalId] = useState<RuntimeRequestId | null>(null);
   const [respondingUserInputId, setRespondingUserInputId] = useState<RuntimeRequestId | null>(null);
 
-  const pendingRequests = useMemo(
-    () =>
-      selectedThread === null
-        ? { approvals: [], userInputs: [] }
-        : derivePendingThreadRequests(selectedThread.projection),
-    [selectedThread],
-  );
-  const activePendingApprovals = pendingRequests.approvals;
+  const activePendingApprovals = pendingRequests?.approvals ?? EMPTY_PENDING_REQUESTS.approvals;
   const activePendingApproval = activePendingApprovals[0] ?? null;
-  const activePendingUserInputs = pendingRequests.userInputs;
+  const activePendingUserInputs = pendingRequests?.userInputs ?? EMPTY_PENDING_REQUESTS.userInputs;
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const questionServerConfigs = useServerConfigs();
   const attachmentDrafts = useAtomValue(composerDraftsAtom);
   const preparationCounts = useAtomValue(questionAttachmentPreparationAtom);
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   useEffect(() => {
-    if (!selectedThreadShell || !selectedThread) return;
+    if (!selectedThreadShell || !pendingRequests) return;
     const prefix = questionAttachmentDraftPrefix(
       selectedThreadShell.environmentId,
       selectedThreadShell.id,
@@ -140,7 +135,7 @@ export function useSelectedThreadRequests() {
       }
     }
     if (changed) appAtomRegistry.set(questionAttachmentPreparationAtom, counts);
-  }, [activePendingUserInputs, attachmentDrafts, selectedThread, selectedThreadShell]);
+  }, [activePendingUserInputs, attachmentDrafts, pendingRequests, selectedThreadShell]);
   const activePendingUserInputDrafts =
     activePendingUserInput && selectedThreadShell
       ? Object.fromEntries(
