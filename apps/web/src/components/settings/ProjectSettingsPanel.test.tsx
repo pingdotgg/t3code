@@ -122,7 +122,10 @@ vi.mock("~/composerDraftStore", () => ({
 }));
 vi.mock("~/lib/composerDraftUploads", () => ({ releaseProjectDraftUploads: state.releaseUploads }));
 vi.mock("~/env", () => ({ isElectron: true }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => state.navigate,
+  useLocation: () => "/settings/projects",
+}));
 vi.mock("../ui/toast", () => ({
   toastManager: { add: vi.fn() },
   stackedThreadToast: (value: unknown) => value,
@@ -182,6 +185,7 @@ vi.mock("./settingsLayout", () => ({
     onClick: () => void;
   }) => <button {...props} aria-label={`Reset ${label} to default`} />,
 }));
+vi.mock("./ProjectActionsSettings", () => ({ ProjectActionsSettings: () => null }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: "model-picker" }));
 vi.mock("../chat/TraitsPicker", () => ({ TraitsPicker: "traits-picker" }));
@@ -196,9 +200,6 @@ vi.mock("../projectScriptEditor", async (importOriginal) => ({
 }));
 
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { TraitsPicker } from "../chat/TraitsPicker";
-import { EMPTY_PROJECT_SCRIPT_INPUT, ProjectScriptEditorDialog } from "../projectScriptEditor";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 
@@ -208,6 +209,8 @@ const instanceId = ProviderInstanceId.make("codex");
 const environments = [primaryId, remoteId].map((environmentId) => ({
   environmentId,
   label: environmentId,
+  connection: { phase: "connected" },
+  serverConfig: { keybindings: DEFAULT_RESOLVED_KEYBINDINGS },
 }));
 const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState => ({
   authenticated: true,
@@ -334,23 +337,11 @@ describe("project settings permissions", () => {
       name.props.onChange();
       name.props.onBlur({ currentTarget: { value: "Renamed" } });
       root.findByType(ProjectFaviconPickerDialog).props.onSelect("/work/icon.png");
-      root.findByType(ProviderModelPicker).props.onInstanceModelChange(instanceId, "gpt-5.2");
-      root
-        .findByType(TraitsPicker)
-        .props.onModelOptionsChange([{ id: "reasoningEffort", value: "high" }]);
-      root
-        .findByProps({ "aria-label": "New-thread workspace" })
-        .parent!.props.onValueChange("local");
-      root
-        .findByProps({ "aria-label": "Automatically pull the default branch" })
-        .props.onCheckedChange(true);
     });
 
     expect(state.update).not.toHaveBeenCalled();
     expect(state.projects.every((project) => project.title === "Shared repo")).toBe(true);
     expect(name.props.disabled).toBe(true);
-    expect(root.findByType(ProviderModelPicker).props.disabled).toBe(true);
-    expect(root.findByType(TraitsPicker).props.disabled).toBe(true);
     expect(button("Remove all entries").props.disabled).toBe(true);
   });
 
@@ -388,54 +379,17 @@ describe("project settings permissions", () => {
     expect(state.update.mock.calls[0]![0].environmentId).toBe(primaryId);
   });
 
-  it("keeps the writable checkout editable and local controls usable in a mixed group", async () => {
-    // Actions are stored in the environment's settings, so editing them needs
-    // settings access on top of the project grant.
-    await grant(
-      primaryId,
-      AsyncResult.success(session([AuthOrchestrationOperateScope, AuthSettingsWriteScope])),
-    );
+  it("disables removal for a checkout whose project grant is missing", async () => {
     await grant(remoteId, AsyncResult.success(session([])));
     const root = await mountPanel();
-    expect(button("Add action").props.disabled).toBe(false);
-    const input = {
-      name: "Build",
-      command: "vp build",
-      icon: EMPTY_PROJECT_SCRIPT_INPUT.icon,
-      runOnWorktreeCreate: false,
-      previewUrl: null,
-      autoOpenPreview: false,
-    };
-    await act(async () => {
-      button("Add action").props.onClick();
-      await root.findByType(ProjectScriptEditorDialog).props.onSubmit(null, input);
-    });
-    expect(state.updateSettings.mock.calls.map(([request]) => request.environmentId)).toEqual([
-      primaryId,
-    ]);
-    expect(
-      state.updateSettings.mock.calls[0]![0].input.patch.projectScriptOverrides[
-        state.projects[0]!.id
-      ].map((script: { name: string }) => script.name),
-    ).toEqual(["Build"]);
-    expect(state.upsertKeybinding).not.toHaveBeenCalled();
-    expect(state.removeKeybinding).not.toHaveBeenCalled();
-
-    await act(() =>
-      root
-        .findByProps({ "aria-label": "Checkout" })
-        .parent!.props.onValueChange(group().memberProjects[1]!.physicalProjectKey),
+    const denied = root.findByProps({ "aria-label": "Remove checkout /work/remote" });
+    expect(denied.props.disabled).toBe(true);
+    await act(async () => denied.props.onClick());
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.delete).not.toHaveBeenCalled();
+    expect(root.findByProps({ "aria-label": "Remove checkout /work/primary" }).props.disabled).toBe(
+      false,
     );
-    expect(button("Add action").props.disabled).toBe(true);
-    expect(button("Remove checkout").props.disabled).toBe(true);
-    await act(async () => {
-      await root.findByType(ProjectScriptEditorDialog).props.onSubmit(null, input);
-      root
-        .findByProps({ "aria-label": "Grouping rule for remote" })
-        .parent!.props.onValueChange("separate");
-    });
-    expect(state.updateSettings).toHaveBeenCalledOnce();
-    expect(state.updateClientSettings).toHaveBeenCalledOnce();
   });
 
   it("allows removing a writable checkout while denying removal of the mixed group", async () => {
@@ -444,7 +398,9 @@ describe("project settings permissions", () => {
     await act(async () => button("Remove all entries").props.onClick());
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.delete).not.toHaveBeenCalled();
-    await act(async () => button("Remove checkout").props.onClick());
+    await act(async () =>
+      renderer!.root.findByProps({ "aria-label": "Remove checkout /work/primary" }).props.onClick(),
+    );
     expect(state.delete).toHaveBeenCalledExactlyOnceWith({
       environmentId: primaryId,
       input: { projectId: state.projects[0]!.id, force: true },
@@ -484,7 +440,6 @@ describe("project settings permissions", () => {
     });
     expect(state.update).not.toHaveBeenCalled();
     expect(name().props.disabled).toBe(true);
-    expect(button("Add action").props.disabled).toBe(false);
 
     await grant(remoteId, writable());
     expect(name().props.disabled).toBe(false);

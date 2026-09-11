@@ -45,13 +45,31 @@ vi.mock("../../state/environments", () => ({
   usePrimaryEnvironment: () => ({ environmentId: "primary-settings" }),
 }));
 
+vi.mock("./SettingsScopeContext", () => ({
+  useSettingsScope: () => {
+    const environment = {
+      environmentId: "primary-settings",
+      serverConfig: {
+        keybindings: [],
+        keybindingsConfigPath: "/fixture/keybindings.json",
+        availableEditors: [],
+      },
+    };
+    return { environment, connectedEnvironments: [environment] };
+  },
+}));
+
 vi.mock("../../state/session", () => {
   const hasScope = (environmentId: EnvironmentId | null, scope: string) =>
     environmentId === "primary-settings" &&
     (scope === "orchestration:operate"
       ? state.canOperate
       : scope === "settings:write" && state.canWriteSettings);
-  return { useEnvironmentScope: hasScope, readEnvironmentScope: hasScope };
+  return {
+    useEnvironmentScope: hasScope,
+    readEnvironmentScope: hasScope,
+    useEnvironmentsWithScope: () => new Set(state.canWriteSettings ? ["primary-settings"] : []),
+  };
 });
 
 vi.mock("../../state/use-atom-command", () => ({
