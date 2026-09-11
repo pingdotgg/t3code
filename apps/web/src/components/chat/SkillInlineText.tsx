@@ -5,15 +5,20 @@ import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/provider
 import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  INLINE_CHIP_WRAPPER_CLASS_NAME,
+  SKILL_CHIP_ICON_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 
 const SKILL_TOKEN_REGEX =
   /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
-type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
+export type InlineSkill = Pick<
+  ServerProviderSkill,
+  "name" | "displayName" | "description" | "shortDescription"
+>;
 
 export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
   const nodes: ReactNode[] = [];
@@ -73,9 +78,18 @@ export function renderSkillInlineMarkdownChildren(
   });
 }
 
+function resolveInlineSkillDescription(skill: InlineSkill): string | null {
+  const shortDescription = skill.shortDescription?.trim();
+  if (shortDescription) {
+    return shortDescription;
+  }
+  const description = skill.description?.trim();
+  return description || null;
+}
+
 function SkillChip(props: { skill: InlineSkill; rawText: string }) {
-  return (
-    <span className="inline-flex align-middle leading-none" data-markdown-copy={props.rawText}>
+  const chip = (
+    <span className={INLINE_CHIP_WRAPPER_CLASS_NAME} data-markdown-copy={props.rawText}>
       <span
         className={cn(
           CHAT_INLINE_CHIP_CLASS_NAME,
@@ -84,7 +98,7 @@ function SkillChip(props: { skill: InlineSkill; rawText: string }) {
       >
         <span
           aria-hidden="true"
-          className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+          className={SKILL_CHIP_ICON_CLASS_NAME}
           dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
         />
         <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
@@ -92,5 +106,19 @@ function SkillChip(props: { skill: InlineSkill; rawText: string }) {
         </span>
       </span>
     </span>
+  );
+
+  const description = resolveInlineSkillDescription(props.skill);
+  if (!description) {
+    return chip;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={chip} />
+      <TooltipPopup side="top" className="max-w-120 whitespace-normal leading-tight">
+        {description}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
