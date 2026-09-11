@@ -1,0 +1,50 @@
+name: Temporary PR 9215 validation
+
+on:
+  push:
+    branches:
+      - fix/review-diff-preview-budget
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/review-diff-preview-budget
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Run focused validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          vp test run apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp fmt --check apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp lint --report-unused-disable-directives apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp run --filter t3 typecheck
+          git diff --check
+
+      - name: Remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/tmp-validate-9215.yml
+          git commit -m "chore: remove temporary PR 9215 validation workflow"
+          git push origin HEAD:fix/review-diff-preview-budget
