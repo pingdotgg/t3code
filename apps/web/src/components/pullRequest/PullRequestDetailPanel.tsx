@@ -1454,7 +1454,7 @@ export function PullRequestDetailPanel({
           !detail && !onClose && "hidden",
         )}
       >
-        <div className="ml-4 grid h-7 min-w-0 items-center overflow-hidden">
+        <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div
             aria-hidden={condensed}
             inert={condensed}
