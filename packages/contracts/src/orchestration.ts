@@ -527,9 +527,19 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * Why a busy session is busy, when the provider reports something more
+ * specific than "running". It overlays the status rather than replacing it,
+ * so turn lifecycle is unaffected and a client that does not know the detail
+ * keeps rendering the plain status.
+ */
+export const OrchestrationSessionStatusDetail = Schema.Literals(["compacting"]);
+export type OrchestrationSessionStatusDetail = typeof OrchestrationSessionStatusDetail.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
+  statusDetail: Schema.optional(OrchestrationSessionStatusDetail),
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

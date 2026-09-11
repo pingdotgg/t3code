@@ -3433,6 +3433,67 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("reports Claude's own compaction as a compacting session state", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "keep going",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "sdk-session-compacting",
+        uuid: "status-compacting",
+      } as unknown as SDKMessage);
+      // Claude closes the run with a status carrying compact_result.
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: null,
+        compact_result: "success",
+        session_id: "sdk-session-compacting",
+        uuid: "status-compacted",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-compacting",
+        uuid: "result-compacting",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const sessionStates = runtimeEvents
+        .filter((event) => event.type === "session.state.changed")
+        .map((event) => event.payload.state);
+
+      // The pair is what clients label from: compaction starts, then the
+      // closing status hands the session back to ordinary work.
+      assert.equal(sessionStates.includes("compacting"), true);
+      assert.equal(sessionStates.at(-1), "running");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves compacted usage when completion follows an older assistant frame", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

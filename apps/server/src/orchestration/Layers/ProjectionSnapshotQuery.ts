@@ -372,6 +372,7 @@ function mapSessionRow(
   return {
     threadId: row.threadId,
     status: row.status,
+    ...(row.statusDetail !== null ? { statusDetail: row.statusDetail } : {}),
     providerName: row.providerName,
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
     runtimeMode: row.runtimeMode,
@@ -804,6 +805,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           status,
+          status_detail AS "statusDetail",
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
           provider_session_id AS "providerSessionId",
@@ -825,6 +827,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           sessions.thread_id AS "threadId",
           sessions.status,
+          sessions.status_detail AS "statusDetail",
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
           sessions.provider_session_id AS "providerSessionId",
@@ -850,6 +853,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           sessions.thread_id AS "threadId",
           sessions.status,
+          sessions.status_detail AS "statusDetail",
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
           sessions.provider_session_id AS "providerSessionId",
@@ -1236,6 +1240,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           threads.title,
           sessions.thread_id AS "threadId",
           sessions.status,
+          sessions.status_detail AS "statusDetail",
           sessions.provider_name AS "providerName",
           sessions.provider_instance_id AS "providerInstanceId",
           sessions.runtime_mode AS "runtimeMode",
@@ -1517,6 +1522,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           status,
+          status_detail AS "statusDetail",
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
           runtime_mode AS "runtimeMode",
@@ -2183,18 +2189,7 @@ pending_approval_requests AS (
 
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
-                sessionsByThread.set(row.threadId, {
-                  threadId: row.threadId,
-                  status: row.status,
-                  providerName: row.providerName,
-                  ...(row.providerInstanceId !== null
-                    ? { providerInstanceId: row.providerInstanceId }
-                    : {}),
-                  runtimeMode: row.runtimeMode,
-                  activeTurnId: row.activeTurnId,
-                  lastError: row.lastError,
-                  updatedAt: row.updatedAt,
-                });
+                sessionsByThread.set(row.threadId, mapSessionRow(row));
               }
 
               const repositoryIdentities = yield* resolveRepositoryIdentitiesForProjects(

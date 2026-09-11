@@ -2321,6 +2321,118 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("projects and clears the compacting status detail on the session row", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-compacting-detail");
+      const turnId = TurnId.make("turn-compacting-detail");
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-cd1"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-cd1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cd1"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-compacting-detail"),
+          title: "Compacting detail",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claude"),
+            model: "claude-opus",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-cd2"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("cmd-cd2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cd2"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            statusDetail: "compacting",
+            providerName: "claude",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const compactingRows = yield* sql<{
+        readonly status: string;
+        readonly statusDetail: string | null;
+      }>`
+        SELECT status, status_detail AS "statusDetail"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(compactingRows, [{ status: "running", statusDetail: "compacting" }]);
+
+      // Omitting the detail is how compaction ends: the next lifecycle write
+      // must not leave a stale "Compacting…" label behind.
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-cd3"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-01-01T00:00:02.000Z",
+        commandId: CommandId.make("cmd-cd3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-cd3"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "claude",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const clearedRows = yield* sql<{
+        readonly status: string;
+        readonly statusDetail: string | null;
+      }>`
+        SELECT status, status_detail AS "statusDetail"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(clearedRows, [{ status: "running", statusDetail: null }]);
+    }),
+  );
+
   it.effect("keeps the turn running across interim assistant messages until the session ends", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

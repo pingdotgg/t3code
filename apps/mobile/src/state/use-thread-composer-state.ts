@@ -257,7 +257,11 @@ export function useThreadComposerState() {
           : null;
       return payload?.requestId === latestCompactMessage?.id;
     });
+    // Two sources, one label: the user's own `/compact` (tracked through its
+    // request message, which exists before the provider says anything) and the
+    // provider compacting on its own mid-turn, which only the session reports.
     return (
+      selectedThread?.session?.statusDetail === "compacting" ||
       queuedMessage !== undefined ||
       ((selectedThread?.session?.status === "starting" ||
         selectedThread?.session?.status === "running") &&

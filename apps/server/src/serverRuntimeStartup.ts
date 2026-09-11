@@ -543,6 +543,12 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     if (session === null) {
       continue;
     }
+    // The provider session that was compacting did not survive the restart, so
+    // whatever detail it left behind describes work that is over. Reconciling
+    // rewrites the whole session, so dropping the key here clears the overlay
+    // for both outcomes below: it cannot sit beside the restart error, and it
+    // cannot label the turn that restart continuation starts next.
+    const { statusDetail: _staleStatusDetail, ...reconciledSession } = session;
     const binding = yield* directory.getBinding(thread.id).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause)
@@ -618,7 +624,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             commandId: CommandId.make(yield* crypto.randomUUIDv4),
             threadId: thread.id,
             session: {
-              ...session,
+              ...reconciledSession,
               status: "error",
               activeTurnId: null,
               lastError,
@@ -665,7 +671,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           commandId: CommandId.make(yield* crypto.randomUUIDv4),
           threadId: thread.id,
           session: {
-            ...session,
+            ...reconciledSession,
             status: "starting",
             activeTurnId: null,
             lastError: null,

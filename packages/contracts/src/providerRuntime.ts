@@ -55,6 +55,10 @@ const RuntimeSessionState = Schema.Literals([
   "starting",
   "ready",
   "running",
+  // Busy, and the provider told us why: it is compacting its own context.
+  // Lifecycle-wise this is just "running"; adapters raise it so clients can
+  // say so instead of showing a generic working label.
+  "compacting",
   "waiting",
   "stopped",
   "error",

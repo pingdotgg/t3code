@@ -3404,11 +3404,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "status":
+        // Claude reports `compacting` while it rewrites its own context, and
+        // clears it with a closing status carrying `compact_result`. Raising
+        // the dedicated state keeps the session busy while telling clients
+        // what it is busy with; every other status is ordinary work.
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
           payload: {
-            state: message.status === "compacting" ? "waiting" : "running",
+            state: message.status === "compacting" ? "compacting" : "running",
             reason: `status:${message.status ?? "active"}`,
             detail: message,
           },

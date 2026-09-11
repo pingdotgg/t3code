@@ -260,13 +260,22 @@ function normalizeRuntimeTurnState(
 }
 
 function orchestrationSessionStatusFromRuntimeState(
-  state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
+  state:
+    | "starting"
+    | "running"
+    | "waiting"
+    | "compacting"
+    | "ready"
+    | "interrupted"
+    | "stopped"
+    | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
   switch (state) {
     case "starting":
       return "starting";
     case "running":
     case "waiting":
+    case "compacting":
       return "running";
     case "ready":
       return "ready";
@@ -1586,6 +1595,18 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : hasPendingTurnStart ? "starting" : "ready";
           }
         })();
+        // Compaction is an overlay on a busy session, not a lifecycle state of
+        // its own. Conflicting session-state signals preserve the active turn's
+        // detail. Other lifecycle events clear it so it cannot outlive the work
+        // even if the provider never sends a closing status.
+        const statusDetail =
+          event.type === "session.state.changed"
+            ? conflictsWithActiveTurn
+              ? thread.session?.statusDetail
+              : event.payload.state === "compacting"
+                ? ("compacting" as const)
+                : undefined
+            : undefined;
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
@@ -1635,6 +1656,7 @@ const make = Effect.gen(function* () {
             session: {
               threadId: thread.id,
               status,
+              ...(statusDetail !== undefined ? { statusDetail } : {}),
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }
