@@ -463,10 +463,12 @@ export function PullRequestDetailPanel({
   onClose,
   context = "page",
   composerDraftTarget,
+  browserUrl,
   onBack,
   onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
+  browserUrl?: string;
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
   /**
    * The thread this panel sits beside, if any. Links that are not the pull
@@ -520,10 +522,17 @@ export function PullRequestDetailPanel({
             projectId: requestedReference.projectId,
             repository: requestedReference.repository,
             number: requestedReference.number,
+            ...(requestedReference.workspace ? { workspace: requestedReference.workspace } : {}),
           },
     [requestedReference, supportsThreadPullRequests],
   );
-  const pullRequestKey = `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
+  const pullRequestKey = JSON.stringify([
+    reference.projectId,
+    reference.host ?? null,
+    reference.repository,
+    reference.number,
+    reference.workspace ?? null,
+  ]);
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
@@ -840,11 +849,21 @@ export function PullRequestDetailPanel({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
   const unavailableGitHubUrl = useMemo(() => {
+    if (browserUrl) return browserUrl;
+    if (reference.workspace) return null;
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
-  }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
+  }, [
+    browserUrl,
+    environmentId,
+    projects,
+    reference.number,
+    reference.projectId,
+    reference.repository,
+    reference.workspace,
+  ]);
   // Project settings stored the override under the sidebar group's key, which a duplicate row
   // borrows from its siblings, so the project alone does not always name the same key.
   const legacyProjectDefaultMergeMethod = useMemo(() => {

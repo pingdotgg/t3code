@@ -1391,6 +1391,22 @@ describe("cached pull request detail", () => {
     };
   };
 
+  it("does not hydrate a checkout path from another workspace's copy of the same PR", () => {
+    const storage = makeStorage();
+    const first = {
+      ...reference,
+      workspace: { threadId: "task-one", repositoryPath: "projects/api" },
+    };
+    const second = {
+      ...reference,
+      workspace: { threadId: "task-two", repositoryPath: "projects/api" },
+    };
+    writePullRequestDetailSnapshot(storage, "env-1", first, detail());
+    expect(readPullRequestDetailSnapshot(storage, "env-1", second)).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-1", first)?.title).toBe("Cache the title");
+  });
+
   it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
     const storage = makeStorage();
     writePullRequestDetailSnapshot(storage, "env-1", reference, detail());

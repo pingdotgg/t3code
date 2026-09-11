@@ -1,4 +1,10 @@
-import { EnvironmentId, ProjectId, WS_METHODS, type PullRequestStack } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  WS_METHODS,
+  type PullRequestStack,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -130,6 +136,54 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
         { _tag: "Success", value: { newContents: "github.example.com" } },
       ]);
       expect(calls).toEqual(["github.com", "github.example.com"]);
+    }),
+  ),
+);
+
+it.effect("keeps workspace scope in writable PR queries", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { atoms } = yield* makeTestRuntime({} as WsRpcProtocolClient);
+      const input = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        workspace: { threadId: ThreadId.make("thread-1"), repositoryPath: "projects/web" },
+      };
+      for (const family of [atoms.detail, atoms.activity]) {
+        const scoped = family({ environmentId: TARGET.environmentId, input });
+        expect(scoped).not.toBe(
+          family({
+            environmentId: TARGET.environmentId,
+            input: {
+              projectId: input.projectId,
+              repository: input.repository,
+              number: input.number,
+            },
+          }),
+        );
+        expect(scoped).not.toBe(
+          family({
+            environmentId: TARGET.environmentId,
+            input: {
+              ...input,
+              workspace: { ...input.workspace, threadId: ThreadId.make("thread-2") },
+            },
+          }),
+        );
+        expect(scoped).toBe(
+          family({
+            environmentId: TARGET.environmentId,
+            input: {
+              ...input,
+              workspace: {
+                repositoryPath: input.workspace.repositoryPath,
+                threadId: input.workspace.threadId,
+              },
+            },
+          }),
+        );
+      }
     }),
   ),
 );

@@ -51,7 +51,7 @@ import {
 import { useEnvironmentQuery } from "../../state/query";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useWorkspaceRepositories } from "../../state/use-workspace-repositories";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
@@ -359,7 +359,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   /* ─── Git actions for the toolbar menu (commit/push without leaving review) ── */
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useWorkspaceRepositories();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const gitStatusQuery = useEnvironmentQuery(
@@ -382,13 +382,21 @@ export function ReviewSheet(props: ReviewSheetProps) {
   useEffect(() => {
     showAuxiliaryPane("inspector");
   }, [environmentId, showAuxiliaryPane, threadId]);
-  const { error, reviewSections, selectedSection, refreshSelectedSection, selectSection } =
-    useReviewSections({
-      enabled: isEnvironmentReady,
-      environmentId,
-      threadId,
-      reviewCache,
-    });
+  const {
+    error,
+    reviewSections,
+    selectedSection,
+    refreshSelectedSection,
+    selectSection,
+    repositories,
+    repositoryFilter,
+    selectRepositoryFilter,
+  } = useReviewSections({
+    enabled: isEnvironmentReady,
+    environmentId,
+    threadId,
+    reviewCache,
+  });
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
     sections: reviewSections,
@@ -787,6 +795,38 @@ export function ReviewSheet(props: ReviewSheetProps) {
       ) : null}
 
       <View className="flex-1 bg-sheet">
+        {repositories.length > 1 && selectedSection?.kind !== "turn" ? (
+          <View className="border-b border-border py-2">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {[
+                { path: null, label: "All repositories", available: true },
+                ...repositories.map((repository) => ({
+                  path: repository.path,
+                  label: repository.path === "." ? "Workspace" : repository.path,
+                  available: repository.available,
+                })),
+              ].map((repository) => (
+                <Pressable
+                  key={repository.path ?? "all"}
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    selected: repositoryFilter === repository.path,
+                    disabled: !repository.available,
+                  }}
+                  disabled={!repository.available}
+                  onPress={() => selectRepositoryFilter(repository.path)}
+                  className="mx-1 rounded-xl border border-border px-3 py-2"
+                >
+                  <Text>
+                    {repositoryFilter === repository.path ? "✓ " : ""}
+                    {repository.label}
+                    {repository.available ? "" : " (unavailable)"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
         {showConnectionNotice ? (
           <View className="flex-1" style={{ paddingTop: topContentInset }}>
             <EnvironmentConnectionNotice

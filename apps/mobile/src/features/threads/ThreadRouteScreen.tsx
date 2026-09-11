@@ -1,3 +1,4 @@
+import { useWorkspaceRepositories } from "../../state/use-workspace-repositories";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -325,11 +326,16 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   /* ─── Git status for native header trigger ───────────────────────── */
+  const { selectedThreadCwd: gitCwd, refreshRepositories } = useWorkspaceRepositories();
+  const completedTurnAt = selectedThread?.latestTurn?.completedAt;
+  useEffect(() => {
+    if (completedTurnAt) refreshRepositories();
+  }, [completedTurnAt, refreshRepositories]);
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    selectedThread !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: gitCwd },
         })
       : null,
   );
@@ -357,9 +363,9 @@ function ThreadRouteContent(
   const gitActionProgressTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: gitCwd,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [selectedThread?.environmentId, gitCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 

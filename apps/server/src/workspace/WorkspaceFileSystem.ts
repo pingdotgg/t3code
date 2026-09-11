@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -54,6 +55,8 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
     return `Workspace file operation '${this.operation}' failed at '${this.operationPath}' for resolved path '${this.resolvedPath}' (requested as '${this.relativePath}' in '${this.workspaceRoot}').`;
   }
 }
+
+const isWorkspaceFileSystemOperationError = Schema.is(WorkspaceFileSystemOperationError);
 
 export class WorkspaceFilePathEscapeError extends Schema.TaggedError<WorkspaceFilePathEscapeError>()(
   "WorkspaceFilePathEscapeError",
@@ -95,7 +98,17 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceFileChangedError extends Schema.TaggedError<WorkspaceFileChangedError>()(
+  "WorkspaceFileChangedError",
+  { relativePath: Schema.String },
+) {
+  override get message(): string {
+    return `Workspace file '${this.relativePath}' changed since it was read. Reload it and try again.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
+  WorkspaceFileChangedError,
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
@@ -138,6 +151,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const writeLock = yield* Semaphore.make(1);
 
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
@@ -323,19 +337,42 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
-      ),
-    );
+    yield* writeLock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          if (input.expectedContents !== undefined) {
+            const current = yield* readFile(input).pipe(
+              Effect.catchIf(
+                (error) =>
+                  isWorkspaceFileSystemOperationError(error) &&
+                  (error.operation === "realpath-target" || error.operation === "open") &&
+                  error.cause instanceof Error &&
+                  "code" in error.cause &&
+                  error.cause.code === "ENOENT",
+                () => Effect.succeed(null),
+              ),
+            );
+            if (current?.truncated || (current?.contents ?? null) !== input.expectedContents) {
+              return yield* new WorkspaceFileChangedError({ relativePath: input.relativePath });
+            }
+          }
+          yield* fileSystem.writeFileString(target.absolutePath, input.contents);
+        }),
+      )
+      .pipe(
+        Effect.catchTag("PlatformError", (cause) =>
+          Effect.fail(
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: target.absolutePath,
+              operation: "write-file",
+              cause,
+            }),
+          ),
+        ),
+      );
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });

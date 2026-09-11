@@ -18,6 +18,7 @@ export interface ReviewSectionItem {
   readonly subtitle: string | null;
   readonly diff: string | null;
   readonly isLoading: boolean;
+  readonly repositoryDiffs?: readonly { path: string; diff: string }[];
 }
 
 export interface ReviewRenderableHunkRow {

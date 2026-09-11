@@ -145,6 +145,9 @@ export function getRenderablePatch(
 
 export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   const raw = fileDiff.name ?? fileDiff.prevName ?? "";
+  if ("workspaceRelativePaths" in fileDiff && fileDiff.workspaceRelativePaths === true) {
+    return raw;
+  }
   if (raw.startsWith("a/") || raw.startsWith("b/")) {
     return raw.slice(2);
   }
@@ -157,6 +160,9 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
  */
 export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
   const raw = fileDiff.prevName ?? fileDiff.name ?? "";
+  if ("workspaceRelativePaths" in fileDiff && fileDiff.workspaceRelativePaths === true) {
+    return raw;
+  }
   if (raw.startsWith("a/") || raw.startsWith("b/")) {
     return raw.slice(2);
   }

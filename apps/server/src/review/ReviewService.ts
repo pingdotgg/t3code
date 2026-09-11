@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import {
@@ -14,6 +15,9 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
 } from "@t3tools/contracts";
+
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { WorkspaceRepositories } from "../workspace/WorkspaceRepositories.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -38,6 +42,8 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const projectionQuery = yield* Effect.serviceOption(ProjectionSnapshotQuery);
+  const workspaceRepositories = yield* Effect.serviceOption(WorkspaceRepositories);
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -75,6 +81,52 @@ export const make = Effect.gen(function* () {
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
       return;
+    }
+
+    if (Option.isSome(projectionQuery)) {
+      const snapshot = yield* projectionQuery.value.getShellSnapshot().pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsRepositoryDetectionError({
+              operation,
+              cwd,
+              detail: "Failed to validate registered review workspaces.",
+              cause,
+            }),
+        ),
+      );
+      const projectIds = new Set(snapshot.projects.map((project) => project.id));
+      const roots = new Set([
+        ...snapshot.projects.map((project) => project.workspaceRoot),
+        ...snapshot.threads.flatMap((thread) =>
+          projectIds.has(thread.projectId) && thread.archivedAt === null && thread.worktreePath
+            ? [thread.worktreePath]
+            : [],
+        ),
+      ]);
+      for (const root of roots) {
+        const activeCwd = yield* canonicalizePath(root);
+        if (candidate === activeCwd) return;
+        if (!isWithinRoot(candidate, activeCwd) || Option.isNone(workspaceRepositories)) continue;
+        const repositories = yield* workspaceRepositories.value
+          .list(activeCwd, { includeIdentity: false })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new VcsRepositoryDetectionError({
+                  operation,
+                  cwd,
+                  detail: "Failed to validate workspace repositories for review.",
+                  cause,
+                }),
+            ),
+          );
+        for (const repository of repositories) {
+          if (!repository.available) continue;
+          const repositoryRoot = yield* canonicalizePath(repository.cwd);
+          if (isWithinRoot(repositoryRoot, activeCwd) && candidate === repositoryRoot) return;
+        }
+      }
     }
 
     return yield* new VcsRepositoryDetectionError({

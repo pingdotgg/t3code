@@ -3,6 +3,50 @@
 T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
+## Work with several repositories
+
+In **Settings → Projects**, select a project and edit **Repository paths** and **Include Git submodules** under **Checkout**. Save writes to that checkout’s `t3.json`, preserving comments and other settings. Existing task worktrees keep their own configuration.
+
+T3 checks that `t3.json` still matches the version read for the save and handles T3 saves one
+at a time. If that check fails, the save is rejected; reload the settings and retry.
+An external editor can still change the file between T3’s final check and write, so avoid editing
+`t3.json` in T3 and an external editor at the same time.
+
+You can also declare repositories directly in `t3.json`, alongside any existing scripts:
+
+```json
+{
+  "repositories": {
+    "paths": ["projects/*"],
+    "includeSubmodules": true
+  }
+}
+```
+
+Paths resolve from the current thread's checkout. `projects/*` includes only immediate child
+repository roots, including linked Git worktrees. Explicit paths such as `apps/backend` also work.
+Recursive patterns and paths outside the workspace are not supported. Other worktrees of those
+repositories are not included. `includeSubmodules` includes declared submodules; uninitialized
+submodules appear as unavailable.
+
+Files and search include these repositories even when the outer workspace ignores their parent
+directory. Each repository keeps its own ignore rules. After adding or removing a repository,
+return focus to T3 or refresh the panel to discover the change. Completed agent file and command
+operations also refresh discovery.
+
+Choose a repository beside the Git controls before committing or pushing. The agent and terminals
+keep the outer workspace as their working directory. The Diff panel shows all repositories by
+default, with a repository filter and a separate branch comparison base for each repository.
+
+On web and desktop, the workspace Pull requests panel has a tab for each repository's checked-out
+branch. Switch tabs to review its PR, or use that repository's Git actions to create one. This lists
+PRs associated with the current workspace branches, rather than every open PR on each remote.
+
+On mobile, select a repository in Git actions. Live and branch review can show all repositories
+or a selected repository. Open that repository's PR using the existing browser action.
+
+Turn diffs and checkpoint restore still apply only to the outer workspace repository.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

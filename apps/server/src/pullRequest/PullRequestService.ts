@@ -63,6 +63,7 @@ import {
 } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
+import { WorkspaceRepositories } from "../workspace/WorkspaceRepositories.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
@@ -533,14 +534,21 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry;
+  const workspaceRepositories = yield* Effect.serviceOption(WorkspaceRepositories);
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
 
+  const resolveProviderKind = (input: Parameters<typeof sourceControlProviders.resolveHandle>[0]) =>
+    sourceControlProviders
+      .resolveHandle(input)
+      .pipe(Effect.map((handle) => handle.context?.provider.kind));
+
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
     filter: Pick<PullRequestListInput, "projectId" | "host">,
+    resolveKind = resolveProviderKind,
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -579,13 +587,12 @@ export const make = Effect.gen(function* () {
         Effect.firstSuccessOf(
           candidates.map(({ project, provider, remoteName, remoteUrl }) =>
             Effect.suspend(() =>
-              sourceControlProviders.resolveHandle({
+              resolveKind({
                 cwd: project.workspaceRoot,
                 context: { provider, remoteName, remoteUrl },
               }),
             ).pipe(
-              Effect.flatMap((handle) => {
-                const kind = handle.context?.provider.kind;
+              Effect.flatMap((kind) => {
                 return kind === undefined || kind === "unknown"
                   ? Effect.fail(undefined)
                   : Effect.succeed(kind);
@@ -680,7 +687,9 @@ export const make = Effect.gen(function* () {
    * targeting can fall back to another checkout on the host. Azure derives its organization
    * from the checkout, so it requires a matching repository.
    */
-  const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
+  const requireUnscopedProject = (
+    ref: PullRequestRef,
+  ): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const own = supported[0];
@@ -739,6 +748,74 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
+
+  const requireProject = Effect.fn("PullRequestService.requireProject")(function* (
+    ref: PullRequestRef,
+    resolveKind = resolveProviderKind,
+  ): Effect.fn.Return<SupportedProject, PullRequestError> {
+    if (ref.workspace === undefined) return yield* requireUnscopedProject(ref);
+    const invalid = (detail: string) =>
+      new PullRequestOperationError({ operation: "resolveRepository", detail });
+    const snapshot = yield* projections.getShellSnapshot().pipe(
+      Effect.mapError(
+        (cause) =>
+          new PullRequestOperationError({
+            operation: "resolveRepository",
+            detail: "The workspace could not be read.",
+            cause,
+          }),
+      ),
+    );
+    const wrapper = snapshot.projects.find((project) => project.id === ref.projectId);
+    const thread = snapshot.threads.find((thread) => thread.id === ref.workspace?.threadId);
+    if (!wrapper || !thread || thread.projectId !== wrapper.id)
+      return yield* invalid("The thread does not belong to the selected project.");
+    if (Option.isNone(workspaceRepositories))
+      return yield* invalid("Workspace repository discovery is unavailable.");
+    const members = yield* workspaceRepositories.value
+      .list(thread.worktreePath ?? wrapper.workspaceRoot)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PullRequestOperationError({
+              operation: "resolveRepository",
+              detail: "Workspace repositories could not be read.",
+              cause,
+            }),
+        ),
+      );
+    const member = members.find((member) => member.path === ref.workspace?.repositoryPath);
+    if (!member || !member.available)
+      return yield* invalid("The selected repository is not available in this workspace.");
+    const project = {
+      ...wrapper,
+      workspaceRoot: member.cwd,
+      repositoryIdentity: member.repositoryIdentity,
+    };
+    const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+    if (!repository || repository.toLowerCase() !== ref.repository.trim().toLowerCase())
+      return yield* invalid("The change request does not belong to the selected repository.");
+    const refined = yield* refineUnknownProjectKinds([project], {}, resolveKind);
+    const identity = project.repositoryIdentity;
+    if (!identity) return yield* invalid("The selected repository has no remote identity.");
+    let kind = identity.provider as SourceControlProviderKind;
+    if (kind === "unknown") {
+      const provider = detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl);
+      kind = provider === null ? kind : (refined.get(provider.baseUrl) ?? kind);
+    }
+    const api = registry.get(kind);
+    if (!api) return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+    const host = pullRequestHostOf(identity, kind);
+    if (ref.host !== undefined && ref.host.trim().toLowerCase() !== host)
+      return yield* invalid("The change request host does not match the selected repository.");
+    return {
+      project,
+      repository,
+      host,
+      cursorKey: listCursorKey(host, kind === "azure-devops" ? identity.canonicalKey : repository),
+      api: withRateLimitBackoff(api, host, rateLimits),
+    };
+  });
 
   /**
    * What the signed-in account may do with this change request, asked of the host itself. Every
@@ -2075,6 +2152,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The public stats omit host, but cache recording must retain the reference that passed validation.
+  type ValidatedPullRequestDiffStat = PullRequestDiffStat & {
+    readonly requestedHost?: string | null;
+  };
+
   /**
    * The line counts for rows already on the page, which the listing left out because on GitHub
    * they cost more than everything else on the row put together.
@@ -2085,9 +2167,97 @@ export const make = Effect.gen(function* () {
    * remote points at, is dropped rather than refused: it is one row's two numbers, and the page
    * that asked has already moved on.
    */
-  const listStatsUncached: PullRequestService["Service"]["listStats"] = (input) =>
+  const listStatsUncached = (
+    input: PullRequestListStatsInput,
+  ): Effect.Effect<
+    {
+      readonly stats: ReadonlyArray<ValidatedPullRequestDiffStat>;
+    },
+    PullRequestError
+  > =>
     Effect.gen(function* () {
       if (input.refs.length === 0) return { stats: [] };
+      const scoped = input.refs.filter((ref) => ref.workspace !== undefined);
+      if (scoped.length > 0) {
+        const byScope = new Map<string, typeof scoped>();
+        for (const ref of scoped) {
+          const key = [
+            ref.projectId,
+            ref.workspace?.threadId,
+            ref.workspace?.repositoryPath,
+            ref.host ?? "",
+            ref.repository.trim().toLowerCase(),
+          ].join("\0");
+          const group = byScope.get(key);
+          if (group) group.push(ref);
+          else byScope.set(key, [ref]);
+        }
+        const providerKinds = yield* Cache.makeWith(
+          (key: string) =>
+            resolveProviderKind(JSON.parse(key) as Parameters<typeof resolveProviderKind>[0]),
+          { capacity: byScope.size },
+        );
+        const resolveBatchProviderKind: typeof resolveProviderKind = (input) =>
+          Cache.get(providerKinds, JSON.stringify(input));
+        const resolved = yield* Effect.forEach(
+          [...byScope.values()],
+          Effect.fn(function* (refs) {
+            const project = yield* requireProject(refs[0]!, resolveBatchProviderKind).pipe(
+              Effect.orElseSucceed(() => undefined),
+            );
+            return project?.api.listChangeRequestStats ? [{ project, refs }] : [];
+          }),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        );
+        const byCheckout = new Map<string, (typeof resolved)[number]>();
+        for (const entry of resolved.flat()) {
+          const key = `${entry.project.host}\0${entry.project.project.workspaceRoot}`;
+          const group = byCheckout.get(key);
+          if (group) group.push(entry);
+          else byCheckout.set(key, [entry]);
+        }
+        const scopedStats = yield* Effect.forEach(
+          [...byCheckout.values()],
+          Effect.fn(function* (entries) {
+            const first = entries[0]!;
+            const readStats = first.project.api.listChangeRequestStats;
+            if (!readStats) return [];
+            return yield* readStats({
+              cwd: first.project.project.workspaceRoot,
+              host: first.project.host,
+              changeRequests: entries.flatMap(({ project, refs }) =>
+                refs.map((ref) => ({
+                  repository: project.repository,
+                  number: ref.number,
+                })),
+              ),
+            }).pipe(
+              Effect.map((stats) =>
+                stats.flatMap((stat) =>
+                  entries.flatMap(({ project, refs }) =>
+                    stat.repository.toLowerCase() === project.repository.toLowerCase()
+                      ? refs
+                          .filter((ref) => ref.number === stat.number)
+                          .map((ref) => ({
+                            ...stat,
+                            projectId: ref.projectId,
+                            workspace: ref.workspace,
+                            requestedHost: ref.host?.trim().toLowerCase() ?? null,
+                          }))
+                      : [],
+                  ),
+                ),
+              ),
+              Effect.orElseSucceed(() => []),
+            );
+          }),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        );
+        const legacy = yield* listStatsUncached({
+          refs: input.refs.filter((ref) => ref.workspace === undefined),
+        });
+        return { stats: [...legacy.stats, ...scopedStats.flat()] };
+      }
       const { supported } = yield* listWorkspaceProjects({});
       const byProject = new Map(supported.map((project) => [project.project.id, project]));
       const wanted = new Map<
@@ -2266,7 +2436,13 @@ export const make = Effect.gen(function* () {
   const refEpochs = new Map<string, number>();
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) =>
-    `${ref.projectId} ${ref.host?.toLowerCase() ?? ""} ${ref.repository.toLowerCase()} ${ref.number}`;
+    JSON.stringify([
+      ref.projectId,
+      ref.host?.toLowerCase() ?? null,
+      ref.repository.toLowerCase(),
+      ref.number,
+      ref.workspace ?? null,
+    ]);
   const refEpoch = (ref: PullRequestRef) =>
     Math.max(turnRefreshEpoch, refEpochs.get(refScope(ref)) ?? 0);
   // Keys carry the reference back out of the cache loader, so the slot layout is shared with
@@ -2278,18 +2454,21 @@ export const make = Effect.gen(function* () {
       ref.host?.toLowerCase() ?? null,
       ref.repository.toLowerCase(),
       ref.number,
+      ref.workspace ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number] = JSON.parse(key) as [
+    const [, projectId, host, repository, number, workspace] = JSON.parse(key) as [
       number,
       string,
       string | null,
       string,
       number,
+      PullRequestRef["workspace"] | null,
     ];
     return {
       projectId,
       ...(host === null ? {} : { host }),
+      ...(workspace ? { workspace } : {}),
       repository,
       number,
     } as PullRequestRef;
@@ -2477,12 +2656,15 @@ export const make = Effect.gen(function* () {
   const detailCache = yield* Cache.makeWith(
     (key: string) => {
       const statsKey = statsCacheKey(key);
-      return detailUncached(refOfCacheKey(key)).pipe(
+      const reference = refOfCacheKey(key);
+      const { workspace } = reference;
+      return detailUncached(reference).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
             recordStats(
               statsKey,
               {
+                ...(workspace ? { workspace } : {}),
                 projectId: value.projectId,
                 repository: value.repository,
                 number: value.number,
@@ -2567,7 +2749,9 @@ export const make = Effect.gen(function* () {
 
   const diffCache = yield* Cache.makeWith(
     (key: string) => {
-      const [, projectId, host, repository, number, cursor, commit] = JSON.parse(key) as [
+      const [, projectId, host, repository, number, cursor, commit, , workspace] = JSON.parse(
+        key,
+      ) as [
         number,
         string,
         string | null,
@@ -2575,12 +2759,15 @@ export const make = Effect.gen(function* () {
         number,
         string | null,
         string | null,
+        string | null,
+        PullRequestRef["workspace"] | null,
       ];
       return diffUncached({
         projectId,
         ...(host === null ? {} : { host }),
         repository,
         number,
+        ...(workspace ? { workspace } : {}),
         ...(cursor === null ? {} : { cursor }),
         ...(commit === null ? {} : { commit }),
       } as PullRequestDiffInput);
@@ -2606,15 +2793,27 @@ export const make = Effect.gen(function* () {
       input.commit === undefined
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
+      input.workspace ?? null,
     ]);
     return staleDiff(key, Cache.get(diffCache, key));
   };
 
   const listStatsCache = yield* Cache.makeWith(
     (key: string) => {
-      const [, refs] = JSON.parse(key) as [number, ReadonlyArray<[string, string, number, number]>];
+      const [, refs] = JSON.parse(key) as [
+        number,
+        ReadonlyArray<
+          [string, string | null, string, number, number, PullRequestRef["workspace"] | null]
+        >,
+      ];
       return listStatsUncached({
-        refs: refs.map(([projectId, repository, number]) => ({ projectId, repository, number })),
+        refs: refs.map(([projectId, host, repository, number, , workspace]) => ({
+          projectId,
+          ...(host === null ? {} : { host }),
+          repository,
+          number,
+          ...(workspace ? { workspace } : {}),
+        })),
       } as unknown as PullRequestListStatsInput).pipe(
         Effect.flatMap((result) =>
           Clock.currentTimeMillis.pipe(Effect.map((at) => ({ result, at }))),
@@ -2630,10 +2829,18 @@ export const make = Effect.gen(function* () {
     JSON.stringify([
       listingsEpoch,
       [...refs]
-        .map((ref) => [ref.projectId, ref.repository, ref.number, refEpoch(ref)] as const)
-        .toSorted((left, right) =>
-          `${left[0]} ${left[1]} ${left[2]}`.localeCompare(`${right[0]} ${right[1]} ${right[2]}`),
-        ),
+        .map(
+          (ref) =>
+            [
+              ref.projectId,
+              ref.host?.trim().toLowerCase() ?? null,
+              ref.repository,
+              ref.number,
+              refEpoch(ref),
+              ref.workspace ?? null,
+            ] as const,
+        )
+        .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
     ]);
   // Exact batches share in-flight reads; overlapping pages reuse each row already fetched.
   const listStats: PullRequestService["Service"]["listStats"] = Effect.fn(
@@ -2660,11 +2867,25 @@ export const make = Effect.gen(function* () {
         (stat) =>
           stat.projectId === ref.projectId &&
           stat.repository.toLowerCase() === ref.repository.toLowerCase() &&
-          stat.number === ref.number,
+          stat.number === ref.number &&
+          JSON.stringify(stat.workspace ?? null) === JSON.stringify(ref.workspace ?? null) &&
+          (ref.workspace === undefined ||
+            stat.requestedHost === (ref.host?.trim().toLowerCase() ?? null)),
       );
-      if (stat !== undefined) recordStats(key, stat, at);
+      if (stat !== undefined) {
+        const { requestedHost: _, ...value } = stat;
+        recordStats(key, value, at);
+      }
     }
-    return { stats: [...held, ...result.stats] };
+    return {
+      stats: [
+        ...held,
+        ...result.stats.map((stat) => {
+          const { requestedHost: _, ...value } = stat;
+          return value;
+        }),
+      ],
+    };
   });
 
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
@@ -2724,6 +2945,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         repository,
         number: input.number,
+        ...(input.workspace ? { workspace: input.workspace } : {}),
         mergedAt: DateTime.formatIso(yield* DateTime.now),
       });
     }

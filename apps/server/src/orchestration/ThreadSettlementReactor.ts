@@ -179,6 +179,19 @@ export const make = Effect.gen(function* () {
         discard: true,
       });
     }
+    const mergeFor = (thread: (typeof candidates)[number]) => {
+      const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
+      return reference != null &&
+        mergedPullRequest !== null &&
+        (mergedPullRequest.workspace === undefined ||
+          (mergedPullRequest.workspace.repositoryPath === "." &&
+            mergedPullRequest.workspace.threadId === thread.id)) &&
+        reference.projectId === mergedPullRequest.projectId &&
+        reference.repository.toLowerCase() === mergedPullRequest.repository.toLowerCase() &&
+        reference.number === mergedPullRequest.number
+        ? mergedPullRequest
+        : null;
+    };
     const lookupKey = (thread: (typeof candidates)[number]) => {
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
@@ -189,6 +202,7 @@ export const make = Effect.gen(function* () {
           reference.number,
           lookupCwdByThreadId.get(thread.id),
           thread.branch,
+          mergeFor(thread) !== null,
         ]);
       }
       if (thread.branch === null) return JSON.stringify(["none", thread.id]);
@@ -204,28 +218,25 @@ export const make = Effect.gen(function* () {
     ) {
       const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
       if (reference != null) {
-        const matchesMerge =
-          mergedPullRequest !== null &&
-          reference.projectId === mergedPullRequest.projectId &&
-          reference.repository.toLowerCase() === mergedPullRequest.repository.toLowerCase() &&
-          reference.number === mergedPullRequest.number;
-        if (!matchesMerge && !projects.has(reference.projectId)) {
+        const matchingMerge = mergeFor(thread);
+        if (matchingMerge === null && !projects.has(reference.projectId)) {
           return yield* Effect.die(new Error("linked pull request project not found"));
         }
-        const summary = matchesMerge
-          ? ({
-              state: "merged",
-              closedAt: null,
-              mergedAt: mergedPullRequest.mergedAt,
-            } satisfies SettlementPullRequest)
-          : yield* pullRequests.summary(
-              {
-                projectId: reference.projectId,
-                repository: reference.repository,
-                number: reference.number,
-              },
-              { recoverTransientFailure: false },
-            );
+        const summary =
+          matchingMerge !== null
+            ? ({
+                state: "merged",
+                closedAt: null,
+                mergedAt: matchingMerge.mergedAt,
+              } satisfies SettlementPullRequest)
+            : yield* pullRequests.summary(
+                {
+                  projectId: reference.projectId,
+                  repository: reference.repository,
+                  number: reference.number,
+                },
+                { recoverTransientFailure: false },
+              );
         const cwd = lookupCwdByThreadId.get(thread.id);
         if (summary.state !== "open" && thread.branch !== null && cwd !== undefined) {
           // A reused branch can already have a new open PR while discovery

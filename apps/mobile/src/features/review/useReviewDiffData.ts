@@ -1,3 +1,4 @@
+import { buildWorkspaceReviewDiff } from "./workspaceReviewDiff";
 import { useEffect, useMemo } from "react";
 
 import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
@@ -49,13 +50,18 @@ export function useReviewDiffData(input: {
   const parsedDiff = useMemo(
     () =>
       measureReviewWork("parse-diff", () =>
-        getCachedReviewParsedDiff({
-          threadKey,
-          sectionId: selectedSection?.id ?? null,
-          diff: selectedSection?.diff,
-        }),
+        selectedSection?.repositoryDiffs
+          ? buildWorkspaceReviewDiff(
+              selectedSection.repositoryDiffs,
+              `${threadKey}:${selectedSection.id}`,
+            )
+          : getCachedReviewParsedDiff({
+              threadKey,
+              sectionId: selectedSection?.id ?? null,
+              diff: selectedSection?.diff,
+            }),
       ),
-    [selectedSection?.diff, selectedSection?.id, threadKey],
+    [selectedSection, threadKey],
   );
   const headerDiffSummary = useMemo(() => formatHeaderDiffSummary(parsedDiff), [parsedDiff]);
   const inlineReviewComments = useMemo(

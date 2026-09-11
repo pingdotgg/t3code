@@ -43,6 +43,14 @@ describe("T3ProjectFile", () => {
     expect(decoded.scripts?.[0]).toEqual({ name: "Dev", command: "pnpm dev" });
   });
 
+  it("trims repository paths and rejects blank or overlong entries", () => {
+    expect(decode({ repositories: { paths: ["  projects/app  "] } }).repositories?.paths).toEqual([
+      "projects/app",
+    ]);
+    expect(() => decode({ repositories: { paths: ["   "] } })).toThrow();
+    expect(() => decode({ repositories: { paths: ["x".repeat(513)] } })).toThrow();
+  });
+
   it("rejects scripts without a command", () => {
     expect(() => decode({ scripts: [{ name: "Dev" }] })).toThrow();
   });

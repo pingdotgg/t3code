@@ -24,7 +24,7 @@ import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { useWorkspaceRepositories } from "./use-workspace-repositories";
 
 export function useSelectedThreadGitActions() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -36,7 +36,8 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, selectedThreadWorktreePath, isChildRepository, refreshRepositories } =
+    useWorkspaceRepositories();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
@@ -45,7 +46,9 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = isChildRepository
+    ? selectedThreadCwd
+    : (selectedThreadProject?.workspaceRoot ?? null);
   const branchTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
@@ -159,9 +162,10 @@ export function useSelectedThreadGitActions() {
         showGitActionResult({ type: "error", title: "Git action failed", description: message });
         return null;
       }
+      refreshRepositories();
       return result.value;
     },
-    [selectedThread, selectedThreadCwd, selectedThreadProject],
+    [refreshRepositories, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
@@ -180,7 +184,7 @@ export function useSelectedThreadGitActions() {
         readonly worktreePath?: string | null;
       };
     }): Promise<AtomCommandResult<void, unknown>> => {
-      if (input.nextThreadState) {
+      if (input.nextThreadState && !isChildRepository) {
         const updateResult = await updateThreadGitContext(input.thread, input.nextThreadState);
         if (AsyncResult.isFailure(updateResult)) {
           return AsyncResult.failure(updateResult.cause);
@@ -190,7 +194,7 @@ export function useSelectedThreadGitActions() {
       await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
       return AsyncResult.success(undefined);
     },
-    [branchState, refreshSelectedThreadGitStatus, updateThreadGitContext],
+    [branchState, isChildRepository, refreshSelectedThreadGitStatus, updateThreadGitContext],
   );
 
   const onCheckoutSelectedThreadBranch = useCallback(
@@ -261,6 +265,7 @@ export function useSelectedThreadGitActions() {
 
   const onCreateSelectedThreadWorktree = useCallback(
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
+      if (isChildRepository) return;
       await runSelectedThreadGitMutation(
         "create_worktree",
         "Creating worktree",
@@ -289,7 +294,12 @@ export function useSelectedThreadGitActions() {
         },
       );
     },
-    [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState],
+    [
+      createWorktree,
+      isChildRepository,
+      runSelectedThreadGitMutation,
+      syncSelectedThreadBranchState,
+    ],
   );
 
   const onPullSelectedThreadBranch = useCallback(async () => {

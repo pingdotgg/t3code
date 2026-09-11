@@ -256,3 +256,15 @@ describe("naming the reader as the author to narrow by", () => {
     expect(resolvePullRequestAuthorFilter("me", "  ")).toBe("me");
   });
 });
+
+it("preserves workspace scope on pull request actions and rejects incomplete scope", () => {
+  const action = {
+    projectId: "p1",
+    repository: "org/app",
+    number: 1,
+    action: "merge",
+    workspace: { threadId: "t1", repositoryPath: "projects/app" },
+  };
+  expect(decodeAction(action).workspace).toEqual(action.workspace);
+  expect(() => decodeAction({ ...action, workspace: { threadId: "t1" } })).toThrow();
+});

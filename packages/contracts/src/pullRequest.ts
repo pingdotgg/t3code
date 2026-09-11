@@ -640,7 +640,13 @@ export type PullRequestListResult = typeof PullRequestListResult.Type;
  * (a frontend project's thread linking a backend PR). Absent `host` means "the project's
  * own host", which is every reference from before thread links became host-level.
  */
+export const PullRequestWorkspace = Schema.Struct({
+  threadId: ThreadId,
+  repositoryPath: TrimmedNonEmptyString,
+});
+
 export const PullRequestRef = Schema.Struct({
+  workspace: Schema.optional(PullRequestWorkspace),
   projectId: ProjectId,
   host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
@@ -717,6 +723,7 @@ export type PullRequestStack = typeof PullRequestStack.Type;
  * rows on screen at the speed of everything else on them.
  */
 export const PullRequestDiffStat = Schema.Struct({
+  workspace: Schema.optional(PullRequestWorkspace),
   projectId: ProjectId,
   repository: TrimmedNonEmptyString,
   number: PositiveInt,

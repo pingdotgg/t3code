@@ -1,3 +1,6 @@
+import { useWorkspaceRepositories } from "../hooks/useWorkspaceRepositories";
+import { WorkspaceRepositorySelector } from "./WorkspaceRepositorySelector";
+import { WorkspacePullRequestsPanel } from "./pullRequest/WorkspacePullRequestsPanel";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -108,7 +111,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { useDiffPanelStore } from "../diffPanelStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
   type ComposerSubmissionIntent,
@@ -3287,6 +3290,21 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const supportsWorkspaceRepositories =
+    serverConfig?.environment.capabilities.workspaceRepositories === true;
+  const workspaceRepositories = useWorkspaceRepositories({
+    environmentId,
+    cwd: gitCwd,
+    mutationId: workspaceMutationId,
+    enabled: supportsWorkspaceRepositories,
+  });
+  const hasWorkspaceRepositories = workspaceRepositories.repositories.length > 1;
+  const selectedGitRepository = workspaceRepositories.selectedRepository;
+  const selectedGitCwd = workspaceRepositories.error
+    ? null
+    : supportsWorkspaceRepositories
+      ? (selectedGitRepository?.cwd ?? gitCwd)
+      : gitCwd;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -4189,10 +4207,10 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadRef, openPreview],
   );
   const addDiffSurface = useCallback(() => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (!activeThreadRef || !isServerThread || (!isGitRepo && !hasWorkspaceRepositories)) return;
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
-  }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen, hasWorkspaceRepositories]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -5601,11 +5619,15 @@ export default function ChatView(props: ChatViewProps) {
     );
   }, [activeThreadReferenceCopyTarget]);
   const addPullRequestSurface = useCallback(() => {
-    if (!supportsPullRequests || activeThreadRef === null || linkedThreadPullRequest === null)
-      return;
-    useRightPanelStore.getState().openPullRequest(activeThreadRef, linkedThreadPullRequest);
-  }, [activeThreadRef, linkedThreadPullRequest, supportsPullRequests]);
-  const pullRequestSurfaceAvailable = supportsPullRequests && linkedThreadPullRequest !== null;
+    if (!supportsPullRequests || activeThreadRef === null) return;
+    if (hasWorkspaceRepositories) {
+      useRightPanelStore.getState().open(activeThreadRef, "workspace-pull-requests");
+    } else if (linkedThreadPullRequest !== null) {
+      useRightPanelStore.getState().openPullRequest(activeThreadRef, linkedThreadPullRequest);
+    }
+  }, [activeThreadRef, linkedThreadPullRequest, supportsPullRequests, hasWorkspaceRepositories]);
+  const pullRequestSurfaceAvailable =
+    supportsPullRequests && (hasWorkspaceRepositories || linkedThreadPullRequest !== null);
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
@@ -8287,9 +8309,29 @@ export default function ChatView(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
+          {...(hasWorkspaceRepositories
+            ? {
+                repositories: workspaceRepositories.repositories,
+                repositoryFilter: workspaceRepositories.repositoryFilter,
+                onSelectRepository: workspaceRepositories.selectRepository,
+              }
+            : {})}
           workspaceMutationId={workspaceMutationId}
         />
       </Suspense>
+    ) : renderedRightPanelSurface?.kind === "workspace-pull-requests" && activeProject ? (
+      <WorkspacePullRequestsPanel
+        key={activeThreadKey}
+        threadRef={activeThreadRef}
+        projectId={activeProject.id}
+        repositories={workspaceRepositories.repositories}
+        statuses={workspaceRepositories.statuses}
+        initialRepositoryPath={selectedGitRepository?.path ?? null}
+        composerDraftTarget={composerDraftTarget}
+        error={workspaceRepositories.error}
+        isPending={workspaceRepositories.isPending}
+        onRefresh={workspaceRepositories.refresh}
+      />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
@@ -8468,9 +8510,11 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
           <ChatHeader
-            {...(!supportsPullRequests || activeProjectRepository === null
-              ? {}
-              : { onOpenPullRequest: openProjectPullRequest })}
+            {...(supportsPullRequests && hasWorkspaceRepositories
+              ? { onOpenPullRequest: addPullRequestSurface }
+              : !supportsPullRequests || activeProjectRepository === null
+                ? {}
+                : { onOpenPullRequest: openProjectPullRequest })}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -8485,7 +8529,36 @@ export default function ChatView(props: ChatViewProps) {
             keybindings={keybindings}
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
-            gitCwd={gitCwd}
+            gitCwd={selectedGitCwd}
+            syncThreadBranch={!supportsWorkspaceRepositories || selectedGitRepository?.path === "."}
+            gitRepositorySelector={
+              workspaceRepositories.error ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span role="alert" className="max-w-48 truncate text-xs text-error" />}
+                  >
+                    Repositories unavailable
+                  </TooltipTrigger>
+                  <TooltipPopup>{workspaceRepositories.error}</TooltipPopup>
+                </Tooltip>
+              ) : (
+                <WorkspaceRepositorySelector
+                  repositories={workspaceRepositories.repositories}
+                  statuses={workspaceRepositories.statuses}
+                  selectedPath={selectedGitRepository?.path ?? null}
+                  onSelect={(path) => {
+                    workspaceRepositories.selectRepository(path);
+                    const selection = selectThreadDiffPanelSelection(
+                      useDiffPanelStore.getState().byThreadKey,
+                      activeThreadRef,
+                    );
+                    if (activeThreadRef && selection.kind === "turn") {
+                      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
+                    }
+                  }}
+                />
+              )
+            }
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
@@ -8978,7 +9051,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
-          diffAvailable={isServerThread && isGitRepo}
+          diffAvailable={isServerThread && (isGitRepo || hasWorkspaceRepositories)}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={isServerThread && supportsThreadPullRequests}
@@ -9036,7 +9109,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddDevice={addDeviceSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
-            diffAvailable={isServerThread && isGitRepo}
+            diffAvailable={isServerThread && (isGitRepo || hasWorkspaceRepositories)}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={isServerThread && supportsThreadPullRequests}

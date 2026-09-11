@@ -6,6 +6,8 @@ import {
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
+  resolveFileDiffPath,
+  resolveFileDiffPreviousPath,
 } from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
@@ -177,5 +179,18 @@ describe("getDiffLineStat", () => {
     if (parsed?.kind !== "files") return;
 
     expect(getDiffLineStat(parsed.files)).toEqual({ additions: 3, deletions: 2 });
+  });
+});
+
+describe("diff path normalization", () => {
+  it("continues stripping Git side markers from ordinary metadata", () => {
+    const parsed = getRenderablePatch(
+      "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
+    );
+    if (parsed?.kind !== "files" || !parsed.files[0]) throw new Error("Expected renamed file");
+    const file = { ...parsed.files[0], name: "b/new.ts", prevName: "a/old.ts" };
+    expect(resolveFileDiffPath(file)).toBe("new.ts");
+    expect(resolveFileDiffPreviousPath(file)).toBe("old.ts");
+    expect(buildFileDiffIdentityKey(file)).toBe("old.ts\u0000new.ts");
   });
 });

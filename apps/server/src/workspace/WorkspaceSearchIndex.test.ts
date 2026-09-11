@@ -1,6 +1,7 @@
 import {
   FileFinder,
   type FileItem,
+  type Score,
   type GrepCursor,
   type GrepOptions,
   type GrepResult,
@@ -30,6 +31,21 @@ function fileItem(relativePath: string): FileItem {
   };
 }
 
+function score(total: number): Score {
+  return {
+    total,
+    baseScore: total,
+    filenameBonus: 0,
+    specialFilenameBonus: 0,
+    frecencyBoost: 0,
+    distancePenalty: 0,
+    currentFilePenalty: 0,
+    comboMatchBoost: 0,
+    exactMatch: false,
+    matchType: "fuzzy",
+  };
+}
+
 it.effect("filters image searches before applying the result limit", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -41,7 +57,7 @@ it.effect("filters image searches before applying the result limit", () =>
         ok: true as const,
         value: {
           items,
-          scores: [],
+          scores: items.map((_, index) => score(index)),
           totalMatched: items.length,
           totalFiles: items.length,
         },
@@ -59,6 +75,8 @@ it.effect("filters image searches before applying the result limit", () =>
 
       expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
+      expect(resultWithoutKind.scores).toEqual([200]);
+      expect(resultWithDirectoryKind.scores).toEqual([200]);
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),

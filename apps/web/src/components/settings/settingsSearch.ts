@@ -99,7 +99,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-overview",
     title: "Project overview",
     to: "/settings/projects",
-    searchTerms: ["name icon emoji image checkout remove delete"],
+    searchTerms: [
+      "name icon emoji image checkout remove delete repositories paths polyrepo submodules t3.json",
+    ],
   },
   {
     id: "default-model",

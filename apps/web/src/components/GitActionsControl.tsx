@@ -103,6 +103,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
+  syncThreadBranch?: boolean;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
   /**
@@ -923,6 +924,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
 export default function GitActionsControl({
   gitCwd,
+  syncThreadBranch = true,
   activeThreadRef,
   draftId,
   onOpenPullRequest,
@@ -982,7 +984,7 @@ export default function GitActionsControl({
 
   const persistThreadBranchSync = useCallback(
     (branch: string | null, manualSelection = false) => {
-      if (!activeThreadRef) {
+      if (!activeThreadRef || !syncThreadBranch) {
         return;
       }
 
@@ -1022,6 +1024,7 @@ export default function GitActionsControl({
       draftId,
       setDraftThreadContext,
       updateThreadMetadata,
+      syncThreadBranch,
     ],
   );
 

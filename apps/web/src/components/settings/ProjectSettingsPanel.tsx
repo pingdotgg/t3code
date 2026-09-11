@@ -38,6 +38,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { ProjectRepositorySettings } from "./ProjectRepositorySettings";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
@@ -478,6 +479,21 @@ function ProjectDetail({
             }
           />
         </SettingsSection>
+        {group.memberProjects.map((member) =>
+          environmentById.get(member.environmentId)?.serverConfig?.environment.capabilities
+            .workspaceRepositories === true ? (
+            <SettingsSection key={member.physicalProjectKey} title="Checkout">
+              <SettingsRow
+                title="Workspace repositories"
+                description={`${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`}
+              />
+              <ProjectRepositorySettings
+                environmentId={member.environmentId}
+                cwd={member.workspaceRoot}
+              />
+            </SettingsSection>
+          ) : null,
+        )}
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
