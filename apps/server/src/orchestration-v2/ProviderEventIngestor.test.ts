@@ -401,6 +401,27 @@ layer("ProviderEventIngestorV2", (it) => {
           { id: "fallback", text: "Report", status: "completed", durationMs: 5_000 },
         ],
       );
+
+      yield* ingest(restartedIngestor, [
+        { id: "duplicate-a", text: "Inserted task", status: "running" },
+        { id: "duplicate-b", text: "Verify", status: "completed" },
+        { id: "fallback", text: "Different completed task", status: "completed" },
+      ]);
+      yield* TestClock.adjust("2 seconds");
+      yield* ingest(restartedIngestor, [
+        { id: "duplicate-a", text: "Inserted task", status: "completed" },
+        { id: "duplicate-b", text: "Verify", status: "completed" },
+        { id: "fallback", text: "Different completed task", status: "completed" },
+      ]);
+      const updated = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      const changedPlan = updated.plans.find(
+        (candidate): candidate is TodoListPlan =>
+          candidate.kind === "todo_list" && candidate.id === planId,
+      );
+      assert.deepEqual(
+        changedPlan?.steps.map((step) => step.durationMs),
+        [2_000, 4_000, undefined],
+      );
     }),
   );
 
