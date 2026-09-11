@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_MODEL, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_MODEL,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -139,27 +144,43 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
           };
         }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
-    const project = (workspaceRoot: string, autoPull = true) =>
-      ({ id: ProjectId.make(workspaceRoot), workspaceRoot, autoPull }) as never;
+    const project = (workspaceRoot: string) =>
+      ({ id: ProjectId.make(workspaceRoot), workspaceRoot }) as never;
+    const overrides = (entries: Record<string, boolean>) => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: Object.fromEntries(
+        Object.entries(entries).map(([root, defaultAutoPull]) => [
+          ProjectId.make(root),
+          { defaultAutoPull },
+        ]),
+      ),
+    });
 
-    yield* ServerRuntimeStartup.autoPullProjects([
-      project("/clean"),
-      project("/current"),
-      project("/dirty"),
-      project("/ahead"),
-      project("/feature"),
-      project("/disabled", false),
-    ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+    yield* ServerRuntimeStartup.autoPullProjects(
+      [
+        project("/clean"),
+        project("/current"),
+        project("/dirty"),
+        project("/ahead"),
+        project("/feature"),
+        project("/disabled"),
+      ],
+      overrides({
+        "/clean": true,
+        "/current": true,
+        "/dirty": true,
+        "/ahead": true,
+        "/feature": true,
+        "/disabled": false,
+      }),
+    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
 
     assert.deepStrictEqual(pulled, ["/clean"]);
 
     pulled.length = 0;
     yield* ServerRuntimeStartup.autoPullProjects(
-      [project("/inherited", false), project("/opted-out"), project("/dirty", false)],
-      {
-        defaultAutoPull: true,
-        projectAutoPullOverrides: { [ProjectId.make("/opted-out")]: false },
-      },
+      [project("/inherited"), project("/opted-out"), project("/dirty")],
+      { ...overrides({ "/opted-out": false }), defaultAutoPull: true },
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),

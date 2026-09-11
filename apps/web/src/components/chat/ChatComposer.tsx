@@ -1513,6 +1513,7 @@ export interface ChatComposerProps {
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
   // Callbacks
+  onCompactContext: () => void;
   onSend: (e?: { preventDefault: () => void }, dispatchMode?: ComposerDispatchMode) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -1622,6 +1623,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollKeyDown,
     onPageScrollKeyUp,
     onPageScrollRelease,
+    onCompactContext,
     onSend,
     onInterrupt,
     onImplementPlanInNewThread,
@@ -2176,7 +2178,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   /**
    * Count of pasted images still being compressed, per thread. Reserved
    * against the attachment limit so concurrent pastes can't overshoot it,
-   * and checked before sending or compacting so an image cannot move into
+   * and checked before sending so an image cannot move into
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<string, number>>(new Map());
@@ -3295,42 +3297,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return;
     }
-    // The compact buttons cannot see the compression counter (it lives in
-    // a ref), so they render enabled during a paste; toast instead of
-    // silently ignoring the click.
-    if ((pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0) {
-      toastManager.add({
-        type: "info",
-        title: "Still compressing a pasted image.",
-        description: "Compact again once its thumbnail appears.",
-      });
-      return;
-    }
-
-    promptRef.current = "/compact";
-    setComposerDraftPrompt(composerDraftTarget, "/compact");
-    submitComposer();
-    // A blocked dispatch (busy send ref, provider preflight rejection)
-    // would leave the injected "/compact" behind as if the user typed it.
-    // Clearing here is safe even when the send did dispatch: the send
-    // snapshots its prompt synchronously and clears the draft itself.
-    if (promptRef.current === "/compact") {
-      promptRef.current = "";
-      setComposerDraftPrompt(composerDraftTarget, "");
-    }
+    onCompactContext();
   }, [
     activePendingApproval,
     activeThreadId,
     compactDisabled,
-    composerDraftTarget,
     isConnecting,
     isSendBusy,
     noProviderAvailable,
+    onCompactContext,
     pendingUserInputs.length,
     phase,
-    promptRef,
-    setComposerDraftPrompt,
-    submitComposer,
   ]);
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
