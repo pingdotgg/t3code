@@ -204,7 +204,7 @@ export function delegatedTaskProgress(projection: {
     Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
   >;
   readonly subagents: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status">
+    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
   readonly providerThreads: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
@@ -222,7 +222,14 @@ export function delegatedTaskProgress(projection: {
   );
   const active = workRuns.some((run) => !terminal(run.status));
   const children =
-    projection.subagents.some((task) => !terminal(task.status)) ||
+    projection.subagents.some(
+      (task) =>
+        !terminal(task.status) ||
+        // Publishing a child's result precedes scheduling its parent's wake.
+        // The parent still owes that follow-up even between those transactions.
+        task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed",
+    ) ||
     projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
