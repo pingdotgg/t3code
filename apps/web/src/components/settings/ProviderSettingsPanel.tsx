@@ -1143,7 +1143,9 @@ export function EnvironmentProviderSettings({
     <>
       <SettingsSection {...searchableSetting("providers")} hideTitle variant="plain">
         <div className="flex min-h-11 min-w-0 flex-wrap items-center gap-2 pb-2">
-          <h1 className="mr-2 text-lg font-semibold tracking-tight">Providers</h1>
+          <h1 className="shrink-0 text-lg font-semibold tracking-tight @min-[48rem]/providers:mr-2">
+            Providers
+          </h1>
           <Select
             items={PROVIDER_SETTINGS_VIEWS}
             value={view.value}
@@ -1156,7 +1158,7 @@ export function EnvironmentProviderSettings({
             <SelectTrigger
               size="compact"
               variant="ghost"
-              className="gap-2 bg-muted/40 text-foreground"
+              className="min-w-0 gap-2 bg-muted/40 text-foreground"
               aria-label="Provider settings view"
             >
               <SelectValue />
@@ -1169,12 +1171,18 @@ export function EnvironmentProviderSettings({
               ))}
             </SelectPopup>
           </Select>
-          {deviceTabs}
+          {deviceTabs ? (
+            <div className="order-last min-w-0 basis-full @min-[48rem]/providers:order-none @min-[48rem]/providers:flex-1 @min-[48rem]/providers:basis-auto">
+              {deviceTabs}
+            </div>
+          ) : null}
           {!deviceTabs ? (
-            <span className="text-xs text-muted-foreground">{environmentLabel}</span>
+            <span className="sr-only min-w-0 truncate text-xs text-muted-foreground @min-[48rem]/providers:not-sr-only">
+              {environmentLabel}
+            </span>
           ) : null}
           {view.value === "accounts" ? (
-            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
+            <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1 @min-[48rem]/providers:gap-2">
               {readOnly ? (
                 <span className="min-w-0 truncate text-xs text-muted-foreground">
                   <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
@@ -1187,13 +1195,14 @@ export function EnvironmentProviderSettings({
                         <Button
                           size="xs"
                           variant="ghost-muted"
+                          className="@max-[48rem]/providers:size-8 @max-[48rem]/providers:p-0"
                           disabled={isRefreshingProviders}
                           aria-busy={isRefreshingProviders}
                           onClick={() => void refreshProviders()}
                         >
                           <RefreshIcon refreshing={isRefreshingProviders} />
                           <span className="sr-only">Refresh provider status</span>
-                          <span className="hidden min-w-0 truncate sm:inline">
+                          <span className="hidden min-w-0 truncate @min-[48rem]/providers:inline">
                             {isRefreshingProviders ? (
                               "Refreshing providers"
                             ) : (
@@ -1211,6 +1220,7 @@ export function EnvironmentProviderSettings({
                         <Button
                           size="xs"
                           variant="outline"
+                          className="@max-[48rem]/providers:size-8 @max-[48rem]/providers:p-0"
                           onClick={() => {
                             setAddAccountDriver(undefined);
                             setIsAddInstanceDialogOpen(true);
@@ -1218,7 +1228,7 @@ export function EnvironmentProviderSettings({
                           aria-label="Add provider"
                         >
                           <PlusIcon />
-                          Add provider
+                          <span className="hidden @min-[48rem]/providers:inline">Add provider</span>
                         </Button>
                       }
                     />
