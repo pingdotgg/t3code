@@ -50,3 +50,18 @@ export function buildCancelQueuedRunCommand(input: {
     },
   };
 }
+
+/** Return the insertion anchor after a drag, or undefined when the order is unchanged. */
+export function resolveQueueDropBeforeRunId(
+  rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
+  runId: RunId,
+  translationY: number,
+): RunId | null | undefined {
+  const sourceIndex = rows.findIndex((row) => row.id === runId);
+  const source = rows[sourceIndex];
+  if (!source || rows.some((row) => row.y === undefined || row.height === undefined)) return;
+  const center = source.y! + source.height! / 2 + translationY;
+  const remaining = rows.filter((row) => row.id !== runId);
+  const before = remaining.find((row) => center < row.y! + row.height! / 2)?.id ?? null;
+  return before === (rows[sourceIndex + 1]?.id ?? null) ? undefined : before;
+}
