@@ -84,7 +84,12 @@ export const layer: Layer.Layer<
           const targetInstance = yield* Effect.option(getMetadata(targetModelSelection.instanceId));
           const targetAdapter = yield* Effect.option(adapters.get(targetModelSelection.instanceId));
           const currentSession = projection.providerSessions
-            .filter((session) => session.providerInstanceId === current.instanceId)
+            .filter(
+              (session) =>
+                session.providerInstanceId === current.instanceId &&
+                session.status !== "stopped" &&
+                session.status !== "error",
+            )
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),

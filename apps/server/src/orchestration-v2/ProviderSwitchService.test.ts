@@ -101,6 +101,38 @@ it.effect(
     ),
 );
 
+for (const deadStatus of ["stopped", "error"] as const) {
+  it.effect(
+    `restarts and releases the live session when a newer ${deadStatus} session exists`,
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+        const thread = projection();
+        const result = yield* service.plan({
+          projection: {
+            ...thread,
+            providerSessions: [
+              ...thread.providerSessions,
+              {
+                ...thread.providerSessions[0]!,
+                id: ProviderSessionId.make("dead_session"),
+                status: deadStatus,
+                updatedAt: DateTime.add(now, { seconds: 1 }),
+              },
+            ],
+          },
+          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+        });
+        assert.equal(result.transition.type, "restart_and_resume");
+        assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+      }).pipe(
+        Effect.provide(
+          testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
+        ),
+      ),
+  );
+}
+
 it.effect("distinguishes compatible and incompatible instances of the same driver", () =>
   Effect.gen(function* () {
     const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
