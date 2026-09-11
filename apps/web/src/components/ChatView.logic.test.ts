@@ -60,6 +60,7 @@ import {
   threadShellHasStarted,
   resolveDraftHeroState,
   peekHeldThreadTimeline,
+  peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -582,7 +583,7 @@ describe("resolveThreadSwitchTimeline", () => {
         loading: true,
         activeThreadKey: "thread-b",
         nextEntries: [],
-        held,
+        lastReady: held,
       }),
     ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
   });
@@ -593,7 +594,7 @@ describe("resolveThreadSwitchTimeline", () => {
         loading: false,
         activeThreadKey: "thread-b",
         nextEntries: ["b1"],
-        held,
+        lastReady: held,
       }),
     ).toEqual({ entries: ["b1"], displayThreadKey: "thread-b" });
   });
@@ -604,7 +605,7 @@ describe("resolveThreadSwitchTimeline", () => {
         loading: true,
         activeThreadKey: "thread-a",
         nextEntries: [],
-        held: null,
+        lastReady: null,
       }),
     ).toEqual({ entries: [], displayThreadKey: "thread-a" });
   });
@@ -617,9 +618,32 @@ describe("resolveThreadSwitchTimeline", () => {
         loading: true,
         activeThreadKey: "thread-b",
         nextEntries: [],
-        held: peekHeldThreadTimeline<string[]>(),
       }),
     ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+  });
+
+  it("paints a remembered destination instead of the last-viewed thread", () => {
+    rememberReadyThreadTimeline(held);
+    rememberReadyThreadTimeline({ threadKey: "thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("thread-a")).toEqual(["a1", "a2"]);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "thread-a" });
+  });
+
+  it("prefers live entries over a remembered snapshot", () => {
+    rememberReadyThreadTimeline({ threadKey: "thread-b", entries: ["stale-b"] });
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "thread-b",
+        nextEntries: ["fresh-b"],
+      }),
+    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "thread-b" });
   });
 });
 

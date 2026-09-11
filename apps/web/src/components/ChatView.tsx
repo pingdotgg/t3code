@@ -415,7 +415,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
-  peekHeldThreadTimeline,
+  peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
   observeProactivePanelUserChoice,
@@ -3249,7 +3249,7 @@ export default function ChatView(props: ChatViewProps) {
     loading: timelineEntries.length === 0 && threadSyncPhase !== null,
     activeThreadKey,
     nextEntries: timelineEntries,
-    held: peekHeldThreadTimeline<typeof timelineEntries>(),
+    rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
   });
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
@@ -4922,6 +4922,21 @@ export default function ChatView(props: ChatViewProps) {
       void legendListRef.current?.scrollToEnd?.({ animated });
     });
   }, []);
+  const displayedTimelineKeyRef = useRef(displayedTimeline.displayThreadKey);
+  useLayoutEffect(() => {
+    const displayKey = displayedTimeline.displayThreadKey;
+    if (displayKey === null || displayKey !== activeThreadKey) {
+      displayedTimelineKeyRef.current = displayKey;
+      return;
+    }
+    if (displayedTimelineKeyRef.current === displayKey) {
+      return;
+    }
+    displayedTimelineKeyRef.current = displayKey;
+    // Keep the list mounted across jumps; pin the newly displayed thread to
+    // its end the way a remount used to via initialScrollAtEnd.
+    scrollToEnd();
+  }, [activeThreadKey, displayedTimeline.displayThreadKey, scrollToEnd]);
   useLayoutEffect(() => {
     if (timelineScrollModeRef.current !== "anchoring-new-turn") {
       return;
@@ -8455,7 +8470,6 @@ export default function ChatView(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={displayedTimeline.displayThreadKey ?? activeThread.id}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
                 isCompacting={isCompacting}
@@ -8467,6 +8481,7 @@ export default function ChatView(props: ChatViewProps) {
                 turnDiffSummaries={activeThread.checkpoints}
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
+                displayThreadKey={displayedTimeline.displayThreadKey ?? routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 supportsConversationRollback={supportsConversationRollback}
                 onRevertToTurnCount={onRevertTimelineTurn}
