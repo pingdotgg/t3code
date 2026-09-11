@@ -112,6 +112,7 @@ describe("ElectronMenu", () => {
         label: "Copy",
         enabled: true,
         accelerator: "Ctrl+Shift+C",
+        registerAccelerator: false,
         click: buildFromTemplateMock.mock.calls[0]?.[0][0].click,
       });
       assert.deepEqual(

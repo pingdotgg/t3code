@@ -167,6 +167,8 @@ export const make = Effect.gen(function* () {
       const itemOption: Electron.MenuItemConstructorOptions = {
         label: item.label,
         enabled: !item.disabled,
+        // Context-menu shortcuts must not intercept keys after the popup closes.
+        registerAccelerator: false,
         ...(item.accelerator ? { accelerator: item.accelerator } : {}),
       };
       if (item.children && item.children.length > 0) {
