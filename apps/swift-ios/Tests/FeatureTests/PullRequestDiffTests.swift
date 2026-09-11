@@ -184,6 +184,27 @@ struct PullRequestPaginationTests {
     }
 
     @Test
+    func failedRefreshKeepsLoadedRowsAndReportsTheFailure() async {
+        let client = PullRequestPaginationClientStub()
+        client.firstPages = [page(environmentID: "studio", numbers: [3])]
+        let model = PullRequestsModel(client: client)
+        await model.load()
+
+        client.initialLoadFailure = PullRequestPaginationClientStub.Failure.offline
+        await model.load(invalidate: true)
+
+        #expect(model.rows.map(\.entry.number) == [3])
+        #expect(model.errorMessage == "This computer is offline.")
+
+        client.initialLoadFailure = nil
+        client.firstPages = [page(environmentID: "studio", numbers: [4])]
+        await model.load(invalidate: true)
+
+        #expect(model.rows.map(\.entry.number) == [4])
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test
     func stalePaginationCannotReplaceANewerReload() async {
         let client = PullRequestPaginationClientStub()
         client.firstPages = [page(
@@ -285,6 +306,7 @@ private final class PullRequestPaginationClientStub: FeatureClient {
     var firstPages: [FeaturePullRequestEnvironmentList] = []
     var targetedPages: [String: FeaturePullRequestEnvironmentList] = [:]
     var failedEnvironmentIDs: Set<String> = []
+    var initialLoadFailure: (any Error)?
     var initialRequests: [PullRequestListInput] = []
     var targetedRequests: [TargetedRequest] = []
     var beforeTargetedResponse:
@@ -294,6 +316,7 @@ private final class PullRequestPaginationClientStub: FeatureClient {
         -> [FeaturePullRequestEnvironmentList]
     {
         initialRequests.append(input)
+        if let initialLoadFailure { throw initialLoadFailure }
         return firstPages
     }
 

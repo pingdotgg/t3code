@@ -396,6 +396,12 @@ public struct PullRequestsView: View {
             ContentUnavailableView("Couldn’t load pull requests", systemImage: "exclamationmark.triangle", description: Text(error))
         } else {
             List {
+                if let errorMessage = model.errorMessage {
+                    FeatureRefreshFailureRow(message: errorMessage) {
+                        Task { await model.load(invalidate: true) }
+                    }
+                }
+
                 ForEach(model.environments.filter { $0.errorMessage != nil }) { environment in
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
