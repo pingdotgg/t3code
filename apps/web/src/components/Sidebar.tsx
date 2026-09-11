@@ -167,6 +167,7 @@ import {
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   searchSidebarThreads,
+  visibleSidebarShelfThreads,
   shouldCreateNewThreadInCurrentProject,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
@@ -250,6 +251,8 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-expanded";
+const ACTIVE_SHELF_EXPANDED_KEY = "t3code:sidebar:active-expanded";
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -300,10 +303,6 @@ function WorkingDuration(props: { startedAt: string | null }) {
 }
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
-// Collapsed shelves share one empty list so a route change alone does not
-// give the sidebar list a new identity.
-const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
-
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
@@ -590,48 +589,12 @@ function SidebarSectionPlaceholder(props: {
   );
 }
 
-// Zero-height markers reserve no label space at rest. During a drag the
-// sorting strategy opens 24px for a 16px label with 4px clearance on each side.
-const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
-
-function SidebarDragBoundary(props: {
-  marker: "pinned-header" | "pinned-divider";
-  label: string;
-  visible: boolean;
-  isDropTarget: boolean;
-}) {
-  return (
-    <SortableSidebarMarker
-      marker={props.marker}
-      data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative mx-0.5 -mb-px h-0"
-    >
-      {props.visible ? (
-        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
-          <span
-            className={cn(
-              "shrink-0 text-xs font-medium",
-              props.isDropTarget ? "text-primary" : "text-sidebar-foreground/80",
-            )}
-          >
-            {props.label}
-          </span>
-          <span
-            aria-hidden
-            className={cn(
-              "h-px flex-1",
-              props.isDropTarget ? "bg-primary/50" : "bg-sidebar-foreground/25",
-            )}
-          />
-        </div>
-      ) : null}
-    </SortableSidebarMarker>
-  );
-}
+// Shelf headers reserve the same space at rest and while dragging.
+const SIDEBAR_DRAG_LABEL_HEIGHT = 32;
 
 // Shelf headers stay visible and keep their measured height while dragging.
 function SidebarSectionHeader(props: {
-  marker: "snoozed-header" | "settled-header";
+  marker: "pinned-header" | "pinned-divider" | "snoozed-header" | "settled-header";
   label: string;
   // While dragging, the settled header reads at full strength and takes the
   // accent while the lifted row is over it.
@@ -677,7 +640,7 @@ function SidebarSectionHeader(props: {
         type="button"
         onClick={props.toggle.onToggle}
         aria-expanded={props.toggle.expanded}
-        data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
+        data-testid={`sidebar-${props.marker === "pinned-divider" ? "active" : props.marker.replace("-header", "")}-shelf-toggle`}
         className={cn(className, "cursor-pointer")}
       >
         {content}
@@ -2693,19 +2656,13 @@ export default function Sidebar() {
     () => setSettledShelfExpanded((value) => !value),
     [setSettledShelfExpanded],
   );
-  const renderedSettledThreads = useMemo(() => {
-    if (settledShelfExpanded) return visibleSettledThreads;
-    if (routeThreadKey === null) return EMPTY_THREADS;
-    const routeThread = visibleSettledThreads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
+  const renderedSettledThreads = useMemo(
+    () => visibleSidebarShelfThreads(visibleSettledThreads, settledShelfExpanded, routeThreadKey),
+    [routeThreadKey, settledShelfExpanded, visibleSettledThreads],
+  );
 
-  // The snoozed shelf is collapsed by default: out of the way, never gone.
-  // Collapsed threads don't render (and so don't participate in jump
-  // shortcuts or multi-select), matching the settled tail's paging model.
+  // Collapsed shelves keep the open thread but exclude hidden rows from
+  // jump shortcuts and multi-select.
   const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useLocalStorage(
     SNOOZED_SHELF_EXPANDED_KEY,
     false,
@@ -2715,23 +2672,45 @@ export default function Sidebar() {
     () => setSnoozedShelfExpanded((value) => !value),
     [setSnoozedShelfExpanded],
   );
-  const visibleSnoozedThreads = useMemo(() => {
-    if (snoozedShelfExpanded) return snoozedThreads;
-    // The open thread must never vanish behind the collapsed shelf: a
-    // snoozed thread reached by route (deep link, open before snoozing
-    // elsewhere) keeps its row — with highlight and wake affordance — same
-    // exception the settled tail's "Show more" makes.
-    if (routeThreadKey === null) return EMPTY_THREADS;
-    const routeThread = snoozedThreads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    return routeThread === undefined ? EMPTY_THREADS : [routeThread];
-  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  const visibleSnoozedThreads = useMemo(
+    () => visibleSidebarShelfThreads(snoozedThreads, snoozedShelfExpanded, routeThreadKey),
+    [routeThreadKey, snoozedShelfExpanded, snoozedThreads],
+  );
 
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useLocalStorage(
+    PINNED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const [activeShelfExpanded, setActiveShelfExpanded] = useLocalStorage(
+    ACTIVE_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const togglePinnedShelf = useCallback(
+    () => setPinnedShelfExpanded((value) => !value),
+    [setPinnedShelfExpanded],
+  );
+  const toggleActiveShelf = useCallback(
+    () => setActiveShelfExpanded((value) => !value),
+    [setActiveShelfExpanded],
+  );
+  const visiblePinnedThreads = useMemo(
+    () => visibleSidebarShelfThreads(pinnedThreads, pinnedShelfExpanded, routeThreadKey),
+    [pinnedThreads, pinnedShelfExpanded, routeThreadKey],
+  );
+  const visibleActiveThreads = useMemo(
+    () => visibleSidebarShelfThreads(activeThreads, activeShelfExpanded, routeThreadKey),
+    [activeThreads, activeShelfExpanded, routeThreadKey],
+  );
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...visiblePinnedThreads,
+      ...visibleActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [visiblePinnedThreads, visibleActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -3323,10 +3302,10 @@ export default function Sidebar() {
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(visiblePinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
+    const activeRows = rowsOf(visibleActiveThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
     if (snoozedThreads.length > 0) {
@@ -3345,6 +3324,8 @@ export default function Sidebar() {
     settledThreads.length,
     snoozedThreads.length,
     visibleSnoozedThreads,
+    visiblePinnedThreads,
+    visibleActiveThreads,
   ]);
   useEffect(() => {
     if (
@@ -4802,23 +4783,39 @@ export default function Sidebar() {
                         switch (item.marker) {
                           case "pinned-header":
                             items.push(
-                              <SidebarDragBoundary
+                              <SidebarSectionHeader
                                 key="pinned-header"
                                 marker="pinned-header"
-                                label="Pinned"
-                                visible={from !== null}
+                                label={
+                                  pinnedShelfExpanded
+                                    ? "Pinned"
+                                    : `Pinned (${pinnedThreads.length})`
+                                }
+                                dragging={from !== null}
                                 isDropTarget={dragTargetSection === "pinned"}
+                                toggle={{
+                                  expanded: pinnedShelfExpanded,
+                                  onToggle: togglePinnedShelf,
+                                }}
                               />,
                             );
                             break;
                           case "pinned-divider":
                             items.push(
-                              <SidebarDragBoundary
+                              <SidebarSectionHeader
                                 key="pinned-divider"
                                 marker="pinned-divider"
-                                label="Active"
-                                visible={from !== null}
+                                label={
+                                  activeShelfExpanded
+                                    ? "Active"
+                                    : `Active (${activeThreads.length})`
+                                }
+                                dragging={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
+                                toggle={{
+                                  expanded: activeShelfExpanded,
+                                  onToggle: toggleActiveShelf,
+                                }}
                               />,
                             );
                             break;
