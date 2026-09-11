@@ -14,7 +14,7 @@ function codeChildren(root: ReturnType<DiffsHighlighter["codeToHast"]>) {
  * multiline strings, comments, and embedded languages continue to highlight as
  * they do in a full pass. The current line is always highlighted again.
  */
-export function createIncrementalHighlighter(
+export function createIncrementalHighlightedDocument(
   highlighter: DiffsHighlighter,
   language: string,
   theme: DiffThemeName,
@@ -29,7 +29,7 @@ export function createIncrementalHighlighter(
       }
     | undefined;
 
-  return (code: string): string => {
+  return (code: string) => {
     // Plain text and ANSI do not have a TextMate grammar state. A CR at the end
     // of a chunk can still become a CRLF, so keep that input on the full path.
     if (
@@ -37,7 +37,7 @@ export function createIncrementalHighlighter(
       ["text", "plaintext", "plain", "txt", "ansi"].includes(language) ||
       code.includes("\r")
     ) {
-      return highlighter.codeToHtml(code, options);
+      return highlighter.codeToHast(code, options);
     }
     if (cached && !code.startsWith(cached.prefix)) cached = undefined;
     const end = code.lastIndexOf("\n") + 1;
@@ -51,7 +51,7 @@ export function createIncrementalHighlighter(
       const state = highlighter.getLastGrammarState(root);
       if (!state) {
         cached = undefined;
-        return highlighter.codeToHtml(code, options);
+        return highlighter.codeToHast(code, options);
       }
       cached = {
         prefix: code.slice(0, end),
@@ -60,8 +60,8 @@ export function createIncrementalHighlighter(
       };
     }
     const prefix = cached;
-    if (!prefix) return highlighter.codeToHtml(code, options);
-    return highlighter.codeToHtml(code.slice(prefix.prefix.length), {
+    if (!prefix) return highlighter.codeToHast(code, options);
+    return highlighter.codeToHast(code.slice(prefix.prefix.length), {
       ...options,
       grammarState: prefix.state,
       transformers: [

@@ -637,6 +637,12 @@ importers:
       effect:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
+      hast-util-to-html:
+        specifier: ^9.0.5
+        version: 9.0.5
+      hast-util-to-jsx-runtime:
+        specifier: ^2.3.6
+        version: 2.3.6
       heic-to:
         specifier: ^1.5.2
         version: 1.5.2
