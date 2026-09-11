@@ -50,6 +50,7 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
+import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
@@ -88,16 +89,22 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+/** The floating player hides only while the same source is rendered in the panel. */
 export function shouldRenderPreviewMiniPlayer(
-  miniPlayerTabId: string | null,
+  source: PreviewMiniPlayerSource | null,
   renderedRightPanelSurface: RightPanelSurface | null,
 ): boolean {
-  return (
-    miniPlayerTabId !== null &&
-    !(
+  if (source === null) return false;
+  if (source.kind === "browser") {
+    return !(
       renderedRightPanelSurface?.kind === "preview" &&
-      renderedRightPanelSurface.resourceId === miniPlayerTabId
-    )
+      renderedRightPanelSurface.resourceId === source.tabId
+    );
+  }
+  return !(
+    renderedRightPanelSurface?.kind === "device" &&
+    renderedRightPanelSurface.target?.hostId === source.hostId &&
+    renderedRightPanelSurface.target.deviceId === source.deviceId
   );
 }
 
