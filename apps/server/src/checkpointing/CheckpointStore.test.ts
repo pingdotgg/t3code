@@ -116,6 +116,116 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  it.effect("preserves unrelated files created after the checkpoint", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("unrelated-file"), 0);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+      yield* writeTextFile(NodePath.join(tmp, "unrelated.txt"), "Human bytes\n");
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+      expect(yield* fs.readFileString(NodePath.join(tmp, "unrelated.txt"))).toBe("Human bytes\n");
+    }),
+  );
+
+  it.effect("removes checkpoint additions without cleaning later unrelated files", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("checkpoint-additions");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+      yield* fs.makeDirectory(NodePath.join(tmp, "new directory"));
+      yield* writeTextFile(NodePath.join(tmp, "new directory/agent.txt"), "Agent bytes\n");
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "Agent edit\n");
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+      yield* writeTextFile(NodePath.join(tmp, "new directory/human.txt"), "Human bytes\n");
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef, fromCheckpointRef })).toBe(
+        true,
+      );
+      expect(yield* fs.exists(NodePath.join(tmp, "new directory/agent.txt"))).toBe(false);
+      expect(yield* fs.readFileString(NodePath.join(tmp, "new directory/human.txt"))).toBe(
+        "Human bytes\n",
+      );
+      expect(yield* fs.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+    }),
+  );
+
+  it.effect("preserves post-checkpoint tracked edits outside the reverted turn diff", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("post-checkpoint-tracked-edits");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+      const humanFile = NodePath.join(tmp, "human.txt");
+
+      yield* writeTextFile(humanFile, "Human baseline\n");
+      yield* git(tmp, ["add", "human.txt"]);
+      yield* git(tmp, ["commit", "-m", "add human file"]);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "Agent edit\n");
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+
+      yield* writeTextFile(humanFile, "Human staged\n");
+      yield* git(tmp, ["add", "human.txt"]);
+      yield* writeTextFile(humanFile, "Human unstaged\n");
+
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef, fromCheckpointRef })).toBe(
+        true,
+      );
+      expect(yield* fs.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+      expect(yield* git(tmp, ["show", ":human.txt"])).toBe("Human staged");
+      expect(yield* fs.readFileString(humanFile)).toBe("Human unstaged\n");
+    }),
+  );
+
+  it.effect("preserves staged changes outside a nested project during restore", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const project = NodePath.join(tmp, "project");
+      const projectFile = NodePath.join(project, "app.ts");
+      const outsideFile = NodePath.join(tmp, "outside.txt");
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("nested-project-index");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+
+      yield* fs.makeDirectory(project);
+      yield* writeTextFile(projectFile, "baseline\n");
+      yield* writeTextFile(outsideFile, "outside baseline\n");
+      yield* git(tmp, ["add", "."]);
+      yield* git(tmp, ["commit", "-m", "add project"]);
+      yield* store.captureCheckpoint({ cwd: project, checkpointRef });
+
+      yield* writeTextFile(projectFile, "agent edit\n");
+      yield* writeTextFile(NodePath.join(project, "agent.txt"), "agent addition\n");
+      yield* store.captureCheckpoint({ cwd: project, checkpointRef: fromCheckpointRef });
+
+      yield* writeTextFile(outsideFile, "outside staged\n");
+      yield* git(tmp, ["add", "outside.txt"]);
+      yield* writeTextFile(outsideFile, "outside unstaged\n");
+
+      expect(
+        yield* store.restoreCheckpoint({ cwd: project, checkpointRef, fromCheckpointRef }),
+      ).toBe(true);
+      expect(yield* git(tmp, ["show", ":outside.txt"])).toBe("outside staged");
+      expect(yield* fs.readFileString(outsideFile)).toBe("outside unstaged\n");
+      expect(yield* fs.readFileString(projectFile)).toBe("baseline\n");
+      expect(yield* fs.exists(NodePath.join(project, "agent.txt"))).toBe(false);
+    }),
+  );
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

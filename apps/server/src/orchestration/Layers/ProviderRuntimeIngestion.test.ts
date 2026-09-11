@@ -704,6 +704,15 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: "2026-01-01T00:00:05.000Z",
     });
     await harness.drain();
+    // The provider command reactor supplies this exact message/turn receipt.
+    // Until it arrives, the lifecycle event must not consume a pending message.
+    await harness.dispatch({
+      type: "thread.turn.start.acknowledge",
+      commandId: CommandId.make("opencode-pending-acknowledged"),
+      threadId,
+      messageId: asMessageId("opencode-pending-message"),
+      turnId: asTurnId("opencode-pending-turn"),
+    });
     const startedThread = (await harness.readModel()).threads.find(
       (entry) => entry.id === threadId,
     );

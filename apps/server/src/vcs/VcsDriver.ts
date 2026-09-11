@@ -22,6 +22,8 @@ export interface VcsCaptureCheckpointInput {
 export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Current checkpoint whose added files should be removed by the rollback. */
+  readonly fromCheckpointRef?: CheckpointRef;
   readonly fallbackToHead?: boolean;
 }
 
