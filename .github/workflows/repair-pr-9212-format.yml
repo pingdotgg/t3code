@@ -22,16 +22,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export VP_BIN_DIR="$HOME/.local/share/vite-plus/bin"
-          export VP_DATA_DIR="$HOME/.local/share/vite-plus"
-          export VP_CACHE_DIR="$HOME/.cache/vite-plus"
-          installer="$(mktemp)"
-          curl -fsSL https://vite.plus -o "$installer"
-          VP_NODE_MANAGER=no bash "$installer"
-          rm -f "$installer"
-          export PATH="$VP_BIN_DIR:$PATH"
-
-          vp fmt apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts
+          npx --yes oxfmt@latest apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts
 
           python3 <<'PY'
           from pathlib import Path
