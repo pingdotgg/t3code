@@ -413,5 +413,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateHandover: TextGeneration.unsupportedHandoverGeneration("claudeAgent"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

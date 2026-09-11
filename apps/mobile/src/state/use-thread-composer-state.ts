@@ -62,6 +62,7 @@ import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
 } from "./composer-attachment-uploads";
+import { threadContextReachedLimit } from "./contextLimit";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -380,6 +381,20 @@ export function useThreadComposerState() {
             },
           }),
       });
+      return null;
+    }
+
+    if (
+      selectedThreadDetail &&
+      threadContextReachedLimit(
+        selectedThreadDetail.activities,
+        selectedEnvironmentRuntime?.serverConfig?.settings.threadContextTokenLimit,
+      )
+    ) {
+      Alert.alert(
+        "Thread context limit reached",
+        "Start a new thread before sending more work to this conversation.",
+      );
       return null;
     }
 

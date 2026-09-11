@@ -1,3 +1,4 @@
+import { prepareThreadHandoverDraft } from "./threadHandoverDraft";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -165,6 +166,7 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   releaseUnusedComposerAttachmentFiles,
@@ -176,6 +178,7 @@ import {
   retargetNewTaskDraft,
   setComposerDraftText,
   setComposerDraftAttachmentUpload,
+  updateComposerDraftSettings,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
   stickyComposerModelSelectionAtom,
@@ -1320,6 +1323,143 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("merges a handover only after hydration without replacing the saved draft", async () => {
+    const draftKey = "new-task:handover-draft";
+    const attachment = {
+      id: "saved-file",
+      type: "file" as const,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/report.pdf",
+    };
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {
+        [draftKey]: {
+          text: "Old unsent prompt",
+          attachments: [attachment],
+          runtimeMode: "full-access",
+        },
+      },
+    });
+    composerDraftFileMocks.blockRead();
+
+    const merge = mergeComposerDraftContent(draftKey, {
+      text: "Generated handover",
+      attachments: [],
+    });
+    await Promise.resolve();
+    expect(composerDraftFileMocks.getWrites()).toHaveLength(0);
+
+    composerDraftFileMocks.releaseRead();
+    await merge;
+
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Old unsent prompt\n\nGenerated handover",
+      attachments: [attachment],
+      runtimeMode: "full-access",
+    });
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
+      text: "Old unsent prompt\n\nGenerated handover",
+      attachments: [attachment],
+      runtimeMode: "full-access",
+    });
+  });
+
+  it("persists handover content, receipt, and workspace as one restart-safe draft", async () => {
+    const draftKey = "new-task:handover-draft";
+    const content = {
+      text: "Generated handover",
+      attachments: [],
+      sourceShareId: "handover:source-thread",
+    };
+    const sourceWorkspace = {
+      mode: "local" as const,
+      branch: "source-branch",
+      worktreePath: "/worktrees/source",
+      startFromOrigin: false,
+    };
+
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toMatchObject({
+      text: "Generated handover",
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "Generated handover",
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+
+    const editedWorkspace = {
+      ...sourceWorkspace,
+      branch: "user-edited",
+      worktreePath: "/worktrees/edited",
+    };
+    updateComposerDraftSettings(draftKey, { workspaceSelection: editedWorkspace });
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+
+    expect(getComposerDraftSnapshot(draftKey).workspaceSelection).toEqual(editedWorkspace);
+    expect(
+      JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].workspaceSelection,
+    ).toEqual(editedWorkspace);
+  });
+
+  it("retries a failed handover write without replacing workspace edits", async () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const content = {
+      text: "Generated handover",
+      attachments: [],
+      sourceShareId: "handover:source-thread",
+    };
+    const sourceWorkspace = {
+      mode: "local" as const,
+      branch: "source-branch",
+      worktreePath: "/worktrees/source",
+      startFromOrigin: false,
+    };
+    composerDraftFileMocks.setWriteError(new Error("storage unavailable"));
+
+    await expect(
+      mergeComposerDraftContent(draftKey, content, {
+        workspaceSelection: sourceWorkspace,
+      }),
+    ).rejects.toBeInstanceOf(ComposerDraftPersistenceError);
+
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      importedShareIds: ["handover:source-thread"],
+      workspaceSelection: sourceWorkspace,
+    });
+    const editedWorkspace = {
+      ...sourceWorkspace,
+      branch: "user-edited",
+      worktreePath: "/worktrees/edited",
+    };
+    updateComposerDraftSettings(draftKey, { workspaceSelection: editedWorkspace });
+    composerDraftFileMocks.setWriteError(null);
+
+    await mergeComposerDraftContent(draftKey, content, {
+      workspaceSelection: sourceWorkspace,
+    });
+    await flushComposerDrafts();
+
+    expect(getComposerDraftSnapshot(draftKey).workspaceSelection).toEqual(editedWorkspace);
+    expect(
+      JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey].workspaceSelection,
+    ).toEqual(editedWorkspace);
+  });
+
   it.each(["read", "decode"] as const)(
     "preserves saved drafts and attachment files when the draft %s fails",
     async (failure) => {
@@ -1575,6 +1715,27 @@ describe("mobile composer drafts", () => {
       [draftKey]: { ...merged[draftKey]!, text: "User edited the imported context" },
     };
     expect(mergeComposerDraftContentState(edited, draftKey, content)).toBe(edited);
+  });
+
+  it("allows a handover retry after its previously imported draft was cleared or sent", () => {
+    const draftKey = "new-task:environment-1:project-1";
+    const content = {
+      text: "Handover context",
+      attachments: [],
+      sourceShareId: "handover:attempt-1",
+    };
+    const written = mergeComposerDraftContentState({}, draftKey, content);
+    const edited = { [draftKey]: { ...written[draftKey]!, text: "Edited handover" } };
+    expect(mergeComposerDraftContentState(edited, draftKey, content)).toBe(edited);
+
+    const cleared = clearComposerDraftContentState(edited, draftKey);
+    expect(cleared[draftKey]?.importedShareIds).toBeUndefined();
+    const retried = mergeComposerDraftContentState(cleared, draftKey, content);
+    expect(retried[draftKey]).toMatchObject({
+      text: "Handover context",
+      importedShareIds: ["handover:attempt-1"],
+    });
+    expect(mergeComposerDraftContentState(retried, draftKey, content)).toBe(retried);
   });
 
   it("preserves existing images when shared content exceeds the draft attachment limit", () => {
@@ -1985,4 +2146,46 @@ describe("mobile composer drafts", () => {
     });
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
+});
+
+it("reopens a migrated handover receipt without duplicating or replacing an edited draft", async () => {
+  composerDraftFileMocks.setDocument({
+    schemaVersion: 1,
+    drafts: {
+      "new-task:environment-1:project-1": {
+        text: "User-edited handover",
+        attachments: [],
+        importedShareIds: ["handover:source"],
+        workspaceSelection: {
+          mode: "local",
+          branch: "user-branch",
+          worktreePath: "/user-worktree",
+          startFromOrigin: false,
+        },
+      },
+    },
+  });
+  const input = {
+    environmentId: EnvironmentId.make("environment-1"),
+    projectId: ProjectId.make("project-1"),
+    importId: "handover:source",
+    handover: "Regenerated handover",
+    workspaceSelection: {
+      mode: "local" as const,
+      branch: "original",
+      worktreePath: "/original",
+      startFromOrigin: false,
+    },
+  };
+  const key = await prepareThreadHandoverDraft(input);
+  expect(key).not.toBe("new-task:environment-1:project-1");
+  expect(getComposerDraftSnapshot(key)).toMatchObject({
+    text: "User-edited handover",
+    workspaceSelection: { branch: "user-branch" },
+    project: { environmentId: input.environmentId, projectId: input.projectId },
+  });
+  appAtomRegistry.set(composerDraftsAtom, {});
+  resetComposerDraftsLoadState();
+  expect(await prepareThreadHandoverDraft(input)).toBe(key);
+  expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toEqual([key]);
 });

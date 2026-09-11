@@ -1,4 +1,8 @@
-import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import {
+  DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+  type OrchestrationThreadActivity,
+  type ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -28,8 +32,10 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 export function deriveLatestContextWindowSnapshot(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ContextWindowSnapshot | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
+  let latest:
+    | { readonly activity: OrchestrationThreadActivity; readonly usedTokens: number }
+    | undefined;
+  for (const activity of activities) {
     if (!activity || activity.kind !== "context-window.updated") {
       continue;
     }
@@ -39,6 +45,15 @@ export function deriveLatestContextWindowSnapshot(
     if (usedTokens === null || usedTokens < 0) {
       continue;
     }
+
+    if (latest === undefined || compareContextWindowActivityOrder(latest.activity, activity) <= 0) {
+      latest = { activity, usedTokens };
+    }
+  }
+
+  if (latest !== undefined) {
+    const { activity, usedTokens } = latest;
+    const payload = asRecord(activity.payload);
 
     const maxTokens = asFiniteNumber(payload?.maxTokens);
     const usedPercentage =
@@ -74,6 +89,20 @@ export function deriveLatestContextWindowSnapshot(
   return null;
 }
 
+function compareContextWindowActivityOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): number {
+  const sequenceComparison =
+    (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER);
+  if (sequenceComparison !== 0) return sequenceComparison;
+
+  const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
+  if (createdAtComparison !== 0) return createdAtComparison;
+
+  return left.id.localeCompare(right.id);
+}
+
 export function formatContextWindowTokens(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
     return "0";
@@ -88,4 +117,11 @@ export function formatContextWindowTokens(value: number | null): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
+
+export function contextWindowReachedThreadLimit(
+  snapshot: ContextWindowSnapshot | null,
+  tokenLimit = DEFAULT_THREAD_CONTEXT_TOKEN_LIMIT,
+): boolean {
+  return snapshot !== null && snapshot.usedTokens >= tokenLimit;
 }

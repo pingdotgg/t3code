@@ -320,3 +320,41 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+const HANDOVER_THREAD_CONTENT_MAX_CHARS = 180_000;
+const HANDOVER_THREAD_CONTENT_HEAD_CHARS = 30_000;
+
+function limitHandoverThreadContents(contents: string): string {
+  if (contents.length <= HANDOVER_THREAD_CONTENT_MAX_CHARS) return contents;
+  const tailChars = HANDOVER_THREAD_CONTENT_MAX_CHARS - HANDOVER_THREAD_CONTENT_HEAD_CHARS;
+  return [
+    contents.slice(0, HANDOVER_THREAD_CONTENT_HEAD_CHARS),
+    "",
+    "[middle of thread omitted]",
+    "",
+    contents.slice(-tailChars),
+  ].join("\n");
+}
+
+export function buildHandoverPrompt(input: { readonly threadContents: string }) {
+  const prompt = `Write a compact Markdown handover for the next coding agent.
+Return JSON with exactly one key: handover.
+
+The handover will become the unsent first message in a new T3 Code thread. Write it as a direct continuation brief, not as commentary about summarizing. Include only facts supported by the thread.
+
+Use these sections:
+- Goal
+- Decisions and constraints
+- Work completed
+- Files changed
+- Verification
+- Open problems
+- Next action
+
+Keep exact file paths, commands, test results, error text, and user decisions when they matter. Separate completed work from proposed work. Do not claim a test passed unless the thread says it passed. Keep it short enough that the next thread avoids carrying the old context.
+
+Thread contents:
+${limitHandoverThreadContents(input.threadContents)}`;
+  const outputSchema = Schema.Struct({ handover: Schema.String });
+  return { prompt, outputSchema };
+}

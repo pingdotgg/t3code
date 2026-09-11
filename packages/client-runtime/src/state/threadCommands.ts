@@ -35,6 +35,7 @@ import {
   archiveThread,
   createThread,
   deleteThread,
+  generateThreadHandover,
   interruptThreadTurn,
   linkThreadPullRequest,
   respondToThreadApproval,
@@ -90,12 +91,19 @@ export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
 ) {
   const scheduler = createAtomCommandScheduler();
+  const handoverScheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    generateHandover: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:generate-handover",
+      execute: generateThreadHandover,
+      scheduler: handoverScheduler,
+      concurrency,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
