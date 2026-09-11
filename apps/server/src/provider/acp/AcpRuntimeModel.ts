@@ -3,9 +3,12 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import { ThreadTokenUsageSnapshot, type ToolLifecycleItemType } from "@t3tools/contracts";
+
+const decodeContextUsage = Schema.decodeUnknownOption(ThreadTokenUsageSnapshot);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -81,6 +84,11 @@ export interface AcpPermissionRequest {
 }
 
 export type AcpParsedSessionEvent =
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usage: ThreadTokenUsageSnapshot;
+      readonly rawPayload: unknown;
+    }
   | {
       readonly _tag: "ModeChanged";
       readonly modeId: string;
@@ -793,6 +801,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
   let modeId: string | undefined;
 
   switch (upd.sessionUpdate) {
+    case "usage_update": {
+      const usage = decodeContextUsage({
+        usedTokens: upd.used,
+        ...(upd.size === 0 ? {} : { maxTokens: upd.size }),
+      });
+      if (Option.isSome(usage)) {
+        events.push({ _tag: "UsageUpdated", usage: usage.value, rawPayload: params });
+      }
+      break;
+    }
     case "config_option_update": {
       events.push({
         _tag: "ConfigOptionsUpdated",

@@ -282,6 +282,7 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
       expect(snapshot.requiresNewThreadForModelChange).toBeUndefined();
+      expect(snapshot.reportsContextWindow).toBe(true);
     }),
   );
 });
@@ -378,6 +379,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
       expect(snapshot.status).toBe("ready");
       expect(snapshot.version).toBe("1.0.13");
+      expect(snapshot.reportsContextWindow).toBe(true);
       expect(snapshot.auth).toEqual({
         status: "authenticated",
         type: "cached_token",

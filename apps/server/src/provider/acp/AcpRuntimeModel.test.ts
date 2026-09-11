@@ -16,6 +16,35 @@ import {
 } from "./AcpRuntimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
+  it.each([
+    { used: 42_000, size: 128_000, usage: { usedTokens: 42_000, maxTokens: 128_000 } },
+    { used: 0, size: 128_000, usage: { usedTokens: 0, maxTokens: 128_000 } },
+    { used: 100, size: 0, usage: { usedTokens: 100 } },
+  ])("parses ACP context usage: $used / $size", ({ used, size, usage }) => {
+    const notification = {
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used, size },
+    } satisfies EffectAcpSchema.SessionNotification;
+    expect(parseSessionUpdateEvent(notification).events).toEqual([
+      { _tag: "UsageUpdated", usage, rawPayload: notification },
+    ]);
+  });
+
+  it.each([
+    { used: -1, size: 128_000 },
+    { used: 1.5, size: 128_000 },
+    { used: Number.NaN, size: 128_000 },
+    { used: 100, size: -1 },
+    { used: 100, size: Number.POSITIVE_INFINITY },
+  ])("ignores invalid ACP context usage: $used / $size", ({ used, size }) => {
+    expect(
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "usage_update", used, size },
+      }).events,
+    ).toEqual([]);
+  });
+
   it("parses session mode state from typed ACP session setup responses", () => {
     const modeState = parseSessionModeState({
       sessionId: "session-1",
