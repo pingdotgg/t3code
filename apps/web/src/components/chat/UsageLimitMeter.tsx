@@ -2,12 +2,13 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { LimitWindows } from "../usage/UsageLimits";
+import { LimitWindows, resetCreditsSummary } from "../usage/UsageLimits";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   USAGE_LIMIT_METER_WARNING_PERCENT,
   type UsageLimitMeterModel,
   formatUsageLimitMeterLabel,
+  isUsageWindowReset,
   selectHeadlineUsageWindow,
 } from "./UsageLimitMeter.logic";
 import { remainingPercent } from "@t3tools/shared/usageLimits";
@@ -24,7 +25,11 @@ export function UsageLimitMeter(props: { model: UsageLimitMeterModel; now?: numb
   // shared store keeps this pure across re-renders.
   const nowMinute = useNowMinute();
   const now = props.now ?? Date.parse(`${nowMinute}:00Z`);
-  const headline = selectHeadlineUsageWindow(model.limits.windows, now);
+  // A window past its reset is full again as far as the provider is
+  // concerned; its stored figure is stale until the next reading lands.
+  const windows = model.limits.windows.filter((window) => !isUsageWindowReset(window, now));
+  const headline = selectHeadlineUsageWindow(windows, now);
+  const credits = model.limits.resetCredits;
   const remaining = headline ? remainingPercent(headline) : 100;
   const isLow = headline !== null && remaining <= USAGE_LIMIT_METER_WARNING_PERCENT;
   const fillColor = isLow
@@ -92,7 +97,21 @@ export function UsageLimitMeter(props: { model: UsageLimitMeterModel; now?: numb
             <div className="font-medium text-muted-foreground text-xs">Usage limits</div>
             <div className="truncate text-secondary-label text-[11px]">{accountLabel}</div>
           </div>
-          <LimitWindows compact driver={model.driver} windows={model.limits.windows} now={now} />
+          {windows.length > 0 ? (
+            <LimitWindows compact driver={model.driver} windows={windows} now={now} />
+          ) : (
+            <div className="text-secondary-label text-[11px]">
+              Every window has reset. Waiting for the next reading.
+            </div>
+          )}
+          {credits && credits.availableCount > 0 ? (
+            <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+              <span className="text-secondary-label">Reset credits</span>
+              <span className="font-medium tabular-nums text-secondary-label">
+                {resetCreditsSummary(credits, now, true)}
+              </span>
+            </div>
+          ) : null}
           <div className="text-pretty text-secondary-label text-[11px]">
             Every account and reset credit is under Usage → Limits.
           </div>
