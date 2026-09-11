@@ -1,3 +1,4 @@
+import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
@@ -1119,7 +1120,7 @@ describe("resolveWorkingStartedAt", () => {
     status: "running" as const,
     providerName: "Codex",
     providerInstanceId: ProviderInstanceId.make("codex"),
-    activeRunId: RunId.make("run-1"),
+    activeRunId: RunId.make("turn-1"),
     lastError: null,
     updatedAt: "2026-03-09T10:02:00.000Z",
   };
@@ -1142,13 +1143,13 @@ describe("resolveWorkingStartedAt", () => {
     ).toBe("2026-03-09T10:00:00.000Z");
   });
 
-  it("falls back to the runtime transition when the latest run already completed", () => {
+  it("does not invent a start from activity updates when the newest run completed", () => {
     expect(
       resolveWorkingStartedAt({
         latestRun: makeLatestRun(),
         runtime,
       }),
-    ).toBe("2026-03-09T10:02:00.000Z");
+    ).toBeNull();
   });
 
   it("skips a malformed startedAt instead of returning it", () => {
@@ -1159,6 +1160,37 @@ describe("resolveWorkingStartedAt", () => {
       }),
     ).toBe("2026-03-09T10:00:00.000Z");
   });
+
+  it.each(["queued", "cancelled"] as const)(
+    "shares the detail timer when a newer run is %s",
+    (status) => {
+      const activityStartedAt = "2026-03-09T10:00:00.000Z";
+      const latestRun = {
+        ...makeLatestRun(),
+        runId: RunId.make("newer-run"),
+        status,
+        startedAt: null,
+        completedAt: status === "queued" ? null : "2026-03-09T10:05:00.000Z",
+      };
+      for (const updatedAt of ["2026-03-09T10:30:00.000Z", "2026-03-09T10:50:00.000Z"]) {
+        const activeRuntime = { ...runtime, updatedAt, activityStartedAt };
+        expect(resolveWorkingStartedAt({ latestRun, runtime: activeRuntime })).toBe(
+          activityStartedAt,
+        );
+        expect(deriveActiveWorkStartedAt(latestRun, activeRuntime, updatedAt)).toBe(
+          activityStartedAt,
+        );
+      }
+      // A server-owned run without a valid start must not borrow a local dispatch clock.
+      expect(
+        deriveActiveWorkStartedAt(
+          latestRun,
+          { ...runtime, activityStartedAt: null },
+          "2026-03-09T10:50:00.000Z",
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("returns null with neither a running run nor a runtime", () => {
     expect(resolveWorkingStartedAt({ latestRun: null, runtime: null })).toBeNull();

@@ -29,6 +29,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
   isTurnItemAtOrBeforeRun,
   layerMemory as projectionStoreMemoryLayer,
+  threadShellFromProjection,
   ProjectionStoreV2,
   ProjectionStoreThreadNotFoundError,
   layer as projectionStoreLayer,
@@ -1467,6 +1468,49 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       );
       assert.equal(shell?.status, "waiting");
       assert.isNull(shell?.activeRunId);
+      const later = DateTime.add(now, { hours: 1 });
+      for (const status of ["queued", "cancelled"] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:clock:newer:${status}`),
+          type: "run.updated",
+          threadId,
+          occurredAt: later,
+          payload: {
+            ...run,
+            id: RunId.make("run:clock:newer"),
+            ordinal: 2,
+            status,
+            requestedAt: later,
+            startedAt: null,
+            completedAt: status === "cancelled" ? later : null,
+          },
+        });
+        for (const activityStatus of ["preparing", "running", "waiting", "completed"] as const) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:clock:${status}:${activityStatus}`),
+            type: "run.updated",
+            threadId,
+            occurredAt: later,
+            payload: {
+              ...run,
+              status: activityStatus,
+              startedAt: activityStatus === "preparing" ? null : now,
+              completedAt: activityStatus === "completed" ? later : null,
+            },
+          });
+          const projection = yield* projectionStore.getThreadProjection(threadId);
+          const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+            (row) => row.id === threadId,
+          )!;
+          const memoryShell = threadShellFromProjection(projection);
+          const expected = activityStatus === "completed" ? null : DateTime.toEpochMillis(now);
+          const timestamp = (value: DateTime.Utc | null | undefined) =>
+            value == null ? null : DateTime.toEpochMillis(value);
+          assert.equal(timestamp(sqlShell.activityRunStartedAt), expected);
+          assert.equal(timestamp(memoryShell.activityRunStartedAt), expected);
+          assert.equal(sqlShell.latestRunId, "run:clock:newer");
+        }
+      }
     }),
   );
 

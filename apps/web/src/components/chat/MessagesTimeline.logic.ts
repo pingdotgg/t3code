@@ -1071,16 +1071,10 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
-    const latestResponseBoundary =
-      input.timelineEntries[lastResponseBoundaryIndex(input.timelineEntries)];
-    const visualResponseStartedAt =
-      activeVisualResponseRunIds.size > 1 && latestResponseBoundary !== undefined
-        ? latestResponseBoundary.createdAt
-        : input.activeTurnStartedAt;
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
-      createdAt: visualResponseStartedAt ?? null,
+      createdAt: input.activeTurnStartedAt ?? null,
     });
   };
   let hasActivityRow = false;

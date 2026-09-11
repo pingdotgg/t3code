@@ -86,6 +86,10 @@ export function deriveThreadRuntime(
   return {
     status: hasPendingBackgroundTasks ? "idle" : (activityRun?.status ?? "idle"),
     activeRunId,
+    activityStartedAt:
+      activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)
+        ? (activityRun.startedAt ?? activityRun.requestedAt)
+        : null,
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     lastError: providerSession?.lastError ?? null,

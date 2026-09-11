@@ -38,5 +38,9 @@ export function assertQueuedCancelledWhileActiveOutput(
   assert.equal(capturedShell.status, "cancelled");
   assert.equal(capturedShell.activeRunId, activeRun.id);
   assert.equal(capturedShell.activityRunStatus, "running");
+  assert.deepEqual(
+    capturedShell.activityRunStartedAt,
+    activeRun.startedAt ?? activeRun.requestedAt,
+  );
   assert.deepEqual(capturedShell.pendingBackgroundTasks, []);
 }
