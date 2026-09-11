@@ -315,6 +315,89 @@ describe("findAccessibleWindow", () => {
     bounds: { x: 100, y: 200, width: 800, height: 600 },
   };
 
+  const chromeCapture = {
+    title: "Issues · pingdotgg/t3code",
+    bounds: { x: 0, y: 33, width: 1470, height: 857 },
+    platform: "darwin" as const,
+    bundleId: "com.google.Chrome",
+  };
+
+  it.each([
+    ["com.google.Chrome", "Google Chrome"],
+    ["com.google.Chrome.beta", "Google Chrome"],
+    ["com.google.Chrome.dev", "Google Chrome"],
+    ["com.google.Chrome.canary", "Google Chrome"],
+    ["org.chromium.Chromium", "Chromium"],
+  ])("matches a macOS browser profile suffix for %s", (bundleId, browserName) => {
+    const window = {
+      name: `${chromeCapture.title} - ${browserName} – Profile`,
+      bounds: chromeCapture.bounds,
+    };
+    expect(findAccessibleWindow([window], { ...chromeCapture, bundleId })).toBe(window);
+  });
+
+  it("matches a Chrome title without a profile suffix", () => {
+    const window = {
+      name: `${chromeCapture.title} - Google Chrome`,
+      bounds: chromeCapture.bounds,
+    };
+    expect(findAccessibleWindow([window], chromeCapture)).toBe(window);
+  });
+
+  it.each([
+    { platform: "linux" as const, bundleId: "com.google.Chrome" },
+    { platform: "win32" as const, bundleId: "com.google.Chrome" },
+    { platform: "darwin" as const, bundleId: "com.example.Editor" },
+    { platform: "darwin" as const, bundleId: undefined },
+  ])("keeps strict titles outside macOS Chrome: %j", (identity) => {
+    const window = {
+      name: `${chromeCapture.title} - Google Chrome – Profile`,
+      bounds: chromeCapture.bounds,
+    };
+    expect(findAccessibleWindow([window], { ...chromeCapture, ...identity })).toBeUndefined();
+  });
+
+  it.each([
+    "Different page - Google Chrome – Profile",
+    "Issues · pingdotgg/t3code copied - Google Chrome – Profile",
+    "Issues · pingdotgg/t3code - Google ChromeSomething",
+  ])("rejects unrelated browser titles: %s", (name) => {
+    expect(
+      findAccessibleWindow([{ name, bounds: chromeCapture.bounds }], chromeCapture),
+    ).toBeUndefined();
+  });
+
+  it("keeps bounds checks and rejects ambiguous browser suffix matches", () => {
+    const window = {
+      name: `${chromeCapture.title} - Google Chrome – Profile`,
+      bounds: chromeCapture.bounds,
+    };
+    expect(
+      findAccessibleWindow([{ ...window, bounds: { ...window.bounds, x: 3 } }], chromeCapture),
+    ).toBeUndefined();
+    expect(
+      findAccessibleWindow([window, { ...window, active: true }], chromeCapture),
+    ).toBeUndefined();
+    expect(findAccessibleWindow([window], chromeCapture, "wayland")).toBeUndefined();
+  });
+
+  it("prefers an exact title over a browser suffix match", () => {
+    const exact = { name: chromeCapture.title, bounds: chromeCapture.bounds };
+    const browser = {
+      name: `${chromeCapture.title} - Google Chrome – Profile`,
+      bounds: chromeCapture.bounds,
+      active: true,
+    };
+    expect(findAccessibleWindow([browser, exact], chromeCapture)).toBe(exact);
+  });
+
+  it("does not strip browser suffixes from captured page titles", () => {
+    const window = { name: "Page - Google Chrome – Profile", bounds: chromeCapture.bounds };
+    expect(
+      findAccessibleWindow([window], { ...chromeCapture, title: "Page - Google Chrome" }),
+    ).toBeUndefined();
+  });
+
   it("matches one window by its captured bounds", () => {
     const windows = [
       { name: "Private", bounds: { x: 0, y: 0, width: 400, height: 300 } },

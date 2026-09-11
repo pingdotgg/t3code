@@ -466,6 +466,8 @@ export function findAccessibleWindow<
     readonly sourceTitle?: string;
     readonly bounds: WindowBounds;
     readonly clientBounds?: WindowBounds | undefined;
+    readonly platform?: NodeJS.Platform;
+    readonly bundleId?: string | undefined;
   },
   matchMode: "screen-bounds" | "wayland" = "screen-bounds",
 ): T | undefined {
@@ -487,19 +489,43 @@ export function findAccessibleWindow<
     matchMode === "wayland" && captured.clientBounds
       ? [captured.bounds, captured.clientBounds]
       : [captured.bounds];
-  const matches = windows.filter((window) => {
+  const candidates = windows.filter((window) => {
     const bounds = window.bounds;
     return (
-      titles.has(normalizeTitle(window.name ?? "")) &&
       bounds !== null &&
       candidateBounds.some((candidate) =>
         boundsKeys.every((key) => Math.abs(bounds[key] - candidate[key]) <= 2),
       )
     );
   });
+  const matches = candidates.filter((window) => titles.has(normalizeTitle(window.name ?? "")));
   if (matches.length === 1) return matches[0];
-  const activeMatches = matches.filter((window) => safeProperty(() => window.active) === true);
-  return activeMatches.length === 1 ? activeMatches[0] : undefined;
+  if (matches.length > 1) {
+    const activeMatches = matches.filter((window) => safeProperty(() => window.active) === true);
+    return activeMatches.length === 1 ? activeMatches[0] : undefined;
+  }
+
+  // Chrome's macOS AX title can append the browser and profile to the captured page title.
+  if (captured.platform !== "darwin" || matchMode !== "screen-bounds") return undefined;
+  const browserName = /^com\.google\.Chrome(?:\.(?:beta|dev|canary))?$/.test(
+    captured.bundleId ?? "",
+  )
+    ? "Google Chrome"
+    : captured.bundleId === "org.chromium.Chromium"
+      ? "Chromium"
+      : undefined;
+  if (!browserName) return undefined;
+  const browserMatches = candidates.filter((window) => {
+    const name = window.name?.trim() ?? "";
+    return [...titles].some((title) => {
+      const prefix = `${title} - ${browserName}`;
+      return (
+        name === prefix ||
+        (name.startsWith(prefix) && /^ [–—-] \S.*$/u.test(name.slice(prefix.length)))
+      );
+    });
+  });
+  return browserMatches.length === 1 ? browserMatches[0] : undefined;
 }
 
 const ELECTRON_KEY_NAMES: Readonly<Record<string, string>> = {
