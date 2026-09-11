@@ -1447,7 +1447,13 @@ export function PullRequestDetailPanel({
           onPickerOpenChange={setThreadPickerOpen}
         />
       ) : null}
-      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
+      <div
+        className={cn(
+          "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
+          detail && "border-b border-border/60",
+          !detail && !onClose && "hidden",
+        )}
+      >
         <div className="ml-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div
             aria-hidden={condensed}
@@ -2513,7 +2519,7 @@ export function PullRequestDetailPanel({
       </div>
 
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
           scrollerRef.current = scroller;
