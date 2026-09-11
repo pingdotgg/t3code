@@ -40,7 +40,7 @@ describe("pullRequestListLines", () => {
       ),
     );
     const original = chains.map((chain) => chain.layers.map((entry) => entry.number));
-    expect(pullRequestListLines(chains).map((line) => line.link.number)).toEqual([
+    expect(pullRequestListLines(chains, "number").map((line) => line.link.number)).toEqual([
       11265, 10368, 10237, 10236, 10235, 10234, 10233, 999,
     ]);
     expect(chains.map((chain) => chain.layers.map((entry) => entry.number))).toEqual(original);
@@ -54,6 +54,7 @@ describe("pullRequestListLines", () => {
         link(9, "solo", "main", "2026-01-01T11:00:00Z"),
         link(5, "old", "main", "2026-01-01T09:00:00Z"),
       ]),
+      "number",
     );
     expect(lines.map((line) => [line.link.number, line.depth, line.stack?.size ?? null])).toEqual([
       // The stack's highest number is #12, so the whole stack outranks #9.
@@ -61,6 +62,21 @@ describe("pullRequestListLines", () => {
       [12, 1, null],
       [9, 0, null],
       [5, 0, null],
+    ]);
+  });
+
+  it("defaults to latest activity and can switch back from number order", () => {
+    const chains = resolveThreadPullRequestChains([
+      link(1, "a", "main", "2026-01-01T10:00:00Z"),
+      link(2, "b", "a", "2026-01-01T12:00:00Z"),
+      link(9, "solo", "main", "2026-01-01T11:00:00Z"),
+    ]);
+    expect(pullRequestListLines(chains).map((line) => line.link.number)).toEqual([1, 2, 9]);
+    expect(pullRequestListLines(chains, "number").map((line) => line.link.number)).toEqual([
+      9, 1, 2,
+    ]);
+    expect(pullRequestListLines(chains, "activity").map((line) => line.link.number)).toEqual([
+      1, 2, 9,
     ]);
   });
 
