@@ -590,7 +590,9 @@ export function buildFileExplorerRevealPowerShellSource(
   explorerCommand: string,
   target: string,
 ): string {
-  return `$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = ${escapePowerShellStringLiteral(target)}; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + $target + '"')`;
+  // EncodedCommand serializes uncaught errors as CLIXML. Write just the
+  // exception message so the client can display it without PowerShell markup.
+  return `$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; try { $target = ${escapePowerShellStringLiteral(target)}; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + $target + '"') } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }`;
 }
 
 function fileExplorerRevealLaunch(

@@ -294,7 +294,7 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     // PowerShell 5.1's Start-Process passes the argument string verbatim.
     assert.equal(
       decodedCommand,
-      "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = 'C:\\workspace with spaces\\media\\author''s clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"')",
+      "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; try { $target = 'C:\\workspace with spaces\\media\\author''s clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"') } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }",
     );
     assert.equal(spawned.options.shell, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -383,6 +383,11 @@ it.skipIf(!windowsHost)("PowerShell reveal fails for a missing target or launche
     assert.equal(result.error, undefined);
     assert.equal(result.status, 1);
     assert.isNotEmpty(result.stderr.trim());
+    assert.notInclude(result.stderr, "CLIXML");
+    assert.notInclude(result.stderr, "<Objs");
+    if (target.endsWith("missing.txt")) {
+      assert.equal(result.stderr.trim(), `Path does not exist: ${target}`);
+    }
   }
 });
 
@@ -469,7 +474,7 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $target = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"')",
+        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; try { $target = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4'; if (!(Test-Path -LiteralPath $target)) { throw ('Path does not exist: ' + $target) }; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + $target + '\"') } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
