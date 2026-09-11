@@ -10,6 +10,8 @@ const {
   getSwitchValueMock,
   hasSwitchMock,
   registerSchemesMock,
+  packagedState,
+  readFileMock,
   setDesktopNameMock,
   mkdirSyncMock,
   writeFileSyncMock,
@@ -18,15 +20,29 @@ const {
   getSwitchValueMock: vi.fn(),
   hasSwitchMock: vi.fn(),
   registerSchemesMock: vi.fn(),
+  readFileMock: vi.fn(),
+  packagedState: { value: false },
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
 }));
 
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  readFileSync: readFileMock,
+  mkdirSync: mkdirSyncMock,
+  writeFileSync: writeFileSyncMock,
+}));
+
 vi.mock("electron", () => ({
   app: {
+    get isPackaged() {
+      return packagedState.value;
+    },
+    getAppPath: () => "/packaged-app",
+    getVersion: () => "1.2.3",
+    getName: () => "T3 Code (Fork)",
     setDesktopName: setDesktopNameMock,
-    getVersion: () => "0.0.37",
     commandLine: {
       appendSwitch: appendSwitchMock,
       getSwitchValue: getSwitchValueMock,
@@ -38,12 +54,6 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
-  mkdirSync: mkdirSyncMock,
-  writeFileSync: writeFileSyncMock,
-}));
-
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
 describe("DesktopPreReadyPlatform", () => {
@@ -52,6 +62,8 @@ describe("DesktopPreReadyPlatform", () => {
     getSwitchValueMock.mockReset();
     hasSwitchMock.mockReset();
     registerSchemesMock.mockReset();
+    readFileMock.mockReset();
+    packagedState.value = false;
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
@@ -74,6 +86,65 @@ describe("DesktopPreReadyPlatform", () => {
       ),
     );
   });
+
+  it("retains legacy packaged identity and rejects malformed metadata", () => {
+    packagedState.value = true;
+    readFileMock.mockReturnValue("{}");
+    assert.equal(
+      DesktopPreReadyPlatform.resolveEarlyDesktopSchemeFromProcess(),
+      "t3code-fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+    );
+    readFileMock.mockReturnValue('{"t3codeDesktopIdentity": {"distributionId": 42}}');
+    assert.throws(() => DesktopPreReadyPlatform.resolveEarlyDesktopSchemeFromProcess());
+    assert.equal(registerSchemesMock.mock.calls.length, 0);
+  });
+
+  it.effect("registers the packaged fork scheme during synchronous pre-ready setup", () =>
+    Effect.gen(function* () {
+      packagedState.value = true;
+      readFileMock.mockReturnValue(
+        '{"t3codeDesktopIdentity":{"appId":"com.t3tools.t3code.fork-abc","packageName":"t3code-fork-abc","productName":"T3 Code (Fork)","displayName":"T3 Code (Fork Alpha)","distributionName":"Fork","distributionId":"fork-abc"}}',
+      );
+      yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions.pipe(
+        Effect.provide(DesktopPreReadyPlatform.layer),
+        Effect.provideService(HostProcessPlatform, "darwin"),
+      );
+      assert.deepEqual(readFileMock.mock.calls, [["/packaged-app/package.json", "utf8"]]);
+      assert.equal(registerSchemesMock.mock.calls.length, 1);
+      assert.deepInclude(registerSchemesMock.mock.calls[0]![0], {
+        scheme: "t3code-fork-abc",
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          corsEnabled: true,
+          stream: true,
+        },
+      });
+    }),
+  );
+
+  it.effect("uses the packaged distribution name for the Linux window class", () =>
+    Effect.gen(function* () {
+      packagedState.value = true;
+      readFileMock.mockReturnValue(
+        '{"t3codeDesktopIdentity":{"appId":"com.t3tools.t3code.fork-abc","packageName":"t3code-fork-abc","productName":"T3 Code (Fork)","displayName":"T3 Code (Fork Alpha)","distributionName":"Fork","distributionId":"fork-abc"}}',
+      );
+
+      yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions.pipe(
+        Effect.provide(DesktopPreReadyPlatform.layer),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+
+      assert.deepEqual(appendSwitchMock.mock.calls[0], ["class", "t3code-fork-abc"]);
+      assert.deepEqual(setDesktopNameMock.mock.calls, [["t3code-fork-abc.desktop"]]);
+      assert.include(writeFileSyncMock.mock.calls[0]![0], "/t3code-fork-abc.desktop");
+      assert.include(
+        writeFileSyncMock.mock.calls[0]![1],
+        "MimeType=x-scheme-handler/t3code-fork-abc;",
+      );
+    }),
+  );
 
   for (const previousEntry of [undefined, 'Exec="/Applications/deleted-previous.AppImage" %U']) {
     it.effect(
