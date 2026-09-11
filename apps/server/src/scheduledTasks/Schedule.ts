@@ -55,9 +55,14 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   if (a.type === "interval") {
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
+  if (b.type !== "fixed_time") return false;
+  const aTime = parseTimeOfDay(a.timeOfDay);
+  const bTime = parseTimeOfDay(b.timeOfDay);
   return (
-    b.type === "fixed_time" &&
-    a.timeOfDay === b.timeOfDay &&
+    aTime !== null &&
+    bTime !== null &&
+    aTime.hour === bTime.hour &&
+    aTime.minute === bTime.minute &&
     weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
   );
 }
