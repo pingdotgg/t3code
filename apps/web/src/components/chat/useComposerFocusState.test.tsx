@@ -53,11 +53,11 @@ afterEach(async () => {
 });
 
 describe("composer focus state", () => {
-  it("stays expanded when the composer loses focus", async () => {
+  it("does not rest from focus state alone", async () => {
     await act(() => composer.setIsComposerFocused(true));
     expect(isResting).toBe(false);
 
-    // A tool disclosure takes focus away from the editor.
+    // Resting on blur is the composer's call, made from the timeline position.
     await act(() => composer.setIsComposerFocused(false));
     expect(isResting).toBe(false);
   });

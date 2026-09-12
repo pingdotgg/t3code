@@ -5432,10 +5432,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
     void onImplementPlanInNewThread();
   }, [onImplementPlanInNewThread]);
-  // The phone composer collapses when the editor loses focus. Desktop only
-  // rests on a timeline scroll, so losing focus there changes nothing.
+  // The phone composer collapses whenever the editor loses focus. Desktop
+  // rests on a timeline scroll, and losing focus while the timeline is still
+  // scrolled away from its end rests it too, so focusing the composer is only
+  // a temporary lift. At the end there is nothing to give back, so blurring
+  // there changes nothing.
   const scheduleComposerCollapseCheck = useCallback(() => {
-    if (!isMobileViewport || mobileComposerExpandInFlightRef.current) {
+    if (mobileComposerExpandInFlightRef.current) {
       return;
     }
     if (composerBlurFrameRef.current !== null) {
@@ -5460,8 +5463,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       setIsComposerFocused(false);
+      if (
+        !isMobileViewport &&
+        composerScrollCollapseEligibleRef.current &&
+        !isTimelineAtLogicalEnd()
+      ) {
+        setIsComposerScrollCollapsed(true);
+      }
     });
-  }, [isMobileViewport, setIsComposerFocused]);
+  }, [
+    isMobileViewport,
+    isTimelineAtLogicalEnd,
+    setIsComposerFocused,
+    setIsComposerScrollCollapsed,
+  ]);
 
   useEffect(() => {
     return () => {

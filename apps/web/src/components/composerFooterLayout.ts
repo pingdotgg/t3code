@@ -41,10 +41,10 @@ export function shouldUseRestingComposerLayout(input: {
   // desktop width, and where the strip is missing or too narrow the controls
   // simply return when the composer is focused.
   //
-  // Only a timeline scroll rests the composer: the user asked for it with the
-  // gesture, and it lifts on the next composer interaction. Losing focus never
-  // rests it, so clicking a message, copying output, or selecting text for a
-  // citation leaves the composer where it was.
+  // A timeline scroll rests the composer, and it lifts on the next composer
+  // interaction. That lift only lasts while the composer holds focus: if the
+  // timeline is still scrolled away from its end when focus leaves, the
+  // composer rests again. At the end, losing focus changes nothing.
   //
   // Resting exists to give reading space back to the timeline. A thread that
   // fits above the composer has nothing to reclaim, so it stays expanded and
