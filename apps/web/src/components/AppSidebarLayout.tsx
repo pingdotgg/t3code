@@ -45,6 +45,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useUnreadBackgroundThreadCount } from "../hooks/useUnreadBackgroundThreadCount";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -78,6 +79,7 @@ function SidebarControl() {
     environmentIdentificationMode === "artwork",
   );
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const unreadCount = useUnreadBackgroundThreadCount();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -112,6 +114,7 @@ function SidebarControl() {
         <TooltipTrigger
           render={
             <SidebarTrigger
+              unreadCount={unreadCount}
               className={cn(
                 "pointer-events-auto",
                 isSidebarVisible &&
@@ -121,12 +124,17 @@ function SidebarControl() {
                   stageBackdropVariant &&
                   resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={
+                unreadCount > 0
+                  ? `Toggle main sidebar (${unreadCount} unread)`
+                  : "Toggle main sidebar"
+              }
             />
           }
         />
         <TooltipPopup side="bottom">
           Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          {unreadCount > 0 ? ` · ${unreadCount} unread` : ""}
         </TooltipPopup>
       </Tooltip>
     </div>
