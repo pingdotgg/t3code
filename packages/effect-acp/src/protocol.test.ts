@@ -290,6 +290,46 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("decodes wire messages larger than the previous 16 MiB default", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const notifications =
+        yield* Deferred.make<ReadonlyArray<AcpProtocol.AcpIncomingNotification>>();
+      yield* transport.incoming.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.flatMap((notificationChunk) => Deferred.succeed(notifications, notificationChunk)),
+        Effect.forkScoped,
+      );
+
+      // 17 MiB exceeds Effect's ndjson default; cursor sessions replay larger
+      // tool results on session/load.
+      const largeText = "x".repeat(17 * 1024 * 1024);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: largeText },
+            },
+          },
+        }),
+      );
+
+      const [update] = yield* Deferred.await(notifications);
+      assert.equal(update?._tag, "SessionUpdate");
+    }),
+  );
+
   it.effect("fails notification encoding through the declared ACP error channel", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
