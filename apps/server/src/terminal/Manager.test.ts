@@ -1937,9 +1937,11 @@ it.layer(
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(
         openInput({
+          threadId: "thread-canonical",
           env: {
             T3CODE_PROJECT_ROOT: "/repo",
             T3CODE_WORKTREE_PATH: "/repo/worktree-a",
+            T3CODE_THREAD_ID: "thread-spoofed",
             CUSTOM_FLAG: "1",
           },
         }),
@@ -1950,6 +1952,7 @@ it.layer(
 
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
+      assert.equal(spawnInput.env.T3CODE_THREAD_ID, "thread-canonical");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
     }),
   );
