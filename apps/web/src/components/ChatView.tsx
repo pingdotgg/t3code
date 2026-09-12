@@ -6309,10 +6309,10 @@ export default function ChatView(props: ChatViewProps) {
       if (!command) return;
 
       if (command === "thread.rename") {
+        if (!isServerThread || !activeThreadRef) return;
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat && isServerThread && activeThreadRef)
-          requestThreadRename(activeThreadRef);
+        if (!event.repeat) requestThreadRename(activeThreadRef);
         return;
       }
 
