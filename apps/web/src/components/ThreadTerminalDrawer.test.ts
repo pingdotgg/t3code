@@ -1,95 +1,166 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   terminalContextMenuItems,
+  terminalFileManagerPath,
+  terminalLinkChatText,
+  terminalLinkCopyText,
   terminalSelectionLineRange,
-  terminalSelectionMenuItems,
-  terminalThemeFromApp,
 } from "./ThreadTerminalDrawer";
 
-describe("terminal selection menus", () => {
-  it("omits Add to chat when the terminal has no chat target", () => {
-    expect(terminalSelectionMenuItems().map(({ id }) => id)).toEqual(["add-to-chat", "copy"]);
-    expect(terminalContextMenuItems({ hasSelection: true }).map(({ id }) => id)).toEqual([
-      "add-to-chat",
-      "copy",
-      "paste",
-    ]);
-
-    expect(terminalSelectionMenuItems({ canAddToChat: false }).map(({ id }) => id)).toEqual([
-      "copy",
-    ]);
-    expect(
-      terminalContextMenuItems({ hasSelection: true, canAddToChat: false }).map(({ id }) => id),
-    ).toEqual(["copy", "paste"]);
+describe("terminalFileManagerPath", () => {
+  it("resolves relative paths and removes terminal positions", () => {
+    expect(terminalFileManagerPath("src/index.ts:12:3", "/Users/olive/project")).toBe(
+      "/Users/olive/project/src/index.ts",
+    );
   });
 });
 
-describe("terminalThemeFromApp", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
+describe("terminalLinkCopyText", () => {
+  it("removes terminal positions from paths", () => {
+    expect(terminalLinkCopyText("src/index.ts:12:3")).toBe("src/index.ts");
   });
 
-  it("uses terminal colors inherited by the mount instead of a light document theme", () => {
-    const root = { classList: { contains: () => false } };
-    const body = {};
-    const drawer = {};
-    let canvasColor = "#000";
-    const colors: Record<string, [number, number, number, number]> = {
-      "#000": [0, 0, 0, 255],
-      "#fff": [255, 255, 255, 255],
-      "#ddd": [221, 221, 221, 255],
-      "#111": [17, 17, 17, 255],
+  it("leaves URLs intact", () => {
+    expect(terminalLinkCopyText("https://t3.codes/docs#terminal")).toBe(
+      "https://t3.codes/docs#terminal",
+    );
+  });
+});
+
+describe("terminalLinkChatText", () => {
+  it("resolves relative paths against the terminal cwd", () => {
+    expect(
+      terminalLinkChatText("src/components/ThreadTerminalDrawer.tsx", "/Users/olive/project"),
+    ).toBe(
+      "[ThreadTerminalDrawer.tsx](/Users/olive/project/src/components/ThreadTerminalDrawer.tsx)",
+    );
+  });
+
+  it("removes terminal positions before serializing a file link", () => {
+    expect(terminalLinkChatText("src/index.ts:12:3", "/Users/olive/project")).toBe(
+      "[index.ts](/Users/olive/project/src/index.ts)",
+    );
+  });
+
+  it("trims trailing separators before serializing a directory link", () => {
+    expect(terminalLinkChatText("/Users/olive/project/dist/", "/Users/olive/project")).toBe(
+      "[dist](/Users/olive/project/dist)",
+    );
+  });
+
+  it("keeps a Windows drive root intact", () => {
+    const separator = String.fromCharCode(92);
+    expect(
+      terminalLinkChatText(
+        `C:${separator}`,
+        `C:${separator}Users${separator}olive${separator}project`,
+      ),
+    ).toBe("[](C:%5C)");
+  });
+
+  it("leaves URLs intact regardless of scheme casing", () => {
+    expect(terminalLinkChatText("HTTPS://t3.codes/docs", "/Users/olive/project")).toBe(
+      "HTTPS://t3.codes/docs",
+    );
+  });
+});
+
+describe("terminalContextMenuItems", () => {
+  it("offers path actions for a detected terminal path", () => {
+    const options = {
+      hasSelection: false,
+      link: "src/components/ThreadTerminalDrawer.tsx",
+      canOpenInPreview: false,
+      openLabel: "Open in Zed",
+      revealLabel: "Reveal in Finder",
     };
 
-    vi.stubGlobal("document", {
-      documentElement: root,
-      body,
-      querySelector: () => drawer,
-      createElement: () => ({
-        width: 0,
-        height: 0,
-        getContext: () => ({
-          clearRect: () => undefined,
-          fillRect: () => undefined,
-          get fillStyle() {
-            return canvasColor;
-          },
-          set fillStyle(value: string) {
-            canvasColor = value;
-          },
-          getImageData: () => ({ data: colors[canvasColor] ?? [0, 0, 0, 0] }),
-        }),
+    expect(terminalContextMenuItems(options)).toEqual([
+      { id: "open-link", label: "Open in Zed" },
+      { id: "reveal-link", label: "Reveal in Finder" },
+      { id: "add-link-to-chat", label: "Add path to chat" },
+      { id: "copy-link", label: "Copy path", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("offers URL actions while preserving enabled selection actions", () => {
+    const options = {
+      hasSelection: true,
+      link: "https://t3.codes",
+      canOpenInPreview: true,
+      openLabel: "Open in editor",
+      revealLabel: null,
+    };
+
+    expect(terminalContextMenuItems(options)).toEqual([
+      { id: "open-link-in-preview", label: "Open in integrated browser" },
+      { id: "open-link-external", label: "Open in system browser" },
+      { id: "add-link-to-chat", label: "Add link to chat" },
+      { id: "copy-link", label: "Copy link", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: false },
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
+
+  it("omits file-manager actions when reveal is unavailable", () => {
+    expect(
+      terminalContextMenuItems({
+        hasSelection: false,
+        link: "src/index.ts",
+        canOpenInPreview: false,
+        openLabel: "Open in editor",
+        revealLabel: null,
       }),
-    });
-    vi.stubGlobal("getComputedStyle", (element: object) => {
-      const local = element === drawer;
-      const values = local
-        ? {
-            "--terminal-background": "#000",
-            "--terminal-foreground": "#fff",
-            "--terminal-cursor": "#ddd",
-            "--terminal-selection-background": "rgba(255, 255, 255, 0.2)",
-          }
-        : {
-            "--terminal-background": "#fff",
-            "--terminal-foreground": "#111",
-          };
-      return {
-        backgroundColor: local ? "#000" : "#fff",
-        color: local ? "#fff" : "#111",
-        colorScheme: local ? "dark" : "light",
-        getPropertyValue: (name: string) => values[name as keyof typeof values] ?? "",
-      };
-    });
+    ).toEqual([
+      { id: "open-link", label: "Open in editor" },
+      { id: "add-link-to-chat", label: "Add path to chat" },
+      { id: "copy-link", label: "Copy path", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
 
-    const theme = terminalThemeFromApp();
+  it("omits selection chat actions when no chat target is available", () => {
+    expect(
+      terminalContextMenuItems({
+        hasSelection: true,
+        link: null,
+        canOpenInPreview: false,
+        openLabel: "Open in editor",
+        revealLabel: null,
+        canAddToChat: false,
+      }),
+    ).toEqual([
+      { id: "copy", label: "Copy", disabled: false },
+      { id: "paste", label: "Paste" },
+    ]);
+  });
 
-    expect(theme.background).toEqual({ r: 0, g: 0, b: 0 });
-    expect(theme.foreground).toEqual({ r: 255, g: 255, b: 255 });
-    expect(theme.cursor).toEqual({ r: 221, g: 221, b: 221 });
+  it("omits link chat actions when no chat target is available", () => {
+    expect(
+      terminalContextMenuItems({
+        hasSelection: false,
+        link: "https://t3.codes",
+        canAddLinkToChat: false,
+        canOpenInPreview: false,
+        openLabel: "Open in editor",
+        revealLabel: null,
+      }),
+    ).toEqual([
+      { id: "open-link-external", label: "Open in system browser" },
+      { id: "copy-link", label: "Copy link", icon: "copy" },
+      { id: "add-to-chat", label: "Add to chat", disabled: true },
+      { id: "copy", label: "Copy", disabled: true },
+      { id: "paste", label: "Paste" },
+    ]);
   });
 });
 

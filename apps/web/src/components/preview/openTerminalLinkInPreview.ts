@@ -38,21 +38,31 @@ interface OpenTerminalLinkInPreviewInput<E> {
   readonly forceBrowser: boolean;
 }
 
-/**
- * Opens a terminal hyperlink where the "Open links in" setting says, unless a
- * Cmd/Ctrl-click explicitly requests the system browser.
- */
+export function canOpenTerminalLinkInPreview(url: string, threadRef: ScopedThreadRef): boolean {
+  return isWebUrl(url) && isPreviewSupportedInRuntime() && threadRef.threadId.length > 0;
+}
+
+/** Opens a terminal URL according to the configured browser-link target. */
 export async function openTerminalLinkInPreview<E>(
   input: OpenTerminalLinkInPreviewInput<E>,
 ): Promise<void> {
   const supportsPreview =
     !input.forceBrowser &&
-    isWebUrl(input.url) &&
-    isPreviewSupportedInRuntime() &&
-    input.threadRef.threadId.length > 0 &&
+    canOpenTerminalLinkInPreview(input.url, input.threadRef) &&
     (await resolveBrowserLinkTargetPreference()) === "app";
-
   if (!supportsPreview) {
+    input.fallbackToBrowser();
+    return;
+  }
+
+  await openTerminalLinkInIntegratedBrowser(input);
+}
+
+/** Opens a terminal URL in the integrated browser for an explicit menu action. */
+export async function openTerminalLinkInIntegratedBrowser<E>(
+  input: Omit<OpenTerminalLinkInPreviewInput<E>, "forceBrowser">,
+): Promise<void> {
+  if (!canOpenTerminalLinkInPreview(input.url, input.threadRef)) {
     input.fallbackToBrowser();
     return;
   }

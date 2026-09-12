@@ -10,6 +10,7 @@ import {
   type TerminalOutputUpdate,
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
+import { splitFilePathPosition } from "@t3tools/client-runtime/markdown-links";
 import {
   Plus,
   Square,
@@ -20,12 +21,14 @@ import {
 } from "lucide-react";
 import {
   type ContextMenuItem,
+  type EditorId,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as Schema from "effect/Schema";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -56,7 +59,12 @@ import {
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
-import { useOpenInPreferredEditor } from "../editorPreferences";
+import { useOpenInPreferredEditor, usePreferredEditor } from "../editorPreferences";
+import { openInEditorMenuLabel } from "../editorLabels";
+import {
+  revealInFileExplorerLabelForKind,
+  revealInFileExplorerLabelForOs,
+} from "./preview/fileExplorerLabel";
 import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
@@ -80,8 +88,14 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useAttachedTerminalSession } from "../state/terminalSessions";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
+import { shellEnvironment } from "../state/shell";
 import { terminalEnvironment } from "../state/terminal";
-import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { useRemoteOpenResolution } from "../remoteOpen";
+import {
+  canOpenTerminalLinkInPreview,
+  openTerminalLinkInIntegratedBrowser,
+  openTerminalLinkInPreview,
+} from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
@@ -247,10 +261,36 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "add-link-to-chat"
+  | "copy"
+  | "copy-link"
+  | "open-link"
+  | "open-link-external"
+  | "open-link-in-preview"
+  | "reveal-link"
+  | "paste";
 
-/** Post-selection popup: available selection actions, always enabled. */
-export function terminalSelectionMenuItems(options?: {
+export function terminalFileManagerPath(link: string, cwd: string): string {
+  return splitFilePathPosition(resolvePathLinkTarget(link, cwd)).path;
+}
+
+export function terminalLinkChatText(link: string, cwd: string): string {
+  if (isTerminalUrl(link)) return link;
+  const path = terminalFileManagerPath(link, cwd);
+  const trimmedPath = path.replace(/(?!^)[/\\]+$/u, "");
+  const normalizedPath =
+    /^[A-Za-z]:$/u.test(trimmedPath) && /^[A-Za-z]:[\\/]+$/u.test(path) ? path : trimmedPath;
+  return serializeComposerFileLink(normalizedPath);
+}
+
+export function terminalLinkCopyText(link: string): string {
+  return isTerminalUrl(link) ? link : splitFilePathPosition(link).path;
+}
+
+/** Post-selection popup actions. Add to chat is available when a chat target exists. */
+function terminalSelectionMenuItems(options?: {
   canAddToChat?: boolean;
 }): ContextMenuItem<"add-to-chat" | "copy">[] {
   return [
@@ -262,20 +302,49 @@ export function terminalSelectionMenuItems(options?: {
 }
 
 /**
- * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
+ * Right-click menu for the terminal canvas: link actions when the pointer is
+ * over a link, selection actions, and Paste. Paste stays available because
+ * browser and Electron menus cannot paste into the terminal canvas.
  */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
+  link: string | null;
   canAddToChat?: boolean;
+  canAddLinkToChat?: boolean;
+  canOpenInPreview: boolean;
+  openLabel: string;
+  revealLabel: string | null;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
-  const { hasSelection, canAddToChat = true } = options;
+  const linkItems: ContextMenuItem<TerminalContextMenuAction>[] = options.link
+    ? isTerminalUrl(options.link)
+      ? [
+          ...(options.canOpenInPreview
+            ? [{ id: "open-link-in-preview" as const, label: "Open in integrated browser" }]
+            : []),
+          { id: "open-link-external", label: "Open in system browser" },
+          ...(options.canAddLinkToChat === false
+            ? []
+            : [{ id: "add-link-to-chat" as const, label: "Add link to chat" }]),
+          { id: "copy-link", label: "Copy link", icon: "copy" },
+        ]
+      : [
+          { id: "open-link", label: options.openLabel },
+          ...(options.revealLabel
+            ? [{ id: "reveal-link" as const, label: options.revealLabel }]
+            : []),
+          ...(options.canAddLinkToChat === false
+            ? []
+            : [{ id: "add-link-to-chat" as const, label: "Add path to chat" }]),
+          { id: "copy-link", label: "Copy path", icon: "copy" },
+        ]
+    : [];
   return [
-    ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
+    ...linkItems,
+    ...terminalSelectionMenuItems(
+      options.canAddToChat === undefined ? undefined : { canAddToChat: options.canAddToChat },
+    ).map((item) => ({
       ...item,
-      disabled: !hasSelection,
+      disabled: !options.hasSelection,
     })),
     { id: "paste", label: "Paste" },
   ];
@@ -318,6 +387,7 @@ interface TerminalViewportProps {
   providerInstanceId?: ProviderInstanceId;
   onSessionExited: () => void;
   onAddTerminalContext?: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink?: (link: string) => void;
   focusRequestId: number;
   autoFocus: boolean;
   visible: boolean;
@@ -344,6 +414,7 @@ export function TerminalViewport({
   providerInstanceId,
   onSessionExited,
   onAddTerminalContext,
+  onAddTerminalLink,
   focusRequestId,
   autoFocus,
   visible,
@@ -356,12 +427,17 @@ export function TerminalViewport({
   const visibleRef = useRef(visible);
   const environmentId = threadRef.environmentId;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const openInPreferredEditor = useOpenInPreferredEditor(
-    environmentId,
-    serverConfig?.availableEditors ?? [],
+  const remoteOpen = useRemoteOpenResolution(environmentId);
+  const availableEditors = serverConfig?.availableEditors ?? [];
+  const [preferredEditor] = usePreferredEditor(availableEditors);
+  const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
+  const openTerminalPath = useEffectEvent((target: string, editorOverride?: EditorId | null) =>
+    openInPreferredEditor(target, editorOverride),
   );
-  const openTerminalPath = useEffectEvent((target: string) => openInPreferredEditor(target));
   const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
+  const revealInFileManager = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
@@ -385,6 +461,27 @@ export function TerminalViewport({
     onAddTerminalContext?.(selection);
   });
   const canAddSelectionToChat = useEffectEvent(() => onAddTerminalContext !== undefined);
+  const canAddLinkToChat = useEffectEvent(() => onAddTerminalLink !== undefined);
+  const handleAddTerminalLink = useEffectEvent((link: string) => {
+    onAddTerminalLink?.(terminalLinkChatText(link, cwd));
+  });
+  const fileManagerRevealLabel =
+    remoteOpen.isResolved &&
+    remoteOpen.state.mode === "local-exec" &&
+    serverConfig?.shellRevealInFileManager === true &&
+    serverConfig.availableEditors.includes("file-manager")
+      ? serverConfig.shellRevealInFileManagerKind === undefined
+        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
+        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
+      : null;
+  const readFileManagerRevealLabel = useEffectEvent(() => fileManagerRevealLabel);
+  const runFileManagerReveal = useEffectEvent((target: string) =>
+    revealInFileManager({
+      environmentId,
+      input: { cwd: target, editor: "file-manager", reveal: true },
+    }),
+  );
+  const readPreferredEditor = useEffectEvent(() => preferredEditor);
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
   const terminalFontFamily = useClientSettings((settings) =>
     resolveTerminalFontPreference({
@@ -504,9 +601,8 @@ export function TerminalViewport({
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
         // exists. The ref is only assigned once that setup has run.
-        onContextMenu: (event) => {
-          if (terminalRef.current) void showTerminalContextMenu(event);
-        },
+        onContextMenu: (event, linkText) =>
+          terminalRef.current ? showTerminalContextMenu(event, linkText) : undefined,
       };
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
@@ -622,14 +718,27 @@ export function TerminalViewport({
         }
       };
 
-      const copySelection = async (text: string, requestId: number) => {
+      const copyTerminalText = async (
+        text: string,
+        description: string,
+        fallbackError: string,
+        requestId: number,
+      ) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          await writeTextToClipboard(text, description);
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to copy terminal selection");
+          reportIfCurrent(requestId, error, fallbackError);
         }
         focusIfCurrent(requestId);
       };
+
+      const copySelection = (text: string, requestId: number) =>
+        copyTerminalText(
+          text,
+          "terminal selection",
+          "Unable to copy terminal selection",
+          requestId,
+        );
 
       const pasteFromClipboard = async (requestId: number) => {
         const activeTerminal = terminalRef.current;
@@ -649,7 +758,7 @@ export function TerminalViewport({
         focusIfCurrent(requestId);
       };
 
-      const showTerminalContextMenu = async (event: MouseEvent) => {
+      const showTerminalContextMenu = async (event: MouseEvent, link: string | null) => {
         if (!localApi || !terminalRef.current) return;
         // Own the gesture before anything async: leaving the default alive lets
         // the browser (or Electron's editing menu) answer with a Paste entry
@@ -659,12 +768,22 @@ export function TerminalViewport({
         clearSelectionAction();
         const selectionAction = readSelectionAction();
         const requestId = selectionActionRequestIdRef.current;
+        const editorAtMenuOpen = readPreferredEditor();
+        const revealLabelAtMenuOpen = readFileManagerRevealLabel();
         let clicked: TerminalContextMenuAction | null;
         try {
           clicked = await localApi.contextMenu.show(
             terminalContextMenuItems({
               hasSelection: selectionAction !== null,
+              link,
               canAddToChat: canAddSelectionToChat(),
+              canAddLinkToChat: canAddLinkToChat(),
+              openLabel: openInEditorMenuLabel(editorAtMenuOpen),
+              canOpenInPreview:
+                link !== null &&
+                isTerminalUrl(link) &&
+                canOpenTerminalLinkInPreview(link, threadRef),
+              revealLabel: revealLabelAtMenuOpen,
             }),
             { x: event.clientX, y: event.clientY },
           );
@@ -682,8 +801,34 @@ export function TerminalViewport({
               addSelectionToChat(selectionAction.selection);
             }
             return;
+          case "add-link-to-chat":
+            if (link && canAddLinkToChat()) handleAddTerminalLink(link);
+            return;
           case "copy":
             if (selectionAction) await copySelection(selectionAction.clipboardText, requestId);
+            return;
+          case "copy-link": {
+            if (!link) return;
+            const isUrl = isTerminalUrl(link);
+            await copyTerminalText(
+              terminalLinkCopyText(link),
+              isUrl ? "terminal link" : "terminal path",
+              isUrl ? "Unable to copy terminal link" : "Unable to copy terminal path",
+              requestId,
+            );
+            return;
+          }
+          case "open-link":
+            if (link) openTerminalLink(link, editorAtMenuOpen);
+            return;
+          case "open-link-external":
+            if (link) openTerminalUrlInBrowser(link);
+            return;
+          case "open-link-in-preview":
+            if (link) openTerminalUrlInPreview(link);
+            return;
+          case "reveal-link":
+            if (link && revealLabelAtMenuOpen !== null) revealTerminalPath(link);
             return;
           case "paste":
             await pasteFromClipboard(requestId);
@@ -782,6 +927,46 @@ export function TerminalViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
+        openTerminalLink(text, undefined, event.metaKey || event.ctrlKey);
+      }
+
+      function openTerminalUrlInBrowser(text: string): void {
+        const latestTerminal = terminalRef.current;
+        if (!latestTerminal) return;
+        if (!localApi) {
+          writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
+          return;
+        }
+        void localApi.shell.openExternal(text).catch((error: unknown) => {
+          writeSystemMessage(
+            latestTerminal,
+            error instanceof Error ? error.message : "Unable to open link",
+          );
+        });
+      }
+
+      function openTerminalUrlInPreview(text: string): void {
+        void openTerminalLinkInIntegratedBrowser({
+          url: text,
+          threadRef,
+          openPreview,
+          fallbackToBrowser: () => openTerminalUrlInBrowser(text),
+        }).catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open link",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
+      }
+
+      function openTerminalLink(
+        text: string,
+        editorOverride?: EditorId | null,
+        forceBrowser = false,
+      ): void {
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {
@@ -789,20 +974,12 @@ export function TerminalViewport({
             writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
             return;
           }
-          const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
-              writeSystemMessage(
-                latestTerminal,
-                error instanceof Error ? error.message : "Unable to open link",
-              );
-            });
-          };
           void openTerminalLinkInPreview({
             url: text,
             threadRef,
             openPreview,
-            fallbackToBrowser,
-            forceBrowser: event.metaKey || event.ctrlKey,
+            fallbackToBrowser: () => openTerminalUrlInBrowser(text),
+            forceBrowser,
           }).catch((error: unknown) => {
             toastManager.add(
               stackedThreadToast({
@@ -816,7 +993,7 @@ export function TerminalViewport({
         }
         const target = resolvePathLinkTarget(text, cwd);
         void (async () => {
-          const result = await openTerminalPath(target);
+          const result = await openTerminalPath(target, editorOverride);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
             return;
           }
@@ -824,6 +1001,19 @@ export function TerminalViewport({
           writeSystemMessage(
             latestTerminal,
             error instanceof Error ? error.message : "Unable to open path",
+          );
+        })();
+      }
+
+      function revealTerminalPath(text: string): void {
+        const target = terminalFileManagerPath(text, cwd);
+        void (async () => {
+          const result = await runFileManagerReveal(target);
+          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          writeSystemMessage(
+            terminal,
+            error instanceof Error ? error.message : "Unable to reveal path",
           );
         })();
       }
@@ -1011,6 +1201,7 @@ interface ThreadTerminalDrawerProps {
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink: (link: string) => void;
   keybindings: ResolvedKeybindingsConfig;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
@@ -1072,6 +1263,7 @@ export default function ThreadTerminalDrawer({
   onCloseTerminal,
   onHeightChange,
   onAddTerminalContext,
+  onAddTerminalLink,
   keybindings,
   terminalLabelsById,
   terminalLaunchLocationsById,
@@ -1542,6 +1734,7 @@ export default function ThreadTerminalDrawer({
                             : {})}
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
+                          onAddTerminalLink={onAddTerminalLink}
                           focusRequestId={focusRequestId}
                           autoFocus={terminalId === resolvedActiveTerminalId}
                           visible={visible}
@@ -1572,6 +1765,7 @@ export default function ThreadTerminalDrawer({
                     : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
+                  onAddTerminalLink={onAddTerminalLink}
                   focusRequestId={focusRequestId}
                   autoFocus
                   visible={visible}
