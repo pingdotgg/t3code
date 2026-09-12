@@ -50,7 +50,8 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
 describe("remote helper lifecycle", () => {
   it.effect("reuses its own healthy helpers and stops only its own runtime", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      const hostPlatform = yield* HostProcessPlatform;
+      if (hostPlatform === "win32") return;
       yield* Effect.promise(async () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
@@ -73,7 +74,7 @@ describe("remote helper lifecycle", () => {
           hub,
           `import http from 'node:http'; import fs from 'node:fs';
 if(fs.existsSync('fail-start-once')) {fs.unlinkSync('fail-start-once');process.exit(1);}
-const args=process.argv.slice(2); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+const args=process.argv.slice(2); fs.writeFileSync('hub-args.json',JSON.stringify(args)); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
         );
         await NodeFSP.writeFile(
           agent,
@@ -126,6 +127,14 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           ]);
           expect(concurrent.hubPort).toBe(manual.hubPort);
           expect(manual.daemonPort).toBeUndefined();
+          const hubArgs = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub-args.json"), "utf8"),
+          );
+          if (hostPlatform === "darwin") {
+            expect(hubArgs).not.toContain("--platform");
+          } else {
+            expect(hubArgs.slice(hubArgs.indexOf("--platform"))).toEqual(["--platform", "android"]);
+          }
           await expect(
             NodeFSP.stat(NodePath.join(root, "hosts/one/daemon.json")),
           ).rejects.toThrow();
