@@ -439,6 +439,16 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("keeps the sidebar usage limits pill off until opted in", () => {
+    expect(decodeClientSettings({}).sidebarUsageLimitsEnabled).toBe(false);
+    expect(
+      decodeClientSettings({ sidebarUsageLimitsEnabled: true }).sidebarUsageLimitsEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarUsageLimitsEnabled: true }).sidebarUsageLimitsEnabled,
+    ).toBe(true);
+  });
+
   it("keeps unpin confirmation opt-in and patchable", () => {
     expect(decodeClientSettings({}).confirmThreadUnpin).toBe(false);
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);

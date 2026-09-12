@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  subscribeUsagePagePreferences,
+} from "./usagePagePreferences";
 
 const key = "t3code:usage-page-preferences:v1";
 let values: Map<string, string>;
@@ -56,6 +60,22 @@ describe("Usage page preferences", () => {
     write.mockRestore();
     saveUsagePagePreferences({ metric: "limits", windowDays: 7 });
     expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 7 });
+  });
+
+  it("tells subscribers about every save until they unsubscribe", () => {
+    const seen: unknown[] = [];
+    const unsubscribe = subscribeUsagePagePreferences((preferences) => seen.push(preferences));
+    saveUsagePagePreferences({ metric: "limits", windowDays: 7 });
+    vi.spyOn(storage, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    saveUsagePagePreferences({ metric: "tokens", windowDays: 1 });
+    unsubscribe();
+    saveUsagePagePreferences({ metric: "cost", windowDays: 30 });
+    expect(seen).toEqual([
+      { metric: "limits", windowDays: 7 },
+      { metric: "tokens", windowDays: 1 },
+    ]);
   });
 
   it("contains failures when the browser blocks storage access", () => {

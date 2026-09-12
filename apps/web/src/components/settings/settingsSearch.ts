@@ -211,6 +211,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
+    id: "sidebar-usage-limits",
+    title: "Usage limits in sidebar",
+    to: "/settings/general",
+    searchTerms: ["quota remaining rate limit codex claude footer subscription"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

@@ -56,6 +56,12 @@ Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
+To keep the tightest window in view while you work, turn on **Settings → General → Usage limits in
+sidebar**. The sidebar footer then shows, per provider, how much of its most constrained window is
+left, pooled across accounts the same way **Usage → Limits** pools them. The figure turns amber
+with a quarter left and red with a tenth. Hover for every window and its reset; select it to open
+**Usage → Limits**. It updates from the same snapshots and never refreshes on its own.
+
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
