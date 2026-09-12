@@ -329,3 +329,76 @@ it.effect("wraps underlying failures with an unexpected-failure reason and cause
     assert.strictEqual(error.cause, projectionError);
   }).pipe(Effect.provide(testLayer));
 });
+
+it.effect.each([true, false])("rewinds provider history with restoreFiles=%s", (restoreFiles) => {
+  const threadId = ThreadId.make("rewind-files");
+  const providerThreadId = ProviderThreadId.make("rewind-provider");
+  const providerSessionId = ProviderSessionId.make("rewind-session");
+  const instanceId = ProviderInstanceId.make("rewind-instance");
+  const checkpointId = CheckpointId.make("rewind-start");
+  const scopeId = CheckpointScopeId.make("rewind-scope");
+  const calls: string[] = [];
+  const providerThread = {
+    id: providerThreadId,
+    providerSessionId,
+    providerInstanceId: instanceId,
+  };
+  const projection = {
+    thread: {
+      activeProviderThreadId: providerThreadId,
+      modelSelection: { instanceId, model: "test" },
+    },
+    providerThreads: [providerThread],
+    providerSessions: [],
+    providerTurns: [],
+    nodes: [],
+    checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: null }],
+    checkpointScopes: [{ id: scopeId }],
+    runs: [{ id: "run-1", ordinal: 1, status: "completed", rootNodeId: null }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const testLayer = checkpointRollbackServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointServiceV2)({
+          restore: () =>
+            Effect.sync(() => {
+              calls.push("files");
+            }),
+        }),
+        Layer.mock(EventSinkV2)({
+          write: ({ events }) =>
+            Effect.sync(() => {
+              assert.ok(
+                events.some(
+                  (event) => event.type === "run.updated" && event.payload.status === "rolled_back",
+                ),
+              );
+              calls.push("projection");
+              return [];
+            }),
+        }),
+        idAllocatorLayer,
+        Layer.mock(ProjectionStoreV2)({ getThreadProjection: () => Effect.succeed(projection) }),
+        Layer.mock(ProviderSessionManagerV2)({
+          open: () =>
+            Effect.succeed({
+              rollbackThread: () =>
+                Effect.sync(() => {
+                  calls.push("provider");
+                  return { providerThread };
+                }),
+            } as never),
+        }),
+        Layer.mock(RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* CheckpointRollbackServiceV2;
+    yield* service.execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles });
+    assert.deepEqual(
+      calls,
+      restoreFiles ? ["provider", "files", "projection"] : ["provider", "projection"],
+    );
+  }).pipe(Effect.provide(testLayer));
+});

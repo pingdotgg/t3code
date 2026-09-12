@@ -190,6 +190,7 @@ export const ChatUnknownAttachment = Schema.Struct({
 export type ChatUnknownAttachment = typeof ChatUnknownAttachment.Type;
 
 export const UploadChatImageAttachment = Schema.Struct({
+  id: Schema.optional(ChatAttachmentId),
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),

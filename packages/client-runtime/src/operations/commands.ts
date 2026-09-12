@@ -1,3 +1,4 @@
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
   CommandId,
@@ -163,6 +164,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly role: "user";
     readonly text: string;
     readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
   };
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
@@ -195,6 +197,7 @@ export interface DismissThreadUserInputInput extends ThreadCommandInput {
 }
 
 export interface RevertThreadCheckpointInput extends ThreadCommandInput {
+  readonly restoreFiles?: boolean;
   readonly checkpointId?: string;
   readonly scopeId?: string;
   readonly turnCount?: number;
@@ -241,6 +244,7 @@ export interface EditQueuedRunInput extends ThreadCommandInput {
   readonly edit?: {
     readonly messageId: MessageId;
     readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
   };
 }
 
@@ -271,7 +275,7 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
   attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>,
 ) {
   const stored = attachments.filter(
-    (attachment): attachment is ChatAttachment => "id" in attachment,
+    (attachment): attachment is ChatAttachment => !("dataUrl" in attachment),
   );
   const uploads = attachments.filter(
     (attachment): attachment is UploadChatAttachment => "dataUrl" in attachment,
@@ -287,7 +291,7 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
     uploads.map((attachment, index) => [attachment, result.attachments[index]]),
   );
   return attachments.flatMap((attachment) => {
-    if ("id" in attachment) return [attachment];
+    if (!("dataUrl" in attachment)) return [attachment];
     const persisted = byUpload.get(attachment);
     return persisted === undefined ? [] : [persisted];
   });
@@ -602,6 +606,11 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.messageId,
     input.message.attachments,
   );
+  const context = remapComposerContextAttachments(
+    input.message.context,
+    input.message.attachments,
+    attachments,
+  );
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   if (bootstrap !== undefined || prepareWorktree !== undefined) {
@@ -645,6 +654,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,
+        ...(context ? { context } : {}),
         attachments,
       },
     });
@@ -660,6 +670,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       messageId: input.message.messageId,
       text: input.message.text,
+      ...(context ? { context } : {}),
       attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.sourceProposedPlan === undefined
@@ -720,6 +731,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     threadId: input.threadId,
     messageId: input.message.messageId,
     text: input.message.text,
+    ...(context ? { context } : {}),
     attachments,
     ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
@@ -801,6 +813,7 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
     ) {
       return yield* dispatch({
         type: "checkpoint.rollback",
+        ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
         commandId: yield* allocateCommandId(input),
         threadId: input.threadId,
         scopeId: CheckpointScopeId.make(input.scopeId),
@@ -829,6 +842,7 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
     }
     return yield* dispatch({
       type: "checkpoint.rollback",
+      ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       scopeId: checkpoint.scopeId,
@@ -933,6 +947,15 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     runId: input.runId,
     text: input.text,
     ...(attachments === undefined ? {} : { attachments }),
+    ...(input.edit?.context && attachments
+      ? {
+          context: remapComposerContextAttachments(
+            input.edit.context,
+            input.edit.attachments,
+            attachments,
+          ),
+        }
+      : {}),
   });
 });
 

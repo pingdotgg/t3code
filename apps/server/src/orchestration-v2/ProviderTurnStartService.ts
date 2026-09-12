@@ -1,3 +1,4 @@
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -183,7 +184,10 @@ export const layer: Layer.Layer<
           : yield* Effect.result(
               providerAuth.tryHandlePromptCommand({
                 instanceId: authInstanceId,
-                text: message.text,
+                text: projectComposerContextForProvider({
+                  text: message.text,
+                  records: message.context?.records ?? [],
+                }),
                 hasAttachments: false,
               }),
             );
@@ -697,10 +701,16 @@ export const layer: Layer.Layer<
           messageId: message.id,
           text:
             effectiveHandoffs.length === 0
-              ? message.text
+              ? projectComposerContextForProvider({
+                  text: message.text,
+                  records: message.context?.records ?? [],
+                })
               : providerMessageWithContextHandoffs({
                   handoffs: effectiveHandoffs,
-                  userText: message.text,
+                  userText: projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
                 }),
           attachments: message.attachments,
           createdBy: message.createdBy,

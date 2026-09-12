@@ -53,6 +53,14 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
     readonly threadId: string;
     readonly attachments: ReadonlyArray<ChatAttachment>;
   }) {
+    if (
+      new Set(input.attachments.map((attachment) => attachment.id)).size !==
+      input.attachments.length
+    ) {
+      return yield* new AttachmentClaimError({
+        message: "Duplicate attachment ids are not allowed.",
+      });
+    }
     if (!input.attachments.some(attachmentIsPendingUpload)) {
       return { attachments: input.attachments, claimedPaths: [] } satisfies ClaimedAttachments;
     }
