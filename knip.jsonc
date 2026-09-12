@@ -22,6 +22,7 @@
         "src/bin.ts!",
         "src/service-launcher.ts!",
         "src/claudeHistoryWorker.ts!",
+        "src/workspaceSearchWorker.ts!",
         "scripts/cli.ts",
         "src/provider/testFixtures/*.mjs",
       ],

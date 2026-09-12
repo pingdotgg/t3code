@@ -42,6 +42,25 @@ process.on("message", (message) => {
     return;
   }
   if (input.method === "search" && input.query === "crash") process.exit(1);
+  if (input.method === "search" && input.query === "hold") {
+    const socket = NodeNet.connect(
+      Number(process.env.T3_SEARCH_TEST_RECEIPT_PORT),
+      "127.0.0.1",
+      () => socket.write("blocked"),
+    );
+    socket.once("data", () => {
+      socket.end();
+      process.send?.(
+        encodeSearchResponse(
+          Exit.succeed({
+            entries: [{ path: String(process.pid), kind: "file" }],
+            truncated: false,
+          }),
+        ),
+      );
+    });
+    return;
+  }
   if (input.method === "refresh") {
     process.send?.(
       encodeSearchResponse(

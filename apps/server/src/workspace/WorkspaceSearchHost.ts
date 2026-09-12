@@ -13,6 +13,7 @@ import type { SearchOperation } from "./workspaceSearchProtocol.ts";
 const make = Effect.gen(function* () {
   const semaphore = yield* Semaphore.make(1);
   let current: { process: SearchProcess; indexes: Set<number> } | undefined;
+  let activeIndex: number | undefined;
   let nextId = 0;
   let closed = false;
   const stop = Effect.fn("WorkspaceSearchHost.stop")(function* () {
@@ -41,6 +42,7 @@ const make = Effect.gen(function* () {
           return yield* new WorkspaceSearchProcessFailed({
             cause: new Error("Workspace search index is closed."),
           });
+        activeIndex = id;
         return yield* Effect.gen(function* () {
           const active = yield* Effect.gen(function* () {
             if (current) return current;
@@ -55,7 +57,14 @@ const make = Effect.gen(function* () {
           return operation.method === "initialize"
             ? null
             : yield* active.process.request({ id, operation });
-        }).pipe(Effect.onError(stop));
+        }).pipe(
+          Effect.onError(stop),
+          Effect.ensuring(
+            Effect.sync(() => {
+              activeIndex = undefined;
+            }),
+          ),
+        );
       },
       semaphore.withPermits(1),
       Effect.timeout("20 seconds"),
@@ -64,19 +73,20 @@ const make = Effect.gen(function* () {
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         released = true;
-        // Disposal must not wait behind a stuck search or native destructor.
-        // Other handles rebuild lazily if this retires the shared process.
-        yield* Effect.acquireUseRelease(
-          semaphore.take(1).pipe(Effect.timeout("1 second"), Effect.onError(stop)),
-          () =>
-            Effect.gen(function* () {
-              if (!current?.indexes.has(id)) return;
-              current.indexes.delete(id);
-              if (current.indexes.size === 0) return yield* stop();
-              yield* current.process.request({ id, operation: { method: "dispose" } });
-            }).pipe(Effect.timeout("1 second"), Effect.onError(stop)),
-          () => semaphore.release(1),
-        ).pipe(Effect.catchCause(() => Effect.void));
+        if (activeIndex === id) yield* stop();
+        // Give unrelated requests their own deadline. The shorter disposal
+        // deadline bounds the native destructor, not another workspace's scan.
+        yield* Effect.gen(function* () {
+          if (!current?.indexes.has(id)) return;
+          current.indexes.delete(id);
+          if (current.indexes.size === 0) return yield* stop();
+          yield* current.process.request({ id, operation: { method: "dispose" } });
+        }).pipe(
+          Effect.timeout("1 second"),
+          Effect.onError(stop),
+          semaphore.withPermits(1),
+          Effect.catchCause(() => Effect.void),
+        );
       }),
     );
     yield* run(initialize);

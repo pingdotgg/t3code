@@ -25,7 +25,11 @@ const withWorker = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const receipts = Effect.fn(function* () {
   const blocked = yield* Deferred.make<void>();
   const exited = yield* Deferred.make<void>();
+  const connection = yield* Deferred.make<NodeNet.Socket>();
   const server = NodeNet.createServer((socket) => {
+    // The fixture can be killed while its receipt socket has a write in flight.
+    socket.on("error", () => {});
+    Deferred.doneUnsafe(connection, Effect.succeed(socket));
     socket.once("data", () => Deferred.doneUnsafe(blocked, Effect.void));
     socket.once("close", () => Deferred.doneUnsafe(exited, Effect.void));
   });
@@ -38,6 +42,9 @@ const receipts = Effect.fn(function* () {
   return {
     blocked,
     exited,
+    release: Deferred.await(connection).pipe(
+      Effect.flatMap((socket) => Effect.sync(() => socket.write("release"))),
+    ),
     environment: { ...process.env, T3_SEARCH_TEST_RECEIPT_PORT: String(address.port) },
   };
 });
@@ -221,6 +228,29 @@ it.effect("cancels a queued request without terminating the active search proces
         yield* Fiber.interrupt(blocked);
         yield* Deferred.await(control.exited);
         expect((yield* other.list()).entries).toHaveLength(1);
+      }).pipe(Effect.provideService(HostProcessEnvironment, control.environment));
+    }).pipe(withWorker),
+  ),
+);
+
+it.effect("lets an active workspace finish while an unrelated index expires", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const control = yield* receipts();
+      yield* Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        yield* Index.make("retiring").pipe(Scope.provide(scope));
+        const surviving = yield* Index.make("surviving");
+        const before = yield* surviving.list();
+        const active = yield* surviving.search("hold", 1).pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(control.blocked);
+        const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        yield* control.release;
+        expect(yield* Fiber.join(active)).toEqual(Exit.succeed(before));
+        yield* Fiber.join(closing);
+        expect((yield* surviving.list()).entries).toEqual(before.entries);
       }).pipe(Effect.provideService(HostProcessEnvironment, control.environment));
     }).pipe(withWorker),
   ),
