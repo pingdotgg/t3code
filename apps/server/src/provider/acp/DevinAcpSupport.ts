@@ -39,7 +39,7 @@ export const DEVIN_API_KEY_ENV = "WINDSURF_API_KEY";
  * fails auth and the user is told to run `devin auth login` — the same outcome
  * as a stale credentials file.
  */
-export const DEVIN_REST_API_KEY_ENV = "DEVIN_API_KEY";
+const DEVIN_REST_API_KEY_ENV = "DEVIN_API_KEY";
 const DEVIN_CREDENTIALS_PATH_SEGMENTS = [".local", "share", "devin", "credentials.toml"] as const;
 
 type DevinAcpRuntimeDevinSettings = Pick<DevinSettings, "binaryPath">;
