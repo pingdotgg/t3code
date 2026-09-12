@@ -14,9 +14,11 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  classifyTaskAgentKind,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type RuntimeMode,
   type ThreadId,
   TurnId,
@@ -72,6 +74,7 @@ import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
   CursorUpdateTodosRequest,
+  cursorTaskToolFields,
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
@@ -88,6 +91,7 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
+const CURSOR_TASK_TYPE = "subagent";
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
@@ -95,6 +99,15 @@ const ACP_APPROVAL_MODE_ALIASES = ["ask"];
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
   return Exit.isSuccess(result) ? result.value : undefined;
+}
+
+function turnHasLiveTasks(ctx: CursorSessionContext, turnId: TurnId): boolean {
+  for (const live of ctx.liveTasks.values()) {
+    if (live.turnId === turnId) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface CursorAdapterLiveOptions {
@@ -147,6 +160,12 @@ interface CursorSessionContext {
   promptsInFlight: number;
   assistantReply: CursorTransportFailure;
   stopped: boolean;
+  readonly liveTasks: Map<
+    string,
+    { readonly turnId: TurnId; readonly title: string; readonly role: string | undefined }
+  >;
+  readonly completedTaskIds: Set<string>;
+  taskDrain: Deferred.Deferred<void> | undefined;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -373,6 +392,62 @@ export function makeCursorAdapter(
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
+    const notifyTaskDrain = (ctx: CursorSessionContext) => {
+      const drain = ctx.taskDrain;
+      if (!drain) {
+        return Effect.void;
+      }
+      ctx.taskDrain = undefined;
+      return Deferred.succeed(drain, undefined).pipe(Effect.ignore);
+    };
+
+    const cursorTaskLinkage = (toolCallId: string, title: string, role: string | undefined) => {
+      const taskType = CURSOR_TASK_TYPE;
+      return {
+        taskId: RuntimeTaskId.make(toolCallId),
+        taskType,
+        agentKind: classifyTaskAgentKind({ taskType }),
+        toolUseId: toolCallId,
+        title,
+        ...(role !== undefined ? { role } : {}),
+      };
+    };
+
+    const finishLiveTasks = (
+      ctx: CursorSessionContext,
+      status: "failed" | "stopped",
+    ): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        for (const [toolCallId, live] of ctx.liveTasks) {
+          yield* offerRuntimeEvent({
+            type: "task.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            turnId: live.turnId,
+            payload: {
+              ...cursorTaskLinkage(toolCallId, live.title, live.role),
+              status,
+            },
+          });
+          ctx.completedTaskIds.add(toolCallId);
+        }
+        ctx.liveTasks.clear();
+        yield* notifyTaskDrain(ctx);
+      });
+
+    const waitForLiveTasks = (ctx: CursorSessionContext, turnId: TurnId): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        while (!ctx.stopped && turnHasLiveTasks(ctx, turnId)) {
+          const drain = ctx.taskDrain ?? (yield* Deferred.make<void>());
+          ctx.taskDrain = drain;
+          if (!turnHasLiveTasks(ctx, turnId) || ctx.stopped) {
+            break;
+          }
+          yield* Deferred.await(drain);
+        }
+      });
+
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
         const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
@@ -471,6 +546,7 @@ export function makeCursorAdapter(
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        yield* finishLiveTasks(ctx, "stopped");
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
@@ -799,6 +875,9 @@ export function makeCursorAdapter(
             promptsInFlight: 0,
             assistantReply: new CursorTransportFailure(),
             stopped: false,
+            liveTasks: new Map(),
+            completedTaskIds: new Set(),
+            taskDrain: undefined,
           };
 
           const nf = yield* Stream.runDrain(
@@ -857,6 +936,74 @@ export function makeCursorAdapter(
                       event.rawPayload,
                       "acp.jsonrpc",
                     );
+                    {
+                      const toolCall = event.toolCall;
+                      const fields = cursorTaskToolFields(toolCall);
+                      const live = ctx.liveTasks.get(toolCall.toolCallId);
+                      const alreadyCompleted = ctx.completedTaskIds.has(toolCall.toolCallId);
+                      if (fields !== undefined || live !== undefined || alreadyCompleted) {
+                        const turnId = live?.turnId ?? ctx.activeTurnId;
+                        const title = fields?.title ?? live?.title ?? "Task";
+                        const role = fields?.role ?? live?.role;
+                        const linkage = cursorTaskLinkage(toolCall.toolCallId, title, role);
+                        const isNew = live === undefined && !alreadyCompleted;
+                        if (isNew && turnId !== undefined) {
+                          ctx.liveTasks.set(toolCall.toolCallId, { turnId, title, role });
+                          yield* offerRuntimeEvent({
+                            type: "task.started",
+                            ...(yield* makeEventStamp()),
+                            provider: PROVIDER,
+                            threadId: ctx.threadId,
+                            turnId,
+                            payload: linkage,
+                          });
+                        }
+                        const isTerminal =
+                          toolCall.status === "completed" || toolCall.status === "failed";
+                        if (alreadyCompleted) {
+                          if (isTerminal) {
+                            ctx.completedTaskIds.delete(toolCall.toolCallId);
+                          }
+                          return;
+                        }
+                        if (isTerminal) {
+                          if (turnId !== undefined) {
+                            yield* offerRuntimeEvent({
+                              type: "task.completed",
+                              ...(yield* makeEventStamp()),
+                              provider: PROVIDER,
+                              threadId: ctx.threadId,
+                              turnId,
+                              payload: {
+                                ...linkage,
+                                status: toolCall.status,
+                              },
+                            });
+                          }
+                          ctx.liveTasks.delete(toolCall.toolCallId);
+                          ctx.completedTaskIds.add(toolCall.toolCallId);
+                          if (turnId !== undefined && !turnHasLiveTasks(ctx, turnId)) {
+                            yield* notifyTaskDrain(ctx);
+                          }
+                        } else if (turnId !== undefined) {
+                          const status = toolCall.status === "pending" ? "pending" : "running";
+                          yield* offerRuntimeEvent({
+                            type: "task.progress",
+                            ...(yield* makeEventStamp()),
+                            provider: PROVIDER,
+                            threadId: ctx.threadId,
+                            turnId,
+                            payload: {
+                              ...linkage,
+                              description: title,
+                              summary: title,
+                              status,
+                            },
+                          });
+                        }
+                        return;
+                      }
+                    }
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp: yield* makeEventStamp(),
@@ -1085,6 +1232,12 @@ export function makeCursorAdapter(
             });
           }
 
+          if (ctx.stopped || (result.stopReason === "cancelled" && ctx.promptsInFlight === 1)) {
+            yield* finishLiveTasks(ctx, "stopped");
+          } else if (result.stopReason !== "cancelled") {
+            yield* waitForLiveTasks(ctx, turnId);
+          }
+
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
             turnRecord.items.push({ prompt: promptParts, result });
@@ -1134,6 +1287,7 @@ export function makeCursorAdapter(
         const ctx = yield* requireSession(threadId);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        yield* finishLiveTasks(ctx, "stopped");
         yield* Effect.ignore(
           ctx.acp.cancel.pipe(
             Effect.mapError((error) =>
