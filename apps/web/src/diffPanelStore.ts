@@ -9,6 +9,7 @@ export type DiffPanelRef = ScopedThreadRef & { readonly surfaceId?: string };
 
 function diffPanelKey(ref: DiffPanelRef): string {
   const threadKey = scopedThreadKey(ref);
+
   return !ref.surfaceId || ref.surfaceId === "diff"
     ? threadKey
     : JSON.stringify([threadKey, ref.surfaceId]);
@@ -118,6 +119,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeSurface: (ref) =>
         set((state) => {
           const threadKey = diffPanelKey(ref);
+
           if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
             return state;
           }
@@ -132,6 +134,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           const surfacePrefix = `[${JSON.stringify(threadKey)},`;
           const belongsToThread = (key: string) =>
             key === threadKey || key.startsWith(surfacePrefix);
+
           return {
             byThreadKey: Object.fromEntries(
               Object.entries(state.byThreadKey).filter(([key]) => !belongsToThread(key)),

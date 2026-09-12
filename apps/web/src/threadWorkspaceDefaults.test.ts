@@ -76,6 +76,7 @@ describe("thread workspace defaults", () => {
     expect(restored).toEqual(template.layout);
     expect(getPanes(restored.paneTree.root)).toHaveLength(2);
   });
+
   test("captures reusable tools while replacing runtime-bound resources", () => {
     let layout = createThreadWorkspaceTabFields([
       "files",
@@ -206,6 +207,7 @@ describe("thread workspace defaults", () => {
       JSON.parse(JSON.stringify(filesDefault)),
     );
     expect(restoredFilesDefault).not.toBeNull();
+
     if (!restoredFilesDefault) return;
 
     expect(threadWorkspaceDefaultHasChanges(filesDefault, null)).toBe(true);

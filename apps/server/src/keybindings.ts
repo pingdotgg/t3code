@@ -119,11 +119,13 @@ function migrateChangedDefaultKeybindings(config: readonly KeybindingRule[]): {
   readonly changed: boolean;
 } {
   let changed = false;
+
   const keybindings = config.map((rule) => {
     if (!isSameKeybindingRule(rule, LEGACY_PREVIEW_TOGGLE_DEFAULT)) return rule;
     changed = true;
     return CURRENT_PREVIEW_TOGGLE_DEFAULT;
   });
+
   return { keybindings, changed };
 }
 
@@ -511,6 +513,7 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
+
       const migratedConfig = migrateChangedDefaultKeybindings(runtimeConfig.keybindings);
       const customConfig = migratedConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));

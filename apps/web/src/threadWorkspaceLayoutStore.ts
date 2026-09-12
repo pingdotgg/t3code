@@ -48,16 +48,21 @@ export const useThreadWorkspaceLayoutStore = create<ThreadWorkspaceLayoutStoreSt
         const threadKey = scopedThreadKey(ref);
         const current = get().byThreadKey[threadKey] ?? EMPTY_THREAD_WORKSPACE_LAYOUT;
         const next = transitionThreadWorkspaceTabs(current, input);
+
         if (next !== current) {
           set((state) => ({ byThreadKey: { ...state.byThreadKey, [threadKey]: next } }));
         }
+
         return next;
       },
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+
           if (!(threadKey in state.byThreadKey)) return state;
+
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
+
           return { byThreadKey };
         }),
     }),

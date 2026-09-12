@@ -107,8 +107,11 @@ function resolvePaneTabDragData(
     paneById,
     typeof data?.sourcePaneId === "string" ? data.sourcePaneId : null,
   );
+
   if (!sourcePane) return null;
+
   const sourceTabId = sourcePane.tabIds.find((tabId) => tabId === data?.sourceTabId);
+
   return sourceTabId ? { sourcePaneId: sourcePane.id, sourceTabId } : null;
 }
 
@@ -127,6 +130,7 @@ function firstClosestElement(elements: readonly Element[], selector: string): HT
     const match = element.closest<HTMLElement>(selector);
     if (match) return match;
   }
+
   return null;
 }
 
@@ -140,6 +144,7 @@ function resolveDragDropPreview(input: {
 }): PaneDragDropPreview | null {
   const elements = document.elementsFromPoint(input.clientX, input.clientY);
   const tabElement = firstClosestElement(elements, "[data-editor-pane-tab-id]");
+
   if (tabElement) {
     const targetPane = paneWithDomId(input.paneById, tabElement.dataset.editorPaneId ?? null);
     const targetTabId = targetPane?.tabIds.find(
@@ -168,6 +173,7 @@ function resolveDragDropPreview(input: {
   }
 
   const tabListElement = firstClosestElement(elements, "[data-editor-pane-tab-list]");
+
   if (tabListElement) {
     const targetPane = paneWithDomId(
       input.paneById,
@@ -190,7 +196,9 @@ function resolveDragDropPreview(input: {
 
   const paneElement = firstClosestElement(elements, "[data-editor-group]");
   const targetPane = paneWithDomId(input.paneById, paneElement?.dataset.editorGroup ?? null);
+
   if (!paneElement || !targetPane) return null;
+
   const bounds = paneElement.getBoundingClientRect();
   const canSwap = canDropPaneTab({
     tree: input.tree,
@@ -210,6 +218,7 @@ function resolveDragDropPreview(input: {
       height: bounds.height,
     },
   });
+
   if (
     !zone ||
     !canDropPaneTab({
@@ -222,6 +231,7 @@ function resolveDragDropPreview(input: {
   ) {
     return null;
   }
+
   return { _tag: "Pane", paneId: targetPane.id, zone };
 }
 
@@ -235,6 +245,7 @@ function sameDragDropPreview(
   if (left._tag === "Tab" && right._tag === "Tab") {
     return left.targetTabId === right.targetTabId && left.position === right.position;
   }
+
   return false;
 }
 
@@ -265,30 +276,38 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
       activationConstraint: { distance: 6 },
     }),
   );
+
   const previewSplitResize = useCallback(
     (splitId: PaneSplitId, ratio: number) => {
       resizePreviewRef.current = { splitId, ratio };
       const container = containerRef.current;
+
       if (!container) return;
       applyPaneTreeLayout(container, resizePaneSplit(props.tree, splitId, ratio));
     },
     [props.tree],
   );
+
   const resetSplitResize = useCallback(() => {
     resizePreviewRef.current = null;
     const container = containerRef.current;
+
     if (!container) return;
     applyPaneTreeLayout(container, props.tree);
   }, [props.tree]);
+
   useLayoutEffect(() => {
     const preview = resizePreviewRef.current;
     const container = containerRef.current;
+
     if (!preview || !container) return;
     applyPaneTreeLayout(container, resizePaneSplit(props.tree, preview.splitId, preview.ratio));
   });
+
   useLayoutEffect(() => {
     const request = props.focusPulse;
     const container = containerRef.current;
+
     if (!request || !container) return;
     for (const element of container.querySelectorAll<HTMLElement>("[data-editor-group]")) {
       if (element.dataset.editorGroup !== request.paneId) continue;
@@ -296,11 +315,13 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
       return;
     }
   }, [props.focusPulse]);
+
   const setDropPreview = (preview: PaneDragDropPreview | null) => {
     if (sameDragDropPreview(dropPreviewRef.current, preview)) return;
     dropPreviewRef.current = preview;
     setDropPreviewState(preview);
   };
+
   const resetDrag = () => {
     draggedTabRef.current = null;
     latestPointerCoordinatesRef.current = null;
@@ -308,8 +329,10 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     setDraggedTabLabel(null);
     setDropPreview(null);
   };
+
   const handleDragStart = (event: DragStartEvent) => {
     const dragData = resolvePaneTabDragData(event, paneById);
+
     if (!dragData) return;
     draggedTabRef.current = dragData;
     setDraggedTab(dragData);
@@ -319,9 +342,11 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
         : "Tab",
     );
   };
+
   const handleDragMove = (event: DragMoveEvent) => {
     const dragData = draggedTabRef.current;
     const coordinates = dragPointerCoordinates(event);
+
     if (!dragData || !coordinates) return;
     setDropPreview(
       resolveDragDropPreview({
@@ -334,6 +359,7 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
       }),
     );
   };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const dragData = draggedTabRef.current;
     const eventCoordinates = dragPointerCoordinates(event);
@@ -341,6 +367,7 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
       event.delta.x === 0 && event.delta.y === 0
         ? (latestPointerCoordinatesRef.current ?? eventCoordinates)
         : eventCoordinates;
+
     const preview =
       dragData && coordinates
         ? resolveDragDropPreview({
@@ -352,6 +379,7 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
             canCopyFromSolePane: props.canCopyDraggedTabFromSolePane?.(dragData) ?? false,
           })
         : dropPreviewRef.current;
+
     if (dragData && preview?._tag === "Pane") {
       props.onDropTab?.({
         draggedTab: dragData,
@@ -374,8 +402,10 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
         });
       }
     }
+
     resetDrag();
   };
+
   return (
     <DndContext
       sensors={sensors}
@@ -456,6 +486,7 @@ interface SplitPaneProps {
 
 function SplitPane(props: SplitPaneProps) {
   const { group } = props;
+
   return (
     // Keep surface-local overlays below the tree's sibling split handles.
     <section
@@ -512,6 +543,7 @@ function paneSplitStyle(bounds: PaneBounds, split: PaneSplitNode): CSSProperties
     split.orientation === "horizontal"
       ? bounds.left + (bounds.right - bounds.left) * split.ratio
       : bounds.top + (bounds.bottom - bounds.top) * split.ratio;
+
   return split.orientation === "horizontal"
     ? {
         top: `${bounds.top * 100}%`,
@@ -529,11 +561,14 @@ function paneSplitStyle(bounds: PaneBounds, split: PaneSplitNode): CSSProperties
 function applyPaneTreeLayout(container: HTMLDivElement, tree: PaneTree): void {
   const layout = calculatePaneTreeLayout(getVisiblePaneTreeRoot(tree));
   const paneElements = new Map<string, HTMLElement>();
+
   for (const element of container.querySelectorAll<HTMLElement>("[data-editor-group]")) {
     const paneId = element.dataset.editorGroup;
     if (paneId) paneElements.set(paneId, element);
   }
+
   const splitElements = new Map<string, HTMLElement>();
+
   for (const element of container.querySelectorAll<HTMLElement>("[data-editor-split]")) {
     const splitId = element.dataset.editorSplit;
     if (splitId) splitElements.set(splitId, element);
@@ -562,6 +597,7 @@ function PaneDropOverlay({ zone }: { readonly zone: PaneDropZone }) {
           : zone === "left"
             ? "Split left"
             : "Split right";
+
   return (
     <div
       className={cn(
@@ -604,6 +640,7 @@ function PaneSplitHandle(props: {
 
   const releasePointer = useCallback((pointerId: number) => {
     const dragState = dragStateRef.current;
+
     if (!dragState) return;
     if (dragState.frameId !== null) cancelAnimationFrame(dragState.frameId);
     try {
@@ -613,6 +650,7 @@ function PaneSplitHandle(props: {
     } catch {
       // Pointer capture may already have ended when the window loses focus.
     }
+
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
     dragStateRef.current = null;
@@ -621,8 +659,11 @@ function PaneSplitHandle(props: {
   const handlePointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
+
       const container = props.containerRef.current;
+
       if (!container) return;
+
       const workspaceBounds = container.getBoundingClientRect();
       const start = horizontal
         ? workspaceBounds.left + workspaceBounds.width * props.bounds.left
@@ -630,11 +671,13 @@ function PaneSplitHandle(props: {
       const size = horizontal
         ? workspaceBounds.width * (props.bounds.right - props.bounds.left)
         : workspaceBounds.height * (props.bounds.bottom - props.bounds.top);
+
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
         return;
       }
+
       dragStateRef.current = {
         pointerId: event.pointerId,
         start,
@@ -654,14 +697,19 @@ function PaneSplitHandle(props: {
   const handlePointerMove = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const dragState = dragStateRef.current;
+
       if (!dragState || dragState.pointerId !== event.pointerId) return;
+
       const position = horizontal ? event.clientX : event.clientY;
       const ratio = calculatePaneSplitRatio(position, dragState.start, dragState.size);
+
       if (ratio === null) return;
       dragState.pendingRatio = ratio;
+
       if (dragState.frameId !== null) return;
       dragState.frameId = requestAnimationFrame(() => {
         const activeDrag = dragStateRef.current;
+
         if (!activeDrag) return;
         activeDrag.frameId = null;
         onResizePreview(activeDrag.pendingRatio);
@@ -673,7 +721,9 @@ function PaneSplitHandle(props: {
   const handlePointerUp = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const dragState = dragStateRef.current;
+
       if (!dragState || dragState.pointerId !== event.pointerId) return;
+
       const finalRatio = dragState.pendingRatio;
       releasePointer(event.pointerId);
       onResizeCommit(finalRatio);
@@ -684,6 +734,7 @@ function PaneSplitHandle(props: {
   const handlePointerCancel = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
       const dragState = dragStateRef.current;
+
       if (!dragState || dragState.pointerId !== event.pointerId) return;
       releasePointer(event.pointerId);
       onResizeCancel();
@@ -694,13 +745,17 @@ function PaneSplitHandle(props: {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       const delta = resolveKeyboardResizeDelta(event.key, split.orientation);
+
       if (delta === null) return;
+
       const ratio = clampPaneSplitRatio(split.ratio + delta);
+
       if (ratio !== null) onResizeCommit(ratio);
       event.preventDefault();
     },
     [onResizeCommit, split],
   );
+
   return (
     <div
       role="separator"

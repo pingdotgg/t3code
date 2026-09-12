@@ -150,8 +150,10 @@ export function threadWorkspaceTabDropTransition(
       targetPaneId: input.targetPaneId,
     };
   }
+
   const sourcePane = findPane(current.paneTree.root, input.draggedTab.sourcePaneId);
   const sourceTab = current.tabsById[input.draggedTab.sourceTabId];
+
   if (
     input.draggedTab.sourcePaneId === input.targetPaneId &&
     sourcePane?.tabIds.length === 1 &&
@@ -165,6 +167,7 @@ export function threadWorkspaceTabDropTransition(
       mode: "copy",
     };
   }
+
   return {
     _tag: "MoveTabToSplit",
     sourcePaneId: input.draggedTab.sourcePaneId,
@@ -185,6 +188,7 @@ export function threadWorkspaceTabBarDropTransition(
 ): ThreadWorkspaceLayoutTransition | null {
   const sourcePane = findPane(current.paneTree.root, input.draggedTab.sourcePaneId);
   const targetPane = findPane(current.paneTree.root, input.targetPaneId);
+
   if (
     !sourcePane?.tabIds.includes(input.draggedTab.sourceTabId) ||
     !targetPane ||
@@ -203,9 +207,11 @@ export function threadWorkspaceTabBarDropTransition(
       targetIndex: input.targetIndex,
     };
   }
+
   const sourceIndex = sourcePane.tabIds.indexOf(input.draggedTab.sourceTabId);
   const adjustedTargetIndex =
     sourceIndex < input.targetIndex ? Math.max(0, input.targetIndex - 1) : input.targetIndex;
+
   return {
     _tag: "ReorderTab",
     paneId: sourcePane.id,
@@ -292,6 +298,7 @@ export function parsePersistedThreadWorkspaceTabFields(
   input: unknown,
 ): ThreadWorkspaceTabFields | null {
   const decoded = decodePersistedThreadWorkspaceTabFields(input);
+
   return decoded._tag === "None" ? null : normalizePersistedThreadWorkspaceTabFields(decoded.value);
 }
 
@@ -304,9 +311,11 @@ export function createThreadWorkspaceTabFields(
     nextId: 1,
     rightSidebarVisibility: "open",
   };
+
   for (const surfaceId of surfaceIds) {
     next = addSurfaceTab(next, surfaceId, false);
   }
+
   return next;
 }
 
@@ -316,6 +325,7 @@ function reconcileThreadWorkspaceTabFields(
 ): ThreadWorkspaceTabFields {
   const validSurfaceIds = new Set(surfaceIds);
   let next = current;
+
   for (const tab of Object.values(next.tabsById)) {
     if (tab._tag === "Surface" && !validSurfaceIds.has(tab.surfaceId)) {
       next = closeWorkspaceTab(next, tab.id);
@@ -326,6 +336,7 @@ function reconcileThreadWorkspaceTabFields(
       next = addSurfaceTab(next, surfaceId, false);
     }
   }
+
   return next;
 }
 
@@ -340,6 +351,7 @@ export function findThreadWorkspaceRightSidebar(
   current: ThreadWorkspaceTabFields,
 ): PaneTreeNode | null {
   const root = current.paneTree.root;
+
   if (root._tag !== "Split" || root.orientation !== "horizontal") return null;
   if (!paneNodeContainsThreadTab(current, root.first)) return null;
   return paneNodeContainsThreadTab(current, root.second) ? null : root.second;
@@ -349,6 +361,7 @@ export function findThreadWorkspaceRightSidebar(
 export function selectVisibleThreadWorkspacePaneTree(current: ThreadWorkspaceTabFields): PaneTree {
   const tree = selectNavigableThreadWorkspacePaneTree(current);
   const root = getVisiblePaneTreeRoot(tree);
+
   return root === tree.root ? tree : { ...tree, root };
 }
 
@@ -364,10 +377,13 @@ export function selectNavigableThreadWorkspacePaneTree(
   }
 
   const root = current.paneTree.root;
+
   if (root._tag !== "Split") return current.paneTree;
+
   const focusedPaneId = findPane(root.first, current.paneTree.focusedPaneId)
     ? current.paneTree.focusedPaneId
     : getPanes(root.first)[0]?.id;
+
   if (!focusedPaneId) return current.paneTree;
   return {
     root: root.first,
@@ -392,10 +408,13 @@ function setThreadWorkspaceRightSidebarVisibility(
   if (visibility === "open") return { ...current, rightSidebarVisibility: visibility };
 
   const root = current.paneTree.root;
+
   if (root._tag !== "Split") return current;
+
   const focusedPaneId = findPane(root.first, current.paneTree.focusedPaneId)
     ? current.paneTree.focusedPaneId
     : getPanes(root.first)[0]?.id;
+
   if (!focusedPaneId) return current;
   return {
     ...current,
@@ -484,13 +503,16 @@ function replaceSurfaceWorkspaceTabs(
   nextSurfaceId: string,
 ): ThreadWorkspaceTabFields {
   if (previousSurfaceId === nextSurfaceId) return current;
+
   let next = current;
+
   for (const previousTab of findSurfaceTabs(current, previousSurfaceId)) {
     const paneId = findThreadWorkspaceTabGroup(next, previousTab.id);
     const group = paneId ? findPane(next.paneTree.root, paneId) : null;
     if (!paneId || !group) continue;
     const equivalentTabId = group.tabIds.find((tabId) => {
       const tab = next.tabsById[tabId];
+
       return tabId !== previousTab.id && tab?._tag === "Surface" && tab.surfaceId === nextSurfaceId;
     });
     if (equivalentTabId) {
@@ -510,11 +532,13 @@ function replaceSurfaceWorkspaceTabs(
       },
     };
   }
+
   return next;
 }
 
 function activateThreadWorkspaceTab(current: ThreadWorkspaceTabFields): ThreadWorkspaceTabFields {
   const threadTab = Object.values(current.tabsById).find((tab) => tab._tag === "Thread");
+
   if (!threadTab) return current;
   return activateWorkspaceTab(current, threadTab.id);
 }
@@ -528,6 +552,7 @@ function activateSurfaceWorkspaceTab(
     .map((tabId) => current.tabsById[tabId])
     .find((tab) => tab?._tag === "Surface" && tab.surfaceId === surfaceId);
   const existingTab = focusedTab ?? findSurfaceTabs(current, surfaceId)[0];
+
   return existingTab
     ? activateWorkspaceTab(current, existingTab.id)
     : addSurfaceTab(current, surfaceId);
@@ -539,10 +564,13 @@ function openSurfaceWorkspaceTab(
   surfaceId: string,
 ): ThreadWorkspaceTabFields {
   const focusedGroup = findPane(current.paneTree.root, current.paneTree.focusedPaneId);
+
   if (!focusedGroup) return activateSurfaceWorkspaceTab(current, surfaceId);
+
   const focusedTab = focusedGroup.tabIds
     .map((tabId) => current.tabsById[tabId])
     .find((tab) => tab?._tag === "Surface" && tab.surfaceId === surfaceId);
+
   return focusedTab
     ? activateWorkspaceTab(current, focusedTab.id)
     : addSurfaceTab(current, surfaceId);
@@ -558,6 +586,7 @@ function splitThreadWorkspaceTab(
   },
 ): ThreadWorkspaceTabFields {
   const sourceTab = current.tabsById[input.tabId];
+
   if (!sourceTab || (input.mode === "copy" && sourceTab._tag === "Thread")) return current;
 
   const targetPaneId = makePaneId(current.nextId);
@@ -572,6 +601,7 @@ function splitThreadWorkspaceTab(
     direction: input.direction,
     mode: input.mode,
   });
+
   if (workspace === current.paneTree) return current;
   return {
     paneTree: workspace,
@@ -595,6 +625,7 @@ function splitThreadWorkspacePane(
     splitId: makePaneSplitId(current.nextId + 1),
     direction,
   });
+
   return workspace === current.paneTree
     ? current
     : { ...current, paneTree: workspace, nextId: current.nextId + 2 };
@@ -611,11 +642,14 @@ function reorderThreadWorkspaceTab(
 ): ThreadWorkspaceTabFields {
   const tab = current.tabsById[input.tabId];
   const group = findPane(current.paneTree.root, input.paneId);
+
   if (!tab || tab._tag === "Thread" || !group) return current;
+
   const threadIndex = group.tabIds.findIndex((tabId) => current.tabsById[tabId]?._tag === "Thread");
   const targetIndex =
     threadIndex < 0 ? input.targetIndex : Math.max(threadIndex + 1, input.targetIndex);
   const workspace = reorderPaneTab(current.paneTree, { ...input, targetIndex });
+
   return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
 }
 
@@ -631,11 +665,15 @@ function moveThreadWorkspaceTabToPane(
 ): ThreadWorkspaceTabFields {
   const tab = current.tabsById[input.tabId];
   const targetGroup = findPane(current.paneTree.root, input.targetPaneId);
+
   if (!tab || !targetGroup) return current;
+
   const equivalentTargetTabId = targetGroup.tabIds.find((tabId) => {
     const candidate = current.tabsById[tabId];
+
     return candidate ? workspaceTabsShareContent(tab, candidate) : false;
   });
+
   if (equivalentTargetTabId) {
     const withoutSource = closeWorkspaceTab(current, input.tabId, input.sourcePaneId);
     const workspace = activatePaneTab(
@@ -647,6 +685,7 @@ function moveThreadWorkspaceTabToPane(
       ? withoutSource
       : { ...withoutSource, paneTree: workspace };
   }
+
   const threadIndex = targetGroup.tabIds.findIndex(
     (tabId) => current.tabsById[tabId]?._tag === "Thread",
   );
@@ -660,6 +699,7 @@ function moveThreadWorkspaceTabToPane(
     ...input,
     ...(requestedTargetIndex !== undefined ? { targetIndex: requestedTargetIndex } : {}),
   });
+
   return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
 }
 
@@ -674,6 +714,7 @@ function moveThreadWorkspaceTabToSplit(
   },
 ): ThreadWorkspaceTabFields {
   if (!current.tabsById[input.tabId]) return current;
+
   const workspace = moveTabToPaneSplit(current.paneTree, {
     sourcePaneId: input.sourcePaneId,
     sourceTabId: input.tabId,
@@ -682,6 +723,7 @@ function moveThreadWorkspaceTabToSplit(
     splitId: makePaneSplitId(current.nextId + 1),
     direction: input.direction,
   });
+
   return workspace === current.paneTree
     ? current
     : { ...current, paneTree: workspace, nextId: current.nextId + 2 };
@@ -696,6 +738,7 @@ function swapThreadWorkspacePanes(
   },
 ): ThreadWorkspaceTabFields {
   const workspace = swapPanes(current.paneTree, input.sourcePaneId, input.targetPaneId);
+
   return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
 }
 
@@ -705,6 +748,7 @@ function closeThreadWorkspaceSurfaceTab(
   tabId: PaneTabId,
 ): ThreadWorkspaceTabFields {
   const tab = current.tabsById[tabId];
+
   return tab?._tag === "Surface" ? closeWorkspaceTab(current, tabId, paneId) : current;
 }
 
@@ -714,6 +758,7 @@ function closeOtherThreadWorkspaceSurfaceTabs(
   tabId: PaneTabId,
 ): ThreadWorkspaceTabFields {
   const group = findPane(current.paneTree.root, paneId);
+
   if (!group || current.tabsById[tabId]?._tag !== "Surface") return current;
   return group.tabIds.reduce(
     (next, candidateId) =>
@@ -731,6 +776,7 @@ function closeThreadWorkspaceSurfaceTabsToRight(
 ): ThreadWorkspaceTabFields {
   const group = findPane(current.paneTree.root, paneId);
   const tabIndex = group?.tabIds.indexOf(tabId) ?? -1;
+
   if (!group || tabIndex < 0) return current;
   return group.tabIds
     .slice(tabIndex + 1)
@@ -748,6 +794,7 @@ function closeAllThreadWorkspaceSurfaceTabs(
   paneId: PaneId,
 ): ThreadWorkspaceTabFields {
   const group = findPane(current.paneTree.root, paneId);
+
   if (!group) return current;
   return group.tabIds.reduce(
     (next, tabId) =>
@@ -803,6 +850,7 @@ export function revealThreadWorkspaceSurfaceBesideThread(
 
   const rightPaneId = findAdjacentPanes(current.paneTree, threadPaneId).right;
   const existingThreadTab = existingTabs[0];
+
   if (existingThreadTab) {
     const moved = rightPaneId
       ? moveThreadWorkspaceTabToPane(current, {
@@ -822,6 +870,7 @@ export function revealThreadWorkspaceSurfaceBesideThread(
   const targetWorkspace = rightPaneId
     ? { ...current, paneTree: focusPane(current.paneTree, rightPaneId) }
     : splitThreadWorkspacePane(current, threadPaneId, "right");
+
   return restorePaneTree(addSurfaceTab(targetWorkspace, surfaceId));
 }
 
@@ -845,6 +894,7 @@ function addSurfaceTab(
     !activate && focusedGroup?.activeTabId
       ? activatePaneTab(openedWorkspace, focusedGroup.id, focusedGroup.activeTabId)
       : openedWorkspace;
+
   return {
     paneTree: workspace,
     tabsById: {
@@ -861,14 +911,18 @@ function activateWorkspaceTab(
   tabId: PaneTabId,
 ): ThreadWorkspaceTabFields {
   const paneId = findThreadWorkspaceTabGroup(current, tabId);
+
   if (!paneId) return current;
+
   const workspace = activatePaneTab(current.paneTree, paneId, tabId);
   const sidebar =
     current.rightSidebarVisibility === "closed" ? findThreadWorkspaceRightSidebar(current) : null;
   const rightSidebarVisibility =
     sidebar && findPane(sidebar, paneId) ? "open" : current.rightSidebarVisibility;
+
   if (workspace === current.paneTree && rightSidebarVisibility === current.rightSidebarVisibility)
     return current;
+
   return {
     ...current,
     paneTree: workspace,
@@ -882,8 +936,11 @@ function closeWorkspaceTab(
   knownGroupId?: PaneId,
 ): ThreadWorkspaceTabFields {
   const paneId = knownGroupId ?? findThreadWorkspaceTabGroup(current, tabId);
+
   if (!paneId) return withoutUnreferencedTabs(current);
+
   const workspace = closePaneTab(current.paneTree, paneId, tabId);
+
   return withoutUnreferencedTabs({ ...current, paneTree: workspace });
 }
 
@@ -894,6 +951,7 @@ function withoutUnreferencedTabs(current: ThreadWorkspaceTabFields): ThreadWorks
   const tabsById = Object.fromEntries(
     Object.entries(current.tabsById).filter(([tabId]) => referencedIds.has(tabId)),
   );
+
   return Object.keys(tabsById).length === Object.keys(current.tabsById).length
     ? current
     : { ...current, tabsById };
@@ -903,6 +961,7 @@ function workspaceTabsShareContent(left: ThreadWorkspaceTab, right: ThreadWorksp
   if (left._tag === "Thread" || right._tag === "Thread") {
     return left._tag === right._tag;
   }
+
   return left.surfaceId === right.surfaceId;
 }
 
@@ -912,15 +971,20 @@ export function parsePersistedThreadWorkspaceTabs(input: unknown): {
   if (!input || typeof input !== "object" || !("byThreadKey" in input)) {
     return { byThreadKey: {} };
   }
+
   const rawByThreadKey = input.byThreadKey;
+
   if (!rawByThreadKey || typeof rawByThreadKey !== "object") {
     return { byThreadKey: {} };
   }
+
   const byThreadKey: Record<string, ThreadWorkspaceTabFields> = {};
+
   for (const [threadKey, rawWorkspace] of Object.entries(rawByThreadKey)) {
     const workspace = parsePersistedThreadWorkspaceTabFields(rawWorkspace);
     if (workspace) byThreadKey[threadKey] = workspace;
   }
+
   return { byThreadKey };
 }
 
@@ -929,6 +993,7 @@ function normalizePersistedThreadWorkspaceTabFields(
 ): ThreadWorkspaceTabFields | null {
   const tabsById: Record<string, ThreadWorkspaceTab> = {};
   let threadTabCount = 0;
+
   for (const [tabKey, tab] of Object.entries(persisted.tabsById)) {
     const tabId = parsePaneTabId(tab.id);
     if (!tabId || tabKey !== tab.id) return null;
@@ -953,6 +1018,7 @@ function normalizePersistedThreadWorkspaceTabFields(
   const maximizedPaneId = persisted.paneTree.maximizedPaneId
     ? parsePaneId(persisted.paneTree.maximizedPaneId)
     : null;
+
   if (
     !root ||
     !focusedPaneId ||
@@ -964,6 +1030,7 @@ function normalizePersistedThreadWorkspaceTabFields(
   ) {
     return null;
   }
+
   return {
     paneTree: { root, focusedPaneId, maximizedPaneId },
     tabsById,
@@ -977,6 +1044,7 @@ function normalizePersistedThreadWorkspaceTabFields(
 
 function nextAvailableEditorId(ids: readonly string[]): number {
   let nextId = 1;
+
   for (const id of ids) {
     const suffix = id.slice(id.lastIndexOf(":") + 1);
     const numericId = Number(suffix);
@@ -984,6 +1052,7 @@ function nextAvailableEditorId(ids: readonly string[]): number {
       nextId = numericId + 1;
     }
   }
+
   return nextId;
 }
 
@@ -1019,10 +1088,12 @@ function normalizePersistedEditorNode(
 
   const id = parsePaneSplitId(node.id);
   const ratio = clampPaneSplitRatio(node.ratio);
+
   if (!id || ratio === null || state.seenSplitIds.has(id)) return null;
   state.seenSplitIds.add(id);
   const first = normalizePersistedEditorNode(node.first, state);
   const second = normalizePersistedEditorNode(node.second, state);
+
   return first && second
     ? { _tag: "Split", id, orientation: node.orientation, ratio, first, second }
     : null;

@@ -248,6 +248,7 @@ function DraggableWorkspaceTab(props: {
     disabled: props.disabled === true || props.dragData === null,
     ...(props.dragData ? { data: { ...props.dragData, label: props.label } } : {}),
   });
+
   return props.children({
     dragData: props.dragData,
     isDragging: draggable.isDragging,
@@ -487,8 +488,10 @@ function RightPanelEmptyState(props: {
   useEffect(() => {
     shortcutActionsRef.current = availableActions;
   });
+
   useEffect(() => {
     if (!props.shortcutsEnabled) return;
+
     const handler = (event: KeyboardEvent) => {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
@@ -711,6 +714,7 @@ function surfaceTitle(
 
 function repeatableSurfaceTitle(id: string, title: string): string {
   const separatorIndex = id.lastIndexOf(":");
+
   return separatorIndex < 0 ? title : `${title} ${id.slice(separatorIndex + 1)}`;
 }
 
@@ -1017,11 +1021,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const surfaceIndex = surface
         ? props.surfaces.findIndex((entry) => entry.id === surface.id)
         : -1;
+
       if (surface && surfaceIndex < 0) return;
 
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
+
       if (surface?.kind === "device" && props.onRenameDevice)
         items.push({ id: "rename", label: "Rename" });
+
       const menuPreviewTabId = surface ? previewTabIdOf(surface, props.previewSessions) : null;
       // Desktop overlay state only arrives once the preview manager has created
       // the tab. A server session id alone can still be ahead of that, and
@@ -1030,6 +1037,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ? (props.desktopByTabId[menuPreviewTabId] ?? null)
         : null;
       const menuMuted = menuOverlay?.audioMuted ?? false;
+
       if (surface?.kind === "preview") {
         // Not gated on audibility: silencing a quiet tab ahead of time is the
         // point, so the item is offered whenever the tab is mutable at all.
@@ -1041,6 +1049,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           }),
         });
       }
+
       items.push(
         ...buildWorkspaceTabContextMenuItems({
           target,
@@ -1058,6 +1067,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       const workspaceAction = action === "rename" || action === "toggle-mute" ? null : action;
       const splitAction = resolveWorkspaceTabSplitAction(workspaceAction);
+
       if (splitAction?.mode === "copy") {
         props.onSplitTab?.(target, splitAction.direction);
         return;
@@ -1066,7 +1076,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         props.onMoveTabToSplit?.(target, splitAction.direction);
         return;
       }
+
       const layoutAction = resolveWorkspaceTabLayoutAction(workspaceAction);
+
       if (layoutAction?._tag === "MoveToGroup") {
         props.onMoveTabToPane?.(target, layoutAction.direction);
         return;
@@ -1137,6 +1149,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   useEffect(() => {
     if ((!props.activeSurfaceId && !props.threadTab?.active) || !tabScrollState.hasOverflow) return;
+
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [props.activeSurfaceId, props.threadTab?.active, tabScrollState.hasOverflow]);
@@ -1231,6 +1244,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     dragData && props.tabDropPreview?.targetTabId === dragData.sourceTabId
                       ? props.tabDropPreview
                       : null;
+
                   return (
                     <button
                       ref={setNodeRef}
@@ -1295,6 +1309,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 dragData && props.tabDropPreview?.targetTabId === dragData.sourceTabId
                   ? props.tabDropPreview
                   : null;
+
               return (
                 <DraggableWorkspaceTab
                   key={surface.id}
@@ -1396,6 +1411,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           }}
                           onKeyDown={(event) => {
                             event.stopPropagation();
+
                             if (event.key === "Enter") event.currentTarget.blur();
                             if (event.key === "Escape") {
                               event.currentTarget.value = title;

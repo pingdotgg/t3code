@@ -26,16 +26,19 @@ export function parsePersistedThreadWorkspaceDefaults(input: unknown): {
   if (!input || typeof input !== "object") {
     return { globalDefault: null, byProjectKey: {} };
   }
+
   const globalDefault =
     "globalDefault" in input ? parseThreadWorkspaceDefault(input.globalDefault) : null;
   const rawByProjectKey = "byProjectKey" in input ? input.byProjectKey : null;
   const byProjectKey: Record<string, ThreadWorkspaceDefault> = {};
+
   if (rawByProjectKey && typeof rawByProjectKey === "object") {
     for (const [projectKey, rawTemplate] of Object.entries(rawByProjectKey)) {
       const template = parseThreadWorkspaceDefault(rawTemplate);
       if (projectKey.length > 0 && template) byProjectKey[projectKey] = template;
     }
   }
+
   return { globalDefault, byProjectKey };
 }
 
@@ -60,7 +63,9 @@ export const useThreadWorkspaceDefaultStore = create<ThreadWorkspaceDefaultStore
       clearProject: (projectKey) =>
         set((state) => {
           if (!(projectKey in state.byProjectKey)) return state;
+
           const { [projectKey]: _removed, ...byProjectKey } = state.byProjectKey;
+
           return { byProjectKey };
         }),
     }),

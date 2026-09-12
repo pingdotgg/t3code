@@ -22,6 +22,7 @@ function activeTabId(state: ReturnType<typeof createThreadWorkspaceTabFields>): 
       : state.paneTree.root.second._tag === "Group"
         ? state.paneTree.root.second
         : null;
+
   return group?.activeTabId ?? null;
 }
 
@@ -63,7 +64,9 @@ describe("thread workspace tabs", () => {
       sidebarId,
     ).left;
     expect(leftId).toBe("pane:root");
+
     if (!leftId) throw new Error("Expected the conversation beside the maximized pane");
+
     const focused = transitionThreadWorkspaceTabs(maximized, { _tag: "FocusPane", paneId: leftId });
     expect(focused.paneTree.maximizedPaneId).toBe(leftId);
     expect(
@@ -78,11 +81,13 @@ describe("thread workspace tabs", () => {
       findAdjacentPanes(selectNavigableThreadWorkspacePaneTree(hidden), leftId).right,
     ).toBeNull();
   });
+
   test("starts with the always-on thread tab and opens surfaces in the focused group", () => {
     const state = createThreadWorkspaceTabFields(["files", "diff"]);
     const group = state.paneTree.root;
 
     expect(group._tag).toBe("Group");
+
     if (group._tag !== "Group") return;
     expect(group.tabIds.map((tabId) => state.tabsById[tabId]?._tag)).toEqual([
       "Thread",
@@ -280,10 +285,12 @@ describe("thread workspace tabs", () => {
     const root = reordered.paneTree.root;
 
     expect(root._tag).toBe("Group");
+
     if (root._tag !== "Group") return;
     expect(
       root.tabIds.map((tabId) => {
         const tab = reordered.tabsById[tabId];
+
         return tab?._tag === "Thread" ? "thread" : tab?.surfaceId;
       }),
     ).toEqual(["thread", "diff", "files"]);
@@ -295,6 +302,7 @@ describe("thread workspace tabs", () => {
     const pane = initial.paneTree.root;
     expect(filesTab).toBeDefined();
     expect(pane._tag).toBe("Group");
+
     if (!filesTab || pane._tag !== "Group") return;
 
     expect(
@@ -319,7 +327,9 @@ describe("thread workspace tabs", () => {
     expect(filesTab).toBeDefined();
     expect(diffTab).toBeDefined();
     expect(sourcePaneId).not.toBeNull();
+
     if (!filesTab || !diffTab || !sourcePaneId) return;
+
     const split = transitionThreadWorkspaceTabs(initial, {
       _tag: "SplitTab",
       paneId: sourcePaneId,
@@ -329,6 +339,7 @@ describe("thread workspace tabs", () => {
     });
     const targetPaneId = findThreadWorkspaceTabGroup(split, filesTab.id);
     expect(targetPaneId).not.toBeNull();
+
     if (!targetPaneId) return;
 
     expect(
@@ -445,6 +456,7 @@ describe("thread workspace tabs", () => {
       targetPaneId: rightGroupId,
     });
     expect(swapped.paneTree.root._tag).toBe("Split");
+
     if (swapped.paneTree.root._tag !== "Split") return;
     expect(
       swapped.paneTree.root.first._tag === "Group" ? swapped.paneTree.root.first.id : null,
@@ -455,12 +467,16 @@ describe("thread workspace tabs", () => {
     const initial = createThreadWorkspaceTabFields(["files"]);
     const initialPane = initial.paneTree.root;
     expect(initialPane._tag).toBe("Group");
+
     if (initialPane._tag !== "Group") return;
+
     const threadTabId = initialPane.tabIds.find(
       (tabId) => initial.tabsById[tabId]?._tag === "Thread",
     );
     expect(threadTabId).toBeDefined();
+
     if (!threadTabId) return;
+
     const surfaceOnlyPane = transitionThreadWorkspaceTabs(initial, {
       _tag: "SplitTab",
       paneId: initialPane.id,
@@ -677,7 +693,9 @@ describe("thread workspace tabs", () => {
       direction: "right",
       mode: "copy",
     });
+
     if (split.paneTree.root._tag !== "Split") throw new Error("Expected split workspace");
+
     const parsed = parsePersistedThreadWorkspaceTabs({
       byThreadKey: {
         thread: {

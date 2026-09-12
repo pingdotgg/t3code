@@ -19,6 +19,7 @@ export function canDropPaneTab(input: {
 }): boolean {
   const sourcePane = findPane(input.tree.root, input.draggedTab.sourcePaneId);
   const targetPane = findPane(input.tree.root, input.targetPaneId);
+
   if (!sourcePane?.tabIds.includes(input.draggedTab.sourceTabId) || !targetPane) return false;
   if (input.zone === "center") return sourcePane.id !== targetPane.id;
   return (
@@ -46,13 +47,16 @@ export function resolvePaneDropZone(input: {
   ) {
     return null;
   }
+
   const horizontal = (input.clientX - input.bounds.left) / input.bounds.width;
   const vertical = (input.clientY - input.bounds.top) / input.bounds.height;
+
   if (horizontal < 0 || horizontal > 1 || vertical < 0 || vertical > 1) return null;
 
   let nearestZone: Exclude<PaneDropZone, "center"> = "left";
   let nearestDistance = horizontal;
   const rightDistance = 1 - horizontal;
+
   if (rightDistance < nearestDistance) {
     nearestZone = "right";
     nearestDistance = rightDistance;
@@ -61,7 +65,9 @@ export function resolvePaneDropZone(input: {
     nearestZone = "up";
     nearestDistance = vertical;
   }
+
   const downDistance = 1 - vertical;
+
   if (downDistance < nearestDistance) {
     nearestZone = "down";
     nearestDistance = downDistance;

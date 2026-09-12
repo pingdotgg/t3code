@@ -35,8 +35,11 @@ function allocateReusableSurfaceId<Kind extends RepeatableRightPanelKind>(
     reservedSurfaceIds.add(kind);
     return kind;
   }
+
   let sequence = 2;
+
   while (reservedSurfaceIds.has(`${kind}:${sequence}`)) sequence += 1;
+
   const id: `${Kind}:${number}` = `${kind}:${sequence}`;
   reservedSurfaceIds.add(id);
   return id;
@@ -91,6 +94,7 @@ function reusableDefaultSurface(
 
 function closeEmptyDefaultPanes(layout: ThreadWorkspaceTabFields): ThreadWorkspaceTabFields {
   let next = layout;
+
   while (next.paneTree.root._tag === "Split") {
     const emptyPane = getPanes(next.paneTree.root).find((pane) => pane.tabIds.length === 0);
     if (!emptyPane) break;
@@ -101,6 +105,7 @@ function closeEmptyDefaultPanes(layout: ThreadWorkspaceTabFields): ThreadWorkspa
     if (closed === next) break;
     next = closed;
   }
+
   return next;
 }
 
@@ -129,6 +134,7 @@ export function createThreadWorkspaceDefault(
   }
 
   let reusableLayout = layout;
+
   for (const [previousSurfaceId, nextSurfaceId] of surfaceIdMap) {
     reusableLayout = transitionThreadWorkspaceTabs(reusableLayout, {
       _tag: "ReplaceSurfaceTabs",
@@ -136,6 +142,7 @@ export function createThreadWorkspaceDefault(
       nextSurfaceId,
     });
   }
+
   reusableLayout = transitionThreadWorkspaceTabs(reusableLayout, {
     _tag: "ReconcileSurfaceTabs",
     surfaceIds: surfaces.map((surface) => surface.id),
@@ -149,6 +156,7 @@ export function createThreadWorkspaceDefault(
   const activeSurfaceId = rightPanel.activeSurfaceId
     ? (surfaceIdMap.get(rightPanel.activeSurfaceId) ?? null)
     : null;
+
   return {
     layout: reusableLayout,
     rightPanel: {
@@ -163,12 +171,16 @@ export function parseThreadWorkspaceDefault(input: unknown): ThreadWorkspaceDefa
   if (!input || typeof input !== "object" || !("layout" in input) || !("rightPanel" in input)) {
     return null;
   }
+
   const layout = parsePersistedThreadWorkspaceTabFields(input.layout);
+
   if (!layout) return null;
+
   const parsedPanels = migratePersistedRightPanelState({
     byThreadKey: { [PARSE_KEY]: input.rightPanel },
   });
   const rightPanel = parsedPanels.byThreadKey[PARSE_KEY];
+
   if (!rightPanel) {
     return createThreadWorkspaceDefault(layout, {
       isOpen: false,
@@ -176,11 +188,13 @@ export function parseThreadWorkspaceDefault(input: unknown): ThreadWorkspaceDefa
       surfaces: [],
     });
   }
+
   return createThreadWorkspaceDefault(layout, rightPanel);
 }
 
 export function describeThreadWorkspaceDefault(template: ThreadWorkspaceDefault): string {
   const paneCount = getPanes(template.layout.paneTree.root).length;
   const surfaceCount = template.rightPanel.surfaces.length;
+
   return `${paneCount} ${paneCount === 1 ? "pane" : "panes"}, ${surfaceCount} ${surfaceCount === 1 ? "tool" : "tools"}`;
 }

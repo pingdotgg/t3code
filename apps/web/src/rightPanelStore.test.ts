@@ -35,9 +35,13 @@ beforeEach(() => {
 function splitSurfaceIntoSoleTabPane(surfaceId: string) {
   const initial = createThreadWorkspaceTabFields([surfaceId]);
   const surfaceTab = findSurfaceTabs(initial, surfaceId)[0];
+
   if (!surfaceTab) throw new Error(`Expected ${surfaceId} surface tab`);
+
   const sourcePaneId = findThreadWorkspaceTabGroup(initial, surfaceTab.id);
+
   if (!sourcePaneId) throw new Error(`Expected ${surfaceId} source pane`);
+
   const split = transitionThreadWorkspaceTabs(initial, {
     _tag: "SplitTab",
     paneId: sourcePaneId,
@@ -46,6 +50,7 @@ function splitSurfaceIntoSoleTabPane(surfaceId: string) {
     mode: "move",
   });
   const surfacePaneId = findThreadWorkspaceTabGroup(split, surfaceTab.id);
+
   if (!surfacePaneId) throw new Error(`Expected ${surfaceId} split pane`);
   useThreadWorkspaceLayoutStore.setState({
     byThreadKey: { [scopedThreadKey(refA)]: split },
@@ -78,6 +83,7 @@ describe("rightPanelStore", () => {
     const layouts = useThreadWorkspaceLayoutStore.getState();
     let updates = 0;
     const unsubscribe = useThreadWorkspaceLayoutStore.subscribe(() => updates++);
+
     try {
       for (let i = 0; i < 2; i++) {
         layouts.transition(refA, { _tag: "FocusPane", paneId });
@@ -137,6 +143,7 @@ describe("rightPanelStore", () => {
     expect(layout.paneTree.focusedPaneId).toBe(paneId);
     expect(findSurfaceTabs(layout, "diff")).toHaveLength(1);
   });
+
   it("keeps a selected file in a sole-tab Files pane", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");

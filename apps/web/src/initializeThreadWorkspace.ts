@@ -16,6 +16,7 @@ export function initializeNewThreadWorkspace(
 ): boolean {
   const threadKey = scopedThreadKey(threadRef);
   const layouts = useThreadWorkspaceLayoutStore.getState();
+
   if (threadKey in layouts.byThreadKey) return false;
 
   const template = selectThreadWorkspaceDefault(
@@ -41,5 +42,6 @@ export function initializeNewThreadWorkspace(
           },
     );
   }
+
   return true;
 }

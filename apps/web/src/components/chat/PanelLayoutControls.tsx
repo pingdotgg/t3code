@@ -131,6 +131,7 @@ function WorkspaceLayoutMiniature({ template }: { readonly template: ThreadWorks
   const surfacesById = new Map(
     template.rightPanel.surfaces.map((surface) => [surface.id, surface]),
   );
+
   return (
     <div className="relative size-full">
       {layout.groups.map(({ bounds, group }) => (
@@ -209,6 +210,7 @@ function WorkspaceDefaultPreview({
     : projectDefault
       ? "Current project"
       : "Inherited global";
+
   return (
     <div
       className={`${previousDefault ? "w-[30rem]" : "w-64"} flex flex-col gap-2.5 p-1.5 text-left`}

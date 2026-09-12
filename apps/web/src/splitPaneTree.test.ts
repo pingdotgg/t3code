@@ -99,6 +99,7 @@ describe("split pane tree", () => {
     });
 
     expect(next.root._tag).toBe("Split");
+
     if (next.root._tag !== "Split") return;
     expect(next.root.orientation).toBe(orientation);
     expect(next.root.first._tag === "Group" ? next.root.first.id : null).toBe(firstGroupId);
@@ -234,6 +235,7 @@ describe("split pane tree", () => {
     const swapped = swapPanes(columns, group("left"), group("right"));
 
     expect(swapped.root._tag).toBe("Split");
+
     if (swapped.root._tag !== "Split") return;
     expect(swapped.root.first).toEqual(findPane(columns.root, group("right")));
     expect(swapped.root.second).toEqual(findPane(columns.root, group("left")));

@@ -47,8 +47,11 @@ export function isWorkspaceShortcutReleasedFromTerminal(
   options?: ShortcutMatchOptions,
 ): boolean {
   const command = resolveShortcutCommand(event, keybindings, options);
+
   if (command === null) return false;
+
   const paneAction = workspacePaneShortcutAction(command);
+
   return (
     command === "rightPanel.toggle" ||
     command === "rightPanel.toggleMaximized" ||

@@ -534,10 +534,12 @@ export default function DiffPanel({
     if (!diffPanelRef) return;
     useDiffPanelStore.getState().selectTurn(diffPanelRef, turnId);
   };
+
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!diffPanelRef) return;
     useDiffPanelStore.getState().selectGitScope(diffPanelRef, scope);
   };
+
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!diffPanelRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(diffPanelRef, baseRef);

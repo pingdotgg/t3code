@@ -124,6 +124,7 @@ export interface ThreadRightPanelState {
 
 function revealThreadWorkspaceSurface(ref: ScopedThreadRef, replacedSurfaceId?: string): void {
   const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+
   if (!panel.isOpen || !panel.activeSurfaceId) return;
   transitionThreadWorkspaceLayout(ref, {
     _tag: "RevealSurface",
@@ -222,7 +223,9 @@ function nextRepeatableSurfaceId<Kind extends RepeatableRightPanelKind>(
   kind: Kind,
 ): Kind | `${Kind}:${number}` {
   if (!current.surfaces.some((surface) => surface.id === kind)) return kind;
+
   let sequence = 2;
+
   while (current.surfaces.some((surface) => surface.id === `${kind}:${sequence}`)) sequence += 1;
   return `${kind}:${sequence}`;
 }
@@ -550,6 +553,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           opened = true;
           return automaticUpdate(state, threadKey, (current) => upsertSurface(current, surface));
         });
+
         if (opened) revealThreadWorkspaceSurface(ref);
         return opened;
       },
@@ -580,13 +584,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
             const id =
               `device:${encodeURIComponent(target.hostId)}:${encodeURIComponent(target.deviceId)}` as const;
+
             if (automatic && current.dismissedDeviceSurfaceIds?.includes(id)) return current;
             opened = true;
             const surface: RightPanelSurface = { id, kind: "device", target };
             const existing = current.surfaces.find((entry) => entry.id === id);
+
             if (current.surfaces.some((entry) => entry.id === "device")) {
               replacedSurfaceId = "device";
             }
+
             const surfaces = existing
               ? current.surfaces.filter((entry) => entry.id !== "device")
               : current.surfaces.map((entry) => (entry.id === "device" ? surface : entry));
@@ -602,6 +609,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         );
+
         if (opened) revealThreadWorkspaceSurface(ref, replacedSurfaceId);
       },
       renameDevice: (ref, surfaceId, title) =>
@@ -620,9 +628,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = browserSurface(tabId);
+
             if (tabId && current.surfaces.some((entry) => entry.id === "browser:new")) {
               replacedSurfaceId = "browser:new";
             }
+
             const withoutPlaceholder = tabId
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
@@ -659,9 +669,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((surface) => surface.id !== activeExplorer.id)
               : current.surfaces;
             const surfaceId = `file:${relativePath}` as const;
+
             if (activeExplorer) {
               replacedSurfaceId = activeExplorer.id;
             }
+
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -695,9 +707,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((surface) => surface.id !== activeExplorer.id)
               : current.surfaces;
             const surface = attachmentSurface(attachment);
+
             if (activeExplorer) {
               replacedSurfaceId = activeExplorer.id;
             }
+
             return upsertSurface({ ...current, surfaces: withoutStandaloneExplorer }, surface);
           }),
         );
@@ -791,6 +805,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           )
         )
           return;
+
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
             current.surfaces.some((surface) => surface.id === surfaceId)

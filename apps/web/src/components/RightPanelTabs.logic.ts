@@ -41,6 +41,7 @@ export function buildWorkspaceTabContextMenuItems(input: {
   readonly moveToSplitAvailable: boolean;
 }): readonly ContextMenuItem<TabContextMenuAction>[] {
   const items: ContextMenuItem<TabContextMenuAction>[] = [];
+
   if (input.target._tag === "Surface") {
     if (input.target.surface.kind === "file") {
       items.push({ id: "copy-path", label: "Copy path" });
@@ -64,9 +65,11 @@ export function buildWorkspaceTabContextMenuItems(input: {
       },
     );
   }
+
   const moveGroupItems = input.moveToGroupAvailable
     ? directionalGroupItems(input.adjacentGroups)
     : [];
+
   if (input.copyToSplitAvailable || input.moveToSplitAvailable || moveGroupItems.length > 0) {
     items.push(
       { id: "split-right", label: "Split Right", disabled: !input.copyToSplitAvailable },
@@ -85,6 +88,7 @@ export function buildWorkspaceTabContextMenuItems(input: {
       },
     );
   }
+
   return items;
 }
 
@@ -93,6 +97,7 @@ function directionalGroupItems(
 ): readonly ContextMenuItem<TabContextMenuAction>[] {
   return (["up", "down", "left", "right"] as const).flatMap((direction) => {
     if (!groups[direction]) return [];
+
     const label =
       direction === "up"
         ? "Move Above"
@@ -101,6 +106,7 @@ function directionalGroupItems(
           : direction === "left"
             ? "Move Left"
             : "Move Right";
+
     return [{ id: directionalGroupActionId(direction), label }];
   });
 }
