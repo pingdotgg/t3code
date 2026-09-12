@@ -1122,6 +1122,141 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("folds a settled subagent spawn row and keeps a live one outside the fold", () => {
+    const firstMessage: ChatMessage = {
+      id: MessageId.make("assistant-first-entry"),
+      role: "assistant",
+      text: "Fanning out.",
+      turnId: TurnId.make("turn-1"),
+      createdAt: "2026-01-01T00:00:01Z",
+      updatedAt: "2026-01-01T00:00:02Z",
+      streaming: false,
+    };
+    const entriesWith = (agentSpawn: { workflowId: string | null; agentTaskIds: string[] }) =>
+      deriveTimelineEntries(
+        [
+          firstMessage,
+          {
+            ...firstMessage,
+            id: MessageId.make("assistant-final-entry"),
+            text: "Done.",
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+          },
+        ],
+        [],
+        [
+          {
+            id: "spawn-entry",
+            createdAt: "2026-01-01T00:00:03Z",
+            turnId: firstMessage.turnId,
+            label: "Ran 2 subagents",
+            tone: "tool",
+            agentSpawn,
+          },
+        ],
+      );
+    const direct = entriesWith({ workflowId: null, agentTaskIds: ["agent-a", "agent-b"] });
+    const workflow = entriesWith({ workflowId: "wf-1", agentTaskIds: ["wf-1", "agent-a"] });
+    const derive = (
+      timelineEntries: typeof direct,
+      liveAgentTaskIds: ReadonlySet<string> | undefined,
+      expandedSpawnEntryIds?: ReadonlySet<string>,
+      expandedTurnIds?: ReadonlySet<TurnId>,
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        liveAgentTaskIds,
+        expandedSpawnEntryIds,
+        ...(expandedTurnIds ? { expandedTurnIds } : {}),
+      }).map((row) => row.id);
+    const folded = ["turn-fold:turn-1", "assistant-final-entry"];
+    const unfolded = ["turn-fold:turn-1", "spawn-entry", "assistant-final-entry"];
+
+    const activeRows = (
+      timelineEntries: typeof direct,
+      liveAgentTaskIds: ReadonlySet<string>,
+      runningTurnId = "turn-1",
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: timelineEntries.slice(0, 2),
+        isWorking: true,
+        runningTurnId: runningTurnId as TurnId,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        liveAgentTaskIds,
+      }).map((row) => row.kind);
+    expect(activeRows(direct, new Set(["agent-b"]))).not.toContain("thinking");
+    expect(activeRows(workflow, new Set(["wf-1"]))).not.toContain("thinking");
+    expect(activeRows(direct, new Set())).toContain("thinking");
+    expect(activeRows(direct, new Set(["agent-b"]), "turn-2")).toContain("thinking");
+
+    for (const [toolLifecycleStatus, tone, sourceActivityKind] of [
+      ["inProgress", "tool", "tool.updated"],
+      ["completed", "tool", "tool.completed"],
+      // Claude background Bash completions arrive without a command or item type.
+      ["completed", "info", "task.completed"],
+    ] as const) {
+      const laterTool = {
+        id: "later-tool",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:04Z",
+        entry: {
+          id: "later-tool",
+          turnId: "turn-1" as TurnId,
+          createdAt: "2026-01-01T00:00:04Z",
+          label: "Read file",
+          tone,
+          sourceActivityKind,
+          toolLifecycleStatus,
+        },
+      };
+      for (const trailingEntries of [[], [laterTool]]) {
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: [...direct.slice(0, 2), ...trailingEntries],
+          isWorking: true,
+          runningTurnId: "turn-1" as TurnId,
+          activeTurnStartedAt: "2026-01-01T00:00:00Z",
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+          liveAgentTaskIds: new Set(["agent-b"]),
+        });
+        expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
+          {
+            id: "live-activity-row",
+            entry: { id: trailingEntries.length ? "later-tool" : "spawn-entry" },
+            active: true,
+          },
+        ]);
+        expect(rows.some((row) => row.kind === "work" || row.kind === "thinking")).toBe(false);
+      }
+    }
+
+    expect(derive(direct, new Set())).toEqual(folded);
+    expect(derive(direct, new Set(["agent-b"]))).toEqual(unfolded);
+    // A workflow coordinator between phases keeps its batch out of the fold.
+    expect(derive(workflow, new Set(["wf-1"]))).toEqual(unfolded);
+    expect(derive(workflow, new Set())).toEqual(folded);
+    // No live set is known.
+    expect(derive(direct, undefined)).toEqual(unfolded);
+    // The user has it open: it stays visible under the collapsed fold and
+    // keeps its place when the fold is expanded.
+    expect(derive(direct, new Set(), new Set(["spawn-entry"]))).toEqual(unfolded);
+    expect(
+      derive(direct, new Set(), new Set(["spawn-entry"]), new Set(["turn-1" as TurnId])),
+    ).toEqual([
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "spawn-entry",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -2286,7 +2421,7 @@ describe("deriveMessagesTimelineRows", () => {
   it.each([
     [undefined, true],
     ["inProgress", true],
-    ["completed", false],
+    ["completed", true],
     ["failed", null],
     ["declined", false],
     ["stopped", false],
@@ -2329,6 +2464,7 @@ describe("deriveMessagesTimelineRows", () => {
         expect(rows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
       } else {
         expect(workLiveRow).toMatchObject({ active });
+        if (active) expect(rows.some((row) => row.kind === "thinking")).toBe(false);
       }
     },
   );
