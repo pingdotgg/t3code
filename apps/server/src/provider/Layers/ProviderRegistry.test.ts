@@ -408,6 +408,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ]);
           assert.deepStrictEqual(status.slashCommands.slice(1), [
             {
+              name: "goal",
+              description: "Manage the native Codex Goal for this thread",
+              input: {
+                hint: "[status|create|steer|pause|resume|clear|reset] [objective]",
+              },
+            },
+            {
               name: "feedback",
               description: "Send this thread and Codex logs to OpenAI",
               input: { hint: "Describe the issue (optional)" },
