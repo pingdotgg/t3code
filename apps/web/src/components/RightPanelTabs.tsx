@@ -44,6 +44,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
@@ -991,8 +992,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!props.onTabDragStart) return;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", label);
-    event.dataTransfer.setData("application/x-t3-pane-tab", label);
-    props.onTabDragStart(target);
+    flushSync(() => props.onTabDragStart?.(target));
   };
   const handleTabDragEnd = () => {
     setTabDropPreview(null);
