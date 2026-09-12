@@ -286,31 +286,6 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const targetVersion = input.requestedVersion ?? (yield* resolveNewestVersion(channel));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
-  // Only archive-distributed versions install without Node and npm on the
-  // machine. Until nightly and stable ship archives, updating onto them from
-  // here would reintroduce the dependency this command exists to remove.
-  if (!isArchiveDistributedVersion(targetVersion)) {
-    return yield* new CliUpdateError({
-      reason: `t3@${targetVersion} is published on npm only. Install it with \`npm install -g t3@${targetVersion}\`, or pick a version from the preview channel.`,
-    });
-  }
-  if (targetVersion === currentVersion) {
-    yield* Console.log(`t3 is already on ${currentVersion} (${targetChannel}).`);
-    return;
-  }
-  if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, currentVersion) < 0) {
-    return yield* new CliUpdateError({
-      reason: `t3@${targetVersion} is older than the running ${currentVersion}. Pass --allow-downgrade to install it anyway.`,
-    });
-  }
-
-  const alreadyOnDisk = yield* fs
-    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion, platform).sentinelPath)
-    .pipe(
-      Effect.map((sentinel) => sentinel.trim() === targetVersion),
-      Effect.orElseSucceed(() => false),
-    );
-
   // Work out everything that will be touched before touching anything, so the
   // user sees one plan and one question rather than a surprise restart.
   const status = yield* service.status;
@@ -325,11 +300,46 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serverRuntimeStatePath: input.serverRuntimeStatePath,
     serviceInstalled,
   });
+  // "Already on" is about what this machine runs, not what this executable
+  // is: a newer t3 downloaded by hand and pointed at a home whose service
+  // still runs the old version has an update to do, and the service's
+  // version is the one the downgrade check has to protect.
+  const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
+  const installedVersion = serviceVersion ?? currentVersion;
+
+  // Only archive-distributed versions install without Node and npm on the
+  // machine. Until nightly and stable ship archives, updating onto them from
+  // here would reintroduce the dependency this command exists to remove.
+  if (!isArchiveDistributedVersion(targetVersion)) {
+    return yield* new CliUpdateError({
+      reason: `t3@${targetVersion} is published on npm only. Install it with \`npm install -g t3@${targetVersion}\`, or pick a version from the preview channel.`,
+    });
+  }
+  if (targetVersion === installedVersion) {
+    yield* Console.log(
+      serviceVersion !== undefined
+        ? `t3 and its background service are already on ${installedVersion} (${targetChannel}).`
+        : `t3 is already on ${installedVersion} (${targetChannel}).`,
+    );
+    return;
+  }
+  if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, installedVersion) < 0) {
+    return yield* new CliUpdateError({
+      reason: `t3@${targetVersion} is older than the installed ${installedVersion}. Pass --allow-downgrade to install it anyway.`,
+    });
+  }
+
+  const alreadyOnDisk = yield* fs
+    .readFileString(pinnedRuntimePaths(path, input.baseDir, targetVersion, platform).sentinelPath)
+    .pipe(
+      Effect.map((sentinel) => sentinel.trim() === targetVersion),
+      Effect.orElseSucceed(() => false),
+    );
 
   yield* Console.log(
     alreadyOnDisk
-      ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
-      : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
+      ? `Switching t3 ${installedVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
+      : `Updating t3 ${installedVersion} -> ${targetVersion} (${targetChannel}).`,
   );
   let restartService = false;
   if (serviceInstalled) {
@@ -444,7 +454,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(`  Background service restarted on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${status.installedVersion ?? currentVersion}. Run \`t3 service update\` when you are ready to restart it.`,
+      `  Background service still running ${installedVersion}. Run \`t3 service update\` when you are ready to restart it.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
@@ -453,7 +463,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
   if (foreground !== undefined) {
     yield* Console.log(
-      `  A server started by hand is still running ${currentVersion} at ${foreground.origin} (pid ${foreground.pid}). Stop it and start it again to pick up ${targetVersion}.`,
+      `  A server started by hand is still running at ${foreground.origin} (pid ${foreground.pid}). Stop it and start it again to pick up ${targetVersion}.`,
     );
   }
 });
