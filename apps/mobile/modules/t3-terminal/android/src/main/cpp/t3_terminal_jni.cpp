@@ -125,6 +125,18 @@ void OnWritePty(GhosttyTerminal, void* userdata, const uint8_t* data, size_t len
   session->responses.insert(session->responses.end(), data, data + len);
 }
 
+bool OnDeviceAttributes(GhosttyTerminal, void*, GhosttyDeviceAttributes* out_attrs) {
+  if (out_attrs == nullptr) return false;
+  *out_attrs = {};
+  out_attrs->primary.conformance_level = GHOSTTY_DA_CONFORMANCE_VT220;
+  out_attrs->primary.features[0] = GHOSTTY_DA_FEATURE_COLUMNS_132;
+  out_attrs->primary.features[1] = GHOSTTY_DA_FEATURE_SELECTIVE_ERASE;
+  out_attrs->primary.features[2] = GHOSTTY_DA_FEATURE_ANSI_COLOR;
+  out_attrs->primary.num_features = 3;
+  out_attrs->secondary.device_type = GHOSTTY_DA_DEVICE_TYPE_VT220;
+  return true;
+}
+
 void ApplyTheme(Session* session, jint foreground, jint background, jint cursor,
                 JNIEnv* env, jintArray palette_array) {
   auto foreground_rgb = RgbFromArgb(foreground);
@@ -218,6 +230,8 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_USERDATA, session);
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                        reinterpret_cast<const void*>(OnWritePty));
+  ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
+                       reinterpret_cast<const void*>(OnDeviceAttributes));
   ApplyTheme(session, foreground, background, cursor, env, palette);
   ghostty_terminal_resize(session->terminal, options.cols, options.rows,
                           static_cast<uint32_t>(std::max(cell_width, 1)),
