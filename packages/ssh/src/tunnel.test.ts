@@ -386,6 +386,72 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
+  it.effect.each([
+    { methods: "publickey", prompts: 0 },
+    { methods: "publickey,password", prompts: 2 },
+    { methods: "publickey,keyboard-interactive", prompts: 2 },
+  ])(
+    "only prompts for server-offered password authentication ($methods)",
+    ({ methods, prompts }) => {
+      const stderr = [
+        'sign_and_send_pubkey: signing failed for ED25519 "key.pub" from agent: communication with agent failed',
+        `dev@10.13.37.3: Permission denied (${methods}).`,
+      ].join("\n");
+      const attempts: number[] = [];
+      let commandCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          if (commandArgs(command).includes("-G")) {
+            return makeSuccessfulProcess("hostname 10.13.37.3\nuser dev\nport 22\n");
+          }
+          commandCount += 1;
+          return {
+            ...makeSuccessfulProcess(""),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+            stderr: Stream.make(new TextEncoder().encode(stderr)),
+          };
+        }),
+      );
+      return Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        const result = yield* Effect.result(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "10.13.37.3",
+            username: "dev",
+            port: 22,
+          }),
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshCommandError);
+          assert.equal(result.failure.message, stderr);
+        }
+        assert.deepEqual(attempts, prompts === 0 ? [] : [1, 2]);
+        assert.equal(commandCount, prompts + 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Layer.succeed(HttpClient.HttpClient, testHttpClient),
+            Layer.succeed(NetService.NetService, testNetService),
+            Layer.succeed(SshPasswordPrompt, {
+              isAvailable: true,
+              request: ({ attempt }) =>
+                Effect.sync(() => {
+                  attempts.push(attempt);
+                  return "test-password";
+                }),
+            }),
+            SshEnvironmentManager.layer(),
+          ),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
+
   it.effect.each(["successful stop", "failed stop"] as const)(
     "closes the tunnel scope and starts fresh after a %s",
     (mode) => {

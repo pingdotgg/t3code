@@ -118,6 +118,10 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ## Desktop-managed SSH
 
+T3 Code asks for an SSH password only when the server offers password or keyboard-interactive
+authentication. For key-only hosts, an authentication failure shows the SSH error. If that error
+says `communication with agent failed`, check that your SSH agent is available, then retry.
+
 In the desktop app, open **Settings → Connections → Add environment**, choose
 **SSH**, and enter a host or SSH alias such as `user@example.com`. T3 Code starts
 or reuses a server there and opens the port forward for you. Projects, provider
