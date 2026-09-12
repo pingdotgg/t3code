@@ -1,3 +1,5 @@
+import * as Notifications from "expo-notifications";
+import { Platform } from "react-native";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -36,6 +38,7 @@ import { authClientMetadata } from "../../lib/authClientMetadata";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import * as MobilePreferences from "../../persistence/mobile-preferences";
 import * as MobileStorage from "../../persistence/mobile-storage";
+import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { resolveCloudPublicConfig } from "./publicConfig";
 
 const RELAY_STATUS_AND_CONNECT_SCOPES = [
@@ -260,12 +263,19 @@ export function linkEnvironmentToCloudWithPreference(
     const deviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId.pipe(
       Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
     );
+    const notificationsEnabled =
+      Platform.OS === "ios" && supportsAgentAwarenessPush()
+        ? (yield* Effect.tryPromise({
+            try: () => Notifications.getPermissionsAsync(),
+            catch: cloudEnvironmentLinkError("Could not read notification permissions."),
+          })).granted
+        : false;
     const liveActivitiesEnabled = input.liveActivitiesEnabled;
     const challenge = yield* relayClient
       .createEnvironmentLinkChallenge({
         clerkToken: input.clerkToken,
         payload: {
-          notificationsEnabled: true,
+          notificationsEnabled,
           liveActivitiesEnabled,
           managedTunnelsEnabled: true,
         },
@@ -297,7 +307,7 @@ export function linkEnvironmentToCloudWithPreference(
         payload: {
           deviceId,
           proof,
-          notificationsEnabled: true,
+          notificationsEnabled,
           liveActivitiesEnabled,
           managedTunnelsEnabled: true,
         },

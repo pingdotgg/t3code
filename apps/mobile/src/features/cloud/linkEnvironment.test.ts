@@ -19,6 +19,15 @@ import {
   refreshCloudEnvironmentConnection,
 } from "./linkEnvironment";
 
+const { getPermissionsAsync, platform, supportsAgentAwarenessPush } = vi.hoisted(() => ({
+  platform: { OS: "ios" },
+  supportsAgentAwarenessPush: vi.fn(() => true),
+  getPermissionsAsync: vi.fn(async () => ({ granted: false })),
+}));
+
+vi.mock("expo-notifications", () => ({ getPermissionsAsync }));
+vi.mock("../agent-awareness/capabilities", () => ({ supportsAgentAwarenessPush }));
+
 vi.mock("expo-constants", () => ({
   default: {
     expoConfig: {
@@ -45,9 +54,7 @@ vi.mock("expo-device", () => ({
 }));
 
 vi.mock("react-native", () => ({
-  Platform: {
-    OS: "ios",
-  },
+  Platform: platform,
 }));
 
 vi.mock("expo-secure-store", () => ({
@@ -189,6 +196,9 @@ function listedEnvironment(environmentId: string) {
 describe("mobile cloud link environment client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    getPermissionsAsync.mockReset();
+    supportsAgentAwarenessPush.mockReset();
+    platform.OS = "ios";
     createProofMock.mockClear();
     loadPreferences.mockClear();
   });
@@ -731,58 +741,87 @@ describe("mobile cloud link environment client", () => {
     }),
   );
 
-  it.effect("preserves disabled Live Activity preferences when linking an environment", () =>
-    Effect.gen(function* () {
-      loadPreferences.mockReturnValueOnce(Effect.succeed({ liveActivitiesEnabled: false }));
-      const bodies: Array<unknown> = [];
-      const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
-        if (init?.body) {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          bodies.push(JSON.parse(requestBodyText(init.body)));
-        }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+  for (const { name, granted, os, pushSupported, enabled } of [
+    { name: "denied permission", granted: false, os: "ios", pushSupported: true, enabled: false },
+    { name: "granted permission", granted: true, os: "ios", pushSupported: true, enabled: true },
+    { name: "Android", granted: true, os: "android", pushSupported: true, enabled: false },
+    { name: "personal team build", granted: true, os: "ios", pushSupported: false, enabled: false },
+  ]) {
+    it.effect(`links with notifications ${enabled ? "enabled" : "disabled"} for ${name}`, () =>
+      Effect.gen(function* () {
+        platform.OS = os;
+        supportsAgentAwarenessPush.mockReturnValue(pushSupported);
+        getPermissionsAsync.mockResolvedValueOnce({ granted });
+        loadPreferences.mockReturnValueOnce(Effect.succeed({ liveActivitiesEnabled: false }));
+        const bodies: Array<unknown> = [];
+        const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
+          if (init?.body) {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            bodies.push(JSON.parse(requestBodyText(init.body)));
+          }
+          if (String(url).endsWith("/v1/client/environment-link-challenges")) {
+            return Promise.resolve(Response.json(validLinkChallengeResponse()));
+          }
+          if (String(url).endsWith("/api/connect/link-proof")) {
+            return Promise.resolve(Response.json(validLinkProof()));
+          }
+          if (String(url).endsWith("/v1/client/environment-links")) {
+            return Promise.resolve(Response.json(validLinkResponse()));
+          }
+          return Promise.resolve(
+            Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+          );
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        yield* withCloudServices(
+          linkEnvironmentToCloud({
+            clerkToken: "clerk-token",
+            connection: savedConnection,
+          }),
         );
-      });
+
+        expect(bodies[0]).toMatchObject({
+          notificationsEnabled: enabled,
+          liveActivitiesEnabled: false,
+        });
+        expect(bodies[1]).toMatchObject({
+          endpoint: {
+            httpBaseUrl: "https://desktop.example.test/",
+            wsBaseUrl: "wss://desktop.example.test/ws",
+            providerKind: "cloudflare_tunnel",
+          },
+          origin: {
+            localHttpHost: "127.0.0.1",
+            localHttpPort: 443,
+          },
+        });
+        expect(bodies[2]).toMatchObject({
+          deviceId: "device-1",
+          notificationsEnabled: enabled,
+          liveActivitiesEnabled: false,
+          managedTunnelsEnabled: true,
+        });
+        expect(bodies[3]).toMatchObject({
+          cloudUserId: "user_123",
+          environmentCredential: "environment-credential",
+        });
+      }),
+    );
+  }
+
+  it.effect("does not contact the relay when notification permission lookup fails", () =>
+    Effect.gen(function* () {
+      getPermissionsAsync.mockRejectedValueOnce(new Error("permission lookup failed"));
+      const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(
-        linkEnvironmentToCloud({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-        }),
-      );
+      const error = yield* withCloudServices(
+        linkEnvironmentToCloud({ clerkToken: "clerk-token", connection: savedConnection }),
+      ).pipe(Effect.flip);
 
-      expect(bodies[1]).toMatchObject({
-        endpoint: {
-          httpBaseUrl: "https://desktop.example.test/",
-          wsBaseUrl: "wss://desktop.example.test/ws",
-          providerKind: "cloudflare_tunnel",
-        },
-        origin: {
-          localHttpHost: "127.0.0.1",
-          localHttpPort: 443,
-        },
-      });
-      expect(bodies[2]).toMatchObject({
-        deviceId: "device-1",
-        notificationsEnabled: true,
-        liveActivitiesEnabled: false,
-        managedTunnelsEnabled: true,
-      });
-      expect(bodies[3]).toMatchObject({
-        cloudUserId: "user_123",
-        environmentCredential: "environment-credential",
-      });
+      expect(error.message).toBe("Could not read notification permissions.");
+      expect(fetchMock).not.toHaveBeenCalled();
     }),
   );
 
@@ -819,8 +858,8 @@ describe("mobile cloud link environment client", () => {
       );
 
       expect(bodies.filter((body) => "liveActivitiesEnabled" in body)).toEqual([
-        expect.objectContaining({ liveActivitiesEnabled: true }),
-        expect.objectContaining({ liveActivitiesEnabled: true }),
+        expect.objectContaining({ notificationsEnabled: false, liveActivitiesEnabled: true }),
+        expect.objectContaining({ notificationsEnabled: false, liveActivitiesEnabled: true }),
       ]);
     }),
   );
