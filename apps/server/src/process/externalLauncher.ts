@@ -188,6 +188,10 @@ function escapePowerShellStringLiteral(input: string): string {
   return `'${input.replaceAll("'", "''")}'`;
 }
 
+function isWindowsPowerShellCommand(command: string): boolean {
+  return /(^|[\\/])powershell\.exe$/i.test(command);
+}
+
 function resolvePowerShellPath(env: NodeJS.ProcessEnv = {}): string {
   return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
@@ -215,7 +219,11 @@ function shouldUseWindowsHostFromWsl(
   );
 }
 
-function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLaunch {
+function resolveWindowsBrowserLaunch(
+  target: string,
+  command: string,
+  platform: NodeJS.Platform,
+): ProcessLaunch {
   const encodedCommand = encodeUtf16LeBase64(
     `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
   );
@@ -223,7 +231,9 @@ function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLa
     command,
     args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
     options: {
-      detached: true,
+      // Native Windows PowerShell can exit before executing a detached launch.
+      // WSL uses Linux process-session semantics and keeps its existing behavior.
+      detached: platform !== "win32",
       shell: false,
       stdin: "ignore",
       stdout: "ignore",
@@ -403,11 +413,11 @@ function buildBrowserLaunch(
   }
 
   if (platform === "win32") {
-    return resolveWindowsBrowserLaunch(target, resolvePowerShellPath(env));
+    return resolveWindowsBrowserLaunch(target, resolvePowerShellPath(env), platform);
   }
 
   if (shouldUseWindowsHostFromWsl(platform, env)) {
-    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath());
+    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath(), platform);
   }
 
   return {
@@ -581,14 +591,8 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
  * when the path has spaces and Explorer misparses it, silently opening a
  * fallback folder. A single `-ArgumentList` string in Windows PowerShell 5.1
  * reaches the child's command line verbatim, preserving the raw switch.
- *
- * Exported so the Windows smoke test can drive the identical source through a
- * real PowerShell against a recording stub instead of Explorer.
  */
-export function buildFileExplorerRevealPowerShellSource(
-  explorerCommand: string,
-  target: string,
-): string {
+function buildFileExplorerRevealPowerShellSource(explorerCommand: string, target: string): string {
   return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
 }
 
@@ -729,12 +733,14 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   }
 
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env });
+  const platform = yield* HostProcessPlatform;
   yield* launchAndUnref(
     {
       command: spawnCommand.command,
       args: spawnCommand.args,
       options: {
-        detached: true,
+        // Match the browser launch workaround without changing editor shims or WSL.
+        detached: platform !== "win32" || !isWindowsPowerShellCommand(spawnCommand.command),
         shell: spawnCommand.shell,
         stdin: "ignore",
         stdout: "ignore",
