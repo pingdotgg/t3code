@@ -25,4 +25,10 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("through the Cursor harness.");
     expect(instructions).not.toContain("reasoning effort");
   });
+
+  it("tells the agent how to nest fenced code inside a code block", () => {
+    expect(buildRuntimeInstructions({ harness: "Claude Code" })).toContain(
+      "A code block that contains triple backticks needs a longer fence (four backticks or ~~~).",
+    );
+  });
 });
