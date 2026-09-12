@@ -409,12 +409,14 @@ export default function DiffPanel({
     if (!renderablePatch || renderablePatch.kind !== "files") {
       return [];
     }
-    return renderablePatch.files.toSorted((left, right) =>
-      resolveFileDiffPath(left).localeCompare(resolveFileDiffPath(right), undefined, {
+    let collator: Intl.Collator | undefined;
+    return renderablePatch.files.toSorted((left, right) => {
+      collator ??= new Intl.Collator(undefined, {
         numeric: true,
         sensitivity: "base",
-      }),
-    );
+      });
+      return collator.compare(resolveFileDiffPath(left), resolveFileDiffPath(right));
+    });
   }, [renderablePatch]);
   const renderableFileEntries = useMemo(
     () =>
