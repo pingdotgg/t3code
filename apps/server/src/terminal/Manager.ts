@@ -1295,8 +1295,9 @@ function createTerminalSpawnEnv(
         key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value) : value;
     }
   }
-  // Both PTY backends feed truecolor-capable terminal clients.
-  if (spawnEnv.COLORTERM === undefined || spawnEnv.COLORTERM === "") {
+  // An explicit empty override opts out for terminals started without a client.
+  // Otherwise both PTY backends feed truecolor-capable terminal clients.
+  if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
   return stripAppImageRuntimeEnv(spawnEnv);

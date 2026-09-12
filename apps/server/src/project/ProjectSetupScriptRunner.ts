@@ -150,10 +150,16 @@ export const make = Effect.gen(function* () {
 
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
-    const env = projectScriptRuntimeEnv({
-      project: { cwd: project.workspaceRoot },
-      worktreePath: input.worktreePath,
-    });
+    const env = {
+      ...projectScriptRuntimeEnv({
+        project: { cwd: project.workspaceRoot },
+        worktreePath: input.worktreePath,
+      }),
+      // Setup runs before a client necessarily attaches. Truecolor probing in
+      // tools such as vp can wait for terminal replies that nobody can send.
+      // Keep TERM's 256-color support without advertising truecolor here.
+      COLORTERM: "",
+    };
 
     yield* terminalManager
       .open({
