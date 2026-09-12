@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 export const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
@@ -68,7 +67,7 @@ export const CodexGoalStreamEvent = Schema.Union([
 export type CodexGoalStreamEvent = typeof CodexGoalStreamEvent.Type;
 export const CodexGoalOperation = Schema.Literals(["get", "set", "clear", "subscribe"]);
 export type CodexGoalOperation = typeof CodexGoalOperation.Type;
-export class CodexGoalOperationError extends Schema.TaggedErrorClass<CodexGoalOperationError>()(
+export class CodexGoalOperationError extends Schema.TaggedError<CodexGoalOperationError>()(
   "CodexGoalOperationError",
   {
     operation: CodexGoalOperation,
