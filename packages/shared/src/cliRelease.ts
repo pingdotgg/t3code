@@ -60,3 +60,41 @@ export function parseChecksums(text: string): ReadonlyMap<string, string> {
 export function isArchiveDistributedVersion(version: string): boolean {
   return /-preview\.\d{8}\.\d+$/.test(version);
 }
+
+export type CliReleaseChannel = "stable" | "nightly" | "preview";
+export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
+  "stable",
+  "nightly",
+  "preview",
+];
+
+/** The release train a version was published on, derived from its prerelease tag. */
+export function cliReleaseChannelOf(version: string): CliReleaseChannel {
+  const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];
+  return channel === "nightly" || channel === "preview" ? channel : "stable";
+}
+
+/** GitHub's list-releases endpoint; newest first, so the first match wins. */
+export const CLI_RELEASE_INDEX_URL = `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=50`;
+
+/**
+ * Picks the newest version on a channel from the release index. Tags are
+ * `v<version>`; the channel is decided by the same rule the runtime uses, so
+ * a preview tag never satisfies a nightly lookup and vice versa. Drafts are
+ * skipped because their assets are not downloadable.
+ */
+export function newestCliReleaseVersion(
+  releases: ReadonlyArray<{
+    readonly tag_name: string;
+    readonly draft?: boolean | undefined;
+  }>,
+  channel: CliReleaseChannel,
+): string | undefined {
+  for (const release of releases) {
+    if (release.draft) continue;
+    const version = /^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/.exec(release.tag_name)?.[1];
+    if (version === undefined) continue;
+    if (cliReleaseChannelOf(version) === channel) return version;
+  }
+  return undefined;
+}

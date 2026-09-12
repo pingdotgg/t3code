@@ -4,7 +4,9 @@ import {
   cliArchiveFileName,
   cliArchivePlatformKey,
   cliReleaseDownloadBaseUrl,
+  cliReleaseChannelOf,
   isArchiveDistributedVersion,
+  newestCliReleaseVersion,
   parseChecksums,
 } from "./cliRelease.ts";
 
@@ -49,5 +51,28 @@ describe("cliRelease", () => {
     expect(isArchiveDistributedVersion("1.2.3-preview.20260911.4")).toBe(true);
     expect(isArchiveDistributedVersion("1.2.3-nightly.20260911.4")).toBe(false);
     expect(isArchiveDistributedVersion("1.2.3")).toBe(false);
+  });
+
+  it("derives the release channel from the version alone", () => {
+    expect(cliReleaseChannelOf("1.2.3")).toBe("stable");
+    expect(cliReleaseChannelOf("1.2.3-nightly.20260911.4")).toBe("nightly");
+    expect(cliReleaseChannelOf("1.2.3-preview.20260911.4")).toBe("preview");
+    // A prerelease that is not one of our trains is not silently a nightly.
+    expect(cliReleaseChannelOf("1.2.3-rc.1")).toBe("stable");
+  });
+
+  it("picks the newest non-draft release on the requested channel", () => {
+    const releases = [
+      { tag_name: "v1.2.4-preview.20260912.9", draft: true },
+      { tag_name: "v1.2.4-preview.20260912.8" },
+      { tag_name: "v1.2.4-nightly.20260912.7" },
+      { tag_name: "desktop-preview" },
+      { tag_name: "v1.2.3" },
+      { tag_name: "v1.2.3-nightly.20260911.2" },
+    ];
+    expect(newestCliReleaseVersion(releases, "preview")).toBe("1.2.4-preview.20260912.8");
+    expect(newestCliReleaseVersion(releases, "nightly")).toBe("1.2.4-nightly.20260912.7");
+    expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
+    expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
   });
 });
