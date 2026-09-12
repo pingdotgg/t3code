@@ -203,8 +203,9 @@ export function ComposerSpeechButton(props: {
   const navigate = useNavigate();
   const presentation = resolveSpeechPresentation(props.state, props.progress);
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
-  const isBusy = presentation.showsConfirm;
   const label = openSettings ? "Open voice settings" : "Start voice input";
+
+  if (presentation.showsConfirm) return null;
 
   return (
     <Tooltip>
@@ -215,10 +216,10 @@ export function ComposerSpeechButton(props: {
             size="icon-sm"
             variant="ghost"
             aria-label={label}
-            aria-disabled={props.disabled || isBusy}
+            aria-disabled={props.disabled}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
-              if (props.disabled || isBusy) return;
+              if (props.disabled) return;
               if (openSettings) {
                 props.onCancel();
                 void navigate({ to: "/settings/voice" });
@@ -228,7 +229,7 @@ export function ComposerSpeechButton(props: {
             }}
             className={cn(
               "relative shrink-0",
-              (props.disabled || isBusy) && "cursor-not-allowed opacity-64 hover:bg-transparent!",
+              props.disabled && "cursor-not-allowed opacity-64 hover:bg-transparent!",
             )}
           >
             <MicIcon />
