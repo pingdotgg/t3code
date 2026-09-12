@@ -7240,6 +7240,284 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("routes subagent task tool calls to the Agents surface", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-subagent-roster");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const finishTurn = promiseWithResolvers<OpenCodeEvent>();
+      const input = {
+        subagent_type: "explore",
+        description: "Find cloud sync UI",
+        prompt: "Locate the sync screen",
+      };
+      const taskEvent = (id: string, state: ToolPart["state"]): OpenCodeEvent => ({
+        id,
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          time: 2,
+          part: {
+            id: "part-task",
+            sessionID,
+            messageID: "msg-task",
+            type: "tool",
+            callID: "call-task",
+            tool: "task",
+            state,
+          },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        taskEvent("evt-task-running", {
+          status: "running",
+          input,
+          title: "Find cloud sync UI",
+          metadata: {},
+          time: { start: 1 },
+        }),
+        taskEvent("evt-task-completed", {
+          status: "completed",
+          input,
+          output: "found it",
+          title: "Find cloud sync UI",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        }),
+        finishTurn.promise,
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type.startsWith("task.") ||
+              event.type.startsWith("item.") ||
+              event.type === "turn.completed"),
+        ),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate the search",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      finishTurn.resolve({
+        id: "evt-task-idle",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      const started = events.find((event) => event.type === "task.started");
+      NodeAssert.ok(started, "expected a task.started event for the subagent");
+      NodeAssert.ok(started.type === "task.started");
+      NodeAssert.equal(started.payload.title, "Find cloud sync UI");
+      NodeAssert.ok(
+        events.some((event) => event.type === "task.completed"),
+        "expected a task.completed event for the subagent",
+      );
+      NodeAssert.deepEqual(
+        events.filter((event) => event.type.startsWith("item.")).map((event) => event.type),
+        [],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts a subagent task once across repeated running updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-subagent-dedupe");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const finishTurn = promiseWithResolvers<OpenCodeEvent>();
+      const input = { subagent_type: "explore", description: "Trace the bug", prompt: "Trace" };
+      const taskEvent = (id: string, state: ToolPart["state"]): OpenCodeEvent => ({
+        id,
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          time: 2,
+          part: {
+            id: "part-task",
+            sessionID,
+            messageID: "msg-task",
+            type: "tool",
+            callID: "call-task",
+            tool: "task",
+            state,
+          },
+        },
+      });
+      runtimeMock.state.subscribedEvents = [
+        taskEvent("evt-task-pending", { status: "pending", input: {}, raw: "" }),
+        taskEvent("evt-task-running-1", {
+          status: "running",
+          input,
+          title: "Trace the bug",
+          metadata: {},
+          time: { start: 1 },
+        }),
+        taskEvent("evt-task-running-2", {
+          status: "running",
+          input,
+          title: "Trace the bug (still going)",
+          metadata: {},
+          time: { start: 1 },
+        }),
+        taskEvent("evt-task-completed", {
+          status: "completed",
+          input,
+          output: "traced",
+          title: "Trace the bug",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        }),
+        finishTurn.promise,
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type.startsWith("task.") || event.type === "turn.completed"),
+        ),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate the trace",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      finishTurn.resolve({
+        id: "evt-task-dedupe-idle",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.deepEqual(
+        events.filter((event) => event.type.startsWith("task.")).map((event) => event.type),
+        ["task.started", "task.updated", "task.updated", "task.completed"],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("carries the subagent result onto the completed task row", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-subagent-result");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const finishTurn = promiseWithResolvers<OpenCodeEvent>();
+      const input = { subagent_type: "explore", description: "Find it", prompt: "Find" };
+      runtimeMock.state.subscribedEvents = [
+        {
+          id: "evt-task-done",
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            time: 2,
+            part: {
+              id: "part-task",
+              sessionID,
+              messageID: "msg-task",
+              type: "tool",
+              callID: "call-task",
+              tool: "task",
+              state: {
+                status: "completed",
+                input,
+                output: "The sync screen lives in SyncScreen.tsx",
+                title: "Find it",
+                metadata: {},
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        } satisfies OpenCodeEvent,
+        {
+          id: "evt-task-failed",
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            time: 3,
+            part: {
+              id: "part-task-2",
+              sessionID,
+              messageID: "msg-task",
+              type: "tool",
+              callID: "call-task-2",
+              tool: "task",
+              state: {
+                status: "error",
+                input,
+                error: "subagent exited early",
+                metadata: {},
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        } satisfies OpenCodeEvent,
+        finishTurn.promise,
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "task.completed" || event.type === "turn.completed"),
+        ),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      finishTurn.resolve({
+        id: "evt-task-result-idle",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      const completed = events.filter((event) => event.type === "task.completed");
+      NodeAssert.equal(completed.length, 2);
+      NodeAssert.ok(completed[0]?.type === "task.completed");
+      NodeAssert.equal(completed[0].payload.status, "completed");
+      NodeAssert.equal(completed[0].payload.summary, "The sync screen lives in SyncScreen.tsx");
+      NodeAssert.ok(completed[1]?.type === "task.completed");
+      NodeAssert.equal(completed[1].payload.status, "failed");
+      NodeAssert.equal(completed[1].payload.summary, "subagent exited early");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("warns on disconnection and recovers a completion missed during reconnect", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
