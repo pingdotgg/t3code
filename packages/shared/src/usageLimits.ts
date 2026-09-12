@@ -14,6 +14,7 @@ import {
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderUsageSpend,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
@@ -502,6 +503,31 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
 /** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+/** No real currency has more than four decimals; past this, precision only breaks formatting. */
+const MAX_SPEND_EXPONENT = 20;
+
+/**
+ * `$46.31 of $500.00`: a spending budget in the provider's currency and
+ * precision. A currency code Intl does not know falls back to `46.31 USD`.
+ */
+export function formatSpend(spend: ServerProviderUsageSpend): string {
+  const exponent = Math.min(spend.exponent, MAX_SPEND_EXPONENT);
+  const scale = 10 ** exponent;
+  let format: (minor: number) => string;
+  try {
+    const currency = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: spend.currency,
+      minimumFractionDigits: exponent,
+      maximumFractionDigits: exponent,
+    });
+    format = (minor) => currency.format(minor / scale);
+  } catch {
+    format = (minor) => `${(minor / scale).toFixed(exponent)} ${spend.currency}`;
+  }
+  return `${format(spend.usedMinor)} of ${format(spend.limitMinor)}`;
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {
