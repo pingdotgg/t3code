@@ -102,7 +102,32 @@ const EMPTY_CONFIG: ThirdPartyLicensesConfig = {
 };
 
 const NOTICE_FILE_PATTERN = /^(?:licen[cs]e|copying|notice)(?:[._-].*)?$/i;
+const NOTICE_TEXT_EXTENSIONS = new Set([
+  "",
+  ".0bsd",
+  ".agpl",
+  ".apache2",
+  ".bsd",
+  ".gpl",
+  ".isc",
+  ".lgpl",
+  ".markdown",
+  ".md",
+  ".mit",
+  ".mpl",
+  ".mpl2",
+  ".rst",
+  ".txt",
+  ".unlicense",
+]);
 const FIRST_PARTY_PACKAGE_PREFIX = "@t3tools/";
+
+function isNoticeTextFile(fileName: string): boolean {
+  return (
+    NOTICE_FILE_PATTERN.test(fileName) &&
+    NOTICE_TEXT_EXTENSIONS.has(NodePath.extname(fileName).toLowerCase())
+  );
+}
 
 function asPath(value: string | URL): string {
   return value instanceof URL ? NodeURL.fileURLToPath(value) : NodePath.resolve(value);
@@ -626,7 +651,7 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
   const rootEntries = await NodeFSP.readdir(packageRoot, { withFileTypes: true });
   noticeFiles.push(
     ...rootEntries
-      .filter((entry) => entry.isFile() && NOTICE_FILE_PATTERN.test(entry.name))
+      .filter((entry) => entry.isFile() && isNoticeTextFile(entry.name))
       .map((entry) => entry.name),
   );
 
@@ -637,7 +662,7 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
     await Promise.all(
       directoryEntries.map(async (entry) => {
         const relativePath = NodePath.join(directory, entry.name);
-        if (entry.isFile() && NOTICE_FILE_PATTERN.test(entry.name)) {
+        if (entry.isFile() && isNoticeTextFile(entry.name)) {
           noticeFiles.push(relativePath);
           return;
         }

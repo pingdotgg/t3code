@@ -261,9 +261,15 @@ describe("third-party license generation", () => {
     await NodeFSP.mkdir(NodePath.join(fixture.dependencyRoot, "dist", "third-party"), {
       recursive: true,
     });
+    await NodeFSP.mkdir(NodePath.join(fixture.dependencyRoot, "lib"), { recursive: true });
     await NodeFSP.writeFile(
       NodePath.join(fixture.dependencyRoot, "dist", "third-party", "NOTICE.txt"),
       "Nested notice\n",
+      "utf8",
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(fixture.dependencyRoot, "lib", "license_header.js"),
+      "require('not-a-license');\n",
       "utf8",
     );
 
