@@ -64,6 +64,19 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "devin") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fill={mono}
+          fillRule="evenodd"
+          d="M5 4h7a8 8 0 0 1 0 16H5V4Zm3 3v10h4a5 5 0 0 0 0-10H8Z"
+          clipRule="evenodd"
+        />
+      </Svg>
+    );
+  }
+
   if (props.provider === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
