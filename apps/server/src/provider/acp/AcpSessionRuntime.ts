@@ -426,6 +426,7 @@ export const make = (
       );
 
     const spawnCommand = yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
+      cwd: options.spawn.cwd,
       ...(options.spawn.env ? { env: options.spawn.env } : {}),
       extendEnv: options.spawn.extendEnv ?? true,
     });
