@@ -3360,7 +3360,8 @@ it("accepts ready attachment-only answers while preserving selected options", ()
   ).toBeNull();
 });
 
-it("makes attachment-only question answers expandable in the mobile feed", () => {
+it("keeps attachment-only question answers expandable outside mobile work groups and turn folds", () => {
+  const turnId = TurnId.make("turn-answer");
   const answer = {
     requestId: ApprovalRequestId.make("question-request"),
     answers: { q: "" },
@@ -3381,17 +3382,46 @@ it("makes attachment-only question answers expandable in the mobile feed", () =>
     id: ThreadId.make("thread-answer"),
     projectId: ProjectId.make("project-answer"),
     title: "Answer history",
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      startedAt: "2026-09-08T00:00:00.000Z",
+      completedAt: "2026-09-08T00:00:04.000Z",
+      assistantMessageId: null,
+    },
     activities: [
       makeActivity({
+        id: EventId.make("tool-before-answer"),
+        createdAt: "2026-09-08T00:00:01.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+      makeActivity({
         id: EventId.make("answer-submitted"),
-        createdAt: "2026-09-08T00:00:00.000Z",
+        createdAt: "2026-09-08T00:00:02.000Z",
         kind: "user-input.answer-submitted",
         summary: "Answered questions",
+        turnId,
         payload: answer,
+      }),
+      makeActivity({
+        id: EventId.make("tool-after-answer"),
+        createdAt: "2026-09-08T00:00:03.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
       }),
     ],
   });
-  const [group] = buildThreadFeed(thread);
+  const feed = buildThreadFeed(thread);
+  expect(feed).toHaveLength(3);
+  const group = feed[1];
   expect(group?.type).toBe("activity-group");
   if (group?.type !== "activity-group") return;
   expect(group.activities[0]).toMatchObject({
@@ -3399,4 +3429,25 @@ it("makes attachment-only question answers expandable in the mobile feed", () =>
     workEntry: { questionAnswer: answer },
   });
   expect(group.activities[0]?.getFullDetail()).toBeNull();
+  const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+  expect(collapsed.map((entry) => entry.type)).toEqual(["turn-fold", "activity-group"]);
+  expect(collapsed[1]).toBe(group);
+  const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+  expect(expanded.map((entry) => entry.type)).toEqual([
+    "turn-fold",
+    "work-toggle",
+    "activity-group",
+    "work-toggle",
+  ]);
+  expect(expanded[2]).toBe(group);
+  const running = deriveThreadFeedPresentation(
+    feed,
+    { ...thread.latestTurn!, state: "running", completedAt: null },
+    new Set(),
+    new Set(),
+    "2026-09-08T00:00:00.000Z",
+  );
+  expect(running[0]?.type).toBe("work-toggle");
+  expect(running[1]).toBe(group);
+  expect(running[2]?.type).toBe("work-toggle");
 });
