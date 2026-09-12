@@ -123,6 +123,94 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 
+  describe("workspace exclusions", () => {
+    for (const ignoreFile of [".ignore", ".gitignore"]) {
+      for (const gitRepository of [false, true]) {
+        it.effect(
+          `indexes a workspace with ${ignoreFile} ${gitRepository ? "inside" : "outside"} a git repository`,
+          () =>
+            Effect.gen(function* () {
+              const cwd = yield* makeTempDir({ git: gitRepository });
+              yield* writeTextFile(cwd, ignoreFile, "build/\n");
+              yield* writeTextFile(cwd, "build/needle.txt", "needle\n");
+              yield* writeTextFile(cwd, "src/needle.txt", "needle\n");
+              const excluded = ignoreFile === ".ignore" || gitRepository;
+              const expectedFiles = excluded
+                ? ["src/needle.txt"]
+                : ["build/needle.txt", "src/needle.txt"];
+              const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+
+              const listed = yield* workspaceEntries.list({ cwd });
+              expect(
+                listed.entries
+                  .filter((entry) => entry.kind === "file" && entry.path.endsWith("needle.txt"))
+                  .map((entry) => entry.path)
+                  .sort(),
+              ).toEqual(expectedFiles);
+              expect(listed.entries.some((entry) => entry.path === "build")).toBe(!excluded);
+
+              const searched = yield* workspaceEntries.search({
+                cwd,
+                query: "needle",
+                kind: "file",
+                limit: 100,
+              });
+              expect(searched.entries.map((entry) => entry.path).sort()).toEqual(expectedFiles);
+
+              const contents = yield* workspaceEntries.searchContents({
+                cwd,
+                query: "needle",
+                limit: 100,
+                caseSensitive: true,
+                wholeWord: false,
+                useRegex: false,
+              });
+              expect(contents.matches.map((match) => match.path).sort()).toEqual(expectedFiles);
+            }),
+        );
+      }
+    }
+
+    it.effect("excludes Subversion and Mercurial metadata without an ignore file", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/needle.txt", "needle\n");
+        for (const directory of [
+          ".svn/pristine",
+          ".hg/store",
+          "nested/.svn/pristine",
+          "nested/.hg/store",
+        ]) {
+          yield* writeTextFile(cwd, `${directory}/needle.txt`, "needle\n");
+        }
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const listed = yield* workspaceEntries.list({ cwd });
+        expect(listed.entries.some((entry) => /(^|\/)\.(svn|hg)(\/|$)/.test(entry.path))).toBe(
+          false,
+        );
+        expect(listed.entries).toContainEqual({ path: "src/needle.txt", kind: "file" });
+
+        const searched = yield* workspaceEntries.search({
+          cwd,
+          query: "needle",
+          kind: "file",
+          limit: 100,
+        });
+        expect(searched.entries).toEqual([{ path: "src/needle.txt", kind: "file" }]);
+
+        const contents = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+        expect(contents.matches.map((match) => match.path)).toEqual(["src/needle.txt"]);
+      }),
+    );
+  });
+
   describe("search", () => {
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
