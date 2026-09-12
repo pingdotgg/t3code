@@ -927,12 +927,18 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
     );
   });
 
-  const interruptTurn: Adapter["interruptTurn"] = (threadId) =>
+  const interruptTurn: Adapter["interruptTurn"] = (threadId, turnId) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
       yield* context.promptLock
         .withPermit(
           Effect.gen(function* () {
+            // A delayed interrupt can target a turn that already completed;
+            // cancel only when it still names the active turn.
+            const activeTurnId = context.activeTurnId ?? context.session.activeTurnId;
+            if (turnId !== undefined && activeTurnId !== undefined && activeTurnId !== turnId) {
+              return;
+            }
             context.cancelling = true;
             yield* cancelRequests(context);
             yield* context.runtime.cancel.pipe(
