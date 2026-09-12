@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.CreateCampaignHttp)`.
  *
- * @binding
- * @section Retraining Loop
- * @example Deploy a Campaign
+ * ### Retraining Loop
+ * **Example:** Deploy a Campaign
  * ```typescript
  * // init
  * const createCampaign = yield* Personalize.CreateCampaign();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   solutionVersionArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateCampaign extends Binding.Service<
   CreateCampaign,

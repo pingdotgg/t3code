@@ -1,0 +1,217 @@
+---
+title: Octane
+description: Deploy an OctaneJS app to Hetzner with Hetzner.Website.Octane — SSR as a systemd unit on port 3000, client assets baked into the unit, and Octane's own Vite dev server under alchemy dev.
+sidebar:
+  order: 14
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.Octane` deploys an [OctaneJS](https://octanejs.dev)
+fullstack app to a Hetzner Cloud Server. Octane wraps Vite, so the
+resource is deliberately thin: it runs your project's own
+`vite build` — Octane's plugin builds the client bundle and the
+self-contained SSR server bundle, and the Node deploy target's
+finishing pass wraps its fetch handler as a Node HTTP program. The
+server runs as a systemd unit on port 3000 (`Hetzner.Service` on a
+`Hetzner.Server`); client assets are baked into the unit. The live
+URL is `http://{ipv4}:3000` — no TLS on the Service. No Dockerfile,
+no build command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads the package's
+`/octane` and `/octane/node` exports from your project at deploy
+time. It is only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Octane
+
+Your `octane.config.ts` picks the deploy target, exactly as in
+Octane's own deployment story — select the Node marker adapter, not
+`aws()` or `cloudflare()`:
+
+```typescript
+// octane.config.ts
+import { node } from "@alchemy.run/frontend-frameworks/octane/node-adapter";
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+  adapter: node(),
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+A missing or foreign adapter fails the deploy with an actionable
+error.
+
+Vite plugins like Tailwind go in `vite.config.ts` next to it,
+alongside the Octane plugin:
+
+```typescript
+// vite.config.ts
+import { octane } from "@octanejs/vite-plugin";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [octane(), tailwindcss()],
+});
+```
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.Octane("Website");
+```
+
+Omit `server` and Alchemy creates a `cpx12` / `ubuntu-24.04` Server
+in `fsn1`. Pass an existing Server so several sites or APIs share
+one VM:
+
+```typescript
+export const Box = Hetzner.Server("Box", {
+  serverType: "cpx12",
+  image: "ubuntu-24.04",
+  location: "fsn1",
+});
+
+export const Website = Hetzner.Website.Octane("Website", {
+  server: Box,
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyOctaneSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+On deploy, `url` is `http://{ipv4}:3000`. The resolved site also
+exposes `server` and `service` (both `undefined` under
+`alchemy dev`).
+
+## Add environment variables
+
+Process environment is configured under `env` — plain strings, or
+`Redacted` values. They are copied onto `process.env` before the
+build and onto the systemd unit at deploy time:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.Octane("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The same values are injected into the dev server's process
+environment under `alchemy dev`, so server code reads them in both
+modes.
+
+## Read the environment in server code
+
+Octane's server runs in Node on the Server, so middleware and
+`ServerRoute` handlers read the environment from `process.env`:
+
+```typescript
+// octane.config.ts
+new ServerRoute({
+  path: "/api/greeting",
+  methods: ["GET"],
+  handler: async () => {
+    return Response.json({ greeting: process.env.GREETING ?? "hello" });
+  },
+});
+```
+
+## Asset routing
+
+Octane's intended setup is asset-first with SSR on miss: exact files
+in `dist/client` are served by the Node process without invoking the
+Octane handler, and every miss streams from Octane SSR. That is the
+default — there is nothing to configure. `GET /health` answers for
+the unit health check.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Octane's own Vite dev server — the plugin's
+in-process SSR middleware serves rendering, server routes, and RPC
+with full HMR. `site.url` is the local address and no Hetzner
+resources are created (`server` and `service` are `undefined`). Wrap
+the site in `Alchemy.remote()` to deploy the real infrastructure even
+during dev.
+
+## Custom domain
+
+`domain` requires an existing Hetzner DNS `zone`. Alchemy creates an
+A `RecordSet` pointing at the Server's public IPv4. There is no TLS
+on the Service — `url` becomes `http://{domain}:3000`. Passing
+`domain` without `zone` fails.
+
+```typescript
+const zone = yield* Hetzner.Zone("Dns", {
+  name: "example.com",
+});
+
+const site = yield* Hetzner.Website.Octane("Web", {
+  domain: "app.example.com",
+  zone,
+});
+```
+
+See [Zones & records](/hetzner/networking/dns).
+
+## Where next
+
+- [`Hetzner.Website.Octane` reference](/providers/hetzner/website/octane)
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services)
+- [Zones & records](/hetzner/networking/dns)

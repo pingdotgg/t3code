@@ -19,6 +19,7 @@ import {
   type ProviderDriverKind,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { codexModelFamily } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -138,7 +139,7 @@ export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
 
 /** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
-export function manifestUpdatedAtMs(manifest: ModelManifestData): number {
+function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;
   const parsed = Date.parse(manifest.updatedAt);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -207,18 +208,20 @@ export const encodeManifestCache = Schema.encodeEffect(
 );
 
 /** True when the manifest classifies `slug` as legacy for `driverKind`. */
-export function isLegacyModel(
+function isLegacyModel(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
   slug: string,
 ): boolean {
-  const catalogModel = manifest.providers?.[driverKind]?.models.find(
-    (model) => model.slug === slug,
-  );
+  const family = driverKind === "codex" ? codexModelFamily(slug) : slug;
+  const catalog = manifest.providers?.[driverKind]?.models;
+  const catalogModel =
+    catalog?.find((model) => model.slug === slug) ??
+    catalog?.find((model) => model.slug === family);
   if (catalogModel) return catalogModel.status === "legacy";
   const currentModels = manifest.currentModels[driverKind];
   if (!currentModels) return false;
-  return !currentModels.includes(slug);
+  return !currentModels.includes(slug) && !currentModels.includes(family);
 }
 
 /**
@@ -260,8 +263,17 @@ export function applyManifestDefault(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
 ): ReadonlyArray<ServerProviderModel> {
-  const slug = manifestDefaultModel(manifest, driverKind);
-  if (slug === undefined || !models.some((model) => model.slug === slug)) return models;
+  const requestedSlug = manifestDefaultModel(manifest, driverKind);
+  if (requestedSlug === undefined) return models;
+  const slug =
+    models.find((model) => model.slug === requestedSlug)?.slug ??
+    (driverKind === "codex"
+      ? models.find(
+          (model) =>
+            !model.isCustom && codexModelFamily(model.slug) === codexModelFamily(requestedSlug),
+        )?.slug
+      : undefined);
+  if (slug === undefined) return models;
   const previous = models.find((model) => model.isDefault && model.slug !== slug);
   if (!previous) return models;
   const movedAliases = previous.aliases ?? [];
@@ -310,8 +322,8 @@ export class ModelManifest extends Context.Service<
   }
 >()("t3/provider/ModelManifest") {}
 
-/** Constant service for tests and callers that only need the bundled data. */
-export const BundledOnlyModelManifest: ModelManifest["Service"] = {
+/** Constant service backing the bundled-data test layer. */
+const BundledOnlyModelManifest: ModelManifest["Service"] = {
   current: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refreshInBackground: Effect.void,

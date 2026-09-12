@@ -60,12 +60,11 @@ export interface NetworkAclAssociation extends Resource<
  * delete, the subnet is reverted to the VPC's default network ACL so it is never
  * left without one.
  *
- * @resource
- * @section Associating Subnets
+ * ### Associating Subnets
  * A subnet starts out attached to the VPC's default ACL; this resource moves it
  * onto a custom ACL so the rules you defined with `NetworkAclEntry` take effect
  * for that subnet.
- * @example Move a Subnet onto a Custom Network ACL
+ * **Example:** Move a Subnet onto a Custom Network ACL
  * ```typescript
  * const association = yield* AWS.EC2.NetworkAclAssociation("PrivateSubnetNaclAssoc", {
  *   networkAclId: privateNetworkAcl.networkAclId,
@@ -75,6 +74,8 @@ export interface NetworkAclAssociation extends Resource<
  * This detaches the subnet from the default ACL and attaches it to your custom
  * ACL; destroying the association automatically reverts the subnet to the
  * default ACL, which is the safe way to "remove" a custom ACL from a subnet.
+ *
+ * @resource
  */
 export const NetworkAclAssociation = Resource<NetworkAclAssociation>(
   "AWS.EC2.NetworkAclAssociation",

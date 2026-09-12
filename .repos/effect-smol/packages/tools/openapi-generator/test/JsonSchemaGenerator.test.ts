@@ -144,15 +144,15 @@ export const A = B
 
     const result = generator.generate("openapi-3.1", definitions, false)
     const recursiveDeclaration =
-      "export const ResourcesNetworkCardSRIOV = Schema.suspend((): Schema.Codec<ResourcesNetworkCardSRIOV> => __recursive_ResourcesNetworkCardSRIOV)"
+      "export const ResourcesNetworkCard = Schema.suspend((): Schema.Codec<ResourcesNetworkCard> => __recursive_ResourcesNetworkCard)"
 
     expect(result).toContain(recursiveDeclaration)
-    expect(result).toContain("const __recursive_ResourcesNetworkCardSRIOV =")
+    expect(result).toContain("const __recursive_ResourcesNetworkCard =")
     expect(result.indexOf(recursiveDeclaration)).toBeLessThan(
-      result.indexOf("export const ResourcesNetworkCard =")
+      result.indexOf("export const ResourcesNetworkCardSRIOV =")
     )
-    expect(result.indexOf("export const ResourcesNetworkCard =")).toBeLessThan(
-      result.indexOf("const __recursive_ResourcesNetworkCardSRIOV =")
+    expect(result.indexOf("export const ResourcesNetworkCardSRIOV =")).toBeLessThan(
+      result.indexOf("const __recursive_ResourcesNetworkCard =")
     )
   })
 

@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
-export class TransferHttpRequestError extends Schema.TaggedErrorClass<TransferHttpRequestError>()(
+export class TransferHttpRequestError extends Schema.TaggedError<TransferHttpRequestError>()(
   "TransferHttpRequestError",
   {
     url: Schema.String,
@@ -120,7 +120,7 @@ function rawDataBytes(data: NodeSocket.NodeWS.RawData): number {
   return data.byteLength;
 }
 
-export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
+function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   let socket: NodeWebSocketWithTransport | null = null;
   // Held separately from the WebSocket so wire totals survive a close, which
   // is when a reconnect measurement reads them.
@@ -176,7 +176,7 @@ export function transferDelta(
   };
 }
 
-export function countingWsRpcProtocolLayer(input: {
+function countingWsRpcProtocolLayer(input: {
   readonly url: string;
   readonly cookie: string;
   readonly recorder: WebSocketTransferRecorder;
@@ -194,7 +194,7 @@ export function countingWsRpcProtocolLayer(input: {
   );
 }
 
-export const makeCountingWsRpcClient = RpcClient.make(WsRpcGroup);
+const makeCountingWsRpcClient = RpcClient.make(WsRpcGroup);
 export type CountingWsRpcClient = Effect.Success<typeof makeCountingWsRpcClient>;
 
 export interface MeasuredWsClient {

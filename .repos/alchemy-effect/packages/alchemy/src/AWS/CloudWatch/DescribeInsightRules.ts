@@ -11,9 +11,8 @@ export interface DescribeInsightRulesRequest
  *
  * Provide `CloudWatch.DescribeInsightRulesHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Insight Rules
- * @example List Contributor Insights Rules
+ * ### Reading Insight Rules
+ * **Example:** List Contributor Insights Rules
  * ```typescript
  * // init — grants cloudwatch:DescribeInsightRules
  * const describeInsightRules = yield* AWS.CloudWatch.DescribeInsightRules();
@@ -22,6 +21,8 @@ export interface DescribeInsightRulesRequest
  * const result = yield* describeInsightRules();
  * const names = (result.InsightRules ?? []).map((rule) => rule.Name);
  * ```
+ *
+ * @binding
  */
 export interface DescribeInsightRules extends Binding.Service<
   DescribeInsightRules,

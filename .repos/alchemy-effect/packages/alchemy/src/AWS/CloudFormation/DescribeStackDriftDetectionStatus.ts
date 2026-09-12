@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * reaches `DETECTION_COMPLETE` / `DETECTION_FAILED` and reports the stack's
  * overall drift status. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.DescribeStackDriftDetectionStatusHttp)`.
- * @binding
- * @section Drift Detection
- * @example Poll a Drift Detection Run
+ * ### Drift Detection
+ * **Example:** Poll a Drift Detection Run
  * ```typescript
  * const describeStackDriftDetectionStatus =
  *   yield* AWS.CloudFormation.DescribeStackDriftDetectionStatus();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // status.DetectionStatus, status.StackDriftStatus
  * ```
+ *
+ * @binding
  */
 export interface DescribeStackDriftDetectionStatus extends Binding.Service<
   DescribeStackDriftDetectionStatus,

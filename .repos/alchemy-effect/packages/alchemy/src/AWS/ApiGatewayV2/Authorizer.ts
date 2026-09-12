@@ -102,12 +102,11 @@ export interface AuthorizerType extends Resource<
 /**
  * An API Gateway v2 Authorizer — controls access to HTTP/WebSocket API
  * routes via JWT validation or a Lambda (`REQUEST`) authorizer.
- * @resource
- * @section JWT authorizers
+ * ### JWT authorizers
  * The common HTTP API authorizer: API Gateway validates the caller's JWT
  * against the issuer's JWKS and matches the audience — no Lambda invoked.
  *
- * @example JWT authorizer for a Cognito user pool
+ * **Example:** JWT authorizer for a Cognito user pool
  * ```typescript
  * const authorizer = yield* ApiGatewayV2.Authorizer("Jwt", {
  *   api,
@@ -128,8 +127,8 @@ export interface AuthorizerType extends Resource<
  * });
  * ```
  *
- * @section Lambda (REQUEST) authorizers
- * @example Simple-response Lambda authorizer
+ * ### Lambda (REQUEST) authorizers
+ * **Example:** Simple-response Lambda authorizer
  * ```typescript
  * const authorizer = yield* ApiGatewayV2.Authorizer("Lambda", {
  *   api,
@@ -140,6 +139,8 @@ export interface AuthorizerType extends Resource<
  *   enableSimpleResponses: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const AuthorizerResource = Resource<AuthorizerType>(
   "AWS.ApiGatewayV2.Authorizer",

@@ -1,8 +1,9 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-03T09:58:00Z",
+  "updatedAt": "2026-09-12T00:41:55Z",
   "currentModels": {
     "codex": [
+      "gpt-6-astra",
       "gpt-5.6-luna",
       "gpt-5.6-terra",
       "gpt-5.6-sol",
@@ -15,7 +16,7 @@
   "providers": {
     "claudeAgent": {
       "defaults": {
-        "chat": "claude-sonnet-5"
+        "chat": "claude-fable-5-1"
       },
       "profiles": {
         "fable-5": {
@@ -32,12 +33,12 @@
                   },
                   {
                     "id": "medium",
-                    "label": "Medium"
+                    "label": "Medium",
+                    "isDefault": true
                   },
                   {
                     "id": "high",
-                    "label": "High",
-                    "isDefault": true
+                    "label": "High"
                   },
                   {
                     "id": "xhigh",

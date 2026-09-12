@@ -14,9 +14,8 @@ export interface DescribeServiceRevisionsRequest
  * task-definition + configuration snapshots that deployments roll between.
  * The host is granted `ecs:DescribeServiceRevisions` on the service's
  * revisions (revision ARNs come from deployment describe/list responses).
- * @binding
- * @section Service Deployments
- * @example Inspect a Target Revision
+ * ### Service Deployments
+ * **Example:** Inspect a Target Revision
  * ```typescript
  * const describeServiceRevisions =
  *   yield* AWS.ECS.DescribeServiceRevisions(service);
@@ -26,6 +25,8 @@ export interface DescribeServiceRevisionsRequest
  * });
  * const taskDefinition = response.serviceRevisions?.[0]?.taskDefinition;
  * ```
+ *
+ * @binding
  */
 export interface DescribeServiceRevisions extends Binding.Service<
   DescribeServiceRevisions,

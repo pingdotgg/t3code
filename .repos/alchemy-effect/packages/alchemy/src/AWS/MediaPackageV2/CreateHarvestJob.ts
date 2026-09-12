@@ -15,9 +15,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  * endpoint's group, channel, and name are injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.MediaPackageV2.CreateHarvestJobHttp)`.
- * @binding
- * @section Harvesting Live-to-VOD Clips
- * @example Harvest the Last Five Minutes to S3
+ * ### Harvesting Live-to-VOD Clips
+ * **Example:** Harvest the Last Five Minutes to S3
  * ```typescript
  * // init — bind the operation to the endpoint
  * const createHarvestJob = yield* AWS.MediaPackageV2.CreateHarvestJob(endpoint);
@@ -34,6 +33,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateHarvestJob extends Binding.Service<
   CreateHarvestJob,

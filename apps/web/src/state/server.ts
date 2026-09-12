@@ -29,6 +29,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   environmentThemes: true,
   usageLimitSources: true,
+  usageLimitsCommand: true,
 });
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
@@ -49,7 +50,7 @@ const EMPTY_PRIMARY_SERVER_STATE: PrimaryServerState = {
   welcome: null,
 };
 
-export const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
+const primaryServerStateAtom = Atom.make((get): PrimaryServerState => {
   const environmentId = get(primaryEnvironmentIdAtom);
   if (environmentId === null) {
     return EMPTY_PRIMARY_SERVER_STATE;
@@ -99,10 +100,6 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
     get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
 ).pipe(Atom.withLabel("web-primary-server-available-editors"));
 
-export const primaryServerKeybindingsConfigPathAtom = Atom.make(
-  (get): string | null => get(primaryServerConfigAtom)?.keybindingsConfigPath ?? null,
-).pipe(Atom.withLabel("web-primary-server-keybindings-config-path"));
-
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
 /**
@@ -114,8 +111,3 @@ export const primaryServerEnvironmentThemesAtom = Atom.make(
   (get): ReadonlyArray<EnvironmentTheme> =>
     get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));
-
-export const primaryServerObservabilityAtom = Atom.make(
-  (get): ServerConfig["observability"] | null =>
-    get(primaryServerConfigAtom)?.observability ?? null,
-).pipe(Atom.withLabel("web-primary-server-observability"));

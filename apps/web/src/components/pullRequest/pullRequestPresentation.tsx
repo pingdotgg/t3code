@@ -1,3 +1,4 @@
+import { Spinner } from "~/components/ui/spinner";
 import type {
   PullRequestActor,
   PullRequestCheck,
@@ -15,8 +16,8 @@ import {
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
-  LoaderIcon,
   TriangleAlertIcon,
+  UserCheckIcon,
 } from "lucide-react";
 import { Children, isValidElement, type ReactNode } from "react";
 
@@ -30,6 +31,21 @@ interface StatePresentation {
   readonly label: string;
   readonly toneClassName: string;
   readonly Icon: typeof GitPullRequestIcon;
+}
+
+export function PullRequestApprovalGlyph() {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        <UserCheckIcon
+          aria-hidden
+          className={cn("size-3.5", CHECK_STATUS_PRESENTATION.success.toneClassName)}
+        />
+        <span className="sr-only">Approved</span>
+      </TooltipTrigger>
+      <TooltipPopup>Approved</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /**
@@ -119,7 +135,7 @@ export function PullRequestStateGlyph({
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: LoaderIcon, toneClassName: "animate-spin text-amber-500" },
+  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
   "action-required": {
     label: "Awaiting action",
     Icon: CircleDotIcon,
@@ -136,7 +152,7 @@ const CHECK_STATUS_PRESENTATION = {
   neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
 } as const satisfies Record<
   PullRequestCheckStatus,
-  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+  { label: string; Icon: typeof CircleCheckIcon | typeof Spinner; toneClassName: string }
 >;
 
 function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">): boolean {
@@ -173,7 +189,7 @@ const CHECKS_STATE_PRESENTATION = {
   passing: {
     label: "All checks have passed",
     Icon: CircleCheckIcon,
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
   },
   failing: {
     label: "Some checks were not successful",
@@ -358,11 +374,13 @@ export function PullRequestActorLabel({
   className,
   labelClassName,
   tooltip = true,
+  profileUrl,
 }: {
   actor: PullRequestActor | null;
   className?: string;
   labelClassName?: string;
   tooltip?: boolean;
+  profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
@@ -377,11 +395,28 @@ export function PullRequestActorLabel({
   return (
     <Tooltip>
       <TooltipTrigger
-        render={<span className={cn("flex min-w-0 items-center gap-1.5", className)} />}
+        render={
+          profileUrl ? (
+            <a
+              href={profileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open ${login}'s profile`}
+            />
+          ) : (
+            <span />
+          )
+        }
+        className={cn(
+          "flex min-w-0 items-center gap-1.5",
+          profileUrl &&
+            "cursor-pointer rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+          className,
+        )}
       >
         {label}
       </TooltipTrigger>
-      <TooltipPopup side="top">{login}</TooltipPopup>
+      <TooltipPopup side="top">{profileUrl ? `Open ${login}'s profile` : login}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -403,10 +438,8 @@ export function PullRequestDiffStat({
   }
   return (
     <span className={cn("inline-flex items-baseline gap-1 tabular-nums", className)}>
-      <span className="text-emerald-600 dark:text-emerald-300/90">
-        +{additions.toLocaleString()}
-      </span>
-      <span className="text-destructive">-{deletions.toLocaleString()}</span>
+      <span className="text-diff-addition-foreground">+{additions.toLocaleString()}</span>
+      <span className="text-diff-deletion">-{deletions.toLocaleString()}</span>
     </span>
   );
 }

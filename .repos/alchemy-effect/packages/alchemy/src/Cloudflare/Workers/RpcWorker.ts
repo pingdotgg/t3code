@@ -275,12 +275,9 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * carries `Self` through the result type as `Rpc<Self>`, so other
  * workers binding to this one see the rpc shape pinned to `Self`.
  *
- * @resource
- * @product Workers
- * @category Workers & Compute
  *
- * @section Defining the rpc group
- * @example Pure schema description
+ * ### Defining the rpc group
+ * **Example:** Pure schema description
  * The rpc group and its schemas live outside any worker so both the
  * server (`RpcWorker`) and any consumers (`RpcClient.make` /
  * `RpcDurableObject`) import the same value.
@@ -302,8 +299,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * export class TaskRpcs extends RpcGroup.make(getTask) {}
  * ```
  *
- * @section Implementing the worker
- * @example Class form (recommended)
+ * ### Implementing the worker
+ * **Example:** Class form (recommended)
  * Mirrors `Cloudflare.Worker<Self>()(...)` — `class X extends ...`
  * works the same. The init Effect builds a handlers `Layer` from the
  * group and returns the `RpcServer.toHttpEffect(schema)`-piped Effect
@@ -329,7 +326,7 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * ) {}
  * ```
  *
- * @example NDJSON for streaming rpcs
+ * **Example:** NDJSON for streaming rpcs
  * If any rpc in the group is a streaming rpc, the wire serialization
  * must be `RpcSerialization.layerNdjson` — streaming rpcs need
  * newline framing on the wire.
@@ -340,8 +337,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * );
  * ```
  *
- * @section Modular form: separate the class from its runtime
- * @example Class declaration with no impl + `static make(impl)`
+ * ### Modular form: separate the class from its runtime
+ * **Example:** Class declaration with no impl + `static make(impl)`
  * The inline class form above bundles the runtime into the class
  * declaration. The two-arg form `(id, props)` declares the class
  * as a pure tagged identifier; provide the runtime separately via
@@ -367,8 +364,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * );
  * ```
  *
- * @section Hosting a Durable Object for cross-script binding
- * @example `RpcWorker<Self, Deps>()` declares published DOs
+ * ### Hosting a Durable Object for cross-script binding
+ * **Example:** `RpcWorker<Self, Deps>()` declares published DOs
  * The optional second type argument `Deps` mirrors
  * `Cloudflare.Worker<Self, Bindings, Deps>` — it declares the DOs
  * this Worker publishes for cross-script binding. With `Counter`
@@ -385,8 +382,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * See {@link RpcDurableObject} for the consumer side
  * (`Counter.from(TaskWorker)`).
  *
- * @section Binding it from another worker
- * @example `Cloudflare.RpcWorker.bind(WorkerClass)`
+ * ### Binding it from another worker
+ * **Example:** `Cloudflare.RpcWorker.bind(WorkerClass)`
  * Inside another worker's init, `RpcWorker.bind(WorkerClass)`
  * registers the service binding on the surrounding worker and returns
  * a typed `RpcClient` you can call directly from any per-request
@@ -415,8 +412,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * ) {}
  * ```
  *
- * @section Driving it from a test
- * @example `Test.make` + `RpcClient.make`
+ * ### Driving it from a test
+ * **Example:** `Test.make` + `RpcClient.make`
  * The same `RpcGroup` drives a typed client. `Test.make` deploys the
  * stack once for the file; each test yields the deploy handle for its
  * URL and calls procedures directly.
@@ -462,8 +459,8 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  * );
  * ```
  *
- * @section Yielding the surrounding worker from inside the impl
- * @example `yield* RpcWorker` inside the init effect
+ * ### Yielding the surrounding worker from inside the impl
+ * **Example:** `yield* RpcWorker` inside the init effect
  * Mirrors `yield* DurableObject` — yield the tag to access
  * the surrounding worker.
  * ```typescript
@@ -471,6 +468,10 @@ const bind = <Self, Rpcs extends Rpc.Any>(
  *   const self = yield* Cloudflare.RpcWorker;
  * });
  * ```
+ *
+ * @resource
+ * @product Workers
+ * @category Workers & Compute
  */
 export const RpcWorker: RpcWorkerClass = (() => {
   const fn = (...args: any[]) => {

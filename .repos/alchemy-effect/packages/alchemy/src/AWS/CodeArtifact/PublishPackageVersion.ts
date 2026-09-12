@@ -17,9 +17,8 @@ export interface PublishPackageVersionRequest extends Omit<
  *
  * Publishes a new package version (generic-format packages) by uploading an asset with its SHA-256 checksum. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.PublishPackageVersionHttp)`.
- * @binding
- * @section Publishing Packages
- * @example Publish a Generic Package Version
+ * ### Publishing Packages
+ * **Example:** Publish a Generic Package Version
  * ```typescript
  * const publish = yield* AWS.CodeArtifact.PublishPackageVersion(repo);
  *
@@ -34,6 +33,8 @@ export interface PublishPackageVersionRequest extends Omit<
  * });
  * console.log(res.status);
  * ```
+ *
+ * @binding
  */
 export interface PublishPackageVersion extends Binding.Service<
   PublishPackageVersion,

@@ -124,9 +124,8 @@ export interface Cluster extends Resource<
  * cluster (signing the cluster CSR and calling InitializeCluster) is an
  * offline certificate-authority ceremony that stays out of band — the
  * `clusterCsr` attribute exposes the CSR to sign.
- * @resource
- * @section Creating a Cluster
- * @example Cluster Spanning Two Availability Zones
+ * ### Creating a Cluster
+ * **Example:** Cluster Spanning Two Availability Zones
  * ```typescript
  * const cluster = yield* Cluster("HsmCluster", {
  *   hsmType: "hsm2m.medium",
@@ -134,7 +133,7 @@ export interface Cluster extends Resource<
  * });
  * ```
  *
- * @example Non-FIPS Cluster with Custom Backup Retention
+ * **Example:** Non-FIPS Cluster with Custom Backup Retention
  * ```typescript
  * const cluster = yield* Cluster("HsmCluster", {
  *   hsmType: "hsm2m.medium",
@@ -144,8 +143,8 @@ export interface Cluster extends Resource<
  * });
  * ```
  *
- * @section Adding HSMs
- * @example Cluster with One HSM
+ * ### Adding HSMs
+ * **Example:** Cluster with One HSM
  * ```typescript
  * const cluster = yield* Cluster("HsmCluster", {
  *   hsmType: "hsm2m.medium",
@@ -156,6 +155,8 @@ export interface Cluster extends Resource<
  *   availabilityZone: "us-west-2a",
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.CloudHSMV2.Cluster");
 

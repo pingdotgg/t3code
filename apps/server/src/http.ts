@@ -63,8 +63,8 @@ const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
   !/(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i.test(mimeType.trim().toLowerCase());
-const isSafeInlineVideoMimeType = (mimeType: string): boolean =>
-  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && mimeType.toLowerCase().startsWith("video/");
+const isSafeInlineMediaMimeType = (mimeType: string): boolean =>
+  DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) && /^(?:audio|video)\//i.test(mimeType);
 const isSafeInlineDocumentMimeType = (mimeType: string): boolean =>
   mimeType.toLowerCase() === "application/pdf" || mimeType.toLowerCase() === "text/html";
 
@@ -108,7 +108,7 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : inlineMimeType !== undefined && isSafeInlineVideoMimeType(inlineMimeType)
+      : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
         ? { "Content-Type": inlineMimeType }
         : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
           ? {
@@ -132,7 +132,7 @@ export function assetResponseHeaders(
   };
 }
 
-/** A single byte range for native video readers; unsupported range syntax uses the full file. */
+/** A single byte range for native media readers; unsupported range syntax uses the full file. */
 function assetByteRange(header: string, size: bigint) {
   const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
   if (!match || (!match[1] && !match[2])) return null;
@@ -170,16 +170,17 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   const headers = assetResponseHeaders(asset.path, asset);
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
-  const isVideo = headers["Content-Type"]?.toLowerCase().startsWith("video/") === true;
-  if (mediaFile && isVideo) {
-    // Host videos can change in place. Do not invite conditional range requests
-    // with validators that cannot establish byte-for-byte identity.
+  const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
+  if (isMedia) {
+    // Host media can change in place. Do not invite conditional range requests
+    // with validators that cannot establish byte-for-byte identity. Attachment media
+    // carries no `file`, and must not outlive the signed URL that granted it either.
     headers["Cache-Control"] = "private, no-store";
   }
   let status = 200;
   let offset = 0n;
   let bytesToRead: bigint | undefined;
-  if (isVideo) {
+  if (isMedia) {
     headers["Accept-Ranges"] = "bytes";
     // If-Range requires a matching validator. A full response is safe when we cannot validate it.
     if (method === "GET" && rangeHeader && ifRangeHeader === undefined) {
@@ -204,7 +205,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     const size = bytesToRead ?? mediaInfo.size;
     headers["Content-Type"] ??= Mime.getType(asset.path) ?? "application/octet-stream";
     headers["Content-Length"] = String(size);
-    if (!isVideo) {
+    if (!isMedia) {
       headers["Last-Modified"] = mediaInfo.mtime.toUTCString();
       headers.ETag = `W/"${mediaInfo.size.toString(16)}-${mediaInfo.mtimeMs.toString(16)}"`;
     }
@@ -566,15 +567,20 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       }
     }
     const fileInfo = opened.info;
+    const mimeType = Mime.getType(filePath) ?? "application/octet-stream";
+    const isHtml = mimeType === "text/html";
 
     // A hash-like name is not enough: custom static files can use the same naming pattern.
     const relativePath = path.relative(staticRoot, filePath).replaceAll("\\", "/");
     const immutable =
-      /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) && immutableBuildAssets.has(relativePath);
+      !isHtml &&
+      /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) &&
+      immutableBuildAssets.has(relativePath);
     const headers: Record<string, string> = {
       "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
     };
-    const modifiedAt = Option.getOrUndefined(fileInfo.mtime);
+    // Deployments can preserve HTML size and mtime while changing its bundle URLs.
+    const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);
     const etag = modifiedAt
       ? `W/"${fileInfo.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`
       : undefined;
@@ -599,17 +605,14 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
         : ifModifiedSince !== undefined &&
           modifiedAt !== undefined &&
           Date.parse(modifiedAt.toUTCString()) <= Date.parse(ifModifiedSince);
-    if (unchanged) {
+    if (!isHtml && unchanged) {
       return HttpServerResponse.empty({
         status: 304,
         headers: { ...headers, Vary: "Accept-Encoding" },
       });
     }
 
-    const contentType =
-      path.extname(filePath) === ".html"
-        ? "text/html; charset=utf-8"
-        : (Mime.getType(filePath) ?? "application/octet-stream");
+    const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
     // HEAD still passes through compression, which selects headers without reading the stream.
     return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {

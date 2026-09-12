@@ -43,9 +43,8 @@ export interface IdentityPoolAuthClient {
  * ID and temporary AWS credentials. These operations are unauthenticated
  * (Cognito does not evaluate IAM for them), so the binding grants no IAM
  * policy — it injects the identity pool ID into `getId`.
- * @binding
- * @section Vending AWS Credentials
- * @example Guest (Unauthenticated) Credentials
+ * ### Vending AWS Credentials
+ * **Example:** Guest (Unauthenticated) Credentials
  * ```typescript
  * const identity = yield* Cognito.IdentityPoolAuth(identityPool);
  *
@@ -55,7 +54,7 @@ export interface IdentityPoolAuthClient {
  * });
  * ```
  *
- * @example Credentials for a User Pool Sign-In
+ * **Example:** Credentials for a User Pool Sign-In
  * ```typescript
  * const provider = `cognito-idp.${region}.amazonaws.com/${userPoolId}`;
  * const { IdentityId } = yield* identity.getId({
@@ -66,6 +65,8 @@ export interface IdentityPoolAuthClient {
  *   Logins: { [provider]: idToken },
  * });
  * ```
+ *
+ * @binding
  */
 export interface IdentityPoolAuth extends Binding.Service<
   IdentityPoolAuth,

@@ -2,104 +2,173 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
+  ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
-  UsageLimitSourceAccount,
+  UsageProviderKind,
 } from "@t3tools/contracts";
 import {
-  collectLimitSources,
-  collectLimitsGroups,
   elapsedShare,
   formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
-  providerLimitsLabel,
+  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsSection } from "../settings/components/SettingsSection";
+import { useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+
+type Driver = ServerProvider["driver"];
+
+/** The series colour the usage chart uses for this driver, so the two views read as one. */
+function useBarColor(driver: Driver): string | null {
+  const colors = useProviderColors();
+  const kind: UsageProviderKind | null =
+    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : null;
+  return kind ? colors[kind] : null;
+}
 
 /**
- * One window as a bar spanning its whole duration: the fill is quota spent,
- * the hairline is how far into the window the clock is.
+ * One window as a bar spanning its whole duration: the fill is quota left,
+ * the hairline is how much of the window is left, so even spending keeps the
+ * fill on the line. Pace sits under the left edge, the countdown under the
+ * right, so a row reads in one glance.
  */
-function WindowBar(props: { readonly window: ServerProviderUsageWindow; readonly now: number }) {
+function WindowRow(props: {
+  readonly window: ServerProviderUsageWindow;
+  readonly color: string | null;
+  readonly now: number;
+}) {
   const { window, now } = props;
-  const used = Math.round(Math.max(0, Math.min(100, window.usedPercent)));
+  const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
+  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
-  const detail = [pace ? PACE_LABEL[pace] : null, resetsIn].filter(Boolean).join(" · ");
   return (
-    <View className="gap-1.5">
+    <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
-        <Text className="text-base text-foreground">{window.label}</Text>
-        <Text className="text-base tabular-nums text-foreground">{used}% used</Text>
+        <Text className="text-sm text-foreground">{window.label}</Text>
+        <Text className="text-sm font-t3-medium tabular-nums text-foreground">
+          {remaining}% left
+        </Text>
       </View>
       <View className="h-3 justify-center">
         <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
           <View
             className={
-              used >= 90
-                ? "h-full rounded-full bg-destructive"
-                : used >= 70
-                  ? "h-full rounded-full bg-warning"
+              remaining <= 10
+                ? "h-full rounded-full bg-red-500"
+                : remaining <= 30
+                  ? "h-full rounded-full bg-amber-500"
                   : "h-full rounded-full bg-foreground"
             }
-            style={{ flex: used }}
+            style={[
+              { flex: remaining },
+              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
+            ]}
           />
-          <View style={{ flex: 100 - used }} />
+          <View style={{ flex: 100 - remaining }} />
         </View>
-        {elapsed !== null ? (
+        {timeLeft !== null ? (
           <View
             className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${elapsed * 100}%`, opacity: 0.6 }}
+            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
           />
         ) : null}
       </View>
-      {detail ? <Text className="text-xs text-foreground-tertiary">{detail}</Text> : null}
+      {pace || resetsIn ? (
+        <View className="flex-row justify-between gap-3">
+          <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
+          <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function AccountLimits(props: {
+function AccountInstanceLabel({ value }: { readonly value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  if (!value.includes("@")) {
+    return (
+      <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {value}
+      </Text>
+    );
+  }
+  return (
+    <Pressable
+      className="shrink active:opacity-60"
+      accessibilityRole="button"
+      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      onPress={() => setRevealed((current) => !current)}
+    >
+      <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {revealed ? value : "••••••@••••••"}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** One account: icon, name and plan on a single line, then its windows. */
+export function AccountLimits(props: {
+  readonly driver: Driver;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
   readonly limits: ServerProvider["usageLimits"];
   readonly now: number;
   readonly first: boolean;
+  /** Tighter padding for the composer card. */
+  readonly dense?: boolean;
+  /** Sits at the end of the heading row, such as a close control. */
+  readonly trailing?: ReactNode;
   readonly footer?: ReactNode;
 }) {
-  const { limits, now } = props;
+  const { limits, now, dense = false } = props;
+  const color = useBarColor(props.driver);
   if (!limits) return null;
   const notice = limitsNotice(limits);
+  const padding = dense ? "px-4 py-3" : "p-4";
   return (
-    <View className={props.first ? "gap-3 p-4" : "gap-3 border-t border-border-subtle p-4"}>
-      <View className="flex-row flex-wrap items-baseline gap-x-2 gap-y-1">
-        <Text className="text-lg text-foreground">{props.label}</Text>
-        {props.instanceLabel !== props.label ? (
-          <Text className="shrink text-xs text-foreground-tertiary">· {props.instanceLabel}</Text>
-        ) : null}
-        {props.detail ? (
-          <Text className="shrink text-sm text-foreground-muted">· {props.detail}</Text>
-        ) : null}
+    <View
+      className={
+        props.first ? `gap-3 ${padding}` : `gap-3 border-t border-border-subtle ${padding}`
+      }
+    >
+      <View className="flex-row items-center gap-2">
+        <ProviderIcon provider={props.driver} size={16} />
+        <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
+          <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
+          {props.instanceLabel !== props.label ? (
+            <AccountInstanceLabel key={props.instanceLabel} value={props.instanceLabel} />
+          ) : null}
+          {props.detail ? (
+            <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
+              · {props.detail}
+            </Text>
+          ) : null}
+        </View>
+        {props.trailing}
       </View>
       {notice ? (
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
-        limits.windows.map((window) => <WindowBar key={window.id} window={window} now={now} />)
+        <View className="gap-3">
+          {limits.windows.map((window) => (
+            <WindowRow key={window.id} window={window} color={color} now={now} />
+          ))}
+        </View>
       )}
       {props.footer}
     </View>
@@ -118,19 +187,21 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
  * credit the provider granted the user, so it goes through the native
  * confirm alert rather than firing on a bare tap.
  */
-function ResetCredits(props: {
+export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
-  readonly instanceId: ProviderInstanceId;
+  readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  /** A smaller pill for the composer card. */
+  readonly dense?: boolean;
 }) {
-  const { environmentId, instanceId, credits, now } = props;
+  const { environmentId, input, credits, now, dense = false } = props;
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  if (credits.availableCount === 0 && status === null) return null;
+  if (dense && credits.availableCount === 0 && status === null) return null;
 
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
@@ -145,10 +216,10 @@ function ResetCredits(props: {
   const redeem = async () => {
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: { instanceId } });
+    const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
     setStatus(
@@ -170,7 +241,7 @@ function ResetCredits(props: {
   };
 
   return (
-    <View className="gap-2">
+    <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
       <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
       {credits.availableCount > 0 ? (
         <Pressable
@@ -178,10 +249,20 @@ function ResetCredits(props: {
           accessibilityState={{ disabled: busy }}
           disabled={busy}
           onPress={confirm}
-          className="self-start rounded-full bg-subtle-strong px-3 py-1.5"
+          className={
+            dense
+              ? "rounded-full bg-subtle-strong px-2.5 py-1"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
+          }
         >
-          <Text className="text-sm font-t3-medium text-foreground">
-            {busy ? "Using credit…" : "Use a reset credit"}
+          <Text
+            className={
+              dense
+                ? "text-xs font-t3-medium text-foreground"
+                : "text-sm font-t3-medium text-foreground"
+            }
+          >
+            {busy ? "Using…" : "Use reset"}
           </Text>
         </Pressable>
       ) : null}
@@ -190,109 +271,55 @@ function ResetCredits(props: {
   );
 }
 
-function ProviderLimits(props: {
-  readonly provider: ServerProvider;
-  readonly environmentId: EnvironmentId;
-  readonly now: number;
-  readonly first: boolean;
-}) {
-  const { provider, environmentId, now } = props;
-  const credits = provider.usageLimits?.resetCredits;
-  return (
-    <AccountLimits
-      label={DRIVER_LABEL[provider.driver] ?? String(provider.driver)}
-      instanceLabel={providerLimitsLabel(provider, (driver) => DRIVER_LABEL[driver])}
-      detail={provider.auth.label}
-      limits={provider.usageLimits}
-      now={now}
-      first={props.first}
-      footer={
-        credits ? (
-          <ResetCredits
-            environmentId={environmentId}
-            instanceId={provider.instanceId}
-            credits={credits}
-            now={now}
-          />
-        ) : undefined
-      }
-    />
-  );
-}
-
-/** Emails stay off the phone screen; the plan and driver identify the row. */
-function SourceAccountLimits(props: {
-  readonly account: UsageLimitSourceAccount;
-  readonly now: number;
-  readonly first: boolean;
-}) {
-  const { account } = props;
-  return (
-    <AccountLimits
-      label={DRIVER_LABEL[account.driver] ?? String(account.driver)}
-      instanceLabel="CLI Proxy"
-      detail={account.plan}
-      limits={account.usageLimits}
-      now={props.now}
-      first={props.first}
-    />
-  );
-}
-
 /**
- * Subscription quota windows from every connected environment's providers,
- * read from the config each environment already streams. Countdowns anchor to
- * render time rather than ticking.
+ * Re-probes every provider (and usage-limit source) on each connected
+ * environment; the fresh snapshots then arrive over the config stream.
+ * Countdowns and pace anchor to `now` rather than ticking, so a refresh also
+ * re-anchors the clock: quota and elapsed time move together, or not at all.
+ * Environments whose probe failed are named, since their rows keep showing
+ * the previous quota with nothing else to say so.
  */
-export function UsageLimitsSection() {
+export function useRefreshLimits(selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const groups = collectLimitsGroups(presentations);
-  const sources = collectLimitSources(presentations);
-  // Anchored once per mount on purpose: countdowns must not tick.
-  const [now] = useState(() => Date.now());
-  if (groups.length === 0 && sources.length === 0) return null;
-
-  return (
-    <>
-      {sources.map((source) => (
-        <SettingsSection key={source.key} card>
-          {source.error ? (
-            <Text className="p-4 text-sm text-foreground-muted">{source.error}</Text>
-          ) : source.accounts.length === 0 ? (
-            <Text className="p-4 text-sm text-foreground-muted">
-              {source.hiddenAccountCount > 0
-                ? "All accounts are shown by connected providers."
-                : "No accounts reported."}
-            </Text>
-          ) : (
-            source.accounts.map((account, index) => (
-              <SourceAccountLimits
-                key={account.id}
-                account={account}
-                now={now}
-                first={index === 0}
-              />
-            ))
-          )}
-        </SettingsSection>
-      ))}
-      {groups.map((group) => (
-        <SettingsSection
-          key={group.environmentId}
-          title={group.environmentLabel ? `Limits · ${group.environmentLabel}` : "Limits"}
-          card
-        >
-          {group.providers.map((provider, index) => (
-            <ProviderLimits
-              key={provider.instanceId}
-              provider={provider}
-              environmentId={group.environmentId}
-              now={now}
-              first={index === 0}
-            />
-          ))}
-        </SettingsSection>
-      ))}
-    </>
-  );
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const [now, setNow] = useState(() => Date.now());
+  const [refreshing, setRefreshing] = useState(false);
+  const [failedEnvironments, setFailedEnvironments] = useState<
+    readonly { environmentId: EnvironmentId; label: string }[]
+  >([]);
+  // Always toggles `refreshing`, even with nothing to probe: Android's
+  // RefreshControl keeps its spinner up until it sees true then false.
+  const refresh = async () => {
+    const connected = [...presentations].filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+    );
+    setRefreshing(true);
+    try {
+      const results = await Promise.all(
+        connected.map(([environmentId]) => refreshProviders({ environmentId, input: {} })),
+      );
+      setFailedEnvironments(
+        connected
+          .filter((_, index) => results[index]?._tag === "Failure")
+          .map(([environmentId, presentation]) => ({
+            environmentId,
+            label: presentation.entry.target.label,
+          })),
+      );
+    } finally {
+      setNow(Date.now());
+      setRefreshing(false);
+    }
+  };
+  const failedLabels = failedEnvironments
+    .filter(
+      ({ environmentId }) =>
+        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
+    )
+    .map(({ label }) => label);
+  return { now, refreshing, failedLabels, refresh };
 }

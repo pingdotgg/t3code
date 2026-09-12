@@ -13,7 +13,9 @@ import {
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
+  createLucideIcon,
   GitBranchIcon,
+  PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
@@ -33,20 +35,31 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   useSidebar,
 } from "../ui/sidebar";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
+  isSettingsOverviewVisible,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import { validateSettingsScopeSearch } from "./settingsScope";
+
+const SnapShotIcon = createLucideIcon("snap-shot", [
+  [
+    "path",
+    {
+      d: "M8 3H6a3 3 0 0 0-3 3v2M16 3h2a3 3 0 0 1 3 3v2M21 16v2a3 3 0 0 1-3 3h-2M8 21H6a3 3 0 0 1-3-3v-2",
+      key: "capture-frame",
+    },
+  ],
+  ["rect", { width: "10", height: "8", x: "7", y: "8", rx: "2", key: "window" }],
+  ["circle", { cx: "12", cy: "12", r: "1.5", key: "lens" }],
+]);
 
 const T3ConnectSidebarSignIn = lazy(() =>
   import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
@@ -64,7 +77,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
 > = {
   "/settings/general": Settings2Icon,
   "/settings/appearance": PaletteIcon,
+  "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
+  "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
@@ -72,7 +87,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
-export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
@@ -82,33 +97,6 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: SETTINGS_SECTION_ICONS[to],
 }));
 
-const SETTINGS_PAGE_SECTIONS: Partial<
-  Readonly<Record<SettingsPath, ReadonlyArray<{ label: string; targetId: string }>>>
-> = {
-  "/settings/general": [
-    { label: "Organization", targetId: "organization" },
-    { label: "Behavior", targetId: "behavior" },
-    { label: "Projects & threads", targetId: "projects-and-threads" },
-    { label: "Confirmations", targetId: "confirmations" },
-    { label: "Text generation", targetId: "text-generation" },
-    { label: "About", targetId: "about" },
-    { label: "Legacy features", targetId: "legacy-features" },
-  ],
-  "/settings/appearance": [
-    { label: "Colors & themes", targetId: "appearance" },
-    { label: "Interface", targetId: "appearance-interface" },
-    { label: "Typography", targetId: "typography" },
-  ],
-  "/settings/source-control": [
-    { label: "Version control", targetId: "source-control" },
-    { label: "Text generation", targetId: "source-control-text-generation" },
-  ],
-  "/settings/connections": [
-    { label: "This environment", targetId: "connections-environment" },
-    { label: "Remote environments", targetId: "remote-environments" },
-  ],
-};
-
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
   return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground/60" />;
@@ -117,6 +105,11 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
+  const currentSearch = useLocation({ select: (location) => location.search });
+  const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
+  const navItems = SETTINGS_NAV_ITEMS.filter(
+    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
+  );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -183,24 +176,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       });
     },
     [isMobile, navigate, setOpenMobile],
-  );
-  const handlePageSectionClick = useCallback(
-    (to: SettingsPath, targetId: string) => {
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      if (pathname === to && scrollToSettingsTarget(targetId, { highlight: false })) {
-        return;
-      }
-      void navigate({
-        to,
-        hash: targetId,
-        replace: true,
-        hashScrollIntoView: false,
-        state: { settingsTargetHighlight: false },
-      });
-    },
-    [isMobile, navigate, pathname, setOpenMobile],
   );
   const clearSearch = useCallback(() => {
     setQuery("");
@@ -345,10 +320,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             </SidebarMenu>
           ) : (
             <SidebarMenu className="ps-px">
-              {SETTINGS_NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
-                const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
+                const isGeneralDetailPage =
+                  item.to === "/settings/general" && pathname === "/settings/open-source-licenses";
+                const isActive =
+                  isGeneralDetailPage || pathname === item.to || pathname.startsWith(`${item.to}/`);
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton
@@ -358,22 +335,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <Icon />
                       <span className="truncate">{item.label}</span>
                     </SidebarMenuButton>
-                    {isActive && pageSections ? (
-                      <SidebarMenuSub className="border-l-0">
-                        {pageSections.map((section) => (
-                          <SidebarMenuSubItem key={section.targetId}>
-                            <SidebarMenuSubButton
-                              render={<button type="button" />}
-                              size="sm"
-                              className="w-full text-sidebar-muted-foreground/65"
-                              onClick={() => handlePageSectionClick(item.to, section.targetId)}
-                            >
-                              <span className="ms-0.5">{section.label}</span>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
-                    ) : null}
                   </SidebarMenuItem>
                 );
               })}

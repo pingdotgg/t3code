@@ -67,9 +67,8 @@ export interface DeliveryChannel extends Resource<
  * this resource as an account-region singleton. A configuration recorder
  * must exist before the channel can be created (see
  * `AWS.Config.ConfigurationRecorder`).
- * @resource
- * @section Creating the Channel
- * @example Deliver configuration history to S3
+ * ### Creating the Channel
+ * **Example:** Deliver configuration history to S3
  * ```typescript
  * import * as Config from "alchemy/AWS/Config";
  *
@@ -78,7 +77,7 @@ export interface DeliveryChannel extends Resource<
  * });
  * ```
  *
- * @example Periodic snapshots with a key prefix
+ * **Example:** Periodic snapshots with a key prefix
  * ```typescript
  * const channel = yield* Config.DeliveryChannel("Channel", {
  *   s3BucketName: bucket.bucketName,
@@ -86,6 +85,8 @@ export interface DeliveryChannel extends Resource<
  *   snapshotDeliveryFrequency: "TwentyFour_Hours",
  * });
  * ```
+ *
+ * @resource
  */
 export const DeliveryChannel = Resource<DeliveryChannel>(
   "AWS.Config.DeliveryChannel",

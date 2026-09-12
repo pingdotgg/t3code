@@ -1,3 +1,5 @@
+import { ContextChipPopover } from "./contextChipParts";
+import { Button } from "./ui/button";
 import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -5,7 +7,14 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
-import { type ServerProviderSkill } from "@t3tools/contracts";
+import {
+  type ComposerContextClipboardFragment,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
@@ -28,6 +37,8 @@ import {
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
+  COPY_COMMAND,
+  CUT_COMMAND,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
   BLUR_COMMAND,
@@ -68,10 +79,7 @@ import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "~/composer-editor-mentions";
-import {
-  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-  type TerminalContextDraft,
-} from "~/lib/terminalContext";
+import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
@@ -82,8 +90,16 @@ import {
   SKILL_CHIP_ICON_SVG,
 } from "./composerInlineChip";
 import { FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
-import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
+import {
+  $createComposerContextReferenceNode,
+  ComposerContextReferenceNode,
+} from "./ComposerContextReferenceNode";
+import {
+  ComposerContextActionsContext,
+  ComposerContextRecordsContext,
+  type ComposerDraftContextRecords,
+} from "./composerContextPresentation";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
@@ -117,6 +133,7 @@ const BACKTICK_SURROUND_CLOSE_SYMBOL = SURROUND_SYMBOLS_MAP.get("`") ?? null;
 type SerializedComposerMentionNode = Spread<
   {
     path: string;
+    source?: string;
     type: "composer-mention";
     version: 1;
   },
@@ -134,32 +151,21 @@ type SerializedComposerSkillNode = Spread<
   SerializedLexicalNode
 >;
 
-type SerializedComposerTerminalContextNode = Spread<
-  {
-    context: TerminalContextDraft;
-    type: "composer-terminal-context";
-    version: 1;
-  },
-  SerializedLexicalNode
->;
-
-const ComposerTerminalContextActionsContext = createContext<{
-  onRemoveTerminalContext: (contextId: string) => void;
-}>({
-  onRemoveTerminalContext: () => {},
-});
-
 function ComposerMentionDecorator(props: { path: string }) {
+  const actions = use(ComposerContextActionsContext);
   const theme = resolvedThemeFromDocument();
   const chip = (
-    <span
-      className={FILE_TAG_CHIP_CLASS_NAME}
+    <button
+      type="button"
+      onClick={() => actions.openMention(props.path)}
+      aria-label={`Preview ${props.path}`}
+      className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
     >
       <FileTagChipContent path={props.path} label={basenameOfPath(props.path)} theme={theme} />
-    </span>
+    </button>
   );
 
   return (
@@ -174,28 +180,33 @@ function ComposerMentionDecorator(props: { path: string }) {
 
 class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   __path: string;
+  __source: string;
 
   static override getType(): string {
     return "composer-mention";
   }
 
   static override clone(node: ComposerMentionNode): ComposerMentionNode {
-    return new ComposerMentionNode(node.__path, node.__key);
+    return new ComposerMentionNode(node.__path, node.__source, node.__key);
   }
 
   static override importJSON(serializedNode: SerializedComposerMentionNode): ComposerMentionNode {
-    return $createComposerMentionNode(serializedNode.path).updateFromJSON(serializedNode);
+    return $createComposerMentionNode(serializedNode.path, serializedNode.source).updateFromJSON(
+      serializedNode,
+    );
   }
 
-  constructor(path: string, key?: NodeKey) {
+  constructor(path: string, source = serializeComposerFileLink(path), key?: NodeKey) {
     super(key);
     this.__path = path;
+    this.__source = source;
   }
 
   override exportJSON(): SerializedComposerMentionNode {
     return {
       ...super.exportJSON(),
       path: this.__path,
+      source: this.__source,
       type: "composer-mention",
       version: 1,
     };
@@ -212,7 +223,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   }
 
   override getTextContent(): string {
-    return serializeComposerFileLink(this.__path);
+    return this.__source;
   }
 
   override isInline(): true {
@@ -224,8 +235,8 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   }
 }
 
-function $createComposerMentionNode(path: string): ComposerMentionNode {
-  return $applyNodeReplacement(new ComposerMentionNode(path));
+function $createComposerMentionNode(path: string, source?: string): ComposerMentionNode {
+  return $applyNodeReplacement(new ComposerMentionNode(path, source));
 }
 
 function resolveSkillDescription(
@@ -258,34 +269,44 @@ function skillMetadataByName(
   );
 }
 
-function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: string | null }) {
-  const chip = (
-    <span
-      className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
-      contentEditable={false}
-      spellCheck={false}
-      data-composer-skill-chip="true"
-    >
-      <span
-        aria-hidden="true"
-        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-      />
-      <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
-    </span>
-  );
+const ComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
 
-  if (!props.skillDescription) {
-    return chip;
-  }
-
+function ComposerSkillDecorator(props: {
+  skillName: string;
+  skillLabel: string;
+  skillDescription: string | null;
+}) {
+  const actions = use(ComposerContextActionsContext);
+  const skill = use(ComposerSkillsContext).find((candidate) => candidate.name === props.skillName);
   return (
-    <Tooltip>
-      <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" className="max-w-120 whitespace-normal leading-tight">
-        {props.skillDescription}
-      </TooltipPopup>
-    </Tooltip>
+    <ContextChipPopover
+      accessibleLabel={`Skill ${props.skillLabel}`}
+      triggerClassName={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
+      chip={
+        <>
+          <span
+            aria-hidden="true"
+            className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+            dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+          />
+          <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.skillLabel}</span>
+        </>
+      }
+    >
+      <div className="space-y-3 p-2 text-sm">
+        <p className="font-medium">{props.skillLabel}</p>
+        <p>
+          {skill?.description ??
+            props.skillDescription ??
+            "No description is available for this skill."}
+        </p>
+        {skill?.path ? (
+          <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
+            View instructions
+          </Button>
+        ) : null}
+      </div>
+    </ContextChipPopover>
   );
 }
 
@@ -360,6 +381,7 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   override decorate(): React.ReactElement {
     return (
       <ComposerSkillDecorator
+        skillName={this.__skillName}
         skillLabel={this.__skillLabel}
         skillDescription={this.__skillDescription}
       />
@@ -375,104 +397,23 @@ function $createComposerSkillNode(
   return $applyNodeReplacement(new ComposerSkillNode(skillName, skillLabel, skillDescription));
 }
 
-function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
-  return <ComposerPendingTerminalContextChip context={props.context} />;
-}
-
-class ComposerTerminalContextNode extends DecoratorNode<React.ReactElement> {
-  __context: TerminalContextDraft;
-
-  static override getType(): string {
-    return "composer-terminal-context";
-  }
-
-  static override clone(node: ComposerTerminalContextNode): ComposerTerminalContextNode {
-    return new ComposerTerminalContextNode(node.__context, node.__key);
-  }
-
-  static override importJSON(
-    serializedNode: SerializedComposerTerminalContextNode,
-  ): ComposerTerminalContextNode {
-    return $createComposerTerminalContextNode(serializedNode.context);
-  }
-
-  constructor(context: TerminalContextDraft, key?: NodeKey) {
-    super(key);
-    this.__context = context;
-  }
-
-  override exportJSON(): SerializedComposerTerminalContextNode {
-    return {
-      ...super.exportJSON(),
-      context: this.__context,
-      type: "composer-terminal-context",
-      version: 1,
-    };
-  }
-
-  override createDOM(): HTMLElement {
-    const dom = document.createElement("span");
-    dom.className = COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME;
-    return dom;
-  }
-
-  override updateDOM(): false {
-    return false;
-  }
-
-  override getTextContent(): string {
-    return INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
-  }
-
-  override isInline(): true {
-    return true;
-  }
-
-  override decorate(): React.ReactElement {
-    return <ComposerTerminalContextDecorator context={this.__context} />;
-  }
-}
-
-function $createComposerTerminalContextNode(
-  context: TerminalContextDraft,
-): ComposerTerminalContextNode {
-  return $applyNodeReplacement(new ComposerTerminalContextNode(context));
-}
-
 type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSkillNode
   | ComposerCitationNode
-  | ComposerTerminalContextNode;
+  | ComposerContextReferenceNode;
 
 function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInlineTokenNode {
   return (
     candidate instanceof ComposerMentionNode ||
     candidate instanceof ComposerSkillNode ||
     candidate instanceof ComposerCitationNode ||
-    candidate instanceof ComposerTerminalContextNode
+    candidate instanceof ComposerContextReferenceNode
   );
 }
 
 function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-
-function terminalContextSignature(contexts: ReadonlyArray<TerminalContextDraft>): string {
-  return contexts
-    .map((context) =>
-      [
-        context.id,
-        context.threadId,
-        context.terminalId,
-        context.terminalLabel,
-        context.lineStart,
-        context.lineEnd,
-        context.createdAt,
-        context.text,
-      ].join("\u001f"),
-    )
-    .join("\u001e");
 }
 
 function skillSignature(skills: ReadonlyArray<ServerProviderSkill>): string {
@@ -836,7 +777,6 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
 
 function $setComposerEditorPrompt(
   prompt: string,
-  terminalContexts: ReadonlyArray<TerminalContextDraft>,
   skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
 ): void {
   const root = $getRoot();
@@ -844,14 +784,14 @@ function $setComposerEditorPrompt(
   const paragraph = $createParagraphNode();
   root.append(paragraph);
 
-  const segments = splitPromptIntoComposerSegments(prompt, terminalContexts);
+  const segments = splitPromptIntoComposerSegments(prompt);
   for (const segment of segments) {
     if (segment.type === "citation") {
       paragraph.append($createComposerCitationNode(segment.citation, segment.source));
       continue;
     }
     if (segment.type === "mention") {
-      paragraph.append($createComposerMentionNode(segment.path));
+      paragraph.append($createComposerMentionNode(segment.path, segment.source));
       continue;
     }
     if (segment.type === "skill") {
@@ -865,24 +805,33 @@ function $setComposerEditorPrompt(
       );
       continue;
     }
-    if (segment.type === "terminal-context") {
-      if (segment.context) {
-        paragraph.append($createComposerTerminalContextNode(segment.context));
-      }
+    if (segment.type === "context-reference") {
+      paragraph.append(
+        $createComposerContextReferenceNode({
+          kind: segment.kind,
+          contextId: segment.contextId,
+          label: segment.label,
+        }),
+      );
       continue;
     }
     $appendTextWithLineBreaks(paragraph, segment.text);
   }
 }
 
-function collectTerminalContextIds(node: LexicalNode): string[] {
-  if (node instanceof ComposerTerminalContextNode) {
-    return [node.__context.id];
+function collectContextIdOccurrences(node: LexicalNode): string[] {
+  if (node instanceof ComposerContextReferenceNode) {
+    return [node.__contextId];
   }
   if ($isElementNode(node)) {
-    return node.getChildren().flatMap((child) => collectTerminalContextIds(child));
+    return node.getChildren().flatMap((child) => collectContextIdOccurrences(child));
   }
   return [];
+}
+
+/** Payload ids referenced by the document, once each in first-occurrence order. */
+function collectContextIds(node: LexicalNode): string[] {
+  return Array.from(new Set(collectContextIdOccurrences(node)));
 }
 
 export interface ComposerPromptEditorHandle {
@@ -894,27 +843,42 @@ export interface ComposerPromptEditorHandle {
     value: string;
     cursor: number;
     expandedCursor: number;
-    terminalContextIds: string[];
+    contextIds: string[];
   };
+  /**
+   * True when a collapsed caret sits on the first ("start") or last ("end")
+   * visual line, counting soft wraps. Prompt history only claims ArrowUp and
+   * ArrowDown at these edges so arrows still move the caret inside multiline
+   * text.
+   */
+  isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
 interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
-  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  /** Draft records behind the prompt's context references, keyed by context id. */
+  contextRecords: ComposerDraftContextRecords;
+  /** Structured clipboard payload for the given referenced ids, or null to skip. */
+  buildContextClipboardFragment?:
+    | ((contextIds: ReadonlyArray<string>) => string | null)
+    | undefined;
+  /** Imports a structured paste's records; returns ids that changed. */
+  importContextFragment?:
+    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
+    | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
-  onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
     nextValue: string,
     nextCursor: number,
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
-    terminalContextIds: string[],
+    contextIds: string[],
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (
@@ -927,6 +891,66 @@ interface ComposerPromptEditorProps {
   onCitationSubmitAndSend?: () => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+}
+
+/**
+ * Client rect of the line the collapsed caret is on, as seen from `edge`.
+ * A caret at a soft-wrap boundary belongs to two visual lines and the
+ * range reports a rect for each, so take the one farthest from the edge
+ * under test: an ambiguous caret then never claims the key and the arrow
+ * moves the caret as usual. A collapsed range reports zero-height rects at
+ * some positions, so probe the adjacent character on the same side. When
+ * the range container is the paragraph itself (an empty line, or a caret
+ * beside an inline chip) measure the child next to the caret before
+ * falling back to the paragraph.
+ */
+function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
+  const collapsedRects = Array.from(range.getClientRects()).filter((rect) => rect.height > 0);
+  const collapsedRect = edge === "start" ? collapsedRects.at(-1) : collapsedRects[0];
+  if (collapsedRect) return collapsedRect;
+
+  const container = range.startContainer;
+  if (container.nodeType === Node.TEXT_NODE) {
+    const textNode = container as Text;
+    if (textNode.data.length === 0) return null;
+    const probeStart = Math.max(
+      0,
+      Math.min(
+        edge === "start" ? range.startOffset : range.startOffset - 1,
+        textNode.data.length - 1,
+      ),
+    );
+    const probeRange = document.createRange();
+    probeRange.setStart(textNode, probeStart);
+    probeRange.setEnd(textNode, probeStart + 1);
+    const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+    if (probeRect) return probeRect;
+    const boundingRect = probeRange.getBoundingClientRect();
+    return boundingRect.height > 0 ? boundingRect : null;
+  }
+
+  if (!(container instanceof HTMLElement)) return null;
+  // The caret sits between the paragraph's children, which is where Lexical
+  // puts it next to an inline chip. Measure the neighbouring child.
+  const neighbour =
+    container.childNodes[Math.max(0, range.startOffset - 1)] ??
+    container.childNodes[range.startOffset];
+  if (neighbour instanceof HTMLElement) {
+    const neighbourRect = neighbour.getBoundingClientRect();
+    if (neighbourRect.height > 0) return neighbourRect;
+  } else if (neighbour instanceof Text && neighbour.data.length > 0) {
+    // Probe the character on the caret's side. A soft-wrapped text node's
+    // first rect is its first visual line, which may not be the caret's.
+    const isBeforeCaret = neighbour === container.childNodes[range.startOffset - 1];
+    const probeStart = isBeforeCaret ? neighbour.data.length - 1 : 0;
+    const probeRange = document.createRange();
+    probeRange.setStart(neighbour, probeStart);
+    probeRange.setEnd(neighbour, probeStart + 1);
+    const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+    if (probeRect) return probeRect;
+  }
+  const containerRect = container.getBoundingClientRect();
+  return containerRect.height > 0 ? containerRect : null;
 }
 
 function ComposerCommandKeyPlugin(props: {
@@ -1134,7 +1158,6 @@ function ComposerInlineTokenSelectionNormalizePlugin() {
 
 function ComposerInlineTokenBackspacePlugin() {
   const [editor] = useLexicalComposerContext();
-  const { onRemoveTerminalContext } = use(ComposerTerminalContextActionsContext);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -1146,19 +1169,13 @@ function ComposerInlineTokenBackspacePlugin() {
         }
 
         const anchorNode = selection.anchor.getNode();
-        const selectionOffset = $readSelectionOffsetFromEditorState(0);
         const removeInlineTokenNode = (candidate: unknown): boolean => {
           if (!isComposerInlineTokenNode(candidate)) {
             return false;
           }
           const tokenStart = getAbsoluteOffsetForPoint(candidate, 0);
           candidate.remove();
-          if (candidate instanceof ComposerTerminalContextNode) {
-            onRemoveTerminalContext(candidate.__context.id);
-            $setSelectionAtComposerOffset(selectionOffset);
-          } else {
-            $setSelectionAtComposerOffset(tokenStart);
-          }
+          $setSelectionAtComposerOffset(tokenStart);
           event?.preventDefault();
           return true;
         };
@@ -1194,7 +1211,7 @@ function ComposerInlineTokenBackspacePlugin() {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, onRemoveTerminalContext]);
+  }, [editor]);
 
   return null;
 }
@@ -1273,28 +1290,76 @@ function ComposerChipSelectionPlugin() {
   return null;
 }
 
-function ComposerInlineTokenPastePlugin() {
+function ComposerInlineTokenPastePlugin(props: {
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+}) {
   const [editor] = useLexicalComposerContext();
+  const importContextFragment = props.importContextFragment;
 
   useEffect(
     () =>
       registerComposerInlineTokenPaste(editor, {
         createMentionNode: $createComposerMentionNode,
         createCitationNode: $createComposerCitationNode,
+        createContextReferenceNode: $createComposerContextReferenceNode,
         getExpandedAbsoluteOffsetForPoint,
+        ...(importContextFragment ? { importContextFragment } : {}),
       }),
-    [editor],
+    [editor, importContextFragment],
   );
 
   return null;
 }
 
-function ComposerSurroundSelectionPlugin(props: {
-  terminalContexts: ReadonlyArray<TerminalContextDraft>;
-  skills: ReadonlyArray<ServerProviderSkill>;
+/**
+ * Copying chips must carry their payloads: the default copy writes the canonical links as
+ * text, and this adds the structured fragment for the referenced records beside it.
+ */
+function ComposerContextClipboardPlugin(props: {
+  buildContextClipboardFragment?: ComposerPromptEditorProps["buildContextClipboardFragment"];
 }) {
   const [editor] = useLexicalComposerContext();
-  const terminalContextsRef = useRef(props.terminalContexts);
+  const build = props.buildContextClipboardFragment;
+
+  useEffect(() => {
+    if (!build) return;
+    const listener = (event: ClipboardEvent | KeyboardEvent | null, cut: boolean) => {
+      if (!event || !("clipboardData" in event) || !event.clipboardData) return false;
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+      const text = selection.getTextContent();
+      const contextIds = collectInlineContextIds(text);
+      if (contextIds.length === 0) return false;
+      const fragment = build(contextIds);
+      if (!fragment) return false;
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text);
+      event.clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+      event.clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
+      if (cut) selection.removeText();
+      return true;
+    };
+    const unregisterCopy = editor.registerCommand(
+      COPY_COMMAND,
+      (event) => listener(event, false),
+      COMMAND_PRIORITY_HIGH,
+    );
+    const unregisterCut = editor.registerCommand(
+      CUT_COMMAND,
+      (event) => listener(event, true),
+      COMMAND_PRIORITY_HIGH,
+    );
+    return () => {
+      unregisterCopy();
+      unregisterCut();
+    };
+  }, [build, editor]);
+
+  return null;
+}
+
+function ComposerSurroundSelectionPlugin(props: { skills: ReadonlyArray<ServerProviderSkill> }) {
+  const [editor] = useLexicalComposerContext();
   const skillMetadataRef = useRef(skillMetadataByName(props.skills));
   const pendingSurroundSelectionRef = useRef<{
     value: string;
@@ -1306,10 +1371,6 @@ function ComposerSurroundSelectionPlugin(props: {
     expandedStart: number;
     expandedEnd: number;
   } | null>(null);
-
-  useEffect(() => {
-    terminalContextsRef.current = props.terminalContexts;
-  }, [props.terminalContexts]);
 
   useEffect(() => {
     skillMetadataRef.current = skillMetadataByName(props.skills);
@@ -1359,7 +1420,7 @@ function ComposerSurroundSelectionPlugin(props: {
         selectionSnapshot.expandedEnd,
       );
       const nextValue = `${selectionSnapshot.value.slice(0, selectionSnapshot.expandedStart)}${inputData}${selectedText}${surroundCloseSymbol}${selectionSnapshot.value.slice(selectionSnapshot.expandedEnd)}`;
-      $setComposerEditorPrompt(nextValue, terminalContextsRef.current, skillMetadataRef.current);
+      $setComposerEditorPrompt(nextValue, skillMetadataRef.current);
       const selectionStart = collapseExpandedComposerCursor(
         nextValue,
         selectionSnapshot.expandedStart,
@@ -1558,14 +1619,15 @@ function ComposerSurroundSelectionPlugin(props: {
 function ComposerPromptEditorInner({
   value,
   cursor,
-  terminalContexts,
+  contextRecords,
+  buildContextClipboardFragment,
+  importContextFragment,
   skills,
   disabled,
   placeholder,
   containerClassName,
   className,
   placeholderClassName,
-  onRemoveTerminalContext,
   onChange,
   onVisibleSelectionChange,
   onCommandKeyDown,
@@ -1581,8 +1643,6 @@ function ComposerPromptEditorInner({
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const initialExpandedCursor = expandCollapsedComposerCursor(value, initialCursor);
-  const terminalContextsSignature = terminalContextSignature(terminalContexts);
-  const terminalContextsSignatureRef = useRef(terminalContextsSignature);
   const skillsSignature = skillSignature(skills);
   const skillsSignatureRef = useRef(skillsSignature);
   const skillMetadataRef = useRef(skillMetadataByName(skills));
@@ -1590,10 +1650,16 @@ function ComposerPromptEditorInner({
     value,
     cursor: initialCursor,
     expandedCursor: initialExpandedCursor,
-    terminalContextIds: terminalContexts.map((context) => context.id),
+    contextIds: collectInlineContextIds(value),
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
+  // Latest controlled value, readable from editor listeners that fire before the layout
+  // effect has rewritten the editor to match it.
+  const latestValueRef = useRef(value);
+  useLayoutEffect(() => {
+    latestValueRef.current = value;
+  }, [value]);
   const citationCommentRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitationComment, setOpenCitationComment] =
     useState<ComposerCitationCommentTarget | null>(null);
@@ -1608,10 +1674,6 @@ function ComposerPromptEditorInner({
       onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
     }),
     [onCitationSubmitAndSend, openCitationComment],
-  );
-  const terminalContextActions = useMemo(
-    () => ({ onRemoveTerminalContext }),
-    [onRemoveTerminalContext],
   );
 
   useEffect(() => {
@@ -1649,12 +1711,10 @@ function ComposerPromptEditorInner({
   useLayoutEffect(() => {
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
-    const contextsChanged = terminalContextsSignatureRef.current !== terminalContextsSignature;
     const skillsChanged = skillsSignatureRef.current !== skillsSignature;
     if (
       previousSnapshot.value === value &&
       previousSnapshot.cursor === normalizedCursor &&
-      !contextsChanged &&
       !skillsChanged
     ) {
       return;
@@ -1665,18 +1725,17 @@ function ComposerPromptEditorInner({
       value,
       cursor: normalizedCursor,
       expandedCursor: normalizedExpandedCursor,
-      terminalContextIds: terminalContexts.map((context) => context.id),
+      contextIds: collectInlineContextIds(value),
     };
     selectionRangeRef.current = {
       start: normalizedExpandedCursor,
       end: normalizedExpandedCursor,
     };
-    terminalContextsSignatureRef.current = terminalContextsSignature;
     skillsSignatureRef.current = skillsSignature;
 
     const rootElement = editor.getRootElement();
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (previousSnapshot.value === value && !contextsChanged && !skillsChanged && !isFocused) {
+    if (previousSnapshot.value === value && !skillsChanged && !isFocused) {
       return;
     }
 
@@ -1685,10 +1744,9 @@ function ComposerPromptEditorInner({
     let citationToOpen: ComposerCitationCommentTarget | null = null;
     editor.update(
       () => {
-        const shouldRewriteEditorState =
-          previousSnapshot.value !== value || contextsChanged || skillsChanged;
+        const shouldRewriteEditorState = previousSnapshot.value !== value || skillsChanged;
         if (shouldRewriteEditorState) {
-          $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
+          $setComposerEditorPrompt(value, skillMetadataRef.current);
         }
         if (shouldRewriteEditorState || isFocused) {
           $setSelectionAtComposerOffset(normalizedCursor);
@@ -1705,22 +1763,27 @@ function ComposerPromptEditorInner({
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, skillsSignature, terminalContexts, terminalContextsSignature, value]);
+  }, [cursor, editor, skillsSignature, value]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
       const rootElement = editor.getRootElement();
       if (!rootElement) return;
-      const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
       rootElement.focus({ preventScroll: true });
+      // A newer prompt is waiting to be applied (a chip was just inserted through the store).
+      // Reporting the editor's stale text now would overwrite that prompt; the pending rewrite
+      // places the caret from the store's cursor instead.
+      if (snapshotRef.current.value !== latestValueRef.current) return;
+      const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
       editor.update(() => {
         $setSelectionAtComposerOffset(boundedCursor);
       });
+      if (boundedCursor === snapshotRef.current.cursor) return;
       snapshotRef.current = {
         value: snapshotRef.current.value,
         cursor: boundedCursor,
         expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
-        terminalContextIds: snapshotRef.current.terminalContextIds,
+        contextIds: snapshotRef.current.contextIds,
       };
       selectionRangeRef.current = {
         start: snapshotRef.current.expandedCursor,
@@ -1731,7 +1794,7 @@ function ComposerPromptEditorInner({
         boundedCursor,
         snapshotRef.current.expandedCursor,
         false,
-        snapshotRef.current.terminalContextIds,
+        snapshotRef.current.contextIds,
       );
     },
     [editor],
@@ -1741,7 +1804,7 @@ function ComposerPromptEditorInner({
     value: string;
     cursor: number;
     expandedCursor: number;
-    terminalContextIds: string[];
+    contextIds: string[];
   } => {
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
@@ -1760,12 +1823,12 @@ function ComposerPromptEditorInner({
         $readExpandedSelectionOffsetFromEditorState(fallbackExpandedCursor),
       );
       const selectionRange = getSelectionRangeForExpandedComposerOffsets($getSelection());
-      const terminalContextIds = collectTerminalContextIds($getRoot());
+      const contextIds = collectContextIds($getRoot());
       snapshot = {
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
-        terminalContextIds,
+        contextIds,
       };
       selectionRangeRef.current = selectionRange ?? {
         start: nextExpandedCursor,
@@ -1799,6 +1862,36 @@ function ComposerPromptEditorInner({
         if (target) setOpenCitationComment(target);
       },
       readSnapshot,
+      isCaretOnVisualEdge: (edge) => {
+        const snapshot = readSnapshot();
+        if (snapshot.value.length === 0) return true;
+        const beforeCaret = snapshot.value.slice(0, snapshot.expandedCursor);
+        const afterCaret = snapshot.value.slice(snapshot.expandedCursor);
+        if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
+          return false;
+        }
+        const rootElement = editor.getRootElement();
+        const selection = window.getSelection();
+        if (
+          !rootElement ||
+          !selection ||
+          !selection.isCollapsed ||
+          selection.rangeCount === 0 ||
+          !selection.anchorNode ||
+          !rootElement.contains(selection.anchorNode)
+        ) {
+          return false;
+        }
+        const caretRect = caretLineRect(selection.getRangeAt(0), edge);
+        if (!caretRect) return false;
+        const edgeElement =
+          edge === "start" ? rootElement.firstElementChild : rootElement.lastElementChild;
+        const edgeRect = (edgeElement ?? rootElement).getBoundingClientRect();
+        const threshold = caretRect.height / 2;
+        return edge === "start"
+          ? caretRect.top - edgeRect.top < threshold
+          : edgeRect.bottom - caretRect.bottom < threshold;
+      },
     }),
     [editor, focusAt, readSnapshot],
   );
@@ -1825,14 +1918,14 @@ function ComposerPromptEditorInner({
         start: nextExpandedCursor,
         end: nextExpandedCursor,
       };
-      const terminalContextIds = collectTerminalContextIds($getRoot());
+      const contextIds = collectContextIds($getRoot());
       const previousSnapshot = snapshotRef.current;
       const snapshotChanged = !(
         previousSnapshot.value === nextValue &&
         previousSnapshot.cursor === nextCursor &&
         previousSnapshot.expandedCursor === nextExpandedCursor &&
-        previousSnapshot.terminalContextIds.length === terminalContextIds.length &&
-        previousSnapshot.terminalContextIds.every((id, index) => id === terminalContextIds[index])
+        previousSnapshot.contextIds.length === contextIds.length &&
+        previousSnapshot.contextIds.every((id, index) => id === contextIds[index])
       );
       if (isApplyingControlledUpdateRef.current) {
         return;
@@ -1843,11 +1936,17 @@ function ComposerPromptEditorInner({
         }
         return;
       }
+      // A selection-only update while a newer prompt waits to be applied (an attachment
+      // chip was just inserted through the store) would report stale text and stale
+      // context ids, clobbering the prompt and dropping the record. Let the rewrite land.
+      if (previousSnapshot.value === nextValue && nextValue !== latestValueRef.current) {
+        return;
+      }
       snapshotRef.current = {
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
-        terminalContextIds,
+        contextIds,
       };
       const cursorAdjacentToMention =
         isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
@@ -1857,13 +1956,13 @@ function ComposerPromptEditorInner({
         nextCursor,
         nextExpandedCursor,
         cursorAdjacentToMention,
-        terminalContextIds,
+        contextIds,
       );
     });
   }, []);
 
   return (
-    <ComposerTerminalContextActionsContext value={terminalContextActions}>
+    <ComposerContextRecordsContext value={contextRecords}>
       <ComposerCitationCommentContext value={citationCommentActions}>
         <div
           className={cn(
@@ -1926,10 +2025,10 @@ function ComposerPromptEditorInner({
               />
             }
             placeholder={
-              terminalContexts.length > 0 ? null : (
+              contextRecords.size > 0 ? null : (
                 <div
                   className={cn(
-                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                    "pointer-events-none absolute inset-0 leading-relaxed text-placeholder/75",
                     placeholderClassName,
                   )}
                 >
@@ -1941,31 +2040,35 @@ function ComposerPromptEditorInner({
           />
           <OnChangePlugin onChange={handleEditorChange} />
           <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
-          <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+          <ComposerSurroundSelectionPlugin skills={skills} />
           <ComposerHomeEndKeyPlugin />
           <ComposerInlineTokenArrowPlugin />
           <ComposerInlineTokenSelectionNormalizePlugin />
           <ComposerInlineTokenBackspacePlugin />
-          <ComposerInlineTokenPastePlugin />
+          <ComposerInlineTokenPastePlugin importContextFragment={importContextFragment} />
+          <ComposerContextClipboardPlugin
+            buildContextClipboardFragment={buildContextClipboardFragment}
+          />
           <ComposerChipSelectionPlugin />
           <HistoryPlugin />
         </div>
       </ComposerCitationCommentContext>
-    </ComposerTerminalContextActionsContext>
+    </ComposerContextRecordsContext>
   );
 }
 
 export function ComposerPromptEditor({
   value,
   cursor,
-  terminalContexts,
+  contextRecords,
+  buildContextClipboardFragment,
+  importContextFragment,
   skills,
   disabled,
   placeholder,
   containerClassName,
   className,
   placeholderClassName,
-  onRemoveTerminalContext,
   onChange,
   onVisibleSelectionChange,
   onCommandKeyDown,
@@ -1977,7 +2080,6 @@ export function ComposerPromptEditor({
   editorRef,
 }: ComposerPromptEditorProps) {
   const initialValueRef = useRef(value);
-  const initialTerminalContextsRef = useRef(terminalContexts);
   const initialSkillMetadataRef = useRef(skillMetadataByName(skills));
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
@@ -1987,14 +2089,10 @@ export function ComposerPromptEditor({
         ComposerMentionNode,
         ComposerSkillNode,
         ComposerCitationNode,
-        ComposerTerminalContextNode,
+        ComposerContextReferenceNode,
       ],
       editorState: () => {
-        $setComposerEditorPrompt(
-          initialValueRef.current,
-          initialTerminalContextsRef.current,
-          initialSkillMetadataRef.current,
-        );
+        $setComposerEditorPrompt(initialValueRef.current, initialSkillMetadataRef.current);
       },
       onError: (error) => {
         throw error;
@@ -2004,28 +2102,31 @@ export function ComposerPromptEditor({
   );
 
   return (
-    <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
-      <ComposerPromptEditorInner
-        value={value}
-        cursor={cursor}
-        terminalContexts={terminalContexts}
-        skills={skills}
-        disabled={disabled}
-        placeholder={placeholder}
-        {...(containerClassName ? { containerClassName } : {})}
-        onRemoveTerminalContext={onRemoveTerminalContext}
-        onChange={onChange}
-        {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
-        onPaste={onPaste}
-        {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
-        editorRef={editorRef}
-        {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
-        {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
-        {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
-        {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
-        {...(className ? { className } : {})}
-        {...(placeholderClassName ? { placeholderClassName } : {})}
-      />
-    </LexicalComposer>
+    <ComposerSkillsContext value={skills}>
+      <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
+        <ComposerPromptEditorInner
+          value={value}
+          cursor={cursor}
+          contextRecords={contextRecords}
+          buildContextClipboardFragment={buildContextClipboardFragment}
+          importContextFragment={importContextFragment}
+          skills={skills}
+          disabled={disabled}
+          placeholder={placeholder}
+          {...(containerClassName ? { containerClassName } : {})}
+          onChange={onChange}
+          {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
+          onPaste={onPaste}
+          {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
+          editorRef={editorRef}
+          {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+          {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
+          {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
+          {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
+          {...(className ? { className } : {})}
+          {...(placeholderClassName ? { placeholderClassName } : {})}
+        />
+      </LexicalComposer>
+    </ComposerSkillsContext>
   );
 }

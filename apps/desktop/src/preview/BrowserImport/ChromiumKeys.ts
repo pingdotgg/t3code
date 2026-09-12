@@ -17,7 +17,6 @@
  *
  * @module ChromiumKeys
  */
-import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
 
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -48,14 +47,11 @@ export const ChromiumKeyFailure = Schema.Literals([
 ]);
 export type ChromiumKeyFailure = typeof ChromiumKeyFailure.Type;
 
-export class ChromiumKeyError extends Schema.TaggedErrorClass<ChromiumKeyError>()(
-  "ChromiumKeyError",
-  {
-    reason: ChromiumKeyFailure,
-    /** Kept for the log; never surfaced to the user. */
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
+export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("ChromiumKeyError", {
+  reason: ChromiumKeyFailure,
+  /** Kept for the log; never surfaced to the user. */
+  cause: Schema.optional(Schema.Defect()),
+}) {
   override get message(): string {
     return `Could not obtain the Chromium cookie key: ${this.reason}.`;
   }
@@ -105,6 +101,12 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
   service: string,
   account: string,
 ) {
+  // Only macOS cookie imports need this binding; loading it at startup can
+  // prevent the desktop from opening on platforms that never use it.
+  const Keyring = yield* Effect.tryPromise({
+    try: () => import("@napi-rs/keyring"),
+    catch: (cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause }),
+  });
   const secret = yield* Effect.try({
     try: () => new Keyring.Entry(service, account).getPassword(),
     catch: (cause) => {

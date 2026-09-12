@@ -18,7 +18,7 @@ export class FisTestFunction extends Lambda.Function<Lambda.Function>()(
 export default FisTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

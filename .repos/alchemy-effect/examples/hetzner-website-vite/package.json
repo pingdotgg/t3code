@@ -1,0 +1,43 @@
+{
+  "name": "hetzner-website-vite",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/hetzner-website-vite"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev:vite": "vite",
+    "preview": "vite preview",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/hetzner": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-pg": "catalog:effect",
+    "alchemy": "workspace:*",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "pg": "catalog:database",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:frontend",
+    "@types/pg": "catalog:database",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  }
+}

@@ -20,16 +20,23 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { environmentSession } from "../state/session";
+import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
-import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
+import {
+  isComposerImageAttachment,
+  isFileBackedComposerAttachment,
+  type DraftComposerAttachment,
+  type DraftComposerImageAttachment,
+} from "./composerImages";
+import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
 
 /**
  * This module owns the server side of a composer attachment's lifecycle.
  * `prepareTurnAttachments` acquires pending uploads (verifying and reusing
  * persisted ones), hands the uploaded ids back to the attachment's durable
- * owner (queued outbox message or composer draft), and returns a release
- * handle for after the turn consumed the bytes. Nothing outside this module
+ * owner (queued outbox message or composer draft), and leaves their cleanup
+ * to that owner after it checks shared references. Nothing outside this module
  * mints or deletes pending uploads. The local-file side of the lifecycle is
  * owned by `removeThreadOutboxMessage` / the composer draft mutators, which
  * release files through `releaseUnusedComposerAttachmentFiles`.
@@ -70,10 +77,14 @@ export function withUploadedMobileAttachmentReferences(input: {
 }): ReadonlyArray<DraftComposerAttachment> {
   return input.attachments.map((attachment, index) => {
     const uploaded = input.uploadedAttachments[index];
+    // A picture picked through Files stays `type: "file"` in the draft while it uploads as an
+    // image, so compare against the type it was actually sent under: comparing draft types
+    // drops the id, and the next send re-uploads bytes the server already holds.
+    const uploadedAs = isComposerImageAttachment(attachment) ? "image" : attachment.type;
     if (
       !uploaded ||
       !("id" in uploaded) ||
-      attachment.type !== uploaded.type ||
+      uploadedAs !== uploaded.type ||
       (attachment.uploadedAttachmentId === uploaded.id &&
         attachment.uploadEnvironmentId === input.environmentId)
     ) {
@@ -144,13 +155,34 @@ export interface PreparedTurnAttachments {
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   /** Every pending upload backing this turn (reused and newly minted). */
   readonly pendingAttachmentIds: ReadonlyArray<string>;
-  /** Deletes all pending uploads once the delivered turn holds the bytes. */
-  readonly releaseUploads: () => Promise<void>;
 }
 
 export type PrepareTurnAttachmentsResult =
   | PreparedTurnAttachments
   | { readonly status: "abandoned" };
+
+/**
+ * The mime an attachment travels under. A picture picked through Files arrives typed as a plain
+ * file, often with no usable mime, so it is promoted to the type the provider accepts. Every
+ * place that names the attachment on the wire — the upload header, the upload input, and the
+ * message reference — has to agree on this one value, or the turn describes bytes that are not
+ * what was actually sent and `ChatImageAttachment` rejects it.
+ */
+export function composerAttachmentWireMimeType(attachment: DraftComposerAttachment): string {
+  if (!isComposerImageAttachment(attachment)) return attachment.mimeType;
+  return supportedImageWireMimeType(attachment);
+}
+
+function supportedImageWireMimeType(
+  attachment: DraftComposerAttachment,
+): (typeof PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES)[number] {
+  const inferred = imageMimeType(attachment);
+  const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
+    (type) => type === attachment.mimeType.toLowerCase() || type === inferred,
+  );
+  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
+  return mimeType;
+}
 
 function uploadedReference(
   attachment: DraftComposerAttachment,
@@ -159,24 +191,63 @@ function uploadedReference(
   const fields = {
     id,
     name: attachment.name,
-    mimeType: attachment.mimeType,
+    mimeType: composerAttachmentWireMimeType(attachment),
     sizeBytes: attachment.sizeBytes,
   };
-  return attachment.type === "image" ? { type: "image", ...fields } : { type: "file", ...fields };
+  // A picture picked through Files is typed as a plain file; uploading it as one leaves the
+  // chat view with nothing to show a thumbnail from, on every client.
+  return isComposerImageAttachment(attachment)
+    ? { type: "image", ...fields }
+    : { type: "file", ...fields };
 }
 
 function attachmentUploadInput(attachment: DraftComposerAttachment) {
-  const fields = {
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    sizeBytes: attachment.sizeBytes,
-  };
-  if (attachment.type === "file") return { type: "file" as const, ...fields };
-  const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
-    (type) => type === attachment.mimeType.toLowerCase(),
+  const fields = { name: attachment.name, sizeBytes: attachment.sizeBytes };
+  return isComposerImageAttachment(attachment)
+    ? { ...fields, mimeType: supportedImageWireMimeType(attachment) }
+    : { type: "file" as const, ...fields, mimeType: attachment.mimeType };
+}
+
+/**
+ * Wire shape for startTurn on servers without attachment uploads: pure inline
+ * uploads without client draft id / previewUri. File-backed images read their
+ * base64 from disk lazily, only when this legacy path is actually taken.
+ */
+async function toUploadChatImageAttachments(
+  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+): Promise<ReadonlyArray<UploadChatImageAttachment>> {
+  return Promise.all(
+    attachments.map(async (attachment) => ({
+      type: attachment.type,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: await composerImageAttachmentDataUrl(attachment),
+    })),
   );
-  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
-  return { ...fields, mimeType };
+}
+
+/** Inline bytes for one image: legacy drafts carry them, file-backed ones read them from disk. */
+async function composerImageAttachmentDataUrl(
+  attachment: DraftComposerImageAttachment,
+): Promise<string> {
+  if (attachment.dataUrl !== undefined) {
+    return attachment.dataUrl;
+  }
+  if (!isFileBackedComposerAttachment(attachment)) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
+  const release = retainComposerAttachmentFileForPreview(attachment);
+  try {
+    const { File, Paths } = await import("expo-file-system");
+    const uri =
+      resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
+      attachment.fileUri;
+    const base64 = await new File(uri).base64();
+    return `data:${attachment.mimeType};base64,${base64}`;
+  } finally {
+    release();
+  }
 }
 
 async function uploadFileBytes(
@@ -187,24 +258,28 @@ async function uploadFileBytes(
 ): Promise<void> {
   const { File, Paths, UploadType } = await import("expo-file-system");
   if (signal.aborted) throw new Error("Upload cancelled.");
+  // Legacy image drafts persisted inline bytes and stage them in a temp cache
+  // file for the native uploader. Everything else uploads its owned copy.
+  const fileUri = attachment.fileUri;
+  const inlineDataUrl = attachment.type === "image" ? attachment.dataUrl : undefined;
+  if (fileUri === undefined && inlineDataUrl === undefined) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
   const file =
-    attachment.type === "image"
+    fileUri === undefined
       ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
-      : new File(
-          resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
-            attachment.fileUri,
-        );
+      : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
   try {
-    if (attachment.type === "image") {
+    if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
-      file.write(attachment.dataUrl.slice(attachment.dataUrl.indexOf(",") + 1), {
+      file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
         encoding: "base64",
       });
     }
     const result = await file.upload(url, {
       httpMethod: "POST",
       uploadType: UploadType.BINARY_CONTENT,
-      headers: { "Content-Type": attachment.mimeType },
+      headers: { "Content-Type": composerAttachmentWireMimeType(attachment) },
       signal,
       ...(onProgress
         ? {
@@ -218,7 +293,7 @@ async function uploadFileBytes(
       throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
     }
   } finally {
-    if (attachment.type === "image" && file.exists) file.delete();
+    if (fileUri === undefined && file.exists) file.delete();
   }
 }
 
@@ -255,17 +330,19 @@ export async function prepareTurnAttachments(input: {
     attachments,
     draftAttachments,
     pendingAttachmentIds,
-    releaseUploads: () => releasePendingAttachmentUploads(environmentId, pendingAttachmentIds),
   });
 
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
-    return ready(
-      toUploadChatImageAttachments(
+    try {
+      const imageAttachments = await toUploadChatImageAttachments(
         input.attachments.filter((attachment) => attachment.type === "image"),
-      ),
-      [],
-      input.attachments,
-    );
+      );
+      if (input.signal?.aborted) return { status: "abandoned" };
+      return ready(imageAttachments, [], input.attachments);
+    } catch (error) {
+      if (input.signal?.aborted) return { status: "abandoned" };
+      throw error;
+    }
   }
 
   const connection = appAtomRegistry.get(
@@ -285,7 +362,7 @@ export async function prepareTurnAttachments(input: {
     for (const attachment of input.attachments) {
       if (controller.signal.aborted) throw new Error("Upload cancelled.");
       if (attachment.type === "image" && !input.supportsImageUploads) {
-        uploadedAttachments.push(...toUploadChatImageAttachments([attachment]));
+        uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
         continue;
       }
 

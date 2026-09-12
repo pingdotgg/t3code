@@ -52,9 +52,8 @@ export interface ApiMapping extends Resource<
 /**
  * An API Gateway v2 API mapping — serves an API stage under a custom
  * {@link DomainName}, optionally at a base path.
- * @resource
- * @section Mapping APIs onto a domain
- * @example Map an API at the domain root
+ * ### Mapping APIs onto a domain
+ * **Example:** Map an API at the domain root
  * ```typescript
  * yield* ApiGatewayV2.ApiMapping("Root", {
  *   api,
@@ -63,7 +62,7 @@ export interface ApiMapping extends Resource<
  * });
  * ```
  *
- * @example Map a second API under /v2
+ * **Example:** Map a second API under /v2
  * ```typescript
  * yield* ApiGatewayV2.ApiMapping("V2", {
  *   api: apiV2,
@@ -72,6 +71,8 @@ export interface ApiMapping extends Resource<
  *   apiMappingKey: "v2",
  * });
  * ```
+ *
+ * @resource
  */
 export const ApiMappingResource = Resource<ApiMapping>(
   "AWS.ApiGatewayV2.ApiMapping",

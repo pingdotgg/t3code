@@ -6,6 +6,7 @@ import Nav from "../components/marketing/Nav.astro";
 import Footer from "../components/marketing/Footer.astro";
 import PostHog from "../components/analytics/PostHog.astro";
 import ThemeProvider from "../components/ThemeProvider.astro";
+import BrandIcons from "../brand/Icons.astro";
 
 interface Props {
   title?: string;
@@ -28,7 +29,7 @@ interface Props {
 
 const props = Astro.props;
 const fm = props.frontmatter ?? {};
-const title = props.title ?? fm.title ?? "alchemy";
+const title = props.title ?? fm.title ?? "Alchemy";
 const description = props.description ?? fm.description;
 const image = props.image ?? fm.image;
 
@@ -57,11 +58,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     {description && <meta name="description" content={description} />}
     <link rel="canonical" href={canonical.href} />
 
-    {/* Brand mark — vector first, with PNG fallback for older browsers. */}
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <BrandIcons />
 
     {/* Open Graph */}
     <meta property="og:type" content="website" />

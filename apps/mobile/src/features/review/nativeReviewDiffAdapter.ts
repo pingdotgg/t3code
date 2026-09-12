@@ -5,8 +5,6 @@ import type {
 } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
-import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
-import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import {
@@ -21,12 +19,24 @@ const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
 
-export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
-export const NATIVE_REVIEW_DIFF_STYLE = createNativeReviewDiffStyle(
-  resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
-);
+/** Render headerless selections without guessing file line numbers from selection indices. */
+export function buildNativeReviewSnippetRows(
+  comment: Pick<ReviewInlineComment, "id" | "diff" | "fenceLanguage">,
+): NativeReviewDiffRow[] {
+  if ((comment.fenceLanguage ?? "diff") !== "diff" || !comment.diff.trim()) return [];
+  const lines = comment.diff.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+  if (lines.some((line) => !/^[ +-]/.test(line) || /^(---|\+\+\+) /.test(line))) return [];
+  return lines.map((line, index) => ({
+    kind: "line",
+    id: `${comment.id}:snippet:${index}`,
+    content: line.slice(1),
+    change: line[0] === "+" ? "add" : line[0] === "-" ? "delete" : "context",
+    oldLineNumber: null,
+    newLineNumber: null,
+  }));
+}
 
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);

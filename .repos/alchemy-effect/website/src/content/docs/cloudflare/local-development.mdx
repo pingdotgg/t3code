@@ -1,0 +1,224 @@
+---
+title: Local development
+description: alchemy dev runs Workers in workerd with local simulators for KV, R2, D1, Queues, Hyperdrive, Workflows, Containers, and the Worker binding surface — browser rendering, images, email, cron, Stream, and more.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+`alchemy dev` runs your Cloudflare stack on your machine. Workers
+execute in workerd — the same runtime used in production — with
+local simulators behind their bindings, websites run their
+frameworks' own dev servers with native HMR, containers run in
+Docker, and code changes hot reload in milliseconds.
+
+```sh
+alchemy dev
+```
+
+<Terminal content={`[g]✓[/g] [b]Bucket[/b] [d](Cloudflare.R2.Bucket)[/d] [g]created[/g] [d](local)[/d]
+[g]✓[/g] [b]DB[/b] [d](Cloudflare.D1.Database)[/d] [g]created[/g] [d](local)[/d]
+[g]✓[/g] [b]Worker[/b] [d](Cloudflare.Worker)[/d] [g]created[/g] [d](local → workerd)[/d]
+[s2][d]• http://localhost:1337[/d]
+
+[d]Watching for changes ...[/d]`} />
+
+## Workers run in workerd
+
+Your Worker code executes in workerd with bindings wired to the
+local simulators, so binding behavior matches what you deploy:
+
+```typescript
+export const Cache = Cloudflare.KV.Namespace("Cache");
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(Cache);
+    return {
+      fetch: Effect.gen(function* () {
+        yield* kv.put("greeting", "hello");
+        const value = yield* kv.get("greeting");
+        return yield* HttpServerResponse.text(value ?? "");
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+) {}
+```
+
+In dev, `kv.put` lands in a local KV simulator and the Worker
+serves at `http://localhost:<port>`. Durable Objects run inside
+the same workerd instance, cron triggers fire on their real
+schedule (and the miniflare-compatible
+`/cdn-cgi/handler/scheduled` route triggers them manually), and
+because everything is a local process you can attach a debugger,
+set breakpoints, and profile.
+
+A local resource's id is `dev:`-prefixed, which doubles as proof
+that no cloud call ran.
+
+## Websites run their own dev servers
+
+Every `Cloudflare.Website.*` resource — Vite, Next.js, Astro,
+Nuxt, SvelteKit, Waku, Octane, Foldkit, StaticSite — runs its
+framework's own dev server under `alchemy dev`: native HMR, no
+cloud resources. The site's `url` is the local dev server's
+address:
+
+```typescript
+const site = yield* Cloudflare.Website.Vite("Web");
+// dev:    site.url = http://localhost:5173 — Vite's own dev server, HMR included
+// deploy: site.url = the deployed site
+```
+
+See
+[Frontend frameworks](/cloudflare/frontend/frontends).
+
+## Containers run in Docker
+
+A `Cloudflare.Container` runs as a real Docker container on your
+machine, driven by its Durable Object in the local workerd:
+
+```typescript
+export class Sandbox extends Cloudflare.Container<
+  Sandbox,
+  { ping: () => Effect.Effect<string> }
+>()("Sandbox") {}
+
+export default Sandbox.make(
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return Sandbox.of({
+      ping: () => Effect.succeed("pong"),
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    });
+  }),
+);
+```
+
+All three image sources work locally: `main` (a bundled Effect
+program), `context` (your own Dockerfile), and `image` (a
+pre-built remote image).
+
+## What's emulated
+
+These resources ship a local provider and run as simulators in
+dev:
+
+| Resource                 | Local behavior                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| Workers                  | workerd, with hot reload and a `http://localhost:<port>` URL                       |
+| Durable Objects          | run inside the local workerd, including SQLite storage                             |
+| KV Namespaces            | local simulator; Node-side capability clients hit the same store                   |
+| R2 Buckets               | local simulator                                                                    |
+| D1 Databases             | local simulator; `migrations` and `importFiles` apply on every reconcile           |
+| Queues + consumers       | local broker with batching, retry, and dead-letter semantics                       |
+| Hyperdrive               | connects directly to your database                                                 |
+| Workflows                | run locally with real step semantics                                               |
+| Containers               | run as Docker containers on your machine                                           |
+| Secrets Store            | local store seeded with the real (Redacted-sourced) values                         |
+| Websites                 | the framework's own dev server (Vite, Astro, Next.js, Nuxt, SvelteKit, Waku, Octane, Foldkit, StaticSite) with native HMR |
+
+Worker-only bindings are simulated too:
+
+- **Email, both directions** — a `send_email` binding persists
+  messages as `.eml` files under `.alchemy/local/email`, and a
+  `POST` to `/cdn-cgi/handler/email` drives your `email()` handler
+  with accept, reject, and reply semantics.
+- **Browser Rendering** — `env.BROWSER` drives a locally-launched
+  headless Chrome over CDP; `@cloudflare/puppeteer` works
+  unchanged.
+- **Images** — `env.IMAGES` transforms run through sharp.
+- **Stream** — uploads land in a local video store.
+- **Tail consumers** — a local producer's trace events reach a
+  local tail Worker.
+- **Secret keys** — `secret_key` CryptoKey bindings boot locally.
+- **Access** — `dev: { access: { identity } }` stubs the
+  authenticated identity behind `ctx.access`, so gated paths are
+  testable without a login wall. See
+  [Protect a Worker with Access](/cloudflare/security/access).
+
+Resources whose provider has no local implementation (a Vectorize
+index, DNS records) deploy to the real cloud, into your personal
+[stage](/environments/stages), so a stack that mixes emulated and
+live-only resources just works.
+
+## Mix in the real cloud
+
+`Alchemy.remote()` opts any resource (or a whole scope) out of
+local emulation:
+
+```typescript
+// Effect-native Worker
+const browser = yield* Cloudflare.Browser("BROWSER").pipe(Alchemy.remote());
+
+// async Worker env
+env: { IMAGES: Cloudflare.Images.Images("IMAGES").pipe(Alchemy.remote()) }
+```
+
+Local and live compose into hybrid topologies. Pin a queue live
+and everything around it stays local — the local Worker produces
+real messages into the real queue, and its local consumer drains
+the same queue through a pull loop:
+
+```typescript
+// the queue is real, even in dev
+const Jobs = Cloudflare.Queues.Queue("Jobs").pipe(Alchemy.remote());
+```
+
+Your dev session sees the same traffic as staging — messages
+produced by deployed services or a teammate's session land in
+your local handler.
+
+Switching a resource between local and live (or dev → deploy)
+plans a **replacement** — dev state never silently becomes cloud
+state. See
+[Local development](/environments/local-development) for the
+shared semantics.
+
+## Custom port
+
+```typescript
+export default Cloudflare.Worker("Worker", {
+  main: import.meta.url,
+  dev: {
+    port: 3000,
+  },
+  // ...
+});
+```
+
+## Test against the local stack
+
+The [test harness](/testing/test-harness) has the same dev mode —
+`Test.make({ dev: true })` (available on both the Bun and Vitest
+adapters, off by default) runs the suite's `deploy(Stack)` against
+the local simulators instead of the cloud, no separate
+`alchemy dev` terminal needed:
+
+```typescript
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  dev: true,
+});
+```
+
+Workers, Durable Objects, Workflows, and the simulated bindings all
+run in workerd exactly as described above, and the stack's `url`
+points at `http://localhost:<port>`. See
+[Test harness → dev](/testing/test-harness#dev) and
+[Tutorial Part 4](/cloudflare/tutorial/part-4).
+
+## Where next
+
+- [Local development](/environments/local-development) — the
+  shared `alchemy dev` concepts: hot reload, `Alchemy.remote()`,
+  and dev vs deploy semantics.
+- [Frontend frameworks](/cloudflare/frontend/frontends) —
+  framework dev servers under `alchemy dev`.
+- [Stages](/environments/stages) — how live-in-dev resources stay
+  isolated per developer.
+- [Testing](/testing) — run the same test suite against the local
+  simulators with `Test.make({ dev: true })`.
+- [Local Providers](/infrastructure-as-code/local-provider) —
+  build the local implementation of a resource.

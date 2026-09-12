@@ -11,9 +11,8 @@ export interface ScanRequest extends Omit<DynamoDB.ScanInput, "TableName"> {}
  * Bind this operation to a `Table` inside a function runtime to get a callable
  * that scans the full table, automatically injecting the table name. Provide
  * the `ScanHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Reading Data
- * @example Scan a Table
+ * ### Reading Data
+ * **Example:** Scan a Table
  * ```typescript
  * const scan = yield* AWS.DynamoDB.Scan(table);
  *
@@ -21,6 +20,8 @@ export interface ScanRequest extends Omit<DynamoDB.ScanInput, "TableName"> {}
  * const items = response.Items;
  * const count = response.Count;
  * ```
+ *
+ * @binding
  */
 export interface Scan extends Binding.Service<
   Scan,

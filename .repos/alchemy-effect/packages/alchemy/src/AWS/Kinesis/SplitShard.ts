@@ -17,9 +17,8 @@ export interface SplitShardRequest extends Omit<
  * targets a hot shard directly (the `Stream` resource's `shardCount`
  * prop covers uniform scaling via `UpdateShardCount`). Provide the
  * implementation with `Effect.provide(AWS.Kinesis.SplitShardHttp)`.
- * @binding
- * @section Managing Shards
- * @example Split a Hot Shard
+ * ### Managing Shards
+ * **Example:** Split a Hot Shard
  * ```typescript
  * // init — bind the operation to the stream
  * const splitShard = yield* AWS.Kinesis.SplitShard(stream);
@@ -30,6 +29,8 @@ export interface SplitShardRequest extends Omit<
  *   NewStartingHashKey: "170141183460469231731687303715884105728",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SplitShard extends Binding.Service<
   SplitShard,

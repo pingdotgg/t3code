@@ -21,9 +21,8 @@ export interface CopyImageSetRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.CopyImageSetHttp)`.
  *
- * @binding
- * @section Updating Image Sets
- * @example Copy an Image Set
+ * ### Updating Image Sets
+ * **Example:** Copy an Image Set
  * ```typescript
  * const copyImageSet = yield* MedicalImaging.CopyImageSet(datastore);
  *
@@ -35,6 +34,8 @@ export interface CopyImageSetRequest extends Omit<
  * });
  * // copy.destinationImageSetProperties.imageSetId
  * ```
+ *
+ * @binding
  */
 export interface CopyImageSet extends Binding.Service<
   CopyImageSet,

@@ -15,9 +15,8 @@ export interface PutSecretValueRequest extends Omit<
  * secret version (string or binary); the new version becomes `AWSCURRENT`.
  * Provide the implementation with
  * `Effect.provide(AWS.SecretsManager.PutSecretValueHttp)`.
- * @binding
- * @section Writing Secret Values
- * @example Rotate a Secret's Value
+ * ### Writing Secret Values
+ * **Example:** Rotate a Secret's Value
  * ```typescript
  * // init — bind the operation to the secret
  * const putSecretValue = yield* AWS.SecretsManager.PutSecretValue(secret);
@@ -28,12 +27,14 @@ export interface PutSecretValueRequest extends Omit<
  * });
  * ```
  *
- * @example Store a Binary Payload
+ * **Example:** Store a Binary Payload
  * ```typescript
  * yield* putSecretValue({
  *   SecretBinary: new TextEncoder().encode(JSON.stringify(credentials)),
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutSecretValue extends Binding.Service<
   PutSecretValue,

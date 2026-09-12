@@ -23,9 +23,8 @@ export interface DeleteWhatsAppMessageTemplateRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.DeleteWhatsAppMessageTemplateHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example Delete a Template
+ * ### Managing Message Templates
+ * **Example:** Delete a Template
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const deleteTemplate = yield* AWS.SocialMessaging.DeleteWhatsAppMessageTemplate(account);
@@ -36,6 +35,8 @@ export interface DeleteWhatsAppMessageTemplateRequest extends Omit<
  *   deleteAllLanguages: true,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteWhatsAppMessageTemplate extends Binding.Service<
   DeleteWhatsAppMessageTemplate,

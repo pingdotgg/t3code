@@ -5,12 +5,12 @@ import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
 import type { Providers } from "./Providers.ts";
 
-export type VirtualFieldProps = Axiom.CreateVirtualFieldInput;
+export type VirtualFieldProps = Axiom.CreateVirtualFieldRequest;
 
 export type VirtualField = Resource<
   "Axiom.VirtualField",
   VirtualFieldProps,
-  Axiom.CreateVirtualFieldOutput,
+  Axiom.CreateVirtualFieldResponse,
   never,
   Providers
 >;
@@ -22,11 +22,10 @@ export type VirtualField = Resource<
  * dashboards and monitors don't have to redefine them.
  *
  * Bound to a single `dataset`; changing the dataset triggers a replacement.
- * @resource
  * @see https://axiom.co/docs/query-data/virtual-fields
  *
- * @section Creating a Virtual Field
- * @example HTTP status class (e.g. 200 → "2xx")
+ * ### Creating a Virtual Field
+ * **Example:** HTTP status class (e.g. 200 → "2xx")
  * ```typescript
  * yield* Axiom.VirtualField("status-class", {
  *   dataset: "my-app-traces",
@@ -37,7 +36,7 @@ export type VirtualField = Resource<
  * });
  * ```
  *
- * @example Latency bucket in seconds
+ * **Example:** Latency bucket in seconds
  * ```typescript
  * yield* Axiom.VirtualField("latency-bucket", {
  *   dataset: "my-app-traces",
@@ -47,6 +46,8 @@ export type VirtualField = Resource<
  *   unit: "s",
  * });
  * ```
+ *
+ * @resource
  */
 export const VirtualField = Resource<VirtualField>("Axiom.VirtualField");
 

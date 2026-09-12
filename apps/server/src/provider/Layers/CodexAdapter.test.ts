@@ -222,6 +222,7 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
+  recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
@@ -352,7 +353,8 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         Stream.runHead,
         Effect.forkChild,
       );
-      yield* adapter.compactThread!(threadId);
+      NodeAssert.ok(adapter.compaction?.type === "native");
+      yield* adapter.compaction.start(threadId);
       yield* runtime.emit({
         id: asEventId("evt-compaction-item-completed"),
         kind: "notification",
@@ -1877,6 +1879,213 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("names the edited files in an apply-patch approval without a reason", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-apply-patch"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-patch"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          callId: "call-1",
+          conversationId: "provider-thread-1",
+          fileChanges: {
+            "/tmp/removed.md": { type: "delete", content: "gone" },
+            "/tmp/added.ts": { type: "add", content: "export {};" },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "apply_patch_approval");
+      NodeAssert.equal(
+        firstEvent.value.payload.detail,
+        "add /tmp/added.ts\ndelete /tmp/removed.md",
+      );
+    }),
+  );
+
+  it.effect("keeps the reason when an apply-patch approval carries one", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-apply-patch-reason"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-patch-reason"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          callId: "call-2",
+          conversationId: "provider-thread-1",
+          reason: "Needs to rewrite the changelog",
+          fileChanges: { "/tmp/CHANGELOG.md": { type: "add", content: "x" } },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.detail, "Needs to rewrite the changelog");
+    }),
+  );
+
+  it.effect("falls back to the grant root for a file-change approval without a reason", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-file-change"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "item/fileChange/requestApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-file-change"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          itemId: "item-1",
+          grantRoot: "/tmp/workspace",
+          startedAtMs: 0,
+          threadId: "provider-thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "file_change_approval");
+      NodeAssert.equal(firstEvent.value.payload.detail, "/tmp/workspace");
+    }),
+  );
+
+  it.effect("prefers the edited files over a blank apply-patch reason", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-apply-patch-blank"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-patch-blank"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          callId: "call-3",
+          conversationId: "provider-thread-1",
+          reason: "   ",
+          fileChanges: {
+            "/tmp/moved.ts": { type: "update", unified_diff: "@@", move_path: "/tmp/renamed.ts" },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.detail, "update /tmp/moved.ts -> /tmp/renamed.ts");
+    }),
+  );
+
+  it.effect("caps the described files in an oversized apply-patch approval", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const fileChanges = Object.fromEntries(
+        Array.from({ length: 25 }, (_unused, index) => [
+          `/tmp/file-${String(index).padStart(2, "0")}.ts`,
+          { type: "add", content: "x" },
+        ]),
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-apply-patch-many"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-patch-many"),
+        turnId: asTurnId("turn-1"),
+        payload: { callId: "call-4", conversationId: "provider-thread-1", fileChanges },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      const detail = firstEvent.value.payload.detail ?? "";
+      NodeAssert.equal(detail.split("\n").length, 21);
+      NodeAssert.ok(detail.endsWith("+5 more"));
+    }),
+  );
+
+  it.effect("leaves an apply-patch approval without changes or a reason undetailed", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-apply-patch-empty"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-08-24T00:00:00.000Z",
+        method: "applyPatchApproval",
+        requestKind: "file-change",
+        requestId: ApprovalRequestId.make("req-patch-empty"),
+        turnId: asTurnId("turn-1"),
+        payload: { callId: "call-5", conversationId: "provider-thread-1", fileChanges: {} },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.detail, undefined);
+    }),
+  );
+
   it.effect("maps MCP elicitation requests into app access approvals", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -2485,3 +2694,302 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
     }
   }),
 );
+
+const usageLimitRuntimeFactory = makeRuntimeFactory();
+const usageLimitLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: usageLimitRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+const USAGE_LIMIT_NOW = "2026-01-01T00:00:00.000Z";
+const USAGE_LIMIT_NOW_SECONDS = Date.parse(USAGE_LIMIT_NOW) / 1000;
+const CODEX_OUT_OF_CREDITS =
+  "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.";
+
+function startUsageLimitRuntime() {
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      runtimeMode: "full-access",
+    });
+    const runtime = usageLimitRuntimeFactory.lastRuntime;
+    NodeAssert.ok(runtime);
+    return { adapter, runtime };
+  });
+}
+
+function codexErrorNotification(input: {
+  readonly id: string;
+  readonly message: string;
+  readonly codexErrorInfo?: string;
+}): ProviderEvent {
+  return {
+    id: asEventId(input.id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-limit"),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "error",
+    payload: {
+      threadId: "thread-1",
+      turnId: "turn-limit",
+      willRetry: false,
+      error: {
+        message: input.message,
+        ...(input.codexErrorInfo ? { codexErrorInfo: input.codexErrorInfo } : {}),
+      },
+    },
+  };
+}
+
+function codexRateLimitsNotification(input: {
+  readonly id: string;
+  readonly rateLimitReachedType?: string;
+  readonly primary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
+  readonly secondary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
+}): ProviderEvent {
+  return {
+    id: asEventId(input.id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-limit"),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "account/rateLimits/updated",
+    payload: {
+      rateLimits: {
+        limitId: "codex",
+        ...(input.rateLimitReachedType ? { rateLimitReachedType: input.rateLimitReachedType } : {}),
+        ...(input.primary
+          ? {
+              primary: {
+                usedPercent: input.primary.usedPercent,
+                resetsAt: USAGE_LIMIT_NOW_SECONDS + input.primary.resetsInSeconds,
+                windowDurationMins: 300,
+              },
+            }
+          : {}),
+        ...(input.secondary
+          ? {
+              secondary: {
+                usedPercent: input.secondary.usedPercent,
+                resetsAt: USAGE_LIMIT_NOW_SECONDS + input.secondary.resetsInSeconds,
+                windowDurationMins: 10_080,
+              },
+            }
+          : {}),
+      },
+    },
+  };
+}
+
+function codexUsageLimitTurnFailed(id: string, turnId = "turn-limit"): ProviderEvent {
+  return {
+    id: asEventId(id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId(turnId),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "turn/completed",
+    payload: {
+      threadId: "thread-1",
+      turn: {
+        id: turnId,
+        items: [],
+        status: "failed",
+        error: { message: CODEX_OUT_OF_CREDITS, codexErrorInfo: "usageLimitExceeded" },
+      },
+    },
+  };
+}
+
+usageLimitLayer("CodexAdapterLive usage limits", (it) => {
+  it.effect("names the exhausted window and the workspace's missing credits", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-limit-error",
+          message: CODEX_OUT_OF_CREDITS,
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-limit-rate-limits",
+          rateLimitReachedType: "workspace_owner_credits_depleted",
+          primary: { usedPercent: 40, resetsInSeconds: 3_600 },
+          secondary: { usedPercent: 100, resetsInSeconds: 5 * 86_400 + 5 * 3_600 },
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-limit-turn"));
+      // A second turn stopping on the same limit says as much as the first.
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-limit-turn-2", "turn-limit-2"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const expected =
+        "Codex usage limit reached. The weekly limit resets in 5d 5h. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.";
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        [
+          "account.rate-limits.updated",
+          "runtime.error",
+          "turn.completed",
+          "runtime.error",
+          "turn.completed",
+        ],
+      );
+      for (const event of events) {
+        if (event.type === "runtime.error") {
+          NodeAssert.equal(event.payload.message, expected);
+          NodeAssert.equal(event.payload.detail, CODEX_OUT_OF_CREDITS);
+        }
+        if (event.type === "turn.completed") {
+          NodeAssert.equal(event.payload.errorMessage, expected);
+        }
+      }
+    }),
+  );
+
+  it.effect("names the session window for a plan limit", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-plan-error",
+          message: "You've hit your usage limit.",
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-plan-rate-limits",
+          rateLimitReachedType: "rate_limit_reached",
+          primary: { usedPercent: 100, resetsInSeconds: 3 * 3_600 + 20 * 60 },
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-plan-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(
+        completed?.payload.errorMessage,
+        "Codex usage limit reached. The session limit resets in 3h 20m. Send the message again once the limit resets.",
+      );
+    }),
+  );
+
+  it.effect("reads a rate-limit snapshot seen earlier in the session", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // The window arrives long before the stop, and the update that reports the
+      // limit as reached carries no windows of its own.
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-early-rate-limits",
+          primary: { usedPercent: 100, resetsInSeconds: 3 * 3_600 + 20 * 60 },
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-sparse-rate-limits",
+          rateLimitReachedType: "rate_limit_reached",
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-early-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(
+        completed?.payload.errorMessage,
+        "Codex usage limit reached. The session limit resets in 3h 20m. Send the message again once the limit resets.",
+      );
+    }),
+  );
+
+  it.effect("falls back to the short message without a rate-limit snapshot", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-bare-error",
+          message: CODEX_OUT_OF_CREDITS,
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-bare-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const expected = "Codex usage limit reached. Send the message again once the limit resets.";
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["runtime.error", "turn.completed"],
+      );
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      NodeAssert.equal(runtimeError?.payload.message, expected);
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(completed?.payload.errorMessage, expected);
+    }),
+  );
+
+  it.effect("still relays other provider errors as they arrive", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-other-error",
+          message: "Codex is temporarily unavailable.",
+          codexErrorInfo: "internalServerError",
+        }),
+      );
+
+      const first = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(first._tag, "Some");
+      if (first._tag !== "Some" || first.value.type !== "runtime.error") return;
+      NodeAssert.equal(first.value.payload.message, "Codex is temporarily unavailable.");
+      NodeAssert.equal(first.value.payload.class, "provider_error");
+    }),
+  );
+});

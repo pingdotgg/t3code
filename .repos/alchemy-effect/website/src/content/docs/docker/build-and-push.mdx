@@ -116,7 +116,9 @@ whatever runs the container:
 a bring-your-own image, and an [ECS task definition](/aws/compute/ecs)
 takes it as the container image. The registry reference is the
 boundary — Cloudflare and AWS pull from the registry; no further
-Docker wiring is involved.
+Docker wiring is involved. A reference already in Cloudflare's
+managed registry (`registry.cloudflare.com/...`) is deployed as-is —
+the Container skips its own pull-and-push round-trip.
 
 ## Where next
 

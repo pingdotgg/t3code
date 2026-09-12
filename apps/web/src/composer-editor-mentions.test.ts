@@ -6,7 +6,21 @@ import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { formatTerminalContextReference } from "./lib/terminalContext";
+
+const terminalReference = formatTerminalContextReference({
+  id: "ctx-1",
+  terminalLabel: "Terminal 1",
+  lineStart: 3,
+  lineEnd: 4,
+});
+const terminalSegment = {
+  type: "context-reference" as const,
+  kind: "terminal",
+  contextId: "terminal_ctx-1",
+  label: "Terminal 1 lines 3-4",
+  source: terminalReference,
+};
 
 const citation: AssistantCitation = {
   version: 1,
@@ -124,13 +138,17 @@ describe("splitPromptIntoComposerSegments", () => {
     },
   );
 
-  it("parses citations alongside file mentions, skills, and terminal contexts", () => {
+  it("parses citations alongside file mentions, skills, and context references", () => {
     const source = serializeAssistantCitation(citation);
+    const reference = formatTerminalContextReference({
+      id: "ctx-1",
+      terminalLabel: "Terminal 1",
+      lineStart: 3,
+      lineEnd: 4,
+    });
 
     expect(
-      splitPromptIntoComposerSegments(
-        `@AGENTS.md ${source}\n$review ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}${source}`,
-      ),
+      splitPromptIntoComposerSegments(`@AGENTS.md ${source}\n$review ${reference}${source}`),
     ).toEqual([
       { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },
@@ -138,7 +156,13 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "\n" },
       { type: "skill", name: "review" },
       { type: "text", text: " " },
-      { type: "terminal-context", context: null },
+      {
+        type: "context-reference",
+        kind: "terminal",
+        contextId: "terminal_ctx-1",
+        label: "Terminal 1 lines 3-4",
+        source: reference,
+      },
       { type: "citation", citation, source },
     ]);
   });
@@ -198,50 +222,72 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
+  it("splits digit-leading skill tokens into skill segments", () => {
+    expect(splitPromptIntoComposerSegments("Use $2spec please")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "2spec" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("keeps digits-only dollar amounts and compact monetary expressions as text", () => {
+    expect(splitPromptIntoComposerSegments("I'll pay $20 tomorrow")).toEqual([
+      { type: "text", text: "I'll pay $20 tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Budget is $20k tomorrow")).toEqual([
+      { type: "text", text: "Budget is $20k tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Cost is $100M total")).toEqual([
+      { type: "text", text: "Cost is $100M total" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Limit is $1e6 here")).toEqual([
+      { type: "text", text: "Limit is $1e6 here" },
+    ]);
+  });
+
   it("does not convert an incomplete trailing skill token", () => {
     expect(splitPromptIntoComposerSegments("Use $review-follow-up")).toEqual([
       { type: "text", text: "Use $review-follow-up" },
     ]);
   });
 
-  it("keeps inline terminal context placeholders at their prompt positions", () => {
+  it("keeps context references at their prompt positions", () => {
     expect(
-      splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md please`,
-      ),
+      splitPromptIntoComposerSegments(`Inspect ${terminalReference} @AGENTS.md please`),
     ).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "terminal-context", context: null },
+      terminalSegment,
+      { type: "text", text: " " },
       { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " please" },
     ]);
   });
 
-  it("preserves consecutive terminal context placeholders without dropping positions", () => {
-    expect(
-      splitPromptIntoComposerSegments(
-        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}tail`,
-      ),
-    ).toEqual([
-      { type: "terminal-context", context: null },
-      { type: "terminal-context", context: null },
-      { type: "text", text: "tail" },
-    ]);
+  it("preserves consecutive context references without dropping positions", () => {
+    expect(splitPromptIntoComposerSegments(`${terminalReference}${terminalReference}tail`)).toEqual(
+      [terminalSegment, terminalSegment, { type: "text", text: "tail" }],
+    );
   });
 
-  it("keeps skill parsing alongside mentions and terminal placeholders", () => {
+  it("keeps skill parsing alongside mentions and context references", () => {
     expect(
       splitPromptIntoComposerSegments(
-        `Inspect ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}$review-follow-up after @AGENTS.md `,
+        `Inspect ${terminalReference} $review-follow-up after @AGENTS.md `,
       ),
     ).toEqual([
       { type: "text", text: "Inspect " },
-      { type: "terminal-context", context: null },
+      terminalSegment,
+      { type: "text", text: " " },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " after " },
       { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },
     ]);
+  });
+
+  it("leaves a context link with an unparsable href as text", () => {
+    const prompt = "see [x](t3-context://v1/terminal/ctx 1) now";
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
   });
 });
 
@@ -282,12 +328,12 @@ describe("selectionTouchesMentionBoundary", () => {
     ).toBe(false);
   });
 
-  it("returns true when selection includes whitespace after a mention following a terminal placeholder", () => {
-    const prompt = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md there`;
+  it("returns true when selection includes whitespace after a mention following a context reference", () => {
+    const prompt = `${terminalReference} @AGENTS.md there`;
     expect(
       selectionTouchesMentionBoundary(
         prompt,
-        `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}@AGENTS.md`.length,
+        `${terminalReference} @AGENTS.md`.length,
         prompt.length,
       ),
     ).toBe(true);
