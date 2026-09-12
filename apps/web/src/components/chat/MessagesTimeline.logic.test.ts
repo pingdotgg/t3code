@@ -9,6 +9,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import {
   applyThreadDetailEvent,
@@ -30,6 +31,7 @@ import {
   shouldPreserveAssistantLineBreaks,
   type MessagesTimelineRow,
   type MessagesTimelineRowsProjection,
+  WORKTREE_SETUP_ROW_ID,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 import {
@@ -1089,6 +1091,39 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("shows the worktree setup card instead of the working placeholder", () => {
+    const snapshot: WorktreeSetupSnapshot = {
+      threadId: ThreadId.make("thread-setup"),
+      phase: "running",
+      startedAt: "2026-01-01T00:00:00Z",
+      endedAt: null,
+      branch: "feature",
+      baseRef: "main",
+      worktreePath: null,
+      setupScript: null,
+      stages: [],
+      error: null,
+      sequence: 3,
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: snapshot,
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "worktree-setup",
+        id: WORKTREE_SETUP_ROW_ID,
+        createdAt: "2026-01-01T00:00:00Z",
+        snapshot,
+      },
+    ]);
+  });
+
   it("keeps context compaction visible outside folded work", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

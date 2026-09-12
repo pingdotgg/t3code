@@ -62,7 +62,11 @@ export class WorktreeSetupTracker extends Context.Service<
       phase: "done" | "failed" | "cancelled",
       error?: string | null,
     ) => Effect.Effect<void>;
-    /** Interrupts the running bootstrap. Returns false when nothing is running. */
+    /**
+     * Interrupts the running bootstrap and waits for it to unwind, so the
+     * caller's dispatch has already failed and rolled back when this returns.
+     * Returns false when nothing is running.
+     */
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
     /** Emits the current snapshot (or null) first, then every change until unsubscribed. */
@@ -248,7 +252,7 @@ export const make = Effect.gen(function* () {
       if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) {
         return false;
       }
-      yield* Fiber.interrupt(tracked.fiber).pipe(Effect.forkDetach);
+      yield* Fiber.interrupt(tracked.fiber);
       return true;
     });
 
@@ -260,10 +264,17 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
         const initial = yield* get(threadId);
+        // Changes published between subscribing and reading `initial` are
+        // already folded into it. Drop them so the client never steps back.
+        const initialSequence = initial?.sequence ?? -1;
         return Stream.concat(
           Stream.make(initial),
           Stream.fromSubscription(subscription).pipe(
-            Stream.filter((change) => change.threadId === threadId),
+            Stream.filter(
+              (change) =>
+                change.threadId === threadId &&
+                (change.snapshot === null || change.snapshot.sequence > initialSequence),
+            ),
             Stream.map((change) => change.snapshot),
           ),
         );

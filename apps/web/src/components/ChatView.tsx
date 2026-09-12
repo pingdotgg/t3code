@@ -43,6 +43,7 @@ import {
   resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
+  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
@@ -1634,11 +1635,17 @@ export default function ChatView(props: ChatViewProps) {
     return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  // Thread whose worktree setup finished in a failed or cancelled state. Keeps
-  // the setup card subscribed after the local dispatch resets.
-  const [worktreeSetupSettledThreadId, setWorktreeSetupSettledThreadId] = useState<ThreadId | null>(
-    null,
-  );
+  // The bootstrap worktree setup this composer last dispatched. Set when a
+  // worktree send starts and cleared once the turn starts or the next send
+  // begins, so a failed or cancelled card stays until the user acts.
+  const [worktreeSetupRef, setWorktreeSetupRef] = useState<{
+    threadId: ThreadId;
+    ownerKey: string;
+  } | null>(null);
+  const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
+  // Set by "Work locally": resend the restored draft once the cancelled
+  // dispatch has settled and the draft is in local mode.
+  const [workLocallyResendPending, setWorkLocallyResendPending] = useState(false);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -3327,37 +3334,44 @@ export default function ChatView(props: ChatViewProps) {
     refresh: gitStatusQuery.refresh,
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
-  // Live stages of a bootstrap worktree setup. Subscribed only while the
-  // client is dispatching one, or for a short while after so the final card
-  // state (done or failed) is still visible.
-  const worktreeSetupSubscriptionActive =
-    isPreparingWorktree || worktreeSetupSettledThreadId === activeThreadId;
+  // Live stages of a bootstrap worktree setup. The subscription follows the
+  // thread that was set up, not the route: a deleted bootstrap thread rotates
+  // the draft's thread id, and the failed card must survive that.
+  const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
+  const worktreeSetupActive =
+    worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
   const worktreeSetupQuery = useEnvironmentQuery(
-    worktreeSetupSubscriptionActive && activeThreadId
-      ? vcsEnvironment.worktreeSetup({ environmentId, input: { threadId: activeThreadId } })
+    worktreeSetupActive
+      ? vcsEnvironment.worktreeSetup({
+          environmentId,
+          input: { threadId: worktreeSetupRef.threadId },
+        })
       : null,
   );
-  const worktreeSetup = worktreeSetupSubscriptionActive ? (worktreeSetupQuery.data ?? null) : null;
+  const latestWorktreeSetup = worktreeSetupQuery.data;
   useEffect(() => {
-    if (!worktreeSetup || worktreeSetup.phase === "running") return;
-    // Keep a failed or cancelled card until the user acts; drop a done card once
-    // the turn has started so the timeline hands over to the agent.
-    if (worktreeSetup.phase === "done") {
-      setWorktreeSetupSettledThreadId(null);
+    if (!latestWorktreeSetup) return;
+    if (latestWorktreeSetup.phase === "done") {
+      // The turn is running now; the timeline hands over to the agent.
+      setWorktreeSetupRef(null);
+      setHeldWorktreeSetup(null);
       return;
     }
-    setWorktreeSetupSettledThreadId(worktreeSetup.threadId);
-  }, [worktreeSetup]);
-  useEffect(() => {
-    if (isPreparingWorktree) setWorktreeSetupSettledThreadId(null);
-  }, [isPreparingWorktree]);
+    // The server drops finished snapshots after a grace period and emits null.
+    // Hold the last real snapshot so the failed card does not vanish.
+    setHeldWorktreeSetup(latestWorktreeSetup);
+  }, [latestWorktreeSetup]);
+  const worktreeSetup =
+    worktreeSetupActive && heldWorktreeSetup?.threadId === worktreeSetupRef.threadId
+      ? heldWorktreeSetup
+      : null;
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
   const onCancelWorktreeSetup = useCallback(() => {
-    if (!activeThreadId) return;
-    void cancelWorktreeSetup({ environmentId, input: { threadId: activeThreadId } });
-  }, [activeThreadId, cancelWorktreeSetup, environmentId]);
+    if (!worktreeSetup || worktreeSetup.phase !== "running") return;
+    void cancelWorktreeSetup({ environmentId, input: { threadId: worktreeSetup.threadId } });
+  }, [cancelWorktreeSetup, environmentId, worktreeSetup]);
   const onOpenWorktreeSetupTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadRef) return;
@@ -7206,6 +7220,9 @@ export default function ChatView(props: ChatViewProps) {
       preparingWorktree: Boolean(baseBranchForWorktree),
       submissionIntent: resolvedSubmissionIntent,
     });
+    setWorktreeSetupRef(
+      baseBranchForWorktree ? { threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey } : null,
+    );
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -8250,22 +8267,27 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  // "Work locally" on the setup card: stop the bootstrap, flip the draft to
-  // local mode, and resend the same message. The failed bootstrap rolls the
-  // draft back into the composer, so the resend picks it up as-is.
+  // "Work locally" on the setup card: flip the draft to local mode and cancel
+  // the bootstrap. The cancelled dispatch fails and puts the message back in
+  // the composer; the effect below resends it once that has settled.
+  const onWorktreeSetupWorkLocally = useCallback(() => {
+    if (!worktreeSetup || worktreeSetup.phase !== "running" || !isLocalDraftThread) return;
+    const threadId = worktreeSetup.threadId;
+    void (async () => {
+      const result = await cancelWorktreeSetup({ environmentId, input: { threadId } });
+      if (result._tag !== "Success" || !result.value.cancelled) return;
+      onEnvModeChange("local");
+      setWorkLocallyResendPending(true);
+    })();
+  }, [cancelWorktreeSetup, environmentId, isLocalDraftThread, onEnvModeChange, worktreeSetup]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
-  const onWorktreeSetupWorkLocally = useCallback(() => {
-    if (!activeThreadId || !isLocalDraftThread) return;
-    void (async () => {
-      await cancelWorktreeSetup({ environmentId, input: { threadId: activeThreadId } });
-      // Wait for the failed dispatch to restore the draft before resending.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      onEnvModeChange("local");
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      await onSendRef.current();
-    })();
-  }, [activeThreadId, cancelWorktreeSetup, environmentId, isLocalDraftThread, onEnvModeChange]);
+  useEffect(() => {
+    if (!workLocallyResendPending || isSendBusy || sendInFlightRef.current) return;
+    if (sendEnvMode !== "local") return;
+    setWorkLocallyResendPending(false);
+    void onSendRef.current();
+  }, [isSendBusy, sendEnvMode, workLocallyResendPending]);
 
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {

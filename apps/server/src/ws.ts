@@ -1400,16 +1400,23 @@ const makeWsRpcLayer = (
               if (Cause.hasInterruptsOnly(cause)) {
                 // A user cancel interrupts the forked bootstrap fiber. The
                 // created thread is rolled back like any other failure so the
-                // draft returns to the composer.
+                // draft returns to the composer. The setup terminal is closed
+                // first so a still-running script cannot hold files open in
+                // the worktree while git removes it.
                 const removeCreatedWorktree =
                   tracked && targetWorktreePath && bootstrap?.prepareWorktree
-                    ? gitWorkflow
-                        .removeWorktree({
-                          cwd: bootstrap.prepareWorktree.projectCwd,
-                          path: targetWorktreePath,
-                          force: true,
-                        })
-                        .pipe(Effect.ignoreCause({ log: true }), Effect.uninterruptible)
+                    ? terminalManager.close({ threadId, deleteHistory: true }).pipe(
+                        Effect.ignoreCause({ log: true }),
+                        Effect.andThen(
+                          gitWorkflow.removeWorktree({
+                            cwd: bootstrap.prepareWorktree.projectCwd,
+                            path: targetWorktreePath,
+                            force: true,
+                          }),
+                        ),
+                        Effect.ignoreCause({ log: true }),
+                        Effect.uninterruptible,
+                      )
                     : Effect.void;
                 return track(worktreeSetupTracker.finish(threadId, "cancelled")).pipe(
                   Effect.andThen(removeCreatedWorktree),

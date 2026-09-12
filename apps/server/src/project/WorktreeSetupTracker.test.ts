@@ -47,6 +47,31 @@ describe("WorktreeSetupTracker", () => {
     }),
   );
 
+  it.effect("stream drops queued changes already folded into the initial snapshot", () =>
+    Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      yield* tracker.begin({
+        threadId,
+        branch: null,
+        baseRef: null,
+        stages: ["agent"],
+        fiber: null,
+      });
+      yield* tracker.stageStatus(threadId, "agent", "running");
+      yield* tracker.stageStatus(threadId, "agent", "done");
+
+      // A late subscriber sees sequence 2 first and must never see 0 or 1.
+      const collected = yield* tracker
+        .stream(threadId)
+        .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* tracker.finish(threadId, "done");
+
+      const snapshots = yield* Fiber.join(collected);
+      expect(snapshots.map((snapshot) => snapshot?.sequence)).toEqual([2, 3]);
+    }),
+  );
+
   it.effect("stream emits the current snapshot first and then every change", () =>
     Effect.gen(function* () {
       const tracker = yield* WorktreeSetupTracker.make;
@@ -84,6 +109,7 @@ describe("WorktreeSetupTracker", () => {
       yield* tracker.begin({ threadId, branch: null, baseRef: null, stages: ["agent"], fiber });
 
       expect(yield* tracker.cancel(threadId)).toBe(true);
+      // cancel returns only after the bootstrap fiber has unwound.
       const exit = yield* Fiber.await(fiber);
       expect(Exit.hasInterrupts(exit)).toBe(true);
 
