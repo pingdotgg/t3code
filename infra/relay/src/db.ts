@@ -44,6 +44,26 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
   });
 
   const mode = relayDatabaseMode(stage);
+
+  // Phase 1 of the Vitess migration
+  // (docs/operations/relay-postgres-to-vitess-migration.md): provision the
+  // MySQL target and apply its checked-in baseline schema while the worker
+  // still runs on Postgres, so DMS can replicate data into it ahead of the
+  // cutover deploy. Deliberately prod-only: nothing speaks MySQL until the
+  // cutover PR, which takes over this resource id and adds the per-stage
+  // MySQLBranch/MySQLPassword mirror of the Postgres branch-per-stage
+  // setup below for developer stages.
+  if (mode === "shared-database") {
+    yield* Planetscale.MySQLDatabase("RelayMysqlDatabase", {
+      name: "t3coderelay-vitess",
+      region: { slug: "us-west" },
+      clusterSize: "PS_20",
+      migrationsDir: "migrations/mysql",
+      migrationsTable: "relay_migrations",
+      replicas: 2,
+    }).pipe(RemovalPolicy.retain());
+  }
+
   const database =
     mode === "shared-database"
       ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
