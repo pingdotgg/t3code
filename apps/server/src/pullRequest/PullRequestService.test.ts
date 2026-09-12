@@ -4556,3 +4556,137 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
     assert.deepStrictEqual(seen, ["/org-b"]);
   }),
 );
+
+it.effect("resolves projects through the narrow project queries, never the shell snapshot", () =>
+  Effect.gen(function* () {
+    let shellSnapshotCalls = 0;
+    const projectShellByIdCalls: Array<string> = [];
+    const projectShellsCalls: Array<ReadonlyArray<ProjectId> | undefined> = [];
+    const projects = [
+      project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      project({ id: "p2", title: "other", workspaceRoot: "/b", repository: "pingdotgg/other" }),
+    ];
+    const service = yield* PullRequestService.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(
+            PullRequestProviderRegistry,
+            fromProviders([
+              fakeProvider("github", {
+                getChangeRequest: () => Effect.succeed(hostedChangeRequest("Body", 3)),
+              }),
+            ]),
+          ),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveHandle: () => Effect.die("Unexpected provider refinement"),
+          }),
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getShellSnapshot: () => {
+              shellSnapshotCalls += 1;
+              return Effect.die("PullRequestService must not read getShellSnapshot");
+            },
+            getProjectShellById: (projectId) => {
+              projectShellByIdCalls.push(projectId as string);
+              const match = projects.find((candidate) => candidate.id === projectId);
+              return Effect.succeed(match === undefined ? Option.none() : Option.some(match));
+            },
+            getProjectShells: (projectIds) => {
+              projectShellsCalls.push(projectIds);
+              return Effect.succeed(
+                projects.filter((candidate) => projectIds?.includes(candidate.id) ?? true),
+              );
+            },
+          }),
+          SourceControlRateLimit.layer,
+          Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
+            Layer.provide(Persistence.layerKvs),
+            Layer.provide(KeyValueStore.layerMemory),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    // A panel open fans out across single-project reads; each one resolves its own project
+    // by id instead of hydrating every thread in the workspace.
+    const detail = yield* service.detail({
+      projectId: "p1" as ProjectId,
+      repository: "pingdotgg/t3code",
+      number: 1,
+    });
+    assert.strictEqual(detail.projectId, "p1");
+    assert.deepStrictEqual(projectShellByIdCalls, ["p1"]);
+    assert.strictEqual(projectShellsCalls.length, 0);
+
+    // Workspace-wide reads list the project shells instead. Number 2 has no recorded row
+    // stats (detail recorded number 1 above), so listStats takes its uncached path.
+    yield* service.listStats({
+      refs: [{ projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 2 }],
+    });
+    yield* service.list({ state: "open" });
+
+    assert.strictEqual(shellSnapshotCalls, 0);
+    assert.strictEqual(projectShellsCalls.length, 2);
+    assert.deepStrictEqual(projectShellsCalls, [undefined, undefined]);
+  }),
+);
+
+it.effect("fails a single-project read as unsupported when its row is deleted", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      // Deleted rows stay excluded in SQL, so getProjectShellById resolves to none — the same
+      // empty shell set the shell snapshot produced with its in-memory filter before.
+      projects: [],
+      providers: [fakeProvider("github")],
+    });
+
+    const error = yield* service
+      .detail({ projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    assert.strictEqual(
+      error._tag === "PullRequestUnavailableError" ? error.reason : null,
+      "provider-unsupported",
+    );
+  }),
+);
+
+it.effect("applies projectId and projectIds together as an intersection", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+        }),
+      ],
+    });
+
+    // The single-row read resolves p1 by id, then the projectIds filter still applies.
+    const disjoint = yield* service.list({
+      state: "open",
+      projectId: "p1" as ProjectId,
+      projectIds: ["p2" as ProjectId],
+    });
+    assert.deepStrictEqual(disjoint.entries, []);
+
+    const overlapping = yield* service.list({
+      state: "open",
+      projectId: "p1" as ProjectId,
+      projectIds: ["p1" as ProjectId, "p2" as ProjectId],
+    });
+    assert.deepStrictEqual(
+      overlapping.entries.map((entry) => entry.projectId),
+      ["p1"],
+    );
+  }),
+);
