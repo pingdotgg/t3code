@@ -247,7 +247,7 @@ type OpenCodeRoutedRequestEvent = OpenCodeAskedRequestEvent | OpenCodeTerminalRe
 
 type OpenCodeChildSessionEvent = Extract<
   OpenCodeSubscribedEvent,
-  { readonly type: "session.created" | "session.updated" | "session.deleted" }
+  { readonly type: "session.created" | "session.updated" | "session.deleted" | "session.status" }
 >;
 
 interface OpenCodeRequestRelationRetry {
@@ -256,6 +256,7 @@ interface OpenCodeRequestRelationRetry {
 }
 
 interface OpenCodeSessionRelationRetry {
+  readonly events: Array<OpenCodeChildSessionEvent>;
   fiber?: Fiber.Fiber<void, never>;
 }
 
@@ -2055,62 +2056,75 @@ export function makeOpenCodeAdapter(
 
     const scheduleChildSessionRelationRetry = Effect.fn("scheduleChildSessionRelationRetry")(
       function* (context: OpenCodeSessionContext, event: OpenCodeChildSessionEvent) {
-        const session = event.properties.info;
-        if (context.sessionRelationRetries.has(session.id)) return;
-        const retry: OpenCodeSessionRelationRetry = {};
-        context.sessionRelationRetries.set(session.id, retry);
+        const sessionId = openCodeEventSessionId(event);
+        if (sessionId === undefined) return;
+        const existing = context.sessionRelationRetries.get(sessionId);
+        if (existing) {
+          existing.events.push(event);
+          return;
+        }
+        const retry: OpenCodeSessionRelationRetry = { events: [event] };
+        context.sessionRelationRetries.set(sessionId, retry);
         const run = Effect.gen(function* () {
           let retryCount = 0;
-          while (context.sessionRelationRetries.get(session.id) === retry) {
-            const related = yield* isRelatedOpenCodeSession(context, session.id).pipe(
+          while (context.sessionRelationRetries.get(sessionId) === retry) {
+            const related = yield* isRelatedOpenCodeSession(context, sessionId).pipe(
               Effect.orElseSucceed(() => false),
             );
-            if (context.sessionRelationRetries.get(session.id) !== retry) return;
+            if (context.sessionRelationRetries.get(sessionId) !== retry) return;
             if (related) {
-              context.sessionRelationRetries.delete(session.id);
-              const turnId = context.activeTurnId;
-              const base = yield* buildEventBase({
-                threadId: context.session.threadId,
-                turnId,
-                itemId: session.id,
-                raw: event,
-              });
-              if (event.type === "session.created") {
-                yield* emit({
-                  ...base,
-                  type: "task.started",
-                  payload: {
-                    taskId: session.id,
-                    taskType: "local_agent",
-                    title: session.title,
-                    description: session.title,
-                  },
+              context.sessionRelationRetries.delete(sessionId);
+              for (const replayEvent of retry.events) {
+                const replaySession =
+                  replayEvent.type === "session.status" ? undefined : replayEvent.properties.info;
+                const base = yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId: context.activeTurnId,
+                  itemId: sessionId,
+                  raw: replayEvent,
                 });
-              } else if (event.type === "session.updated") {
-                yield* emit({
-                  ...base,
-                  type: "task.progress",
-                  payload: {
-                    taskId: session.id,
-                    taskType: "local_agent",
-                    title: session.title,
-                    description: session.title,
-                    summary: session.title,
-                    status: "running",
-                  },
-                });
-              } else {
-                yield* emit({
-                  ...base,
-                  type: "task.completed",
-                  payload: {
-                    taskId: session.id,
-                    taskType: "local_agent",
-                    status: "completed",
-                    summary: session.title,
-                  },
-                });
-                context.relatedSessionIds.delete(session.id);
+                if (replayEvent.type === "session.created") {
+                  yield* emit({
+                    ...base,
+                    type: "task.started",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      title: replaySession.title,
+                      description: replaySession.title,
+                    },
+                  });
+                } else if (replayEvent.type === "session.updated") {
+                  yield* emit({
+                    ...base,
+                    type: "task.progress",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      title: replaySession.title,
+                      description: replaySession.title,
+                      summary: replaySession.title,
+                      status: "running",
+                    },
+                  });
+                } else if (
+                  replayEvent.type === "session.status" &&
+                  replayEvent.properties.status.type !== "idle"
+                ) {
+                  continue;
+                } else {
+                  yield* emit({
+                    ...base,
+                    type: "task.completed",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      status: "completed",
+                      summary: replaySession?.title ?? "Completed",
+                    },
+                  });
+                  context.relatedSessionIds.delete(sessionId);
+                }
               }
               return;
             }
@@ -2122,8 +2136,8 @@ export function makeOpenCodeAdapter(
           Effect.catchCause(() => Effect.void),
           Effect.ensuring(
             Effect.sync(() => {
-              if (context.sessionRelationRetries.get(session.id) === retry) {
-                context.sessionRelationRetries.delete(session.id);
+              if (context.sessionRelationRetries.get(sessionId) === retry) {
+                context.sessionRelationRetries.delete(sessionId);
               }
             }),
           ),
@@ -2315,7 +2329,8 @@ export function makeOpenCodeAdapter(
         if (
           event.type === "session.created" ||
           event.type === "session.updated" ||
-          event.type === "session.deleted"
+          event.type === "session.deleted" ||
+          event.type === "session.status"
         ) {
           yield* scheduleChildSessionRelationRetry(context, event);
           return;
