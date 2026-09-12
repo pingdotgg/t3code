@@ -1,11 +1,18 @@
 ---
 name: ios-debugger-agent
-description: Build, launch, inspect, and drive iOS apps with the repository-configured XcodeBuildMCP server. Use on macOS for iOS Simulator builds, focused native test runs, semantic UI automation, screenshots, logs, or debugging, including T3 Code Mobile verification.
+description: Build, launch, inspect, and drive iOS apps with the repository-configured XcodeBuildMCP server. Use on macOS for iOS Simulator builds, focused native test runs, semantic UI automation, screenshots, logs, or debugging, including either the React Native T3 client in apps/mobile or the separate native SwiftUI client in apps/swift-ios.
 ---
 
 # iOS Debugger Agent
 
 Use the repository-configured `xcodebuildmcp` tools instead of requiring a globally installed Codex plugin. Prefer MCP tools over raw `xcodebuild`, `xcrun`, or `simctl` when the client exposes them.
+
+T3 Code has two separate iOS clients. Identify the affected one before setting session defaults:
+
+- React Native mobile: `apps/mobile/ios/T3CodeDev.xcworkspace`, scheme `T3CodeDev`
+- Native SwiftUI mobile: `apps/swift-ios/T3Code.xcodeproj`, scheme `T3Code`
+
+Do not assume an installed React Native build verifies SwiftUI behavior, or vice versa. Use [`test-t3-mobile`](../test-t3-mobile/SKILL.md) for the full isolated-backend and pairing workflow.
 
 ## Confirm availability
 
