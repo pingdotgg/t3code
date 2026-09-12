@@ -16,12 +16,13 @@ export function parseDelimitedPreview(text: string, delimiter: "," | "\t") {
   let cell = "";
   let quoted = false;
   let truncated = false;
+  let rowStart = text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const endCell = () => {
     if (row.length < 30) row.push(cell);
     else truncated = true;
     cell = "";
   };
-  for (let index = text.charCodeAt(0) === 0xfeff ? 1 : 0; index < text.length; index++) {
+  for (let index = rowStart; index < text.length; index++) {
     const char = text[index];
     if (char === '"') {
       if (quoted && text[index + 1] === '"') {
@@ -41,12 +42,13 @@ export function parseDelimitedPreview(text: string, delimiter: "," | "\t") {
         rows.push(row);
         row = [];
         if (char === "\r" && text[index + 1] === "\n") index++;
+        rowStart = index + 1;
         if (rows.length === 100) return { rows, truncated: truncated || index < text.length - 1 };
       }
     } else if (cell.length < 2000) cell += char;
     else truncated = true;
   }
-  if (cell.length || row.length) {
+  if (rowStart < text.length) {
     endCell();
     rows.push(row);
   }
