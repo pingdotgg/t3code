@@ -45,8 +45,8 @@ export default mergeConfig(
         // (declared deps are external by default, which is what this change is
         // undoing). `neverBundle` forces the native packages out: returning
         // false from `alwaysBundle` only means "no opinion", so a transitive
-        // dependency would still be bundled — which silently inlined
-        // msgpackr-extract and its loader, losing native acceleration.
+        // dependency would still be bundled — which silently inlined native
+        // loaders such as node-gyp-build, losing native acceleration.
         alwaysBundle: shouldBundleCliDependency,
         neverBundle: (id: string) => isExternalCliDependency(id),
         onlyBundle: false,

@@ -477,7 +477,7 @@ const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
       Schema.String,
-      SchemaTransformation.transformOrFail({
+      SchemaTransformation.transformEffect({
         decode: (value) => Effect.succeed(value || fallback),
         encode: (value) => Effect.succeed(value),
       }),

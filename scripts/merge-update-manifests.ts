@@ -79,18 +79,18 @@ export const mergeUpdateManifestFiles = Effect.fn("mergeUpdateManifestFiles")(fu
 export const mergeUpdateManifestsCommand = Command.make(
   "merge-update-manifests",
   {
-    platform: Flag.choice("platform", UpdateManifestPlatform.literals).pipe(
+    platform: Flag.Literals("platform", UpdateManifestPlatform.literals).pipe(
       Flag.withDescription("Update manifest platform."),
     ),
-    primaryPath: Argument.string("primary-path").pipe(
+    primaryPath: Argument.String("primary-path").pipe(
       Argument.withDescription("Primary update manifest path. Defaults to the output path."),
     ),
-    secondaryPath: Argument.string("secondary-path").pipe(
+    secondaryPath: Argument.String("secondary-path").pipe(
       Argument.withDescription(
         "Secondary update manifest path to merge into the primary manifest.",
       ),
     ),
-    outputPath: Argument.string("output-path").pipe(
+    outputPath: Argument.String("output-path").pipe(
       Argument.withDescription("Optional output path for the merged manifest."),
       Argument.optional,
     ),

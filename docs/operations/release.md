@@ -269,7 +269,7 @@ break:
   sidecar, the sidecar digest does not match the emitted archive, or required
   Linux runtime members are absent.
 - The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
-  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
+  pnpm install metadata, or Windows-only FFF or ffi-rs bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 

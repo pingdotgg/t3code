@@ -865,11 +865,11 @@ const resolvePythonForNodeGyp = Effect.fn("resolvePythonForNodeGyp")(function* (
   const path = yield* Path.Path;
   const hostPlatform = yield* HostProcessPlatform;
   const env = yield* Config.all({
-    configuredPython: Config.string("npm_config_python").pipe(
-      Config.orElse(() => Config.string("PYTHON")),
+    configuredPython: Config.String("npm_config_python").pipe(
+      Config.orElse(() => Config.String("PYTHON")),
       Config.option,
     ),
-    localAppData: Config.string("LOCALAPPDATA").pipe(Config.option),
+    localAppData: Config.String("LOCALAPPDATA").pipe(Config.option),
   });
   const isPython3 = (candidate: string) =>
     spawnAndCollectOutput(
@@ -1069,7 +1069,6 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/node-pty/third_party/conpty",
   "node_modules/@ff-labs/fff-bin-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
-  "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
 ] as const;
 // WSL runs the same CPU arch as the Windows host; universal is mac-only.
 export const resolveWslPrebuildArch = (arch: typeof BuildArch.Type): "x64" | "arm64" | undefined =>
@@ -1560,36 +1559,36 @@ function getPatchedDependencyPackageName(patchKey: string): string {
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
-  publisherName: Config.string("AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"),
-  endpoint: Config.string("AZURE_TRUSTED_SIGNING_ENDPOINT"),
-  certificateProfileName: Config.string("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME"),
-  codeSigningAccountName: Config.string("AZURE_TRUSTED_SIGNING_ACCOUNT_NAME"),
-  fileDigest: Config.string("AZURE_TRUSTED_SIGNING_FILE_DIGEST").pipe(Config.withDefault("SHA256")),
-  timestampDigest: Config.string("AZURE_TRUSTED_SIGNING_TIMESTAMP_DIGEST").pipe(
+  publisherName: Config.String("AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"),
+  endpoint: Config.String("AZURE_TRUSTED_SIGNING_ENDPOINT"),
+  certificateProfileName: Config.String("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME"),
+  codeSigningAccountName: Config.String("AZURE_TRUSTED_SIGNING_ACCOUNT_NAME"),
+  fileDigest: Config.String("AZURE_TRUSTED_SIGNING_FILE_DIGEST").pipe(Config.withDefault("SHA256")),
+  timestampDigest: Config.String("AZURE_TRUSTED_SIGNING_TIMESTAMP_DIGEST").pipe(
     Config.withDefault("SHA256"),
   ),
-  timestampRfc3161: Config.string("AZURE_TRUSTED_SIGNING_TIMESTAMP_RFC3161").pipe(
+  timestampRfc3161: Config.String("AZURE_TRUSTED_SIGNING_TIMESTAMP_RFC3161").pipe(
     Config.withDefault("http://timestamp.acs.microsoft.com"),
   ),
 });
 
 const BuildEnvConfig = Config.all({
   platform: Config.schema(BuildPlatform, "T3CODE_DESKTOP_PLATFORM").pipe(Config.option),
-  target: Config.string("T3CODE_DESKTOP_TARGET").pipe(Config.option),
+  target: Config.String("T3CODE_DESKTOP_TARGET").pipe(Config.option),
   arch: Config.schema(BuildArch, "T3CODE_DESKTOP_ARCH").pipe(Config.option),
-  version: Config.string("T3CODE_DESKTOP_VERSION").pipe(Config.option),
-  outputDir: Config.string("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
-  skipBuild: Config.boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
-  keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
-  signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
-  verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
-  mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
-  mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  version: Config.String("T3CODE_DESKTOP_VERSION").pipe(Config.option),
+  outputDir: Config.String("T3CODE_DESKTOP_OUTPUT_DIR").pipe(Config.option),
+  skipBuild: Config.Boolean("T3CODE_DESKTOP_SKIP_BUILD").pipe(Config.withDefault(false)),
+  keepStage: Config.Boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
+  signed: Config.Boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
+  verbose: Config.Boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
+  mockUpdates: Config.Boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
+  mockUpdateServerPort: Config.String("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
   // Path to a prebuilt Linux node-pty binary (pty.node) for the target arch,
   // produced by the Linux CI job and handed to the Windows packaging job. Placed
   // into the staged node-pty so the WSL backend ships a ready binary and never
   // compiles on the user's machine.
-  wslPrebuild: Config.string("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
+  wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -1754,10 +1753,10 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
 ) {
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
-  const reuseCaptureHelpers = yield* Config.boolean(
+  const reuseCaptureHelpers = yield* Config.Boolean(
     "T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
   ).pipe(Config.withDefault(false));
   // Rust is only optional when every Linux Rust artifact comes from a cache.
@@ -1796,7 +1795,7 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
   arch: typeof BuildArch.Type,
 ) {
   const rustTargets = resolveResourceMonitorRustTargets("mac", arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
   const checks = yield* Effect.all(
@@ -1853,7 +1852,7 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
     const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
-    const reuseResourceMonitor = yield* Config.boolean(
+    const reuseResourceMonitor = yield* Config.Boolean(
       "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
     ).pipe(Config.withDefault(false));
     const python = yield* resolvePythonForNodeGyp();
@@ -2171,7 +2170,7 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
   // Release CI restores these binaries from a cache keyed on the crate sources and
   // skips the Rust toolchain on a hit, so the build must be skippable too.
-  const reuseHelpers = yield* Config.boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
+  const reuseHelpers = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
     Config.withDefault(false),
   );
   const binaryPath = path.join(
@@ -2234,7 +2233,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+  const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
   const builtBinaries: string[] = [];
@@ -2573,8 +2572,8 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   updateChannel: "latest" | "nightly",
 ) {
   const env = yield* Config.all({
-    updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
-    githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
+    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
   });
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
@@ -3564,10 +3563,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // Assert against the emitted bundle, not the bundler config. `alwaysBundle`
   // only forces packages IN, so a transitive dependency of an external package
   // is bundled by default however the predicate is written — that silently
-  // inlined msgpackr-extract and its native loader while every list-based test
-  // still passed. An inlined native loader resolves its prebuilds relative to
-  // the bundle and quietly falls back to a slower pure-JS path, so this fails
-  // the build rather than shipping a silent regression.
+  // inlined a native loader (node-gyp-build-optional-packages) while every
+  // list-based test still passed. An inlined native loader resolves its
+  // prebuilds relative to the bundle and quietly falls back to a slower
+  // pure-JS path, so this fails the build rather than shipping a silent
+  // regression.
   {
     const chunkNames = (yield* fs.readDirectory(distDirs.serverDist)).filter((entry) =>
       entry.endsWith(".mjs"),
@@ -3986,58 +3986,58 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 });
 
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
-  platform: Flag.choice("platform", BuildPlatform.literals).pipe(
+  platform: Flag.Literals("platform", BuildPlatform.literals).pipe(
     Flag.withDescription("Build platform (env: T3CODE_DESKTOP_PLATFORM)."),
     Flag.optional,
   ),
-  target: Flag.string("target").pipe(
+  target: Flag.String("target").pipe(
     Flag.withDescription(
       "Artifact target, for example dmg/AppImage/nsis (env: T3CODE_DESKTOP_TARGET).",
     ),
     Flag.optional,
   ),
-  arch: Flag.choice("arch", BuildArch.literals).pipe(
+  arch: Flag.Literals("arch", BuildArch.literals).pipe(
     Flag.withDescription("Build arch, for example arm64/x64/universal (env: T3CODE_DESKTOP_ARCH)."),
     Flag.optional,
   ),
-  buildVersion: Flag.string("build-version").pipe(
+  buildVersion: Flag.String("build-version").pipe(
     Flag.withDescription("Artifact version metadata (env: T3CODE_DESKTOP_VERSION)."),
     Flag.optional,
   ),
-  outputDir: Flag.string("output-dir").pipe(
+  outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription("Output directory for artifacts (env: T3CODE_DESKTOP_OUTPUT_DIR)."),
     Flag.optional,
   ),
-  skipBuild: Flag.boolean("skip-build").pipe(
+  skipBuild: Flag.Boolean("skip-build").pipe(
     Flag.withDescription(
       "Skip `vp run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
     ),
     Flag.optional,
   ),
-  keepStage: Flag.boolean("keep-stage").pipe(
+  keepStage: Flag.Boolean("keep-stage").pipe(
     Flag.withDescription("Keep temporary staging files (env: T3CODE_DESKTOP_KEEP_STAGE)."),
     Flag.optional,
   ),
-  signed: Flag.boolean("signed").pipe(
+  signed: Flag.Boolean("signed").pipe(
     Flag.withDescription(
       "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: T3CODE_DESKTOP_SIGNED).",
     ),
     Flag.optional,
   ),
-  verbose: Flag.boolean("verbose").pipe(
+  verbose: Flag.Boolean("verbose").pipe(
     Flag.withDescription("Stream subprocess stdout (env: T3CODE_DESKTOP_VERBOSE)."),
     Flag.optional,
   ),
-  mockUpdates: Flag.boolean("mock-updates").pipe(
+  mockUpdates: Flag.Boolean("mock-updates").pipe(
     Flag.withDescription("Enable mock updates (env: T3CODE_DESKTOP_MOCK_UPDATES)."),
     Flag.optional,
   ),
-  mockUpdateServerPort: Flag.integer("mock-update-server-port").pipe(
+  mockUpdateServerPort: Flag.Int("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
-  wslPrebuild: Flag.string("wsl-prebuild").pipe(
+  wslPrebuild: Flag.String("wsl-prebuild").pipe(
     Flag.withDescription(
       "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
     ),
