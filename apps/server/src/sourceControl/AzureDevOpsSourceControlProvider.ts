@@ -64,6 +64,8 @@ function toChangeRequest(summary: {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: ChangeRequest["updatedAt"];
+  readonly isCrossRepository: boolean;
+  readonly headRepositoryNameWithOwner?: string;
 }): ChangeRequest {
   return {
     provider: "azure-devops",
@@ -77,7 +79,10 @@ function toChangeRequest(summary: {
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
-    isCrossRepository: false,
+    isCrossRepository: summary.isCrossRepository,
+    ...(summary.headRepositoryNameWithOwner
+      ? { headRepositoryNameWithOwner: summary.headRepositoryNameWithOwner }
+      : {}),
   };
 }
 
