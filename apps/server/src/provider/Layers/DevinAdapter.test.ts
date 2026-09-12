@@ -110,7 +110,6 @@ const makeTestAdapter = (
           ...input,
           devinSettings: { binaryPath },
           environment,
-          browserAuth: true,
           childProcessSpawner,
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
@@ -213,6 +212,36 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
       const authenticate = requests.find((request) => request.method === "authenticate");
       assert.isDefined(authenticate);
       assert.deepEqual(authenticate?.params, { methodId: "devin-browser" });
+    }),
+  );
+
+  it.effect("never requests browser authentication when resuming while signed out", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("devin-resume-signed-out");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devin-resume-signed-out-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockDevinWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath, signedOutEnvironment(tempDir));
+
+      // Recovery during server restart resumes with a cursor; popping a
+      // browser there would surprise nobody at the keyboard.
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto",
+        resumeCursor: { schemaVersion: 1, sessionId: "previous-devin-session" },
+      });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const methods = requests.map((request) => request.method);
+      assert.notInclude(methods, "authenticate");
+      assert.include(methods, "session/load");
+      assert.notInclude(methods, "session/new");
     }),
   );
 

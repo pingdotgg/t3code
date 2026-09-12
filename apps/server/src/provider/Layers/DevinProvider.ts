@@ -75,12 +75,12 @@ const DevinModelsListJson = Schema.Struct({
 
 const decodeDevinModelsListJson = Schema.decodeResult(Schema.fromJsonString(DevinModelsListJson));
 
-export function parseDevinModelsListJson(output: string): ReadonlyArray<ServerProviderModel> {
-  const decoded = decodeDevinModelsListJson(output);
-  if (Result.isFailure(decoded)) return [];
+function devinModelsFromDecodedList(
+  decoded: typeof DevinModelsListJson.Type,
+): ServerProviderModel[] {
   const seen = new Set<string>();
   const models: ServerProviderModel[] = [];
-  for (const family of decoded.success.families ?? []) {
+  for (const family of decoded.families ?? []) {
     for (const variant of family.variants ?? []) {
       const slug = variant.model_uid.trim();
       if (!slug || seen.has(slug)) continue;
@@ -100,6 +100,11 @@ export function parseDevinModelsListJson(output: string): ReadonlyArray<ServerPr
     if (first) models[0] = { ...first, isDefault: true };
   }
   return models;
+}
+
+export function parseDevinModelsListJson(output: string): ReadonlyArray<ServerProviderModel> {
+  const decoded = decodeDevinModelsListJson(output);
+  return Result.isFailure(decoded) ? [] : devinModelsFromDecodedList(decoded.success);
 }
 
 export interface DevinAuthStatus {
@@ -295,14 +300,17 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
           Effect.result,
         )
       : undefined;
-  // A failed or skipped listing keeps the previous catalog; a successful
-  // listing (even an empty one) replaces it.
-  const modelsFetched =
+  // A failed, skipped, or undecodable listing keeps the previous catalog; a
+  // decoded listing (even an empty one) replaces it.
+  const decodedModels =
     modelsResult !== undefined &&
     Result.isSuccess(modelsResult) &&
     Option.isSome(modelsResult.success) &&
-    modelsResult.success.value.code === 0;
-  const models = modelsFetched ? parseDevinModelsListJson(modelsResult.success.value.stdout) : [];
+    modelsResult.success.value.code === 0
+      ? decodeDevinModelsListJson(modelsResult.success.value.stdout)
+      : undefined;
+  const modelsFetched = decodedModels !== undefined && Result.isSuccess(decodedModels);
+  const models = modelsFetched ? devinModelsFromDecodedList(decodedModels.success) : [];
 
   return {
     installed: true,
