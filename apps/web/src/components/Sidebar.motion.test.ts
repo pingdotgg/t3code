@@ -39,6 +39,9 @@ class TestRow {
   getBoundingClientRect() {
     return { top: this.offsetTop + this.dragTranslate, height: this.offsetHeight };
   }
+  getAttribute(name: string) {
+    return this.attributes.find((attribute) => attribute.name === name)?.value ?? null;
+  }
   setAttribute(name: string, value: string) {
     this.removeAttribute(name);
     this.attributes.push({ name, value });
@@ -96,7 +99,10 @@ function fixture(rows: TestRow[]) {
 
 function expectMove(row: TestRow, offset: number) {
   expect(row.animate).toHaveBeenLastCalledWith(
-    [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0px)" }],
+    [
+      { transform: `translate(0px, ${offset}px)`, offset: 0 },
+      { transform: "translate(0px, 0px)", offset: 1 },
+    ],
     { duration: 150, easing: "ease-out" },
   );
 }
@@ -397,5 +403,88 @@ describe("sidebar list motion", () => {
     motion.update(true);
     expectMove(a, 83);
     expectMove(b, -83);
+  });
+});
+
+describe("pinning motion", () => {
+  it("retargets a pin from its curved XY position during another layout change", () => {
+    const first = new TestRow("first");
+    const pin = new TestRow("pin");
+    const inserted = new TestRow("inserted");
+    const { motion, layout } = fixture([first, pin]);
+    motion.update(true);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, first]);
+    motion.update(true);
+    const frames = pin.animate.mock.lastCall![0];
+    // The first curve finishes at the 6px dip and 7.68px horizontal bow.
+    pin.animations[0]!.progress = Number(frames[80]!.offset);
+    layout([inserted, pin, first]);
+    motion.update(true);
+    expect(pin.animate.mock.lastCall![0][0]).toEqual({
+      transform: "translate(7.68px, 6px)",
+      offset: 0,
+      zIndex: 20,
+      backgroundColor: "var(--sidebar)",
+    });
+    expect(pin.animate.mock.lastCall![1].duration).toBe(150);
+    expect(pin.animations[0]!.cancel).toHaveBeenCalledOnce();
+    // A second interruption retains the X carried into the ordinary glide.
+    pin.animations[1]!.progress = 0.5;
+    layout([pin, inserted, first]);
+    motion.update(true);
+    expect(pin.animate.mock.lastCall![0][0]).toEqual({
+      transform: "translate(3.84px, 86px)",
+      offset: 0,
+      zIndex: 20,
+      backgroundColor: "var(--sidebar)",
+    });
+  });
+
+  it("fades a removed pin from its curved position instead of its linear estimate", () => {
+    const first = new TestRow("first");
+    const pin = new TestRow("pin");
+    const { motion, layout } = fixture([first, pin]);
+    motion.update(true);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, first]);
+    motion.update(true);
+    pin.animations[0]!.progress = Number(pin.animate.mock.lastCall![0][80]!.offset);
+    layout([first]);
+    motion.update(true);
+    expect(pin.clones[0]!.style.top).toBe("97px");
+    expect(pin.clones[0]!.style.left).toBe("11.68px");
+  });
+
+  it("flies a newly pinned row from its old location into the pinned slot", () => {
+    const first = new TestRow("first");
+    const pinned = new TestRow("pinned");
+    const { motion, layout } = fixture([first, pinned]);
+    motion.update(false);
+    pinned.setAttribute("data-thread-pinned", "true");
+    layout([pinned, first]);
+    motion.update(true);
+    const [frames, timing] = pinned.animate.mock.lastCall!;
+    expect(timing.duration).toBe(550);
+    expect(frames[0]?.transform).toBe("translate(0px, 83px)");
+    expect(frames.at(-1)?.transform).toBe("translate(0px, 0px)");
+    expectMove(first, -83);
+    pinned.animations[0]!.finish();
+    pinned.setAttribute("data-thread-pinned", "false");
+    layout([first, pinned]);
+    motion.update(true);
+    expectMove(pinned, -83);
+  });
+
+  it("does not fly pins when reduced motion is enabled", () => {
+    const first = new TestRow("first");
+    const pinned = new TestRow("pinned");
+    const { motion, layout, media } = fixture([first, pinned]);
+    motion.update(false);
+    media.matches = true;
+    pinned.setAttribute("data-thread-pinned", "true");
+    layout([pinned, first]);
+    motion.update(true);
+    expect(pinned.animate).not.toHaveBeenCalled();
   });
 });
