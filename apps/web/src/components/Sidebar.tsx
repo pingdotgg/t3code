@@ -1,3 +1,4 @@
+import { projectSettingsSearch } from "../projectSettingsNavigation";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -2446,13 +2447,16 @@ export default function Sidebar() {
   }, [clearSelection, projectScopeKey]);
 
   const openProjectSettings = useCallback(
-    (projectGroup: SidebarProjectSnapshot) => {
+    (
+      projectGroup: SidebarProjectSnapshot,
+      project?: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+    ) => {
       if (isMobile) {
         setOpenMobile(false);
       }
       void router.navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: projectGroup.projectKey },
+        to: "/settings/projects",
+        search: projectSettingsSearch(projectGroup.projectKey, project),
       });
     },
     [isMobile, router, setOpenMobile],
@@ -4033,7 +4037,8 @@ export default function Sidebar() {
                   projectRef.projectId === thread.projectId,
               ),
             );
-            if (projectGroup) openProjectSettings(projectGroup);
+            const project = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
+            if (projectGroup && project) openProjectSettings(projectGroup, project);
             return;
           }
           case "new-thread-on-branch": {

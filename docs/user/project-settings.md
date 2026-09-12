@@ -41,10 +41,14 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+Opening **Project settings** from a thread selects that thread's environment and checkout.
+Opening it from a project group keeps the whole group selected. Group settings show the same
+project icon as the sidebar, including when that checkout's environment is offline.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, or image. The choice applies to
-every checkout in the project group and appears on connected clients. Choose **Automatic** to let
+the selected checkouts and appears on connected clients. Choose **Automatic** to let
 T3 Code detect an icon again.
 
 ## Keep the default branch current

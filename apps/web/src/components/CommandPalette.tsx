@@ -1,5 +1,7 @@
 "use client";
 
+import { projectSettingsSearch } from "../projectSettingsNavigation";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -1846,9 +1848,15 @@ function OpenCommandPaletteDialog(props: {
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
+        const project = contextualProjectRef
+          ? projectByKey.get(
+              `${contextualProjectRef.environmentId}:${contextualProjectRef.projectId}`,
+            )
+          : undefined;
+        if (contextualProjectRef && !project) return;
         await navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: contextualProjectGroup.projectKey },
+          to: "/settings/projects",
+          search: projectSettingsSearch(contextualProjectGroup.projectKey, project),
         });
       },
     });
