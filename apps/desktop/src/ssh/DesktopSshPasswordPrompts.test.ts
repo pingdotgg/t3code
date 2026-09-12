@@ -99,6 +99,7 @@ function makeElectronWindowLayer(window: ReturnType<typeof makeTestWindow>["wind
       clearMain: () => Effect.void,
       prepareReveal: () => Effect.succeed(false),
       reveal: () => Effect.void,
+      fromWebContentsId: () => Effect.die("unexpected webContents lookup"),
       sendAll: () => Effect.void,
       destroyAll: Effect.void,
       syncAllAppearance: () => Effect.void,

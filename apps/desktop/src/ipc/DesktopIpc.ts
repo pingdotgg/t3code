@@ -4,8 +4,20 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+/**
+ * The slice of an Electron WebContents that IPC handlers may touch: enough to
+ * identify the calling renderer, push messages back to it, and notice when it
+ * goes away.
+ */
+export interface DesktopIpcSenderWebContents {
+  readonly id: number;
+  isDestroyed(): boolean;
+  send(channel: string, ...args: ReadonlyArray<unknown>): void;
+  once(event: "destroyed", listener: () => void): unknown;
+}
+
 export interface DesktopIpcInvokeEvent {
-  readonly sender: { readonly id: number };
+  readonly sender: DesktopIpcSenderWebContents;
 }
 
 export interface DesktopIpcSyncEvent {
