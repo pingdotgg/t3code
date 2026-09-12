@@ -1260,10 +1260,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
-          onOpenFullDiskAccessSettings={() => {
+          onCheckFullDiskAccess={
+            window.desktopBridge?.checkSystemPermission
+              ? () => window.desktopBridge!.checkSystemPermission!("full-disk-access")
+              : undefined
+          }
+          onOpenFullDiskAccessSettings={async () => {
             // Rejects outside the desktop shell (and on shells that predate the
             // method), so the one toast covers every way the link can fail.
-            void readLocalApi()
+            await readLocalApi()
               ?.shell.openSystemSettings("full-disk-access")
               .catch(() => {
                 toastManager.add({
