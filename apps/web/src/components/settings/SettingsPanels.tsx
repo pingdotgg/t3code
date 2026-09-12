@@ -2076,9 +2076,17 @@ function AgentHistoryImportNowRow() {
   if (isImporting) {
     description = "Importing…";
   } else if (status?.state === "completed") {
-    description = `Imported ${status.threadsImported} ${
+    const conversations = `${status.threadsImported} ${
       status.threadsImported === 1 ? "conversation" : "conversations"
-    } into ${status.projectsCreated} ${status.projectsCreated === 1 ? "project" : "projects"}.`;
+    }`;
+    // A repeat run usually adds no projects, and "into 0 projects" reads as a
+    // failure rather than as nothing new to create.
+    description =
+      status.projectsCreated === 0
+        ? `Imported ${conversations}.`
+        : `Imported ${conversations} into ${status.projectsCreated} new ${
+            status.projectsCreated === 1 ? "project" : "projects"
+          }.`;
   } else if (status?.state === "failed") {
     // The server stores a pretty-printed cause here, which can run to many
     // lines. A settings row gets the first line only; the full cause is in the
