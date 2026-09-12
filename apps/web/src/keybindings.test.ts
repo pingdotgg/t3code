@@ -738,6 +738,29 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "resolves a custom composer-focus shortcut inside and outside terminals on %s",
+    (platform) => {
+      const keybindings = compile([
+        { shortcut: modShortcut("i", { shiftKey: true }), command: "composer.focus" },
+      ]);
+      const input = event({
+        key: "i",
+        shiftKey: true,
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+
+      for (const terminalFocus of [false, true]) {
+        assert.strictEqual(
+          resolveShortcutCommand(input, keybindings, { platform, context: { terminalFocus } }),
+          "composer.focus",
+        );
+        assert.isNull(resolveShortcutCommand(input, [], { platform }));
+      }
+    },
+  );
+
   it("resolves a custom stop-thread shortcut", () => {
     const keybindings = compile([{ shortcut: modShortcut("escape"), command: "thread.stop" }]);
 

@@ -53,6 +53,10 @@ a shortcut.
 
 ## Commands with special behavior
 
+`composer.focus` moves focus to the end of the current thread's composer, including
+from a terminal. It has no default shortcut; assign one with **Add keybinding** in
+**Settings → Keybindings**.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
