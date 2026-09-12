@@ -8,8 +8,15 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -19,7 +26,69 @@ import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  makeAntigravityAcpRuntime,
 } from "./AntigravityAcpSupport.ts";
+
+it.effect.each([false, true])(
+  "drains exited validation stderr with inherited pipe: %s",
+  (inherited) =>
+    Effect.gen(function* () {
+      const releaseStderr = yield* Deferred.make<void>();
+      const draining = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void>();
+      const diagnostics: string[] = [];
+      const childProcessSpawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Deferred.succeed(draining, undefined).pipe(Effect.as(false)),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: inherited
+              ? Stream.make(new TextEncoder().encode("final startup diagnostic")).pipe(
+                  Stream.concat(
+                    Stream.fromEffect(Deferred.await(releaseStderr)).pipe(
+                      Stream.flatMap(() => Stream.empty),
+                    ),
+                  ),
+                )
+              : Stream.fromEffect(Deferred.await(releaseStderr)).pipe(
+                  Stream.map(() => new TextEncoder().encode("final startup diagnostic")),
+                ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const runtime = yield* makeAntigravityAcpRuntime({
+        spawn: { command: "antigravity-fixture", args: [] },
+        cwd: "/fixture",
+        childProcessSpawner,
+        clientInfo: { name: "test", version: "1" },
+        onDiagnostic: (message) => Effect.sync(() => void diagnostics.push(message)),
+      });
+      const initialization = yield* runtime.initialize().pipe(
+        Effect.exit,
+        Effect.tap(() => Deferred.succeed(completed, undefined)),
+        Effect.forkScoped,
+      );
+      expect(
+        yield* Effect.raceFirst(
+          Deferred.await(draining).pipe(Effect.as("draining")),
+          Deferred.await(completed).pipe(Effect.as("completed")),
+        ),
+      ).toBe("draining");
+      expect(yield* Deferred.isDone(completed)).toBe(false);
+      if (inherited) yield* TestClock.adjust("1 second");
+      else yield* Deferred.succeed(releaseStderr, undefined);
+      expect(Exit.isFailure(yield* Fiber.join(initialization))).toBe(true);
+      expect(diagnostics).toEqual(["final startup diagnostic"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 const modelConfig = {
   id: "model",
