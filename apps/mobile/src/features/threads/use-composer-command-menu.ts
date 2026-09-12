@@ -12,8 +12,10 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsBySource,
   getProviderSkillsForSlashMenu,
+  formatProviderSkillReference,
+  formatProviderSkillMenuDescription,
   isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -104,6 +106,10 @@ export function buildComposerSlashCommandItems(input: {
   return items;
 }
 
+/**
+ * Apply a command pick to the active draft range, preserving exact skill sources and returning
+ * any requested interaction mode.
+ */
 export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
@@ -130,7 +136,7 @@ export function resolveComposerCommandSelection(input: {
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
   } else if (item.type === "skill") {
-    replacement = `$${item.skill.name} `;
+    replacement = `${formatProviderSkillReference(item.skill)} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
@@ -142,7 +148,10 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
-/** Shared autocomplete for thread composers and unsent new-task drafts. */
+/**
+ * Provide workspace-aware command suggestions and selection handlers for the thread and new-task
+ * composers.
+ */
 export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
@@ -289,29 +298,31 @@ export function useComposerCommandMenu({
       const skillItems = getProviderSkillsForSlashMenu(skills, true)
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${JSON.stringify([skill.name, skill.path])}`,
           type: "skill" as const,
           skill,
           label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
 
       return [...commandItems, ...skillItems];
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+      const enabledSkills = dedupeProviderSkillsBySource(
+        skills.filter(isProviderSkillUserInvocable),
+      );
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });
 
       if (!normalizedQuery) {
         return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${JSON.stringify([skill.name, skill.path])}`,
           type: "skill" as const,
           skill,
           label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
       }
 
@@ -374,11 +385,11 @@ export function useComposerCommandMenu({
       }
 
       return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
+        id: `skill:${JSON.stringify([skill.name, skill.path])}`,
         type: "skill" as const,
         skill,
         label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
+        description: formatProviderSkillMenuDescription(skill, skills),
       }));
     }
 

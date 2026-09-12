@@ -184,6 +184,7 @@ export interface CodexSessionRuntimeOptions {
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
+  readonly skills?: ReadonlyArray<{ readonly name: string; readonly path: string }>;
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
@@ -605,10 +606,15 @@ function buildCodexCollaborationMode(input: {
   };
 }
 
+/**
+ * Build Codex turn parameters, carrying authorized skill selections as native path-bound inputs
+ * alongside text and images.
+ */
 export function buildTurnStartParams(input: {
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
+  readonly skills?: CodexSessionRuntimeSendTurnInput["skills"];
   readonly attachments?: ReadonlyArray<{
     readonly type: "image";
     readonly url: string;
@@ -629,6 +635,9 @@ export function buildTurnStartParams(input: {
       type: "text",
       text: input.prompt,
     });
+  }
+  for (const skill of input.skills ?? []) {
+    turnInput.push({ type: "skill", name: skill.name, path: skill.path });
   }
   for (const attachment of input.attachments ?? []) {
     turnInput.push(attachment);
@@ -2359,6 +2368,7 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
+            ...(input.skills ? { skills: input.skills } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),

@@ -990,15 +990,29 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
-        input: "ok, now $implement all the tickets\nstart with auth",
+        input:
+          "Use [$review](/personal/review/SKILL.md), now $implement all the tickets\nstart with auth\n\nInstructions: $implement remains literal",
+        skillContext: "\n\nInstructions: $implement remains literal",
         attachments: [],
       });
 
-      const promptMessage = yield* Effect.promise(() =>
-        readFirstPromptMessage(harness.getLastCreateQueryInput()),
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input:
+          "Use [$review](/personal/review/SKILL.md)\n\nInstructions: $implement remains literal",
+        skillContext: "\n\nInstructions: $implement remains literal",
+      });
+      const messages = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
       );
+      assert.deepEqual(messages[1]?.message.content, [
+        { type: "text", text: "Instructions: $implement remains literal" },
+        { type: "text", text: "Use [$review](/personal/review/SKILL.md)" },
+      ]);
+      const promptMessage = messages[0];
       assert.deepEqual(promptMessage?.message.content, [
-        { type: "text", text: "ok, now" },
+        { type: "text", text: "Instructions: $implement remains literal" },
+        { type: "text", text: "Use [$review](/personal/review/SKILL.md), now" },
         { type: "text", text: "/implement all the tickets\nstart with auth" },
       ]);
     }).pipe(

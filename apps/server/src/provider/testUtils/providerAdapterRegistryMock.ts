@@ -46,6 +46,7 @@ export const makeAdapterRegistryMock = (adapters: KindAdapterMap): ProviderAdapt
 
   return {
     getByInstance,
+    getSkills: () => Effect.succeed([]),
     getInstanceInfo: (instanceId) => {
       const adapter = byInstanceId.get(instanceId);
       if (!adapter) {

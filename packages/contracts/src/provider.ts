@@ -71,6 +71,14 @@ export const ProviderSendTurnInput = Schema.Struct({
   /** Internal recovery signal. Allows an empty turn only for adapters that
       explicitly support promptless continuation. */
   continuation: Schema.optional(Schema.Boolean),
+  /** Generated exact-file fallback suffix, excluded from native name-based dispatch planning. */
+  skillContext: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+  ),
+  /** Exact sources selected in the composer, supplied internally by ProviderService. */
+  skills: Schema.optional(
+    Schema.Array(Schema.Struct({ name: TrimmedNonEmptyString, path: TrimmedNonEmptyString })),
+  ),
   input: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),

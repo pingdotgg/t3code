@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
 
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
@@ -17,6 +18,30 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it.each(["$code", "/skill:code"])(
+    "preserves the selected skill source from %s",
+    (draftMessage) => {
+      const skill = {
+        name: "code-review",
+        path: "/personal/My Skills/code-review/SKILL.md",
+        enabled: true,
+      };
+      const result = resolveComposerCommandSelection({
+        draftMessage,
+        trigger: { rangeStart: 0, rangeEnd: draftMessage.length },
+        allowInteractionMode: false,
+        item: {
+          id: "personal-review",
+          type: "skill",
+          skill,
+          label: "Code Review",
+          description: "Standards and spec",
+        },
+      });
+      expect(collectSkillReferences(result.text)).toEqual([{ name: skill.name, path: skill.path }]);
+      expect(result.cursor).toBe(result.text.length);
+    },
+  );
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

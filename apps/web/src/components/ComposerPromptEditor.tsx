@@ -129,6 +129,7 @@ type SerializedComposerSkillNode = Spread<
     skillName: string;
     skillLabel?: string;
     skillDescription?: string;
+    skillSource?: string;
     type: "composer-skill";
     version: 1;
   },
@@ -250,18 +251,20 @@ type ComposerSkillMetadata = {
   description: string | null;
 };
 
+/** Index chip metadata by exact path, with first-by-name lookup retained for legacy drafts. */
 function skillMetadataByName(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ReadonlyMap<string, ComposerSkillMetadata> {
-  return new Map(
-    skills.map((skill) => [
-      skill.name,
-      {
-        label: formatProviderSkillDisplayName(skill),
-        description: resolveSkillDescription(skill),
-      },
-    ]),
-  );
+  const metadata = new Map<string, ComposerSkillMetadata>();
+  for (const skill of skills) {
+    const value = {
+      label: formatProviderSkillDisplayName(skill),
+      description: resolveSkillDescription(skill),
+    };
+    if (!metadata.has(skill.name)) metadata.set(skill.name, value);
+    metadata.set(skill.path, value);
+  }
+  return metadata;
 }
 
 function ComposerSkillDecorator(props: { skillLabel: string; skillDescription: string | null }) {
@@ -299,32 +302,42 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   __skillName: string;
   __skillLabel: string;
   __skillDescription: string | null;
+  __skillSource: string;
 
   static override getType(): string {
     return "composer-skill";
   }
 
+  /** Preserve the selected source when Lexical clones a skill chip during editor updates. */
   static override clone(node: ComposerSkillNode): ComposerSkillNode {
     return new ComposerSkillNode(
       node.__skillName,
       node.__skillLabel,
       node.__skillDescription,
+      node.__skillSource,
       node.__key,
     );
   }
 
+  /** Restore persisted chips, accepting older drafts that stored only a skill name. */
   static override importJSON(serializedNode: SerializedComposerSkillNode): ComposerSkillNode {
     return $createComposerSkillNode(
       serializedNode.skillName,
       serializedNode.skillLabel ?? serializedNode.skillName,
       serializedNode.skillDescription ?? null,
+      serializedNode.skillSource,
     ).updateFromJSON(serializedNode);
   }
 
+  /**
+   * Create a chip from a serialized skill reference, falling back to a bare name for legacy
+   * callers.
+   */
   constructor(
     skillName: string,
     skillLabel: string,
     skillDescription: string | null,
+    skillSource?: string,
     key?: NodeKey,
   ) {
     super(key);
@@ -332,13 +345,19 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     this.__skillName = normalizedSkillName;
     this.__skillLabel = skillLabel;
     this.__skillDescription = skillDescription;
+    this.__skillSource = skillSource ?? `$${normalizedSkillName}`;
   }
 
+  /**
+   * Persist the selected source with the display metadata so draft reloads retain skill
+   * identity.
+   */
   override exportJSON(): SerializedComposerSkillNode {
     return {
       ...super.exportJSON(),
       skillName: this.__skillName,
       skillLabel: this.__skillLabel,
+      skillSource: this.__skillSource,
       ...(this.__skillDescription ? { skillDescription: this.__skillDescription } : {}),
       type: "composer-skill",
       version: 1,
@@ -355,8 +374,12 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
     return false;
   }
 
+  /**
+   * Return the invocation source for copy and prompt submission, independent of the visible
+   * label.
+   */
   override getTextContent(): string {
-    return `$${this.__skillName}`;
+    return this.__skillSource;
   }
 
   override isInline(): true {
@@ -377,8 +400,11 @@ function $createComposerSkillNode(
   skillName: string,
   skillLabel: string,
   skillDescription: string | null,
+  skillSource?: string,
 ): ComposerSkillNode {
-  return $applyNodeReplacement(new ComposerSkillNode(skillName, skillLabel, skillDescription));
+  return $applyNodeReplacement(
+    new ComposerSkillNode(skillName, skillLabel, skillDescription, skillSource),
+  );
 }
 
 function ComposerTerminalContextDecorator(props: { context: TerminalContextDraft }) {
@@ -840,6 +866,7 @@ function $appendTextWithLineBreaks(parent: ElementNode, text: string): void {
   }
 }
 
+/** Rebuild the editor from serialized draft text, resolving source-bound skill metadata by path. */
 function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,
@@ -861,12 +888,13 @@ function $setComposerEditorPrompt(
       continue;
     }
     if (segment.type === "skill") {
-      const metadata = skillMetadata.get(segment.name);
+      const metadata = skillMetadata.get(segment.path ?? segment.name);
       paragraph.append(
         $createComposerSkillNode(
           segment.name,
           metadata?.label ?? formatProviderSkillDisplayName({ name: segment.name }),
           metadata?.description ?? null,
+          segment.source,
         ),
       );
       continue;

@@ -75,6 +75,26 @@ describe("discoverGrokSkills", () => {
     ),
   );
 
+  it.effect("keeps distinct same-name sources from the CLI inventory", () =>
+    Effect.gen(function* () {
+      const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
+      expect(skills.map((skill) => skill.path)).toEqual([
+        "/plugins/review/SKILL.md",
+        "/personal/review/SKILL.md",
+      ]);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeInspectSpawner(
+          inspectPayload([
+            { name: "review", source: { type: "bundled", path: "/plugins/review/SKILL.md" } },
+            { name: "review", source: { type: "user", path: "/personal/review/SKILL.md" } },
+          ]),
+        ),
+      ),
+    ),
+  );
+
   it.effect("disables skills the CLI marks as not user-invocable", () =>
     Effect.gen(function* () {
       const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});

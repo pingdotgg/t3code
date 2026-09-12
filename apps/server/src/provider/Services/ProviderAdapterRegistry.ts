@@ -7,13 +7,17 @@
  *
  * @module ProviderAdapterRegistry
  */
-import type { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 
-import type { ProviderAdapterError, ProviderUnsupportedError } from "../Errors.ts";
+import type {
+  ProviderAdapterError,
+  ProviderUnsupportedError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 import type { ProviderContinuationIdentity } from "../ProviderDriver.ts";
 
@@ -41,6 +45,11 @@ export interface ProviderAdapterRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, ProviderUnsupportedError>;
 
+  /** Discover skills for this instance and the active session workspace. */
+  readonly getSkills: (
+    instanceId: ProviderInstanceId,
+    cwd: string | undefined,
+  ) => Effect.Effect<ServerProvider["skills"], ProviderUnsupportedError | ProviderValidationError>;
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderUnsupportedError>;

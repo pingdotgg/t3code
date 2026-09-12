@@ -1464,6 +1464,10 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
+/**
+ * Build SDK content with native skill dispatch planned only from user text. Keep exact-file
+ * fallback instructions in a separate block so they cannot trigger name-based dispatch.
+ */
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {
@@ -1475,7 +1479,13 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly skillNames: ReadonlySet<string>;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.modelCatalog);
+  const skillContext = input.skillContext ?? "";
+  const originalInput = skillContext ? input.input?.slice(0, -skillContext.length) : input.input;
+  const text = buildPromptText(
+    { ...input, input: originalInput },
+    dependencies.boundInstanceId,
+    dependencies.modelCatalog,
+  );
   const sdkContent: Array<Record<string, unknown>> = [];
 
   // Claude Code expands a skill only from the LAST text block, and only when
@@ -1483,6 +1493,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   // therefore split into [leading text, "/name trailing text"] so the CLI
   // runs it natively and the prose around it survives. See ClaudeSkillDispatch.
   const dispatch = planClaudeSkillDispatch(text, dependencies.skillNames);
+  if (skillContext) sdkContent.push({ type: "text", text: skillContext.trimStart() });
   if (dispatch?.leadingText !== undefined) {
     sdkContent.push({ type: "text", text: dispatch.leadingText });
   }

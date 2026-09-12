@@ -1,3 +1,4 @@
+import { serializeSkillReference } from "@t3tools/shared/composerInlineTokens";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -275,7 +276,9 @@ function makeFakeCodexAdapter(
     capabilities: {
       sessionModelSwitch: "in-session",
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
-      ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
+      ...(provider === CODEX_DRIVER
+        ? { promptlessTurnContinuation: true, nativeSkillInput: true }
+        : {}),
     },
     startSession,
     sendTurn,
@@ -377,6 +380,7 @@ function makeStaticInstanceRegistry(
       const adapter = adapters.get(instanceId);
       return adapter ? Effect.succeed(adapter) : Effect.fail(unsupported(instanceId));
     },
+    getSkills: () => Effect.succeed([]),
     getInstanceInfo: (instanceId) => {
       const adapter = adapters.get(instanceId);
       return adapter
@@ -848,6 +852,7 @@ it.effect(
           requestedInstanceId === instanceId
             ? Effect.succeed(codex.adapter)
             : Effect.fail(unsupported()),
+        getSkills: () => Effect.succeed([]),
         getInstanceInfo: (requestedInstanceId) =>
           requestedInstanceId === instanceId
             ? Effect.succeed({
@@ -927,6 +932,7 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
         requestedInstanceId === instanceId
           ? Effect.succeed(codex.adapter)
           : Effect.fail(unsupported()),
+      getSkills: () => Effect.succeed([]),
       getInstanceInfo: (requestedInstanceId) =>
         requestedInstanceId === instanceId
           ? Effect.succeed({
@@ -985,6 +991,79 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+for (const driver of ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"]) {
+  const driverKind = ProviderDriverKind.make(driver);
+  const instanceId = ProviderInstanceId.make(`skill-test-${driver}`);
+  const fake = makeFakeCodexAdapter(driverKind);
+  const directory = fixtureCwd(`skill-${driver}`);
+  const skillPath = NodePath.join(directory, "SKILL.md");
+  const setup = makeProviderServiceLayer({
+    registry: {
+      ...makeStaticInstanceRegistry([[instanceId, fake.adapter]]),
+      getSkills: (requestedInstance, cwd) => {
+        assert.equal(requestedInstance, instanceId);
+        assert.equal(cwd, directory);
+        return Effect.succeed([{ name: "code-review", path: skillPath, enabled: true }]);
+      },
+    },
+  });
+  setup.layer(`explicit skill dispatch: ${driver}`, (it) => {
+    it.effect("delivers the chosen source's instructions to the adapter", () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        NodeFS.writeFileSync(
+          skillPath,
+          "MATT_STANDARDS_AND_SPEC: review the diff against the spec.",
+        );
+        const threadId = asThreadId(`skill-${driver}`);
+        yield* provider.startSession(threadId, {
+          provider: driverKind,
+          providerInstanceId: instanceId,
+          threadId,
+          runtimeMode: "full-access",
+          cwd: directory,
+        });
+        yield* provider.sendTurn({
+          threadId,
+          input: `Use ${serializeSkillReference({ name: "code-review", path: skillPath })} now.`,
+        });
+        const sent = fake.sendTurn.mock.calls.at(-1)?.[0].input ?? "";
+        if (driver === "codex") {
+          assert.equal(
+            sent,
+            `Use ${serializeSkillReference({ name: "code-review", path: skillPath })} now.`,
+          );
+          assert.deepEqual(fake.sendTurn.mock.calls.at(-1)?.[0].skills, [
+            { name: "code-review", path: skillPath },
+          ]);
+          assert.notInclude(sent, "MATT_STANDARDS_AND_SPEC");
+        } else {
+          assert.include(sent, "MATT_STANDARDS_AND_SPEC");
+          assert.include(sent, encodeJson(skillPath));
+          assert.include(sent, encodeJson(directory));
+          assert.isUndefined(fake.sendTurn.mock.calls.at(-1)?.[0].skills);
+          const context = fake.sendTurn.mock.calls.at(-1)?.[0].skillContext;
+          assert.isString(context);
+          assert.isTrue(sent.endsWith(context!));
+          assert.include(context!, "MATT_STANDARDS_AND_SPEC");
+        }
+        const undiscoveredPath = NodePath.join(directory, "undiscovered", "SKILL.md");
+        NodeFS.mkdirSync(NodePath.dirname(undiscoveredPath), { recursive: true });
+        NodeFS.writeFileSync(undiscoveredPath, "DO_NOT_SEND");
+        const calls = fake.sendTurn.mock.calls.length;
+        const failure = yield* provider
+          .sendTurn({
+            threadId,
+            input: serializeSkillReference({ name: "code-review", path: undiscoveredPath }),
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(failure, ProviderValidationError);
+        assert.equal(fake.sendTurn.mock.calls.length, calls);
+      }),
+    );
+  });
+}
 
 const routing = makeProviderServiceLayer();
 

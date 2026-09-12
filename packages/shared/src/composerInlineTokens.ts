@@ -9,6 +9,7 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -16,6 +17,120 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+}
+
+/**
+ * Encode a selected skill as a Markdown reference that preserves its exact file through storage
+ * and transport.
+ */
+export function serializeSkillReference(skill: { name: string; path: string }): string {
+  const path = encodeURI(skill.path).replace(
+    /[()?#]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `[$${skill.name}](${path})`;
+}
+
+/** Explicit source references survive draft storage and transport as Markdown. */
+export function collectSkillReferences(
+  text: string,
+): ReadonlyArray<{ name: string; path: string }> {
+  const references = new Map<string, { name: string; path: string }>();
+  for (const token of collectSkillReferenceTokens(text)) {
+    if (token.path)
+      references.set(JSON.stringify([token.value, token.path]), {
+        name: token.value,
+        path: token.path,
+      });
+  }
+  return [...references.values()];
+}
+
+/** Markdown fences and exact-length backtick spans are literal, including unclosed fences. */
+function collectMarkdownCodeRanges(text: string): Array<{ start: number; end: number }> {
+  const fences: Array<{ start: number; end: number }> = [];
+  let open: { start: number; character: string; length: number } | undefined;
+  for (const line of text.matchAll(/^.*(?:\n|$)/gm)) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)\r?\n?$/.exec(line[0]);
+    if (!delimiter) continue;
+    const run = delimiter[1]!;
+    const rest = delimiter[2]!;
+    if (open) {
+      if (run[0] === open.character && run.length >= open.length && rest.trim() === "") {
+        fences.push({ start: open.start, end: line.index + line[0].length });
+        open = undefined;
+      }
+    } else if (run[0] !== "`" || !rest.includes("`")) {
+      open = { start: line.index, character: run[0]!, length: run.length };
+    }
+  }
+  if (open) fences.push({ start: open.start, end: text.length });
+  const ranges = [...fences];
+  let offset = 0;
+  for (const fence of [...fences, { start: text.length, end: text.length }]) {
+    const runs = [...text.slice(offset, fence.start).matchAll(/`+/g)].map((run) => {
+      const start = offset + run.index;
+      let backslashes = 0;
+      for (let cursor = start - 1; cursor >= offset && text[cursor] === "\\"; cursor--) {
+        backslashes++;
+      }
+      return { start, length: run[0].length, escaped: backslashes % 2 };
+    });
+    const nextByLength = new Map<number, number>();
+    const closing = new Map<number, number>();
+    for (let index = runs.length - 1; index >= 0; index--) {
+      const run = runs[index]!;
+      // Outside a span, an escape consumes only the first backtick in a run.
+      // Inside a span, backslashes are literal, so closing runs keep their full length.
+      const next = nextByLength.get(run.length - run.escaped);
+      if (next !== undefined) closing.set(index, next);
+      nextByLength.set(run.length, index);
+    }
+    for (let index = 0; index < runs.length; index++) {
+      const end = closing.get(index);
+      if (end === undefined) continue;
+      ranges.push({
+        start: runs[index]!.start + runs[index]!.escaped,
+        end: runs[end]!.start + runs[end]!.length,
+      });
+      index = end;
+    }
+    offset = fence.end;
+  }
+  return ranges.sort((left, right) => left.start - right.start);
+}
+
+/**
+ * Parse absolute SKILL.md references outside Markdown code, retaining source offsets for
+ * composer chips. Malformed references remain prose.
+ */
+function collectSkillReferenceTokens(
+  text: string,
+): Extract<ComposerInlineToken, { type: "skill" }>[] {
+  if (!text.includes("[$")) return [];
+  const tokens: Extract<ComposerInlineToken, { type: "skill" }>[] = [];
+  const codeRanges = collectMarkdownCodeRanges(text);
+  let codeRangeIndex = 0;
+  const pattern = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^\s)]+)\)/g;
+  for (const match of text.matchAll(pattern)) {
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    while (codeRanges[codeRangeIndex] && codeRanges[codeRangeIndex]!.end <= start) codeRangeIndex++;
+    const codeRange = codeRanges[codeRangeIndex];
+    if (codeRange && start >= codeRange.start && start < codeRange.end) continue;
+    const name = match[2];
+    const encodedPath = match[3];
+    if (!name || !encodedPath) continue;
+    let path: string;
+    try {
+      path = decodeURIComponent(encodedPath);
+    } catch {
+      continue;
+    }
+    if (!/^(?:\/|[a-zA-Z]:[\\/]|\\\\)/.test(path) || !/[\\/]SKILL\.md$/i.test(path)) continue;
+    const end = (match.index ?? 0) + match[0].length;
+    tokens.push({ type: "skill", value: name, path, source: text.slice(start, end), start, end });
+  }
+  return tokens;
 }
 
 /**
@@ -102,11 +217,15 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Collect file and skill chips in source order. Pass prior tokens to preserve an existing chip
+ * at the end of an edited draft.
+ */
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  const matches = [...collectMentionTokens(text), ...collectSkillReferenceTokens(text)];
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

@@ -63,6 +63,28 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect(
+    "preserves same-name selections as native exact-path skill inputs alongside text and images",
+    () =>
+      Effect.gen(function* () {
+        const skills = [
+          { name: "code-review", path: "/personal/code-review/SKILL.md" },
+          { name: "code-review", path: "C:\\plugins\\code-review\\SKILL.md" },
+        ];
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: "Review these changes",
+          skills,
+          attachments: [{ type: "image", url: "https://example.com/image.png" }],
+        });
+        NodeAssert.deepStrictEqual(params.input, [
+          { type: "text", text: "Review these changes" },
+          ...skills.map((skill) => ({ type: "skill", ...skill })),
+          { type: "image", url: "https://example.com/image.png" },
+        ]);
+      }),
+  );
   it("keeps invalid turn values only in the schema cause", () => {
     const secret = "codex-turn-input-secret-sentinel";
     const error = Effect.runSync(

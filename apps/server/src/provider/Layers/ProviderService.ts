@@ -36,6 +36,8 @@ import {
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
+import { authorizeSkillReferences, expandSkillReferencesForProvider } from "../skillReferences.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -1663,6 +1665,38 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: true,
         });
       }
+      const skills = collectSkillReferences(parsed.input ?? "");
+      if (skills.length > 0) {
+        const sessions = yield* routed.adapter.listSessions();
+        const session = sessions.find((candidate) => candidate.threadId === input.threadId);
+        const inventory = yield* registry.getSkills(routed.instanceId, session?.cwd);
+        yield* authorizeSkillReferences(skills, inventory).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+        );
+      }
+      const providerPrompt =
+        input.input === undefined || routed.adapter.capabilities.nativeSkillInput === true
+          ? input.input
+          : yield* expandSkillReferencesForProvider(input.input, skills).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
+            );
+      yield* decodeInputOrValidationError({
+        operation: "ProviderService.sendTurn",
+        schema: ProviderSendTurnInput.fields.input,
+        payload: providerPrompt,
+      });
+      const { skills: _ignoredSkills, skillContext: _ignoredSkillContext, ...baseInput } = input;
+      const providerInput = {
+        ...baseInput,
+        ...(providerPrompt !== input.input && input.input !== undefined
+          ? { skillContext: providerPrompt?.slice(input.input.length) }
+          : {}),
+        ...(providerPrompt !== undefined ? { input: providerPrompt } : {}),
+        ...(routed.adapter.capabilities.nativeSkillInput === true && skills.length > 0
+          ? { skills }
+          : {}),
+      };
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
       yield* Effect.annotateCurrentSpan({
@@ -1688,7 +1722,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
-            const turn = yield* routed.adapter.sendTurn(input);
+            const turn = yield* routed.adapter.sendTurn(providerInput);
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,

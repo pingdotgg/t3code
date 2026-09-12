@@ -989,7 +989,10 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          const rawPrompt = input.input?.trim() ?? "";
+          const skillContext = input.skillContext ?? "";
+          const rawPrompt =
+            (skillContext ? input.input?.slice(0, -skillContext.length) : input.input)?.trim() ??
+            "";
           if (rawPrompt) {
             let cursorSkillNames = ctx.cursorSkillNames;
             if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
@@ -1010,7 +1013,7 @@ export function makeCursorAdapter(
             const prompt = cursorSkillNames
               ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)
               : rawPrompt;
-            promptParts.push({ type: "text", text: prompt });
+            promptParts.push({ type: "text", text: prompt + skillContext });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
