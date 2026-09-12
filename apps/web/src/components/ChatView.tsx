@@ -1644,9 +1644,11 @@ export default function ChatView(props: ChatViewProps) {
     ownerKey: string;
   } | null>(null);
   const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
-  // Set by "Work locally": resend the restored draft once the cancelled
-  // dispatch has settled and the draft is in local mode.
-  const [workLocallyResendPending, setWorkLocallyResendPending] = useState(false);
+  // Set by "Work locally": the draft whose restored message should be resent
+  // once the cancelled dispatch has settled and the draft is in local mode.
+  // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
+  // moving to another draft drops it without an effect.
+  const [workLocallyResendDraftId, setWorkLocallyResendDraftId] = useState<DraftId | null>(null);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -5510,7 +5512,6 @@ export default function ChatView(props: ChatViewProps) {
       return [];
     });
     resetLocalDispatch();
-    setWorkLocallyResendPending(false);
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
 
@@ -8292,7 +8293,8 @@ export default function ChatView(props: ChatViewProps) {
       !worktreeSetup ||
       !worktreeSetupRef ||
       worktreeSetup.phase !== "running" ||
-      !isLocalDraftThread
+      !isLocalDraftThread ||
+      !draftId
     ) {
       return;
     }
@@ -8304,9 +8306,16 @@ export default function ChatView(props: ChatViewProps) {
       const result = await cancelWorktreeSetup(target);
       if (result._tag !== "Success" || !result.value.cancelled) return;
       onEnvModeChange("local");
-      setWorkLocallyResendPending(true);
+      setWorkLocallyResendDraftId(draftId);
     })();
-  }, [cancelWorktreeSetup, isLocalDraftThread, onEnvModeChange, worktreeSetup, worktreeSetupRef]);
+  }, [
+    cancelWorktreeSetup,
+    draftId,
+    isLocalDraftThread,
+    onEnvModeChange,
+    worktreeSetup,
+    worktreeSetupRef,
+  ]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
   // Resend once the cancelled dispatch has settled and the composer is free.
@@ -8315,7 +8324,8 @@ export default function ChatView(props: ChatViewProps) {
   // feedback upload in between. What remains inside `onSend` are the checks
   // that need the user to change something, and those should not auto retry.
   const workLocallyResendReady =
-    workLocallyResendPending &&
+    workLocallyResendDraftId !== null &&
+    workLocallyResendDraftId === draftId &&
     activeThread !== null &&
     !isSendBusy &&
     !isConnecting &&
@@ -8335,7 +8345,7 @@ export default function ChatView(props: ChatViewProps) {
     ) {
       return;
     }
-    setWorkLocallyResendPending(false);
+    setWorkLocallyResendDraftId(null);
     void onSendRef.current();
   }, [routeThreadKey, workLocallyResendReady]);
 
