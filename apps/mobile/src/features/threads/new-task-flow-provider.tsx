@@ -96,6 +96,7 @@ import {
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
+  resolveNewTaskBranchAfterModeChange,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
@@ -764,7 +765,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode,
-          branch: mode === "local" ? localSelection.branch : selectedBranchName,
+          branch:
+            mode === "local"
+              ? localSelection.branch
+              : resolveNewTaskBranchAfterModeChange(workspaceMode, mode, selectedBranchName),
           worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
@@ -777,6 +781,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProject,
       selectedProjectDraftKey,
       selectedWorktreePath,
+      workspaceMode,
     ],
   );
 
