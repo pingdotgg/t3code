@@ -126,6 +126,7 @@ interface AntigravityProviderOptions {
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
+  readonly checkAuth?: Effect.Effect<ServerProvider["auth"]>;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -192,22 +193,30 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const detectedAuth = options.checkAuth
+      ? yield* options.checkAuth.pipe(Effect.orElseSucceed(() => undefined))
+      : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
-      const authenticated = draft.auth.status === "authenticated";
+      const nextAuth =
+        draft.auth.status !== "authenticated" && detectedAuth?.status === "authenticated"
+          ? detectedAuth
+          : draft.auth;
+      const authenticated = nextAuth.status === "authenticated";
       const message =
         errorMessage ??
         (authenticated
           ? undefined
-          : draft.auth.status === "unauthenticated"
+          : nextAuth.status === "unauthenticated"
             ? SIGN_IN_MESSAGE
             : AUTH_UNCHECKED_MESSAGE);
       return {
         ...state,
         draft: {
           ...draft,
+          auth: nextAuth,
           installed: !missingInstallation,
           version: initialized?.agentInfo?.version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
@@ -224,7 +233,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...(initialized !== undefined
             ? {
                 supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
+                  supportsTextGeneration && nextAuth.status !== "unauthenticated",
               }
             : {}),
           ...(message ? { message } : {}),

@@ -5,7 +5,12 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
 
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+const DRIVER_LABEL: Partial<Record<string, string>> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+  copilot: "GitHub Copilot",
+  antigravity: "Antigravity",
+};
 
 /**
  * The /usage-limits result, docked above the composer. It is the Usage → Limits

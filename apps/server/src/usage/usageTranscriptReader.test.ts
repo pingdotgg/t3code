@@ -1,13 +1,19 @@
-// @effect-diagnostics nodeBuiltinImport:off - resume coverage writes, appends
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - resume coverage writes, appends
 // to, and truncates real transcript files byte-exactly, mirroring the reader's
 // own deliberate node:fs usage.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
-import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import { afterEach, assert, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import {
+  listTranscriptFiles,
+  readAntigravityDbRecords,
+  readCopilotDbRecords,
+  readTranscriptRecords,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +212,210 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("readCopilotDbRecords", () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    tempDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "copilot-usage-test-"));
+    dbPath = NodePath.join(tempDir, "session-store.db");
+  });
+
+  afterEach(async () => {
+    await NodeFSP.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("reads and maps assistant_usage_events records accurately", () => {
+    const db = new NodeSqlite.DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE assistant_usage_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        turn_index INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER NOT NULL,
+        cache_write_tokens INTEGER NOT NULL,
+        reasoning_tokens INTEGER NOT NULL,
+        total_nano_aiu INTEGER NOT NULL,
+        token_details_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    db.exec(`
+      INSERT INTO assistant_usage_events (
+        session_id, turn_index, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_write_tokens, reasoning_tokens,
+        total_nano_aiu, token_details_json, created_at
+      ) VALUES (
+        'sess-abc-123', 0, 'gpt-5.4-mini', 1200, 150,
+        800, 100, 45,
+        15000, '[]', '2026-09-10T14:22:18.431Z'
+      );
+    `);
+    db.close();
+
+    const records = readCopilotDbRecords(dbPath);
+    expect(records).not.toBeNull();
+    expect(records).toHaveLength(1);
+
+    const first = records?.[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error("expected record");
+
+    expect(first.provider).toBe("copilot");
+    expect(first.model).toBe("gpt-5.4-mini");
+    expect(first.sessionId).toBe("sess-abc-123");
+    expect(first.dedupeKey).toBe("copilot:sess-abc-123:1");
+    expect(first.totals).toEqual({
+      uncachedInputTokens: 300, // 1200 - 800 - 100
+      cachedInputTokens: 800,
+      cacheCreationTokens: 100,
+      outputTokens: 150,
+      reasoningTokens: 45,
+    });
+    expect(first.timestampMs).toBe(Date.parse("2026-09-10T14:22:18.431Z"));
+  });
+
+  it("returns null when database cannot be opened or table does not exist", () => {
+    const records = readCopilotDbRecords("/nonexistent/path/session-store.db");
+    expect(records).toBeNull();
+  });
+
+  it("accounts for SQLite WAL file mtime and size in listTranscriptFiles", async () => {
+    // Write an older session-store.db
+    await NodeFSP.writeFile(dbPath, "dummy-db");
+    const oldTime = new Date(Date.now() - 100_000);
+    await NodeFSP.utimes(dbPath, oldTime, oldTime);
+
+    // Create a newer WAL file
+    const walPath = `${dbPath}-wal`;
+    await NodeFSP.writeFile(walPath, "wal-content-1234");
+    const newTime = new Date();
+    await NodeFSP.utimes(walPath, newTime, newTime);
+
+    const sinceMs = Date.now() - 50_000;
+    const files = await listTranscriptFiles(tempDir, sinceMs, { provider: "copilot" });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe(dbPath);
+    expect(Math.round(files[0]?.mtimeMs ?? 0)).toBe(newTime.getTime());
+    expect(files[0]?.size).toBe("dummy-db".length + "wal-content-1234".length);
+
+    // When both are older than sinceMs
+    const futureSinceMs = Date.now() + 100_000;
+    const emptyFiles = await listTranscriptFiles(tempDir, futureSinceMs, { provider: "copilot" });
+    expect(emptyFiles).toHaveLength(0);
+  });
+});
+
+describe("readAntigravityDbRecords", () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    tempDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "antigravity-usage-test-"));
+    dbPath = NodePath.join(tempDir, "conv-123.db");
+  });
+
+  afterEach(async () => {
+    await NodeFSP.rm(tempDir, { recursive: true, force: true });
+  });
+
+  function makeMockProto(): Buffer {
+    function encodeVarint(val: number): Buffer {
+      const bytes: number[] = [];
+      while (val > 127) {
+        bytes.push((val & 0x7f) | 0x80);
+        val >>>= 7;
+      }
+      bytes.push(val);
+      return Buffer.from(bytes);
+    }
+    function encodeTag(tag: number, wire: number): Buffer {
+      return encodeVarint((tag << 3) | wire);
+    }
+    function encodeLengthDelimited(tag: number, payload: Buffer | string): Buffer {
+      const buf = typeof payload === "string" ? Buffer.from(payload) : payload;
+      return Buffer.concat([encodeTag(tag, 2), encodeVarint(buf.length), buf]);
+    }
+    function encodeVarintField(tag: number, val: number): Buffer {
+      return Buffer.concat([encodeTag(tag, 0), encodeVarint(val)]);
+    }
+
+    const timingInner = encodeVarintField(1, 1789046800);
+    const timingOuter = encodeLengthDelimited(4, timingInner);
+    const timingField = encodeLengthDelimited(9, timingOuter);
+
+    const tokensBuf = Buffer.concat([
+      encodeVarintField(2, 1000),
+      encodeVarintField(3, 200),
+      encodeVarintField(9, 150),
+    ]);
+    const tokensField = encodeLengthDelimited(4, tokensBuf);
+    const modelField = encodeLengthDelimited(19, "gemini-3.8-flash");
+    const rootSubmessage = Buffer.concat([modelField, tokensField, timingField]);
+    return encodeLengthDelimited(1, rootSubmessage);
+  }
+
+  it("reads and maps gen_metadata records accurately", () => {
+    const db = new NodeSqlite.DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE gen_metadata (
+        idx INTEGER PRIMARY KEY,
+        data BLOB NOT NULL,
+        size INTEGER NOT NULL
+      );
+    `);
+
+    const proto = makeMockProto();
+    const insert = db.prepare("INSERT INTO gen_metadata (idx, data, size) VALUES (?, ?, ?)");
+    insert.run(0, proto, proto.length);
+    db.close();
+
+    const records = readAntigravityDbRecords(dbPath);
+    expect(records).not.toBeNull();
+    expect(records).toHaveLength(1);
+
+    const first = records?.[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error("expected record");
+
+    expect(first.provider).toBe("antigravity");
+    expect(first.model).toBe("gemini-3.8-flash");
+    expect(first.sessionId).toBe("conv-123");
+    expect(first.dedupeKey).toBe("antigravity:conv-123:0");
+    expect(first.totals).toEqual({
+      uncachedInputTokens: 850,
+      cachedInputTokens: 150,
+      cacheCreationTokens: 0,
+      outputTokens: 200,
+      reasoningTokens: 0,
+    });
+    expect(first.timestampMs).toBe(1789046800 * 1000);
+  });
+
+  it("accounts for SQLite WAL file in listTranscriptFiles for antigravity", async () => {
+    await NodeFSP.writeFile(dbPath, "dummy-db");
+    const oldTime = new Date(Date.now() - 100_000);
+    await NodeFSP.utimes(dbPath, oldTime, oldTime);
+
+    const walPath = `${dbPath}-wal`;
+    await NodeFSP.writeFile(walPath, "wal-bytes");
+    const newTime = new Date();
+    await NodeFSP.utimes(walPath, newTime, newTime);
+
+    const sinceMs = Date.now() - 50_000;
+    const files = await listTranscriptFiles(tempDir, sinceMs, { provider: "antigravity" });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]?.path).toBe(dbPath);
+    expect(Math.round(files[0]?.mtimeMs ?? 0)).toBe(newTime.getTime());
+    expect(files[0]?.size).toBe("dummy-db".length + "wal-bytes".length);
   });
 });

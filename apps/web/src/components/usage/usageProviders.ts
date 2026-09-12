@@ -1,6 +1,13 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
+import {
+  AntigravityIcon,
+  ClaudeAI,
+  GithubCopilotIcon,
+  GrokIcon,
+  type Icon,
+  OpenAI,
+} from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -24,11 +31,21 @@ export const PROVIDER_PRESENTATION = {
     color: "#d97757",
     mark: ClaudeAI,
   },
+  copilot: {
+    label: "GitHub Copilot",
+    color: "#1f6feb",
+    mark: GithubCopilotIcon,
+  },
   grok: {
     label: "Grok Build",
     // Contrast-aware neutral between the Codex series and muted chart chrome.
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     mark: GrokIcon,
+  },
+  antigravity: {
+    label: "Antigravity",
+    color: "#4285f4",
+    mark: AntigravityIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
