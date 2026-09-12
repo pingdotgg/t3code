@@ -40,6 +40,7 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
+import { environmentMismatchError } from "../connection/errors.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -289,7 +290,17 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.mapError(mapRpcError),
         Effect.flatMap(() => Effect.fail(configSubscriptionEndedError)),
       ),
-    ).pipe(Effect.withSpan("environment.initialSync"));
+    ).pipe(
+      Effect.flatMap((config) =>
+        config.environment.environmentId === connection.environmentId
+          ? Effect.succeed(config)
+          : environmentMismatchError({
+              expected: connection.environmentId,
+              actual: config.environment.environmentId,
+            }),
+      ),
+      Effect.withSpan("environment.initialSync"),
+    );
     const serverConfigEvents = Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(serverConfigUpdates);
