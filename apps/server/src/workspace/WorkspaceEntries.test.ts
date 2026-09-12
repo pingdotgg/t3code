@@ -386,6 +386,57 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    for (const { query, variants } of [
+      { query: "Äpfel", variants: ["Äpfel", "äpfel"] },
+      { query: "äpfel", variants: ["Äpfel", "äpfel"] },
+      { query: "Σ", variants: ["Σ", "σ", "ς"] },
+      { query: "K", variants: ["K", "k", "K"] },
+    ]) {
+      for (const useRegex of [false, true]) {
+        it.effect(`matches Unicode case variants for ${query} (regex: ${useRegex})`, () =>
+          Effect.gen(function* () {
+            const cwd = yield* makeTempDir({ prefix: "t3code-unicode-search-" });
+            yield* writeTextFile(cwd, "words.txt", variants.join("\n"));
+            const entries = yield* WorkspaceEntries.WorkspaceEntries;
+            const input = { cwd, query, limit: 100, wholeWord: false, useRegex };
+            const insensitive = yield* entries.searchContents({ ...input, caseSensitive: false });
+            const sensitive = yield* entries.searchContents({ ...input, caseSensitive: true });
+
+            expect(insensitive.matches.map((match) => match.lineContent)).toEqual(variants);
+            expect(sensitive.matches.map((match) => match.lineContent)).toEqual([query]);
+          }),
+        );
+      }
+    }
+
+    it.effect("keeps case-insensitive literal syntax and Unicode match ranges intact", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-unicode-literal-search-" });
+        const query = "Äpfel.[x]+(a)?{2}^$|/\\";
+        yield* writeTextFile(
+          cwd,
+          "words.txt",
+          `🍎 ${query}\n🍎 ${query.toLowerCase()}\nÄpfelZxxaa\n`,
+        );
+        const entries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* entries.searchContents({
+          cwd,
+          query,
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: true,
+          useRegex: false,
+        });
+
+        expect(result.regexFallbackError).toBeUndefined();
+        expect(result.matches.map((match) => match.lineNumber)).toEqual([1, 2]);
+        for (const match of result.matches) {
+          expect(match.matchRanges).toEqual([{ start: 3, end: 3 + query.length }]);
+          expect(match.lineContent.slice(3).toLowerCase()).toBe(query.toLowerCase());
+        }
+      }),
+    );
+
     it.effect("honors case sensitivity and gitignore rules", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-ignore-", git: true });
