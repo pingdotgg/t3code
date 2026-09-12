@@ -180,7 +180,9 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
 }
 
-const MARKDOWN_FENCE_PATTERN = /^(`{3,}|~{3,})/;
+// CommonMark allows up to three spaces of indentation before a fence. Four or
+// more means the line is content inside the block, not a fence.
+const MARKDOWN_FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
  * Splits buffered assistant text at the last blank line or closing code fence
@@ -198,7 +200,7 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
     if (newline === -1) {
       break;
     }
-    const line = text.slice(lineStart, newline).trim();
+    const line = text.slice(lineStart, newline).trimEnd();
     const fence = MARKDOWN_FENCE_PATTERN.exec(line)?.[1];
     if (fence !== undefined) {
       if (openFence === null) {
@@ -206,13 +208,13 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
       } else if (
         fence[0] === openFence[0] &&
         fence.length >= openFence.length &&
-        line.length === fence.length
+        line.trimStart().length === fence.length
       ) {
         // CommonMark: a closing fence carries no info string.
         openFence = null;
         boundary = newline + 1;
       }
-    } else if (openFence === null && line.length === 0 && lineStart > 0) {
+    } else if (openFence === null && line.trim().length === 0 && lineStart > 0) {
       boundary = newline + 1;
     }
     lineStart = newline + 1;

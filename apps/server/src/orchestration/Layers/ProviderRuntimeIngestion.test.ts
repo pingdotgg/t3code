@@ -4474,6 +4474,15 @@ describe("splitBufferedAssistantText", () => {
     expect(splitBufferedAssistantText(text)).toEqual({ ready: "", rest: text });
   });
 
+  it("treats a fence indented four or more spaces as code, not a closing fence", () => {
+    const text = "```\n    ```\n\nstill code\n";
+    expect(splitBufferedAssistantText(text)).toEqual({ ready: "", rest: text });
+    expect(splitBufferedAssistantText("```\n   ```\nafter")).toEqual({
+      ready: "```\n   ```\n",
+      rest: "after",
+    });
+  });
+
   it("treats CRLF blank lines as boundaries", () => {
     expect(splitBufferedAssistantText("one\r\n\r\ntwo")).toEqual({
       ready: "one\r\n\r\n",
