@@ -1,4 +1,6 @@
 import { describe, it, assert } from "@effect/vitest";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -7,9 +9,11 @@ import {
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -154,6 +158,7 @@ function mockSpawnerLayer(
 
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
+  refreshedVersion?: string,
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
@@ -192,7 +197,16 @@ function makeRegistry(
     const registry: ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
-      refreshInstance: () => Ref.get(providersRef),
+      refreshInstance: (instanceId) =>
+        refreshedVersion === undefined
+          ? Ref.get(providersRef)
+          : Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) =>
+                provider.instanceId === instanceId
+                  ? { ...provider, version: refreshedVersion }
+                  : provider,
+              ),
+            ),
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
@@ -208,12 +222,14 @@ function makeRegistry(
   });
 }
 
-const makeTestRunner = (registry: ProviderRegistryShape) =>
+const makeTestRunner = (registry: ProviderRegistryShape, fileSystem = NodeFileSystem.layer) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            fileSystem,
+            NodePath.layer,
             Layer.succeed(ProviderRegistry, registry),
             // Fresh per runner so a version cached by one test cannot leak into another.
             Layer.sync(ProviderVersionCache, () => new Map()),
@@ -224,6 +240,275 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   );
 
 describe("providerMaintenanceRunner", () => {
+  it.effect.each([
+    { scope: "user", code: 2316632107 },
+    { scope: "machine", code: -1978335189 },
+    { scope: undefined, code: 2316632107 },
+  ] as const)("verifies WinGet's no-update result: $scope/$code", ({ scope, code }) =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      let refreshed = false;
+      const runner = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: (instanceId) =>
+          Effect.sync(() => {
+            refreshed = true;
+          }).pipe(Effect.andThen(registry.refreshInstance(instanceId))),
+        getProviderMaintenanceCapabilitiesForInstance: () => {
+          const capabilities = lifecycleFor(CODEX_DRIVER);
+          return Effect.succeed({
+            ...capabilities,
+            latestVersion: null,
+            update: {
+              ...capabilities.update!,
+              ...(scope ? { windowsInstaller: { manager: "winget", scope } as const } : {}),
+            },
+          });
+        },
+      });
+      const result = yield* runner.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, scope ? "unchanged" : "failed");
+      assert.strictEqual(refreshed, scope !== undefined);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ code, stdout: "No available upgrade found." })),
+        ),
+      ),
+    ),
+  );
+  it.effect.each([false, true])(
+    "keeps the update lock during cancellation: worker started=%s",
+    (workerStarted) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const waitingForExit = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        const secondInstanceId = ProviderInstanceId.make("codex_second");
+        const events: string[] = [];
+        let firstStopped = false;
+        let installStarts = 0;
+        let exitReads = 0;
+        const fs = yield* FileSystem.FileSystem;
+        const { registry } = yield* makeRegistry(
+          [baseProvider, { ...baseProvider, instanceId: secondInstanceId }],
+          "0.0.1",
+        );
+        const runner = yield* makeTestRunner(
+          {
+            ...registry,
+            setProviderMaintenanceActionState: (input) =>
+              registry
+                .setProviderMaintenanceActionState(input)
+                .pipe(
+                  Effect.tap(() =>
+                    input.instanceId === secondInstanceId && input.state?.status === "queued"
+                      ? Deferred.succeed(secondQueued, undefined)
+                      : Effect.void,
+                  ),
+                ),
+            getProviderMaintenanceCapabilitiesForInstance: () =>
+              Effect.succeed({
+                provider: CODEX_DRIVER,
+                packageName: null,
+                update: {
+                  command: "winget upgrade",
+                  executable: "C:\\Tools\\winget.exe",
+                  args: ["upgrade"],
+                  lockKey: "selected-winget",
+                  windowsInstaller: { manager: "winget", scope: "machine" },
+                },
+              }),
+          },
+          Layer.succeed(FileSystem.FileSystem, {
+            ...fs,
+            exists: (file) =>
+              /[\\/]started$/.test(file) ? Effect.succeed(workerStarted) : fs.exists(file),
+            writeFileString: (file, content, options) =>
+              fs.writeFileString(file, content, options).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    if (content === "cancel") events.push("cancel");
+                  }),
+                ),
+              ),
+          }),
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const executable = (command as unknown as { command: string }).command;
+              if (/powershell/i.test(executable)) {
+                return Deferred.succeed(started, undefined).pipe(
+                  Effect.as({
+                    ...mockHandle({
+                      exitCode: Effect.gen(function* () {
+                        // The first read collects command completion; cancellation
+                        // must independently await exit before releasing the lock.
+                        if (++exitReads > 1) yield* Deferred.succeed(waitingForExit, undefined);
+                        return yield* Deferred.await(stopped);
+                      }),
+                    }),
+                    kill: () =>
+                      Effect.sync(() => {
+                        events.push("kill");
+                      }),
+                  }),
+                );
+              }
+              return Effect.sync(() => {
+                if (++installStarts === 1) return mockHandle({ code: 2316632089 });
+                assert.strictEqual(
+                  firstStopped,
+                  true,
+                  "second installer started before the first stopped",
+                );
+                events.push("second spawn");
+                return mockHandle({ code: 0 });
+              });
+            }),
+          ),
+        );
+        const first = yield* runner.updateProvider(CODEX_DRIVER).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const second = yield* runner
+          .updateProvider({ provider: CODEX_DRIVER, instanceId: secondInstanceId })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(secondQueued);
+        const interrupt = yield* Fiber.interrupt(first).pipe(Effect.forkChild);
+        yield* Deferred.await(waitingForExit);
+        assert.deepStrictEqual(events, workerStarted ? ["cancel"] : ["cancel", "kill"]);
+        assert.strictEqual(installStarts, 1);
+        firstStopped = true;
+        events.push("stopped");
+        yield* Deferred.succeed(stopped, ChildProcessSpawner.ExitCode(1460));
+        yield* Fiber.join(interrupt);
+        const result = yield* Fiber.join(second);
+        assert.strictEqual(
+          result.providers.find((provider) => provider.instanceId === secondInstanceId)?.updateState
+            ?.status,
+          "succeeded",
+        );
+        assert.strictEqual(installStarts, 2);
+        assert.deepStrictEqual(
+          events,
+          workerStarted
+            ? ["cancel", "stopped", "kill", "second spawn"]
+            : ["cancel", "kill", "stopped", "kill", "second spawn"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeFileSystem.layer,
+            Layer.succeed(HostProcessPlatform, "win32"),
+            Layer.succeed(SpawnExecutableResolution, (command) => command),
+            latestVersionHttpClient("0.0.1"),
+          ),
+        ),
+      ),
+  );
+  for (const manager of ["winget", "scoop"] as const) {
+    it.effect.each(
+      (
+        [
+          { status: "succeeded", calls: 2 },
+          {
+            code: manager === "winget" ? -1978335207 : 1,
+            version: "",
+            status: "unchanged",
+            calls: 2,
+          },
+          { elevatedCode: 1223, status: "failed", calls: 2 },
+          { elevatedCode: 1460, status: "failed", calls: 2 },
+          { eligible: false, status: "failed", calls: 1 },
+          { verified: false, status: "failed", calls: 1 },
+          { platform: "linux", status: "failed", calls: 1 },
+          { code: 1, stdout: "Some other failure", status: "failed", calls: 1 },
+          { code: 2, status: "failed", calls: 1 },
+          { code: 0, status: "succeeded", calls: manager === "scoop" ? 2 : 1 },
+          { code: 0, stdout: "Updated successfully", status: "succeeded", calls: 1 },
+        ] as const
+      ).map((scenario) => ({
+        platform: "win32" as const,
+        eligible: true,
+        code: manager === "winget" ? 2316632089 : 1,
+        stdout:
+          manager === "scoop" ? "ERROR: You need admin rights to update global apps.\r\n" : "",
+        verified: true,
+        elevatedCode: 0,
+        version: "0.0.1",
+        ...scenario,
+      })),
+    )(
+      `gates ${manager} UAC retry: $platform/$eligible/$verified/$code/$elevatedCode/$version`,
+      (scenario) => {
+        const commands: string[] = [];
+        return Effect.gen(function* () {
+          const { registry } = yield* makeRegistry(baseProvider, scenario.version);
+          const runner = yield* makeTestRunner({
+            ...registry,
+            getProviderMaintenanceCapabilitiesForInstance: () =>
+              Effect.succeed({
+                provider: CODEX_DRIVER,
+                packageName: null,
+                latestVersion: "0.0.1",
+                update: {
+                  command: manager,
+                  executable: `C:/Tools/${manager}.${manager === "scoop" ? "cmd" : "exe"}`,
+                  args:
+                    manager === "scoop"
+                      ? ["update", "main/tool", ...(scenario.eligible ? ["--global"] : [])]
+                      : [
+                          "upgrade",
+                          "--id",
+                          "Example.Tool",
+                          "--scope",
+                          scenario.eligible ? "machine" : "user",
+                        ],
+                  lockKey: "selected-installer",
+                  ...(scenario.verified
+                    ? {
+                        windowsInstaller: {
+                          manager,
+                          scope: scenario.eligible ? ("machine" as const) : ("user" as const),
+                        },
+                      }
+                    : {}),
+                },
+              }),
+          });
+          const result = yield* runner.updateProvider(CODEX_DRIVER);
+          assert.strictEqual(commands.length, scenario.calls);
+          assert.strictEqual(result.providers[0]?.updateState?.status, scenario.status);
+          if (scenario.elevatedCode === 1223) {
+            assert.match(result.providers[0]?.updateState?.message ?? "", /cancelled.*declined/);
+          }
+          if (scenario.elevatedCode === 1460) {
+            assert.strictEqual(result.providers[0]?.updateState?.message, "Update timed out.");
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcessPlatform, scenario.platform),
+              Layer.succeed(SpawnExecutableResolution, (command) => command),
+              latestVersionHttpClient("0.0.1"),
+              mockSpawnerLayer((command) => {
+                commands.push(command);
+                return {
+                  code: commands.length === 1 ? scenario.code : scenario.elevatedCode,
+                  stdout: commands.length === 1 ? scenario.stdout : "",
+                };
+              }),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
@@ -256,15 +541,57 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect("reports unchanged when the updater exits 0 but the provider is gone", () => {
+  it.effect.each([
+    { before: "1.0.0", after: "1.0.0", status: "unchanged" },
+    { before: "1.0.0", after: "0.9.0", status: "unchanged" },
+    { before: "1.0.0", after: "1.2.0", status: "succeeded" },
+    { before: null, after: "1.2.0", status: "succeeded" },
+  ])(
+    "verifies version advancement with unknown latest: $before -> $after",
+    ({ before, after, status }) =>
+      Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry({
+          ...baseProvider,
+          version: before,
+        });
+        const updater = yield* makeTestRunner({
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed({
+              ...lifecycleFor(CODEX_DRIVER),
+              latestVersion: null,
+            }),
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, version: after })),
+            ),
+        });
+        const result = yield* updater.updateProvider(CODEX_DRIVER);
+        assert.strictEqual(result.providers[0]?.updateState?.status, status);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            latestVersionHttpClient("1.2.0"),
+            mockSpawnerLayer(() => ({ stdout: "completed" })),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    { installed: false, version: null },
+    { installed: true, version: null },
+    { installed: true, version: "" },
+  ])("reports unchanged after exit 0: $installed/$version", ({ installed, version }) => {
     return Effect.gen(function* () {
       const { registry, providersRef } = yield* makeRegistry(baseProvider);
-      // After the update, the refreshed snapshot no longer sees an install.
+      // After the update, the refreshed snapshot cannot verify the install/version.
       const updater = yield* makeTestRunner({
         ...registry,
         refreshInstance: () =>
           Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) => ({ ...provider, installed: false, version: null })),
+            providers.map((provider) => ({ ...provider, installed, version })),
           ),
       });
 
@@ -487,7 +814,7 @@ describe("providerMaintenanceRunner", () => {
     () => {
       const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
       return Effect.gen(function* () {
-        const { registry } = yield* makeRegistry(baseProvider);
+        const { registry } = yield* makeRegistry(baseProvider, "0.0.1");
         const runner = yield* makeTestRunner(registry);
 
         const result = yield* runner.updateProvider(CODEX_DRIVER);
@@ -520,18 +847,21 @@ describe("providerMaintenanceRunner", () => {
       const personalInstanceId = ProviderInstanceId.make("codex_personal");
       const workInstanceId = ProviderInstanceId.make("codex_work");
       const refreshedInstanceIds: Array<ProviderInstanceId> = [];
-      const { registry } = yield* makeRegistry([
-        {
-          ...baseProvider,
-          instanceId: personalInstanceId,
-          version: "0.124.0-alpha.3",
-        },
-        {
-          ...baseProvider,
-          instanceId: workInstanceId,
-          version: "0.124.0-alpha.3",
-        },
-      ]);
+      const { registry } = yield* makeRegistry(
+        [
+          {
+            ...baseProvider,
+            instanceId: personalInstanceId,
+            version: "0.124.0-alpha.3",
+          },
+          {
+            ...baseProvider,
+            instanceId: workInstanceId,
+            version: "0.124.0-alpha.3",
+          },
+        ],
+        "0.124.0-alpha.4",
+      );
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (instanceId, provider) =>
@@ -572,6 +902,8 @@ describe("providerMaintenanceRunner", () => {
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       assert.strictEqual(result.providers[1]?.instanceId, workInstanceId);
       assert.strictEqual(result.providers[1]?.updateState, undefined);
+      assert.strictEqual(result.providers[0]?.version, "0.124.0-alpha.4");
+      assert.strictEqual(result.providers[1]?.version, "0.124.0-alpha.3");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -765,7 +1097,7 @@ describe("providerMaintenanceRunner", () => {
   it.effect("accepts arbitrary driver-provided update lock keys", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
+      const { registry } = yield* makeRegistry(baseProvider, "0.0.1");
       const updater = yield* makeTestRunner({
         ...registry,
         getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
@@ -801,7 +1133,7 @@ describe("providerMaintenanceRunner", () => {
     "releases the running-provider marker when interrupted after queuing but before the lock run starts",
     () =>
       Effect.gen(function* () {
-        const { registry } = yield* makeRegistry(baseProvider);
+        const { registry } = yield* makeRegistry(baseProvider, "0.0.1");
         let blockQueuedState = true;
         const queuedStateWrittenLatch: { resolve: () => void } = { resolve: () => {} };
         const releaseQueuedStateLatch: { resolve: () => void } = { resolve: () => {} };
@@ -850,14 +1182,21 @@ describe("providerMaintenanceRunner", () => {
   );
 
   it.effect("resolves npm to a .cmd shim and routes through the shell on win32", () => {
+    const env = { PATH: "C:\\selected tools", SCOOP: "C:\\Scoop Root" };
     const captured: Array<{
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly shell: boolean | string | undefined;
     }> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
-      const runner = yield* makeTestRunner(registry);
+      const { registry } = yield* makeRegistry(baseProvider, "0.0.1");
+      const runner = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) => {
+          const capabilities = lifecycleFor(provider);
+          return Effect.succeed({ ...capabilities, update: { ...capabilities.update!, env } });
+        },
+      });
 
       const result = yield* runner.updateProvider(CODEX_DRIVER);
 
@@ -886,9 +1225,10 @@ describe("providerMaintenanceRunner", () => {
             PATH: "C:\\fake\\npm",
             PATHEXT: ".COM;.EXE;.BAT;.CMD",
           }),
-          Layer.succeed(SpawnExecutableResolution, (command) =>
-            command === "npm" ? "C:\\fake\\npm\\npm.cmd" : undefined,
-          ),
+          Layer.succeed(SpawnExecutableResolution, (command, _platform, resolvedEnv) => {
+            assert.strictEqual(resolvedEnv?.PATH, env.PATH);
+            return command === "npm" ? `${env.PATH}\\npm.cmd` : undefined;
+          }),
           latestVersionHttpClient("0.0.0"),
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,

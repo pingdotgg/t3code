@@ -1,7 +1,28 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary } from "./providerStatus";
+import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
+
+it("presents an unknown version only when the installer can check for updates", () => {
+  const advisory = {
+    status: "unknown" as const,
+    currentVersion: "1.0.0",
+    latestVersion: null,
+    updateCommand: "scoop update main/claude-code",
+    canUpdate: true,
+    checkedAt: null,
+    message: null,
+  };
+  expect(getProviderVersionAdvisoryPresentation(advisory)).toMatchObject({
+    title: "Check for updates",
+    isCheck: true,
+  });
+  expect(getProviderVersionAdvisoryPresentation({ ...advisory, canUpdate: false })).toBeNull();
+  expect(getProviderVersionAdvisoryPresentation({ ...advisory, updateCommand: null })).toBeNull();
+  expect(
+    getProviderVersionAdvisoryPresentation({ ...advisory, status: "behind_latest" }),
+  ).toMatchObject({ title: "Update available", isCheck: false });
+});
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),

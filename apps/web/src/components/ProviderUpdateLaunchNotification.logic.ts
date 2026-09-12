@@ -161,7 +161,8 @@ export function isProviderSettingsUpdateCandidate(
 ): provider is ProviderSettingsUpdateCandidate {
   return (
     provider.enabled &&
-    provider.versionAdvisory?.status === "behind_latest" &&
+    (provider.versionAdvisory?.status === "behind_latest" ||
+      provider.versionAdvisory?.status === "unknown") &&
     provider.versionAdvisory.canUpdate === true &&
     provider.versionAdvisory.updateCommand !== null
   );
@@ -270,6 +271,13 @@ export function getProviderUpdateRejectedToastView(
   };
 }
 
+function getUnchangedProviderUpdateDescription(providers: ReadonlyArray<ServerProvider>): string {
+  return (
+    (providers.length === 1 ? providers[0]?.updateState?.message : null) ??
+    "No provider update was verified. Review provider settings for details."
+  );
+}
+
 export function getProviderUpdateProgressToastView(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly providerCount: number;
@@ -292,13 +300,8 @@ export function getProviderUpdateProgressToastView(input: {
     return {
       phase: "unchanged",
       type: "warning",
-      title:
-        unchangedProviders.length === 1
-          ? "Provider still needs an update"
-          : "Providers still need updates",
-      description: `${formatProviderList(unchangedProviders)} ${
-        unchangedProviders.length === 1 ? "still appears" : "still appear"
-      } outdated. Check provider settings for details.`,
+      title: unchangedProviders.length === 1 ? "Provider unchanged" : "Providers unchanged",
+      description: getUnchangedProviderUpdateDescription(unchangedProviders),
     };
   }
 
@@ -461,11 +464,9 @@ export function getProviderUpdateSidebarPillView(
       tone: "warning",
       title:
         unchangedProviders.length === 1
-          ? `${unchangedProviderName} still needs an update`
-          : `${unchangedProviders.length} providers still need updates`,
-      description: `${formatProviderList(unchangedProviders)} ${
-        unchangedProviders.length === 1 ? "still appears" : "still appear"
-      } outdated. Review provider settings for details.`,
+          ? `${unchangedProviderName} unchanged`
+          : `${unchangedProviders.length} providers unchanged`,
+      description: getUnchangedProviderUpdateDescription(unchangedProviders),
       dismissible: true,
     });
   }

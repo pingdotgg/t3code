@@ -6,8 +6,10 @@ import {
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -16,16 +18,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { SqlClient } from "effect/unstable/sql";
 
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
-const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
-const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
+const INSTALLER_PROBE_TIMEOUT_MS = 10_000;
+const INSTALLER_PROBE_MAX_BYTES = 256 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 /**
@@ -62,9 +65,10 @@ export interface ProviderMaintenanceCapabilities {
    * Latest version reported by the installer that owns the executable.
    * `undefined` means the installer has no channel of its own and the npm
    * registry entry for `packageName` is authoritative; `null` means the
-   * installer was asked and did not know.
+   * installer was asked and did not know. An effect defers a separate lookup
+   * until update checks are enabled and binds the owning instance's services.
    */
-  readonly latestVersion?: string | null;
+  readonly latestVersion?: string | null | Effect.Effect<string | null>;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -72,6 +76,11 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  /** Proven Windows installer and scope; machine installs may request a UAC retry. */
+  readonly windowsInstaller?: {
+    readonly manager: "scoop" | "winget";
+    readonly scope: "user" | "machine";
+  };
   /**
    * Extra environment for the spawned updater, on top of the server's own.
    * A native updater finds its install through the same variables the
@@ -105,6 +114,7 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
+  readonly wingetPackageId?: string;
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath: (commandPath: string) => boolean;
@@ -160,7 +170,8 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
-  readonly latestVersion?: string | null;
+  readonly latestVersion?: Exclude<ProviderMaintenanceCapabilities["latestVersion"], undefined>;
+  readonly windowsInstaller?: ProviderMaintenanceCommandAction["windowsInstaller"];
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcessPlatform.defaultValue();
   const update =
@@ -177,6 +188,7 @@ export function makeProviderMaintenanceCapabilities(input: {
           args: input.updateArgs,
           lockKey: input.updateLockKey,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.windowsInstaller ? { windowsInstaller: input.windowsInstaller } : {}),
         };
   return {
     provider: input.provider,
@@ -308,37 +320,402 @@ export function parseHomebrewLatestVersion(
   return nonEmptyString(raw);
 }
 
-/** Run `brew <args>` and return stdout, or null on failure, timeout, or oversized output. */
-const runHomebrew = Effect.fn("runHomebrew")(function* (
-  brewPath: string,
+/** Return stdout, or null on failure, timeout, or oversized output. */
+const runInstallerProbe = Effect.fn("runInstallerProbe")(function* (
+  executable: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(brewPath, args, { env, extendEnv: true }));
+    // reg.exe follows the console code page, including when stdout is redirected.
+    // Set it before invoking reg so paths survive the UTF-8 stream decoder.
+    const registryQuery = /(?:^|[\\/])reg\.exe$/i.test(executable);
+    const registryScript = registryQuery
+      ? `[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); & ${[executable, ...args]
+          .map((value) => `'${value.replaceAll("'", "''")}'`)
+          .join(" ")}; exit $LASTEXITCODE`
+      : null;
+    const path = yield* Path.Path;
+    const resolved = yield* resolveSpawnCommand(
+      registryScript
+        ? path.join(
+            env.SystemRoot ?? "C:\\Windows",
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe",
+          )
+        : executable,
+      registryScript
+        ? [
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            Buffer.from(registryScript, "utf16le").toString("base64"),
+          ]
+        : args,
+      { env, extendEnv: true },
+    );
+    const child = yield* spawner.spawn(
+      ChildProcess.make(resolved.command, resolved.args, {
+        env,
+        extendEnv: true,
+        shell: resolved.shell,
+      }),
+    );
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
-    // stderr is drained so a chatty brew cannot block on a full pipe.
-    const [stdout, exitCode] = yield* Effect.all(
+    const [stdout, exitCode, stderr] = yield* Effect.all(
       [
-        collectUint8StreamText({ stream: child.stdout, maxBytes: HOMEBREW_INFO_MAX_BYTES }),
+        collectUint8StreamText({ stream: child.stdout, maxBytes: INSTALLER_PROBE_MAX_BYTES }),
         child.exitCode,
-        Stream.runDrain(child.stderr),
+        collectUint8StreamText({ stream: child.stderr, maxBytes: INSTALLER_PROBE_MAX_BYTES }),
       ],
       { concurrency: "unbounded" },
     );
-    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
+    // `reg query /s /f` exits 1 with a summary on stdout when there are no matches.
+    const noMatches =
+      args.includes("/s") &&
+      Number(exitCode) === 1 &&
+      stdout.text.trim() !== "" &&
+      stderr.text.trim() === "";
+    if (args[0] === "query" && stderr.text.trim() !== "") return null;
+    return (Number(exitCode) !== 0 && !noMatches) ||
+      stdout.truncated ||
+      stderr.truncated ||
+      stdout.invalidUtf8
+      ? null
+      : stdout.text;
   });
   return yield* collect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(INSTALLER_PROBE_TIMEOUT_MS)),
     Effect.map(Option.getOrNull),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew probe failed", {
+    Effect.catchCause((cause) => {
+      const interrupts = cause.reasons.filter(Cause.isInterruptReason);
+      if (interrupts.length > 0) return Effect.failCause(Cause.fromReasons<never>(interrupts));
+      return Effect.logWarning("Installer probe failed", {
         subcommand: args[0],
         errorTag: causeErrorTag(cause),
-      }).pipe(Effect.as(null)),
+      }).pipe(Effect.as(null));
+    }),
+  );
+});
+
+const decodeScoopMetadata = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      bucket: Schema.optional(Schema.String),
+    }),
+  ),
+);
+const decodeWingetSource = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      Identifier: Schema.String,
+      Name: Schema.String,
+    }),
+  ),
+);
+
+const readWingetPortableIndex = Effect.fn("readWingetPortableIndex")(
+  function* (filename: string) {
+    const fs = yield* FileSystem.FileSystem;
+    if (Number((yield* fs.stat(filename)).size) > INSTALLER_PROBE_MAX_BYTES) return null;
+    const sqlite = yield* Effect.promise(async () =>
+      process.versions.bun !== undefined
+        ? await import("@effect/sql-sqlite-bun/SqliteClient")
+        : await import("@t3tools/shared/nodeSqliteClient"),
+    );
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* sql`SELECT filepath, filetype, symlinktarget FROM portable`;
+    }).pipe(
+      Effect.provide(sqlite.layer({ filename, readonly: true })),
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              filepath: Schema.String,
+              filetype: Schema.Number,
+              symlinktarget: Schema.NullOr(Schema.String),
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+  Effect.orElseSucceed(() => null),
+);
+
+/** Windows ownership must survive explicit selection, including a shim retargeted off PATH. */
+const resolveWindowsInstaller = Effect.fn("resolveWindowsInstaller")(function* (
+  definition: PackageManagedProviderMaintenanceDefinition,
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manual = {
+    ...makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+    }),
+    latestVersion: null,
+  };
+  const canonical = (value: string) => normalizeCommandPath(path.normalize(value));
+  const realPath = (value: string) => fs.realPath(value).pipe(Effect.orElseSucceed(() => null));
+  const read = Effect.fn("readInstallerMetadata")(function* (file: string) {
+    return yield* collectUint8StreamText({
+      stream: fs.stream(file, { bytesToRead: INSTALLER_PROBE_MAX_BYTES + 1 }),
+      maxBytes: INSTALLER_PROBE_MAX_BYTES,
+    }).pipe(
+      Effect.map((result) => (result.truncated || result.invalidUtf8 ? null : result.text)),
+      Effect.orElseSucceed(() => null),
+    );
+  });
+  const resolve = (command: string) =>
+    resolveCommandPath(command, { env: context.env }).pipe(
+      Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
+    );
+  const action = (
+    windowsInstaller: NonNullable<ProviderMaintenanceCommandAction["windowsInstaller"]>,
+    executable: string,
+    args: string[],
+    lockKey: string,
+    latestVersion: Exclude<ProviderMaintenanceCapabilities["latestVersion"], undefined>,
+    env = context.env,
+  ) =>
+    makeProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+      windowsInstaller,
+      updateExecutable: executable,
+      updateArgs: args,
+      updateLockKey: lockKey,
+      platform: context.platform,
+      env,
+      latestVersion,
+    });
+
+  const observed = context.resolvedCommandPath.replaceAll("\\", "/");
+  // npm prefixes can contain "shims" or "apps" without belonging to Scoop.
+  const npmShim =
+    /\.cmd$/i.test(observed) &&
+    (yield* resolveNpmGlobalPrefix(context, definition.npmPackageName)) !== null;
+  const shim = npmShim ? null : /^(.*)\/shims\/[^/]+\.(?:exe|cmd|ps1)$/i.exec(observed);
+  if (shim && !/\.exe$/i.test(observed)) return manual;
+  const shimText = shim ? yield* read(observed.replace(/\.exe$/i, ".shim")) : null;
+  const targets = [...(shimText ?? "").matchAll(/^\s*path\s*=\s*"([^"\r\n]+)"\s*$/gim)];
+  const target = shim ? (targets.length === 1 ? targets[0]![1]! : null) : context.realCommandPath;
+  const scoop =
+    !npmShim &&
+    target &&
+    /^(.*)\/apps\/([\w.-]+)\/[^/]+\/(.+)$/i.exec(target.replaceAll("\\", "/"));
+  if (shim || scoop) {
+    if (!scoop || !target || !path.isAbsolute(target)) return manual;
+    const [root, app, relative] = [scoop[1]!, scoop[2]!, scoop[3]!];
+    if (/\/microsoft\/winget\//i.test(observed)) return manual;
+    // Globals beside a Scoop-installed Node belong to npm, not to Node's Scoop package.
+    if (/^nodejs(?:-lts|\d+)?$/i.test(app)) return null;
+    if (relative.split(/[\\/]/).includes("..")) return manual;
+    if (shim && canonical(shim[1]!) !== canonical(root)) return manual;
+    const current = path.join(root, "apps", app, "current");
+    const realCurrent = yield* realPath(current);
+    const realTarget = yield* realPath(target);
+    if (
+      canonical(shim ? target : observed) !== canonical(path.join(current, relative)) ||
+      !realCurrent ||
+      !realTarget ||
+      canonical(path.join(realCurrent, relative)) !== canonical(realTarget)
+    )
+      return manual;
+    const install = decodeScoopMetadata((yield* read(path.join(current, "install.json"))) ?? "");
+    const bucket = Option.isSome(install) ? install.value.bucket : null;
+    if (!bucket || !/^[\w][\w.-]*$/.test(bucket)) return manual;
+    const executable = yield* resolve("scoop");
+    const manager =
+      executable && /^(.*)\/shims\/scoop\.(?:cmd|exe)$/i.exec(executable.replaceAll("\\", "/"));
+    if (!executable || !manager) return manual;
+    const managerRoot = manager[1]!;
+    const global = canonical(root) !== canonical(managerRoot);
+    if (global) {
+      const configured =
+        context.env.SCOOP_GLOBAL ??
+        (yield* runInstallerProbe(executable, ["config", "global_path"], context.env));
+      if (configured === null) return manual;
+      const globalRoot =
+        !configured.trim() || /^'global_path' is not set\s*$/i.test(configured)
+          ? path.join(context.env.ProgramData ?? "C:\\ProgramData", "scoop")
+          : configured.trim();
+      if (canonical(globalRoot) !== canonical(root)) return manual;
+    }
+    return action(
+      { manager: "scoop", scope: global ? "machine" : "user" },
+      executable,
+      ["update", `${bucket}/${app}`, ...(global ? ["--global"] : [])],
+      // Updating any app may first refresh this manager and its shared buckets.
+      `scoop:${canonical((yield* realPath(managerRoot)) ?? managerRoot)}`,
+      // Local bucket manifests can be stale; keep an explicit update check available.
+      null,
+      { ...context.env, SCOOP: managerRoot, ...(global ? { SCOOP_GLOBAL: root } : {}) },
+    );
+  }
+
+  const packageId = definition.wingetPackageId;
+  // Proven npm ownership must survive an inconclusive Windows registry probe.
+  if (!packageId || npmShim) return null;
+  const registry = path.join(context.env.SystemRoot ?? "C:\\Windows", "System32", "reg.exe");
+  const currentVersion = "Software\\Microsoft\\Windows\\CurrentVersion";
+  const uninstall = `${currentVersion}\\Uninstall`;
+  const entries: Array<{
+    productCode: string;
+    values: Map<string, string>;
+    scope: "user" | "machine";
+  }> = [];
+  for (const [hive, scope, view] of [
+    ["HKCU", "user", "/reg:64"],
+    ["HKLM", "machine", "/reg:64"],
+    ["HKLM", "machine", "/reg:32"],
+  ] as const) {
+    const found = yield* runInstallerProbe(
+      registry,
+      ["query", `${hive}\\${uninstall}`, "/s", "/f", packageId, "/d", "/e", view],
+      context.env,
+    );
+    if (found === null) {
+      // A missing uninstall root is normal on fresh profiles; an unreadable one is not proof.
+      const parent = `${hive === "HKCU" ? "HKEY_CURRENT_USER" : "HKEY_LOCAL_MACHINE"}\\${currentVersion}`;
+      const listing = yield* runInstallerProbe(registry, ["query", parent, view], context.env);
+      const keys = listing?.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+      if (keys !== undefined && !keys.includes(`${parent}\\Uninstall`.toLowerCase())) continue;
+      return manual;
+    }
+    for (const key of found.match(/^HKEY_[^\r\n]+/gim) ?? []) {
+      const record = yield* runInstallerProbe(registry, ["query", key.trim(), view], context.env);
+      if (record === null) return manual;
+      const values = new Map(
+        [...record.matchAll(/^\s*(\w+)\s+REG_(?:SZ|DWORD)\s+(.+?)\s*$/gm)].map((match) => [
+          match[1]!,
+          match[2]!,
+        ]),
+      );
+      if (values.get("WinGetPackageIdentifier")?.toLowerCase() === packageId.toLowerCase())
+        entries.push({ productCode: key.trim().split("\\").at(-1)!, values, scope });
+    }
+  }
+  const matches = [];
+  for (const entry of entries) {
+    const { values, productCode } = entry;
+    const targetPath = values.get("TargetFullPath");
+    // A matching link name alone is insufficient: the link may now point elsewhere.
+    if (targetPath) {
+      if (canonical(targetPath) === canonical(context.realCommandPath)) matches.push(entry);
+      continue;
+    }
+    const location = values.get("InstallLocation");
+    if (
+      !location ||
+      !path.isAbsolute(location) ||
+      !/^[\w.-]+$/.test(productCode) ||
+      !canonical(context.realCommandPath).startsWith(`${canonical(location).replace(/\/+$/, "")}/`)
+    )
+      continue;
+    // Archive portables record ownership in <ARP product code>.db, not TargetFullPath.
+    const files = yield* readWingetPortableIndex(path.join(location, `${productCode}.db`));
+    if (!files) return manual;
+    const owned = files.filter(
+      (file) =>
+        file.filetype === 1 && canonical(file.filepath) === canonical(context.realCommandPath),
+    );
+    const links = files.filter(
+      (file) =>
+        file.filetype === 3 &&
+        file.symlinktarget &&
+        canonical(file.symlinktarget) === canonical(context.realCommandPath),
+    );
+    if (owned.length !== 1 || links.length !== 1) return manual;
+    const linkTarget = yield* realPath(links[0]!.filepath);
+    const directoryOnPath = /^(?:0x0*1|1)$/i.test(values.get("InstallDirectoryAddedToPath") ?? "");
+    if (
+      linkTarget ? canonical(linkTarget) !== canonical(context.realCommandPath) : !directoryOnPath
+    )
+      return manual;
+    matches.push(entry);
+  }
+  if (matches.length === 0)
+    return /\/microsoft\/winget\//i.test(
+      `${observed}/${context.realCommandPath.replaceAll("\\", "/")}`,
+    )
+      ? manual
+      : null;
+  if (matches.length !== 1) return manual;
+  const { values, scope } = matches[0]!;
+  if (values.get("WinGetInstallerType") !== "portable") return manual;
+  const sourceId = values.get("WinGetSourceIdentifier");
+  // --id/--source/--scope cannot distinguish two records with the same identity.
+  if (
+    !sourceId ||
+    entries.filter(
+      (entry) => entry.scope === scope && entry.values.get("WinGetSourceIdentifier") === sourceId,
+    ).length !== 1
+  )
+    return manual;
+  let executable = yield* resolve("winget");
+  if (!executable && context.env.LOCALAPPDATA) {
+    const alias = path.join(context.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "winget.exe");
+    // App Installer's execution alias is a reparse point, not a regular executable.
+    if (yield* fs.readLink(alias).pipe(Effect.orElseSucceed(() => null))) executable = alias;
+  }
+  if (!executable) return manual;
+  const sources = yield* runInstallerProbe(
+    executable,
+    ["source", "export", "--disable-interactivity"],
+    context.env,
+  );
+  const sourceMatches = (sources ?? "").split(/\r?\n/).flatMap((line) => {
+    const source = decodeWingetSource(line);
+    return Option.isSome(source) && source.value.Identifier === sourceId ? [source.value.Name] : [];
+  });
+  if (sourceMatches.length !== 1 || !sourceMatches[0]) return manual;
+  const selection = ["--id", packageId, "--exact", "--source", sourceMatches[0]];
+  const unattended = ["--accept-source-agreements", "--disable-interactivity"];
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const latest = yield* runInstallerProbe(
+    executable,
+    ["show", ...selection, "--versions", ...unattended],
+    context.env,
+  ).pipe(
+    Effect.map((versions) =>
+      (versions?.match(/^\s*\d+\.\d+\.\d+(?:-[\w.-]+)?\s*$/gm) ?? [])
+        .map((version) => version.trim())
+        .reduce<string | null>(
+          (latest, version) =>
+            latest === null || compareSemverVersions(version, latest) > 0 ? version : latest,
+          null,
+        ),
     ),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.cached,
+  );
+  return action(
+    { manager: "winget", scope },
+    executable,
+    [
+      "upgrade",
+      ...selection,
+      "--scope",
+      scope,
+      // Portable upgrades otherwise relocate custom installs to WinGet's default directory.
+      "--location",
+      values.get("InstallLocation") ?? path.dirname(context.realCommandPath),
+      // Single-file portable upgrades otherwise revert a custom executable name.
+      ...(values.has("TargetFullPath") ? ["--rename", path.basename(context.realCommandPath)] : []),
+      ...unattended,
+    ],
+    `winget:${sourceId}:${packageId}:${scope}:${canonical(context.realCommandPath)}`,
+    latest,
   );
 });
 
@@ -360,6 +737,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   });
   if (!context) {
     return manual;
+  }
+  if (context.platform === "win32") {
+    const windows = yield* resolveWindowsInstaller(definition, context).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(INSTALLER_PROBE_TIMEOUT_MS),
+        orElse: () => Effect.succeed({ ...manual, latestVersion: null }),
+      }),
+    );
+    if (windows) return windows;
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
@@ -445,7 +831,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // A keg-shaped path is only Homebrew's if it sits under the prefix of the
     // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
     const fileSystem = yield* FileSystem.FileSystem;
-    const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
+    const brewPrefix = nonEmptyString(
+      yield* runInstallerProbe(brewPath, ["--prefix"], context.env),
+    );
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
       : null;
@@ -459,7 +847,11 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
-    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const info = yield* runInstallerProbe(
+      brewPath,
+      ["info", "--json=v2", homebrew.name],
+      context.env,
+    );
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -579,13 +971,43 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
 )(function* (resolve: Effect.Effect<ProviderMaintenanceCapabilities>) {
-  const [cached, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    resolve,
-    MAINTENANCE_CAPABILITIES_CACHE_TTL,
-  );
+  const semaphore = yield* Semaphore.make(1);
+  let cached: { value: ProviderMaintenanceCapabilities; expiresAt: number } | undefined;
   return (options?: { readonly fresh?: boolean }) =>
-    options?.fresh ? invalidate.pipe(Effect.andThen(cached)) : cached;
+    semaphore.withPermit(
+      Effect.gen(function* () {
+        if (options?.fresh) cached = undefined;
+        if (cached && cached.expiresAt > (yield* Clock.currentTimeMillis)) return cached.value;
+        const value = yield* resolve;
+        cached = {
+          value,
+          expiresAt:
+            (yield* Clock.currentTimeMillis) +
+            Duration.toMillis(MAINTENANCE_CAPABILITIES_CACHE_TTL),
+        };
+        return value;
+      }),
+    );
 });
+
+/** Bind the instance's lookup services once; callers need no resolver services. */
+export const makeProviderMaintenanceResolution = Effect.fn("makeProviderMaintenanceResolution")(
+  function* (
+    resolver: ProviderMaintenanceCapabilitiesResolver,
+    options: { readonly binaryPath: string; readonly env: NodeJS.ProcessEnv },
+  ) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* makeCachedProviderMaintenanceResolution(
+      resolveProviderMaintenanceCapabilitiesEffect(resolver, options).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+    );
+  },
+);
 
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
@@ -659,7 +1081,9 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
   if (maintenanceCapabilities.latestVersion !== undefined) {
-    return maintenanceCapabilities.latestVersion;
+    return Effect.isEffect(maintenanceCapabilities.latestVersion)
+      ? yield* maintenanceCapabilities.latestVersion
+      : maintenanceCapabilities.latestVersion;
   }
   const packageName = maintenanceCapabilities.packageName;
   if (!packageName) {

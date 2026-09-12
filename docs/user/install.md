@@ -83,10 +83,16 @@ Cursor's executable is `cursor-agent`, although its login command is
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** appears only when T3 Code can tell which
-installer owns the CLI (its own update command, Homebrew, or a global npm, pnpm,
-bun, or Vite+ install) and runs that installer. Otherwise update the CLI the same
-way you installed it. Homebrew installs compare against the version Homebrew
-offers, which can trail the npm release by a few hours.
+installer owns the CLI (its own update command, Homebrew, Scoop, portable WinGet,
+or a global npm, pnpm, bun, or Vite+ install) and runs that installer. Otherwise
+update the CLI the same way you installed it. Homebrew and WinGet installs
+compare against their installer's available version, which can trail the npm release.
+For Scoop, or when that version is unknown but the installer is verified, **Check for updates**
+runs the installer to check for and install an update.
+
+On Windows, a global Scoop or machine-wide WinGet update requests administrator approval when
+needed; T3 Code itself can run normally. Approve the UAC prompt on the server's
+Windows desktop using the same account. Declining the prompt cancels the update.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
