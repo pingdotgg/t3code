@@ -683,6 +683,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.files, DESKTOP_FILE_EXCLUSIONS);
       assert.deepStrictEqual(winWithoutWslPrebuild.files, win.files);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
+      assert.equal(linux.artifactName, "T3-Code-${arch}.${ext}");
+      assert.equal(mac.artifactName, "T3-Code-${version}-${arch}.${ext}");
+      assert.equal(win.artifactName, "T3-Code-${version}-${arch}.${ext}");
       for (const config of [linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
       }

@@ -32,6 +32,12 @@ or use a package manager:
 | Arch Linux         | `yay -S t3code-bin`             |
 | Arch Linux nightly | `yay -S t3code-nightly-bin`     |
 
+Linux AppImage:
+
+Download `T3-Code-x86_64.AppImage` from GitHub Releases. In-app updates replace that file without
+changing its path. If you installed an older versioned AppImage, update your desktop entry or
+symlink to the stable filename after the first upgrade.
+
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
