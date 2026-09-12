@@ -4,6 +4,7 @@ import {
   buildConnectCliClerkAuthorizeUrl,
   connectCliSignInRedirectUrl,
   hasConnectCliAuthConfig,
+  readConnectCliCallbackError,
   readConnectCliCallbackResult,
 } from "./connectCliAuth";
 
@@ -104,6 +105,21 @@ describe("connectCliAuth", () => {
     ).toBeNull();
     expect(
       readConnectCliCallbackResult(new URL("https://app.t3.codes/connect/callback?state=s")),
+    ).toBeNull();
+  });
+
+  it("reads the OAuth error code Clerk sends when sign-in is refused", () => {
+    expect(
+      readConnectCliCallbackError(
+        new URL(
+          "https://app.t3.codes/connect/callback?error=access_denied&error_description=The+user+denied+the+request",
+        ),
+      ),
+    ).toBe("access_denied");
+    expect(
+      readConnectCliCallbackError(
+        new URL("https://app.t3.codes/connect/callback?code=abc&state=state-1"),
+      ),
     ).toBeNull();
   });
 });

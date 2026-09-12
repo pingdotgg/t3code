@@ -115,3 +115,9 @@ export function readConnectCliCallbackResult(
   }
   return { code, state };
 }
+
+export function readConnectCliCallbackError(
+  url: URL = new URL(window.location.href),
+): string | null {
+  return url.searchParams.get("error")?.trim() || null;
+}
