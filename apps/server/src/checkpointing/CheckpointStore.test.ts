@@ -116,6 +116,211 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  describe("captureCheckpoint", () => {
+    for (const scenario of [
+      "partial staging",
+      "staged deletion of ignored file",
+      "staged addition removed from disk",
+      "intent to add",
+      "subdirectory",
+      "unborn subdirectory",
+      "missing index",
+      "linked worktree",
+      "assume unchanged",
+      "skip worktree",
+      "split index",
+      "sparse checkout",
+      "unmerged index",
+    ]) {
+      it.effect(`preserves snapshot and index semantics with ${scenario}`, () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          const fileSystem = yield* FileSystem.FileSystem;
+          const vcsProcess = yield* VcsProcess.VcsProcess;
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+          yield* initRepoWithCommit(tmp);
+          yield* fileSystem.makeDirectory(NodePath.join(tmp, "inside"));
+          yield* writeTextFile(NodePath.join(tmp, "inside", "file.txt"), "original\n");
+          yield* writeTextFile(NodePath.join(tmp, "outside.txt"), "outside\n");
+          yield* git(tmp, ["add", "."]);
+          yield* git(tmp, ["commit", "-m", "fixture"]);
+          let cwd = tmp;
+          let hasHead = true;
+          if (scenario === "linked worktree") {
+            cwd = NodePath.join(tmp, "linked");
+            yield* git(tmp, ["worktree", "add", "-b", "linked", cwd]);
+          }
+          if (scenario === "unborn subdirectory") {
+            cwd = yield* makeTmpDir();
+            yield* git(cwd, ["init"]);
+            yield* writeTextFile(NodePath.join(cwd, "outside.txt"), "staged outside\n");
+            yield* git(cwd, ["add", "."]);
+            yield* fileSystem.makeDirectory(NodePath.join(cwd, "inside"));
+            yield* writeTextFile(NodePath.join(cwd, "inside", "file.txt"), "new inside\n");
+            cwd = NodePath.join(cwd, "inside");
+            hasHead = false;
+          } else {
+            const file = NodePath.join(cwd, "inside", "file.txt");
+            yield* writeTextFile(file, "staged content\n");
+            yield* git(cwd, ["add", "inside/file.txt"]);
+            yield* writeTextFile(file, "working tree content\n");
+            if (scenario === "staged deletion of ignored file") {
+              yield* git(cwd, ["rm", "--cached", "-f", "inside/file.txt"]);
+              yield* writeTextFile(NodePath.join(cwd, ".gitignore"), "inside/file.txt\n");
+            } else if (scenario === "staged addition removed from disk") {
+              yield* writeTextFile(NodePath.join(cwd, "new.txt"), "new\n");
+              yield* git(cwd, ["add", "new.txt"]);
+              yield* fileSystem.remove(NodePath.join(cwd, "new.txt"));
+            } else if (scenario === "intent to add") {
+              yield* writeTextFile(NodePath.join(cwd, "new.txt"), "new\n");
+              yield* git(cwd, ["add", "-N", "new.txt"]);
+            } else if (scenario === "subdirectory") {
+              yield* writeTextFile(NodePath.join(cwd, "outside.txt"), "staged outside\n");
+              yield* git(cwd, ["add", "outside.txt"]);
+              cwd = NodePath.join(cwd, "inside");
+            } else if (scenario === "assume unchanged" || scenario === "skip worktree") {
+              yield* git(cwd, ["reset", "HEAD", "inside/file.txt"]);
+              yield* git(cwd, [
+                "update-index",
+                scenario === "assume unchanged" ? "--assume-unchanged" : "--skip-worktree",
+                "inside/file.txt",
+              ]);
+            } else if (scenario === "split index") {
+              yield* git(cwd, ["update-index", "--split-index"]);
+            } else if (scenario === "sparse checkout") {
+              yield* git(cwd, ["sparse-checkout", "set", "--cone", "inside"]);
+            } else if (scenario === "unmerged index") {
+              const blob = yield* git(cwd, ["rev-parse", "HEAD:inside/file.txt"]);
+              yield* git(cwd, ["update-index", "--force-remove", "inside/file.txt"]);
+              yield* vcsProcess.run({
+                operation: "CheckpointStore.test.conflict",
+                command: "git",
+                cwd,
+                args: ["update-index", "--index-info"],
+                stdin: `100644 ${blob} 1\tinside/file.txt\n100644 ${blob} 2\tinside/file.txt\n100644 ${blob} 3\tinside/file.txt\n`,
+              });
+            }
+          }
+          const indexPath = yield* git(cwd, [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index",
+          ]);
+          if (scenario === "missing index") yield* fileSystem.remove(indexPath);
+          const indexExists = yield* fileSystem.exists(indexPath);
+          const userIndex = indexExists ? yield* fileSystem.readFile(indexPath) : undefined;
+          const referenceIndex = NodePath.join(yield* makeTmpDir(), "index");
+          const referenceEnv = { ...process.env, GIT_INDEX_FILE: referenceIndex };
+          if (hasHead) {
+            yield* vcsProcess.run({
+              operation: "CheckpointStore.test.baseline",
+              command: "git",
+              cwd,
+              args: ["read-tree", "HEAD"],
+              env: referenceEnv,
+            });
+          }
+          yield* vcsProcess.run({
+            operation: "CheckpointStore.test.baseline",
+            command: "git",
+            cwd,
+            args: ["add", "-A", "--", "."],
+            env: referenceEnv,
+          });
+          const expected = yield* vcsProcess.run({
+            operation: "CheckpointStore.test.baseline",
+            command: "git",
+            cwd,
+            args: ["write-tree"],
+            env: referenceEnv,
+          });
+          const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("semantics"), 1);
+          yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef });
+          expect(yield* git(cwd, ["rev-parse", `${checkpointRef}^{tree}`])).toBe(
+            expected.stdout.trim(),
+          );
+          expect(yield* fileSystem.exists(indexPath)).toBe(indexExists);
+          if (userIndex) expect(yield* fileSystem.readFile(indexPath)).toEqual(userIndex);
+          // Restore only this disposable fixture; capture must include actual on-disk content.
+          if (scenario === "partial staging" || scenario === "linked worktree") {
+            yield* writeTextFile(NodePath.join(cwd, "inside", "file.txt"), "after capture\n");
+            expect(yield* checkpointStore.restoreCheckpoint({ cwd, checkpointRef })).toBe(true);
+            expect(yield* fileSystem.readFileString(NodePath.join(cwd, "inside", "file.txt"))).toBe(
+              "working tree content\n",
+            );
+          }
+        }),
+      );
+    }
+
+    it.effect("rehashes racy-clean files after copying the index", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["config", "core.trustctime", "false"]);
+        const file = NodePath.join(tmp, "racy.txt");
+        yield* writeTextFile(file, "before\n");
+        yield* fileSystem.utimes(file, 1000, 1000);
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "racy file"]);
+        const index = NodePath.join(tmp, ".git", "index");
+        yield* fileSystem.utimes(index, 1000, 1000);
+        yield* writeTextFile(file, "after!\n");
+        yield* fileSystem.utimes(file, 1000, 1000);
+        const userIndex = yield* fileSystem.readFile(index);
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("racy"), 1);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        expect(yield* git(tmp, ["show", `${checkpointRef}:racy.txt`])).toBe("after!");
+        expect(yield* fileSystem.readFile(index)).toEqual(userIndex);
+      }),
+    );
+
+    it.effect("reuses cached file metadata without changing the user index", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        yield* initRepoWithCommit(tmp);
+        const filter = NodePath.join(tmp, ".git", "count-clean.cjs");
+        const calls = NodePath.join(tmp, ".git", "clean-calls");
+        yield* writeTextFile(
+          filter,
+          `const fs = require("node:fs"); fs.appendFileSync(${JSON.stringify(calls)}, "clean\\n"); process.stdin.pipe(process.stdout);`,
+        );
+        yield* git(tmp, ["config", "filter.count.clean", `node "${filter}"`]);
+        yield* writeTextFile(NodePath.join(tmp, ".gitattributes"), "*.count filter=count\n");
+        yield* writeTextFile(NodePath.join(tmp, "unchanged.count"), "unchanged\n");
+        // Keep the fixture out of Git's racy-clean timestamp window without sleeping.
+        yield* fileSystem.utimes(NodePath.join(tmp, "unchanged.count"), 1, 1);
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add filtered file"]);
+        yield* writeTextFile(calls, "");
+        const indexPath = NodePath.join(tmp, ".git", "index");
+        const userIndex = yield* fileSystem.readFile(indexPath);
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("cache-test"), 1);
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        expect(yield* fileSystem.readFileString(calls)).toBe("");
+        expect(yield* fileSystem.readFile(indexPath)).toEqual(userIndex);
+        expect(yield* git(tmp, ["rev-parse", `${checkpointRef}^{tree}`])).toBe(
+          yield* git(tmp, ["rev-parse", "HEAD^{tree}"]),
+        );
+
+        yield* writeTextFile(NodePath.join(tmp, "unchanged.count"), "changed content\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        expect(yield* git(tmp, ["show", `${checkpointRef}:unchanged.count`])).toBe(
+          "changed content",
+        );
+        expect(yield* fileSystem.readFileString(calls)).not.toBe("");
+        expect(yield* fileSystem.readFile(indexPath)).toEqual(userIndex);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

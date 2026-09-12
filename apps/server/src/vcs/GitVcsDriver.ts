@@ -735,12 +735,74 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+          // Borrow only the stat cache, not the user's staged snapshot or flags.
+          // A one-tree reset restores HEAD membership, including staged deletions.
+          const seeded = yield* Effect.gen(function* () {
+            const indexResult = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            });
+            const sharedIndex = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--shared-index-path"],
+            });
+            const sparse = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--bool", "--get", "core.sparseCheckout"],
+              allowNonZeroExit: true,
+            });
+            if (sharedIndex.stdout.trim() !== "" || sparse.stdout.trim() === "true") {
+              return false;
+            }
+            const indexPath = indexResult.stdout.trim();
+            const indexStat = yield* fileSystem.stat(indexPath);
+            if (Option.isNone(indexStat.mtime)) return false;
+            yield* fileSystem.copyFile(indexPath, tempIndexPath);
+            // A newer copy timestamp would make racy-clean entries look trustworthy.
+            yield* fileSystem.utimes(tempIndexPath, indexStat.mtime.value, indexStat.mtime.value);
+            const entries = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                ...WORKSPACE_GIT_HARDENED_CONFIG_ARGS,
+                "ls-files",
+                "-v",
+                "-z",
+                "--full-name",
+                "--",
+                ":/",
+              ],
+              env: commitEnv,
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            });
+            if (
+              entries.stdoutTruncated ||
+              entries.stdout
+                .split("\0")
+                .some((entry) => entry.length > 0 && entry[0] !== "H" && entry[0] !== "M")
+            ) {
+              return false;
+            }
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [...WORKSPACE_GIT_HARDENED_CONFIG_ARGS, "read-tree", "--reset", "HEAD"],
+              env: commitEnv,
+            });
+            return true;
+          }).pipe(Effect.option);
+          if (!Option.getOrElse(seeded, () => false)) {
+            yield* cleanupTempIndex;
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "HEAD"],
+              env: commitEnv,
+            });
+          }
         }
 
         yield* execute({
