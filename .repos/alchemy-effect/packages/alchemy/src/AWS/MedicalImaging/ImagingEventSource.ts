@@ -74,8 +74,8 @@ export interface ImagingEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming HealthImaging Events
- * @example React To Finished Imports
+ * ### Consuming HealthImaging Events
+ * **Example:** React To Finished Imports
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

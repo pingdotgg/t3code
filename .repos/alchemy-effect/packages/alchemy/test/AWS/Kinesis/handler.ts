@@ -50,7 +50,7 @@ export const StreamAndConsumerLive = Layer.effect(
 export const KinesisApiFunctionLive = KinesisApiFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     // The sink's bounded partial-failure retry can sleep up to ~6s, which
     // exceeds Lambda's 3s default timeout (see PATTERNS §7).
     timeout: Duration.seconds(30),

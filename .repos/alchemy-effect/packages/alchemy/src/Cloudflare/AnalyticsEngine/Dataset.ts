@@ -17,10 +17,9 @@ export type DatasetProps = {
  * exposes `writeDataPoint()` at runtime and does not require separate
  * provisioning through the Cloudflare API.
  *
- * @resource
  *
- * @section Binding to a Worker
- * @example Basic Analytics Engine binding
+ * ### Binding to a Worker
+ * **Example:** Basic Analytics Engine binding
  * ```typescript
  * const Analytics = yield* Cloudflare.AnalyticsEngine.Dataset("Analytics", {
  *   dataset: "app-events",
@@ -32,11 +31,13 @@ export type DatasetProps = {
  * });
  * ```
  *
- * @example Effect-style worker
+ * **Example:** Effect-style worker
  * ```typescript
  * const analytics = yield* Cloudflare.AnalyticsEngine.WriteDataset(Analytics);
  * yield* analytics.writeDataPoint({ blobs: ["signup"] });
  * ```
+ *
+ * @resource
  */
 export type Dataset = {
   kind: TypeId;

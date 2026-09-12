@@ -1,30 +1,79 @@
 ---
 title: Astro
-description: Deploy an Astro site to Cloudflare with Alchemy — static output via StaticSite today; Vite-resource support is a TODO.
+description: Deploy an Astro site to Cloudflare Workers with Cloudflare.Website.Astro — SSR in the Worker, prerendered pages as static assets, sessions backed by an auto-provisioned KV namespace.
 sidebar:
   order: 9
 ---
 
-:::caution[Not yet supported by Cloudflare.Website.Vite]
-`Cloudflare.Website.Vite` does not support Astro yet — support is a
-TODO. Astro's build is orchestrated by the `astro` CLI rather than a
-plain `vite build` of your `vite.config`, so it never enters the Vite
-resource's build path (see
-[what "pure Vite" means](/cloudflare/frontend/vite#what-pure-vite-means)).
-:::
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
-## Deploy the static output with StaticSite
+export const devDeps = "@alchemy.run/frontend-frameworks";
 
-Astro's static output is just a directory of files, and
-`Cloudflare.Website.StaticSite` deploys any directory produced by any
-build command. This isn't a theoretical workaround: the Alchemy docs
-site itself ([alchemy.run](/)) is an Astro/Starlight
-app deployed exactly this way.
+`Cloudflare.Website.Astro` deploys an [Astro](https://astro.build)
+project as a Cloudflare Worker. It runs Astro's programmatic build
+with a wrangler-free Cloudflare adapter: server-rendered pages
+execute in the Worker, prerendered pages and client assets deploy as
+static assets. Your `astro.config.*` loads natively — there is no
+adapter to install into it and no Wrangler file to write.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/astro`
+export from your project at deploy time. It is only used at build time,
+so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Astro
+
+Your `astro.config.*` file loads natively — integrations, Vite
+plugins, and any other non-serializable options work exactly as they
+do outside Alchemy. Alchemy merges a programmatic config *over* it:
+the Cloudflare adapter is injected for you (don't declare an
+`adapter` in your config — that fails the build with an actionable
+error), and options passed via the `astro` prop override the file's —
+see [Astro configuration](#astro-configuration) below for the
+details.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Astro("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`WebsiteEnv` is the typed shape of the Worker's bindings, derived
+from the class — you'll import it into your Astro code in
+[Read bindings in server code](#read-bindings-in-server-code).
+
+## Add it to the Stack
+
+Yield the class from your Stack and return its URL:
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -34,80 +83,190 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const site = yield* Cloudflare.Website.StaticSite("Website", {
-      command: "astro build",
-      outdir: "dist",
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
-    });
+    const site = yield* Website;
     return { url: site.url };
   }),
 );
 ```
 
-`StaticSite` runs `astro build` as a shell command, content-hashes the
-`dist` directory, and deploys it as a Worker serving static assets —
-the docs site's own declaration is the same shape, except its command
-is `bun run build` (which ends in `astro build`).
+Pages are server-rendered by default. Pages that
+`export const prerender = true` are served as static assets. Astro's
+server runtime is built against Node APIs, so the `nodejs_compat`
+compatibility flag is added automatically — you don't need to pass
+it.
 
-## Add a Worker in front
+During `alchemy dev`, Astro's dev server runs with SSR executing in
+workerd, so server code sees the same runtime and the same real
+bindings it will have in production.
 
-Optionally, a custom Worker can run before asset serving — set `main`
-and `runWorkerFirst`:
+See
+[examples/cloudflare-website-astro](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-astro)
+for the checked-in example.
 
-```diff lang="typescript"
- const site = yield* Cloudflare.Website.StaticSite("Website", {
-   command: "astro build",
-+  main: "./src/worker.ts",
-   outdir: "dist",
-   compatibility: {
-     flags: ["nodejs_compat"],
-   },
-+  assets: {
-+    runWorkerFirst: true,
-+  },
- });
-```
+## Add bindings
 
-The docs site uses this to rewrite OG and canonical tags with
-`HTMLRewriter` (so preview deployments unfurl themselves instead of
-production) and to serve 301 redirects — see
-[a custom Worker in front of your assets](/cloudflare/frontend/static-site#a-custom-worker-in-front-of-your-assets)
-for the full pattern.
-
-## What the workaround loses
-
-This path deploys Astro's **static output only**. Astro SSR —
-`output: "server"` with the Cloudflare adapter — is not verified with
-Alchemy, so server-rendered routes, Astro actions, and middleware
-won't run; everything must be rendered at build time.
-
-## Local dev
-
-For `alchemy dev`, use `StaticSite`'s standard external dev-server
-mechanism — `dev.command` spawns the framework's own dev server
-instead of running the build:
+The resource returns a plain `Worker`, so `env` accepts the full
+binding vocabulary — KV namespaces, R2 buckets, Durable Objects,
+secrets:
 
 ```diff lang="typescript"
- const site = yield* Cloudflare.Website.StaticSite("Website", {
-   command: "astro build",
-+  dev: {
-+    command: "astro dev",
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Cache = Cloudflare.KV.Namespace("Cache");
+
+export const Website = Cloudflare.Website.Astro("Website", {
++  env: {
++    CACHE: Cache,
++    API_KEY: Config.redacted("API_KEY"),
 +  },
-   outdir: "dist",
- });
+});
 ```
 
-This is the same mechanism `StaticSite` uses for any framework's dev
-server (the docs site doesn't set `dev.command`, so treat the `astro
-dev` pairing as the standard recipe rather than a battle-tested one) —
-see [StaticSite](/cloudflare/frontend/static-site) for how external
-dev mode works.
+`Cache` is a description, not a deploy — Alchemy provisions the real
+namespace because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
 
-## Status
+## Read bindings in server code
 
-Astro support in the Vite resource is tracked as a TODO; until it
-lands, the matrix on
-[Frontend frameworks](/cloudflare/frontend/frontends) reflects current
-status.
+Astro code reads bindings via `Astro.locals.runtime.env` (or
+`import { env } from "cloudflare:workers"`). Type the locals once by
+augmenting `App.Locals` with the inferred env type:
+
+```typescript
+// src/env.d.ts
+import type { WebsiteEnv } from "../alchemy.run.ts";
+
+declare global {
+  namespace App {
+    interface Locals {
+      runtime: { env: WebsiteEnv };
+    }
+  }
+}
+
+export {};
+```
+
+Every server-rendered page and endpoint now gets fully typed
+bindings:
+
+```astro
+---
+// src/pages/index.astro
+const cached = await Astro.locals.runtime.env.CACHE.get("greeting");
+---
+
+<h1>{cached ?? "hello"}</h1>
+```
+
+`Astro.locals.runtime.env.CACHE` is typed as a KV namespace and
+`.API_KEY` as a string — renaming a binding in `alchemy.run.ts` is a
+type error in your pages.
+
+## Sessions
+
+Astro's session API is backed by a KV namespace. One is provisioned
+and bound as `SESSION` automatically, so `Astro.session` works with
+zero configuration.
+
+Bind your own namespace under that name to use it instead:
+
+```typescript
+export const Sessions = Cloudflare.KV.Namespace("Sessions");
+
+export const Website = Cloudflare.Website.Astro("Website", {
+  env: {
+    SESSION: Sessions,
+  },
+});
+```
+
+Or opt out of session provisioning entirely:
+
+```typescript
+export const Website = Cloudflare.Website.Astro("Website", {
+  sessionKVBindingName: false,
+});
+```
+
+## Fully static sites
+
+With `astro: { output: "static" }` every page is prerendered at
+build time and the deploy is assets-only — no server bundle is
+uploaded, and Cloudflare's asset layer answers every request:
+
+```typescript
+export const Website = Cloudflare.Website.Astro("Website", {
+  astro: { output: "static" },
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+`notFoundHandling: "404-page"` serves the built `404.html` for
+unmatched routes. Session provisioning is skipped for declared-static
+sites, since no Worker code runs at request time.
+
+## Astro configuration
+
+Your `astro.config.*` is the primary place to configure Astro —
+integrations, Vite plugins, and every other option (serializable or
+not) work as usual:
+
+```typescript
+// astro.config.ts
+import { defineConfig } from "astro/config";
+import react from "@astrojs/react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  site: "https://blog.example.com",
+  integrations: [react()],
+  vite: {
+    plugins: [tailwindcss()],
+  },
+});
+```
+
+A config file can't consume Alchemy `Output`s or vary by stage. For
+those values the `astro` prop is a deploy-time override bag — a
+serializable subset (`site`, `base`, `output`, `srcDir`, `publicDir`,
+`outDir`, `trailingSlash`) merged *over* the config file, so a value
+set here wins:
+
+```typescript
+// alchemy.run.ts
+import { Stack } from "alchemy/Stack";
+
+export const Website = Cloudflare.Website.Astro(
+  "Website",
+  Stack.useSync(({ stage }) => ({
+    astro: {
+      site:
+        stage === "prod"
+          ? "https://blog.example.com"
+          : `https://${stage}.example.com`,
+    },
+  })),
+);
+```
+
+Use `config` to load an alternate config file (relative to
+`rootDir`) instead of astro's own `astro.config.*` discovery:
+
+```typescript
+export const Website = Cloudflare.Website.Astro("Website", {
+  config: "astro.deploy.config.ts",
+});
+```
+
+Two options are managed for you regardless of the config file:
+
+- `adapter` — Alchemy injects its wrangler-free Cloudflare adapter.
+  Declaring an adapter in `astro.config.*` fails the build with an
+  actionable error.
+- `output` — Alchemy defaults it to `"server"` (superseding a
+  file-level `output`), so pages render on demand in the Worker.
+  Opt into a fully prerendered site with `astro: { output: "static" }`
+  on the resource.

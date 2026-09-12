@@ -1,7 +1,11 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
-import { resolveMarkdownLinkPresentation, type MarkdownFileIcon } from "./markdownLinks";
+import {
+  resolveMarkdownInlineCodePresentation,
+  resolveMarkdownLinkPresentation,
+  type MarkdownFileIcon,
+} from "./markdownLinks";
 
 export interface NativeMarkdownTextRun {
   readonly text: string;
@@ -191,7 +195,8 @@ function appendRun(
   return runs;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
@@ -283,8 +288,17 @@ function appendNode(
       return appendRun(runs, textNodeContent(nodeTextContent(node)), context);
     case "html_inline":
       return appendRun(runs, inlineHtmlText(nodeTextContent(node)), context);
-    case "code_inline":
-      return appendRun(runs, nodeTextContent(node), { ...context, code: true });
+    case "code_inline": {
+      const content = nodeTextContent(node);
+      const presentation = context.href ? null : resolveMarkdownInlineCodePresentation(content);
+      return presentation
+        ? appendRun(runs, presentation.label, {
+            ...context,
+            href: presentation.href,
+            fileIcon: presentation.icon,
+          })
+        : appendRun(runs, content, { ...context, code: true });
+    }
     case "soft_break":
       return appendRun(runs, " ", context);
     case "line_break":
@@ -680,21 +694,31 @@ function containsRichBlock(node: MarkdownNode): boolean {
   return (node.children ?? []).some(containsRichBlock);
 }
 
+/**
+ * Sibling identity for React keys. A source offset survives appends while the
+ * document streams; the child index is the fallback for offset-free nodes. The
+ * two never share a namespace, so a positioned node cannot collide with an
+ * offset-free sibling whose index happens to equal its offset.
+ */
+export function nativeMarkdownNodePosition(node: MarkdownNode, index: number): string {
+  return node.beg === undefined ? `index:${index}` : `offset:${node.beg}`;
+}
+
 export function nativeMarkdownDocumentChunks(
   document: MarkdownNode,
 ): ReadonlyArray<NativeMarkdownDocumentChunk> {
   const chunks: NativeMarkdownDocumentChunk[] = [];
   let selectableNodes: MarkdownNode[] = [];
+  let selectableStart = 0;
 
   const flushSelectable = () => {
-    if (selectableNodes.length === 0) {
+    const first = selectableNodes[0];
+    if (!first) {
       return;
     }
-    const first = selectableNodes[0];
-    const last = selectableNodes.at(-1);
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}:${last?.end ?? "end"}`,
+      key: `selectable:${nativeMarkdownNodePosition(first, selectableStart)}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -705,6 +729,9 @@ export function nativeMarkdownDocumentChunks(
 
   for (const [index, child] of (document.children ?? []).entries()) {
     if (!containsRichBlock(child)) {
+      if (selectableNodes.length === 0) {
+        selectableStart = index;
+      }
       selectableNodes.push(child);
       continue;
     }
@@ -712,7 +739,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}:${child.end ?? index}`,
+      key: `rich:${child.type}:${nativeMarkdownNodePosition(child, index)}`,
       node: child,
     });
   }

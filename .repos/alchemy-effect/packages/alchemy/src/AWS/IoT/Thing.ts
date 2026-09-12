@@ -42,20 +42,21 @@ export interface Thing extends Resource<
 /**
  * An AWS IoT Thing — the cloud representation of a physical device.
  *
- * @resource
- * @section Creating a Thing
- * @example Basic Thing
+ * ### Creating a Thing
+ * **Example:** Basic Thing
  * ```typescript
  * const thing = yield* Thing("sensor", {});
  * ```
  *
- * @example Thing with Attributes
+ * **Example:** Thing with Attributes
  * ```typescript
  * const thing = yield* Thing("sensor", {
  *   thingName: "temperature-sensor-01",
  *   attributes: { location: "warehouse-a", model: "acme-t1000" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Thing = Resource<Thing>("AWS.IoT.Thing");
 

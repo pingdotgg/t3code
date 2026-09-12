@@ -1,5 +1,5 @@
-import { describe, it } from "@effect/vitest"
-import { assertInclude, assertNone, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { assert, describe, it } from "@effect/vitest"
+import { assertNone, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Cause, Context, Duration, Effect, Fiber, Layer, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import type { Span } from "effect/Tracer"
@@ -13,11 +13,56 @@ const getParent = (span: Tracer.Span): Tracer.AnySpan => {
   return span.parent.value
 }
 
+const otlpTracerLayer = OtlpTracer.layer({
+  url: "http://localhost:4318/v1/traces",
+  resource: {
+    serviceName: "test-service"
+  }
+}).pipe(
+  Layer.provide(OtlpSerialization.layerJson),
+  Layer.provide(Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, new Response())))
+  ))
+)
+
+const makeRootAndChildSpans = Effect.gen(function*() {
+  const root = yield* Effect.withSpan(Effect.currentSpan, "root")
+  const child = yield* Effect.withSpan(Effect.currentSpan, "child", { parent: root })
+  return [root, child] as const
+})
+
+const assertSpanIdentifiers = (root: Tracer.Span, child: Tracer.Span) => {
+  assert.match(root.traceId, /^[0-9a-f]{32}$/)
+  assert.match(root.spanId, /^[0-9a-f]{16}$/)
+  strictEqual(child.traceId, root.traceId)
+  assert.match(child.spanId, /^[0-9a-f]{16}$/)
+}
+
 describe("Tracer", () => {
+  describe("span identifiers", () => {
+    it.effect("generates native span identifiers", () =>
+      Effect.gen(function*() {
+        const [root, child] = yield* makeRootAndChildSpans
+        assertSpanIdentifiers(root, child)
+      }))
+
+    it.effect("generates OTLP span identifiers", () =>
+      Effect.gen(function*() {
+        const [root, child] = yield* makeRootAndChildSpans
+        assert.notInstanceOf(root, Tracer.NativeSpan)
+        assert.notInstanceOf(child, Tracer.NativeSpan)
+        assertSpanIdentifiers(root, child)
+      }).pipe(Effect.provide(otlpTracerLayer)))
+  })
+
   describe("Effect.withSpan", () => {
     it.effect("should capture the stack trace", () =>
       Effect.gen(function*() {
-        const cause = yield* Effect.die(new Error("boom")).pipe(
+        const error = new Error("boom")
+        const errorSite = error.stack?.split("\n")[1]?.trim()
+        assert.isDefined(errorSite)
+        const cause = yield* Effect.die(error).pipe(
           Effect.withSpan("C", {
             annotations: Tracer.DisablePropagation.context(true)
           }),
@@ -25,7 +70,7 @@ describe("Tracer", () => {
           Effect.flip
         )
 
-        assertInclude(Cause.pretty(cause), "Tracer.test.ts:20:41")
+        assert.include(Cause.pretty(cause), errorSite)
       }))
 
     it.effect("should set the parent span", () =>
@@ -114,20 +159,7 @@ describe("Tracer", () => {
 
         strictEqual(result, 42)
       }).pipe(
-        Effect.provide(
-          OtlpTracer.layer({
-            url: "http://localhost:4318/v1/traces",
-            resource: {
-              serviceName: "test-service"
-            }
-          }).pipe(
-            Layer.provide(OtlpSerialization.layerJson),
-            Layer.provide(Layer.succeed(
-              HttpClient.HttpClient,
-              HttpClient.make((request) => Effect.succeed(HttpClientResponse.fromWeb(request, new Response())))
-            ))
-          )
-        )
+        Effect.provide(otlpTracerLayer)
       ))
 
     it.effect("should set the correct start and end time", () =>
@@ -287,6 +319,23 @@ describe("Tracer", () => {
 
         strictEqual(span.status.startTime, 0n)
       }))
+
+    it.effect("should set start and end times to zero when timing is disabled", () =>
+      Effect.gen(function*() {
+        yield* TestClock.adjust("1 millis")
+
+        const useSpan = yield* Effect.useSpan("useSpan", (span) => Effect.succeed(span))
+        const withSpan = yield* Effect.currentSpan.pipe(Effect.withSpan("withSpan"))
+
+        deepStrictEqual(
+          [useSpan.status, withSpan.status].map((status) => {
+            strictEqual(status._tag, "Ended")
+            return status._tag === "Ended" ? [status.startTime, status.endTime] : undefined
+          }),
+          [[0n, 0n], [0n, 0n]],
+          "disabled span timing"
+        )
+      }).pipe(Effect.withTracerTiming(false)))
   })
 
   describe("Effect.linkSpans", () => {

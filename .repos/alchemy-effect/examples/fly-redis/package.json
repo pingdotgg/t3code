@@ -1,0 +1,25 @@
+{
+  "name": "fly-redis",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-redis"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@distilled.cloud/fly-io": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  }
+}

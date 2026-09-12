@@ -13,7 +13,8 @@ type EditorDefinition = {
   /**
    * URL scheme for editors that support VS Code's remote deep links
    * (`<scheme>://vscode-remote/ssh-remote+<host><path>`). Only set for VS Code
-   * and forks that ship the Remote-SSH machinery.
+   * and forks that ship the Remote-SSH machinery, plus Zed, which uses its own
+   * `zed://ssh/<host><path>` shape.
    */
   readonly remoteScheme?: string;
 };
@@ -49,7 +50,13 @@ export const EDITORS = [
     launchStyle: "goto",
     remoteScheme: "vscodium",
   },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
+  {
+    id: "zed",
+    label: "Zed",
+    commands: ["zed", "zeditor"],
+    launchStyle: "direct-path",
+    remoteScheme: "zed",
+  },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
@@ -84,7 +91,7 @@ export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
 const remoteSchemeOf = (editor: EditorDefinition): string | undefined => editor.remoteScheme;
 
-/** Editors that can open a remote workspace via `vscode-remote` deep links. */
+/** Editors that can open a remote workspace via an SSH deep link. */
 export const REMOTE_CAPABLE_EDITOR_IDS: ReadonlyArray<EditorId> = EDITORS.flatMap((editor) =>
   remoteSchemeOf(editor) !== undefined ? [editor.id] : [],
 );
@@ -95,9 +102,10 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 };
 
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
- * opens `absolutePath` on `host` in the local editor over SSH. Returns
- * undefined for editors without remote deep-link support.
+ * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
+ * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
+ * local editor over SSH. Returns undefined for editors without remote
+ * deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
@@ -111,8 +119,18 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
+  const encodedHost = encodeURIComponent(input.host);
+  if (input.editor === "zed") {
+    // Zed's remote server resolves a rooted path on the system drive, so a
+    // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other
+    // drives are untested and kept as is rather than silently remapped, and a
+    // POSIX path that happens to start with `/C:` is left alone.
+    const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
+    const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
+    return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
+  }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
 };
 
 /**
@@ -130,7 +148,7 @@ export const RemoteOpenTarget = Schema.Struct({
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;
 
-export class ExternalLauncherUnknownEditorError extends Schema.TaggedErrorClass<ExternalLauncherUnknownEditorError>()(
+export class ExternalLauncherUnknownEditorError extends Schema.TaggedError<ExternalLauncherUnknownEditorError>()(
   "ExternalLauncherUnknownEditorError",
   {
     editor: Schema.String,
@@ -141,7 +159,7 @@ export class ExternalLauncherUnknownEditorError extends Schema.TaggedErrorClass<
   }
 }
 
-export class ExternalLauncherUnsupportedEditorError extends Schema.TaggedErrorClass<ExternalLauncherUnsupportedEditorError>()(
+export class ExternalLauncherUnsupportedEditorError extends Schema.TaggedError<ExternalLauncherUnsupportedEditorError>()(
   "ExternalLauncherUnsupportedEditorError",
   {
     editor: EditorId,
@@ -152,7 +170,7 @@ export class ExternalLauncherUnsupportedEditorError extends Schema.TaggedErrorCl
   }
 }
 
-export class ExternalLauncherCommandNotFoundError extends Schema.TaggedErrorClass<ExternalLauncherCommandNotFoundError>()(
+export class ExternalLauncherCommandNotFoundError extends Schema.TaggedError<ExternalLauncherCommandNotFoundError>()(
   "ExternalLauncherCommandNotFoundError",
   {
     editor: EditorId,
@@ -170,7 +188,7 @@ const ExternalLauncherSpawnFields = {
   cause: Schema.Defect(),
 };
 
-export class ExternalLauncherBrowserSpawnError extends Schema.TaggedErrorClass<ExternalLauncherBrowserSpawnError>()(
+export class ExternalLauncherBrowserSpawnError extends Schema.TaggedError<ExternalLauncherBrowserSpawnError>()(
   "ExternalLauncherBrowserSpawnError",
   {
     ...ExternalLauncherSpawnFields,
@@ -182,7 +200,7 @@ export class ExternalLauncherBrowserSpawnError extends Schema.TaggedErrorClass<E
   }
 }
 
-export class ExternalLauncherEditorSpawnError extends Schema.TaggedErrorClass<ExternalLauncherEditorSpawnError>()(
+export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<ExternalLauncherEditorSpawnError>()(
   "ExternalLauncherEditorSpawnError",
   {
     ...ExternalLauncherSpawnFields,
@@ -203,5 +221,3 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherEditorSpawnError,
 ]);
 export type ExternalLauncherError = typeof ExternalLauncherError.Type;
-
-export const isExternalLauncherError = Schema.is(ExternalLauncherError);

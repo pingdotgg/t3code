@@ -19,6 +19,7 @@ export interface ProviderCommandReactorShape {
    *
    * The returned effect must be run in a scope so all worker fibers can be
    * finalized on shutdown.
+   * It subscribes before returning. Event handling waits for server activation.
    *
    * Filters orchestration domain events to provider-intent types before
    * processing.

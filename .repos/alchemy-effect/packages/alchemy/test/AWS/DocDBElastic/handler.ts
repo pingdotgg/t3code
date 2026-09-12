@@ -23,7 +23,7 @@ export class DocDBElasticTestFunction extends Lambda.Function<Lambda.Function>()
 export default DocDBElasticTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const listSnapshots = yield* DocDBElastic.ListClusterSnapshots();

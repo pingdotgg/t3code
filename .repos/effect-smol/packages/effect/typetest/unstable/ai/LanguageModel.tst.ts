@@ -1,5 +1,5 @@
 import { Context, Effect, Schema, type Stream } from "effect"
-import { type AiError, LanguageModel, Tool, Toolkit } from "effect/unstable/ai"
+import { type AiError, type Chat, LanguageModel, Tool, Toolkit } from "effect/unstable/ai"
 import type * as Response from "effect/unstable/ai/Response"
 import { describe, expect, it } from "tstyche"
 
@@ -31,8 +31,55 @@ const ToolWithRequestContext = Tool.make("ToolWithRequestContext", {
   dependencies: [RequestContext]
 })
 
+const TransformTool = Tool.make("TransformTool", {
+  parameters: Schema.FiniteFromString,
+  success: Schema.Finite
+})
+
 describe("LanguageModel", () => {
   describe("generateText", () => {
+    it("uses encoded tool parameters when tool call resolution is disabled", () => {
+      const toolkit = Toolkit.make(TransformTool)
+      const program = LanguageModel.generateText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution: true
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBe<string>()
+    })
+
+    it("uses decoded tool parameters when tool call resolution is enabled", () => {
+      const toolkit = Toolkit.make(TransformTool)
+      const program = LanguageModel.generateText({
+        prompt: "hello",
+        toolkit
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBe<number>()
+    })
+
+    it("uses decoded tool parameters for a non-literal resolution flag", () => {
+      const toolkit = Toolkit.make(TransformTool)
+      const disableToolCallResolution = null as unknown as boolean
+      const program = LanguageModel.generateText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBe<number>()
+    })
+
     it("returns an empty tool record when no toolkit is provided", () => {
       const program = LanguageModel.generateText({
         prompt: "hello"
@@ -156,6 +203,20 @@ describe("LanguageModel", () => {
   })
 
   describe("streamText", () => {
+    it("uses encoded tool parameters when tool call resolution is disabled", () => {
+      const toolkit = Toolkit.make(TransformTool)
+      const stream = LanguageModel.streamText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution: true
+      })
+
+      type StreamPart = typeof stream extends Stream.Stream<infer A, any, any> ? A : never
+      type ToolCallParams = Extract<StreamPart, { readonly type: "tool-call" }>["params"]
+
+      expect<ToolCallParams>().type.toBe<string>()
+    })
+
     it("returns an empty tool record when no toolkit is provided", () => {
       const stream = LanguageModel.streamText({
         prompt: "hello"
@@ -186,6 +247,40 @@ describe("LanguageModel", () => {
           readonly ToolWithRequestContext: typeof ToolWithRequestContext
         }>
       >()
+    })
+  })
+
+  describe("generateObject", () => {
+    it("uses encoded tool parameters when tool call resolution is disabled", () => {
+      const toolkit = Toolkit.make(TransformTool)
+      const program = LanguageModel.generateObject({
+        prompt: "hello",
+        toolkit,
+        schema: Schema.Struct({ answer: Schema.Number }),
+        disableToolCallResolution: true
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBe<string>()
+    })
+  })
+
+  describe("Chat", () => {
+    it("uses encoded tool parameters when tool call resolution is disabled", () => {
+      const chat = null as unknown as Chat.Service
+      const toolkit = Toolkit.make(TransformTool)
+      const program = chat.generateText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution: true
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBe<string>()
     })
   })
 })

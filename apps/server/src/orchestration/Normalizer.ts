@@ -4,6 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
+  type UserInputAttachments,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type IsoDateTime,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
@@ -129,13 +131,28 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
-    if (canonicalCommand.type !== "thread.turn.start") {
+    if (
+      canonicalCommand.type !== "thread.turn.start" &&
+      canonicalCommand.type !== "thread.user-input.respond"
+    ) {
       return canonicalCommand as OrchestrationCommand;
     }
 
+    const attachments =
+      canonicalCommand.type === "thread.turn.start"
+        ? canonicalCommand.message.attachments
+        : Object.values(canonicalCommand.attachmentsByQuestionId ?? {}).flat();
+    if (
+      canonicalCommand.type === "thread.user-input.respond" &&
+      attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per question response.`,
+      });
+    }
     const claimedAttachmentPaths: string[] = [];
     const normalizedAttachments = yield* Effect.forEach(
-      canonicalCommand.message.attachments,
+      attachments,
       (attachment) =>
         Effect.gen(function* () {
           if (!("dataUrl" in attachment)) {
@@ -176,12 +193,14 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             });
             if (expectedPath !== claim.finalPath) {
               return yield* new OrchestrationDispatchCommandError({
-                message: `Attachment '${attachment.name}' cannot be sent: image type does not match the upload.`,
+                message: `Attachment '${attachment.name}' cannot be sent: attachment type does not match the upload.`,
               });
             }
 
             // Keep the pending copy until the turn succeeds. A failed thread
-            // bootstrap can then retry with a fresh thread id.
+            // bootstrap can then retry with a fresh thread id. A copy, not a
+            // hard link: an agent editing the delivered file in place must not
+            // mutate the retry source.
             yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
               Effect.mapError(
                 (cause) =>
@@ -223,6 +242,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             name: attachment.name,
             mimeType: parsed.mimeType.toLowerCase(),
             sizeBytes: bytes.byteLength,
+            ...(attachment.source ? { source: attachment.source } : {}),
           };
 
           const attachmentPath = resolveAttachmentPath({
@@ -257,6 +277,25 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
 
+    if (canonicalCommand.type === "thread.user-input.respond") {
+      let index = 0;
+      const attachmentsByQuestionId = Object.fromEntries(
+        Object.entries(canonicalCommand.attachmentsByQuestionId ?? {}).map(
+          ([questionId, original]) => {
+            const claimed = normalizedAttachments.slice(
+              index,
+              index + original.length,
+            ) as UserInputAttachments[string];
+            index += original.length;
+            return [questionId, claimed];
+          },
+        ),
+      );
+      return {
+        ...canonicalCommand,
+        ...(attachments.length > 0 ? { attachmentsByQuestionId } : {}),
+      };
+    }
     return {
       ...canonicalCommand,
       message: {
@@ -269,14 +308,24 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 export const cleanupFailedUploadedAttachments = Effect.fn(
   "Normalizer.cleanupFailedUploadedAttachments",
 )(function* (command: ClientOrchestrationCommand, normalizedCommand: OrchestrationCommand) {
-  if (command.type !== "thread.turn.start" || normalizedCommand.type !== "thread.turn.start") {
-    return;
-  }
+  const originalAttachments =
+    command.type === "thread.turn.start"
+      ? command.message.attachments
+      : command.type === "thread.user-input.respond"
+        ? Object.values(command.attachmentsByQuestionId ?? {}).flat()
+        : [];
+  const normalizedAttachments =
+    normalizedCommand.type === "thread.turn.start"
+      ? normalizedCommand.message.attachments
+      : normalizedCommand.type === "thread.user-input.respond"
+        ? Object.values(normalizedCommand.attachmentsByQuestionId ?? {}).flat()
+        : [];
+  if (normalizedAttachments.length === 0) return;
 
   const serverConfig = yield* ServerConfig;
   const claimedPaths: string[] = [];
-  for (const [index, attachment] of normalizedCommand.message.attachments.entries()) {
-    const original = command.message.attachments[index];
+  for (const [index, attachment] of normalizedAttachments.entries()) {
+    const original = originalAttachments[index];
     if (
       !original ||
       "dataUrl" in original ||
