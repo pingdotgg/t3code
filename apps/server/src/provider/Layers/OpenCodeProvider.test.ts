@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
@@ -164,6 +166,23 @@ beforeEach(() => {
 });
 
 const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              code: 200,
+              success: true,
+              data: { limits: [{ type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 42 }] },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -199,6 +218,44 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
+  it.effect("publishes connected Z.ai quota through the existing provider snapshot", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["zai-coding-plan"],
+          default: {},
+          all: [
+            {
+              id: "zai-coding-plan",
+              name: "Z.ai",
+              source: "api",
+              env: [],
+              key: "test-key",
+              options: {},
+              models: {},
+            },
+          ],
+        },
+        agents: [],
+        skills: [],
+      };
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.equal(snapshot.usageLimits?.windows[0]?.usedPercent, 42);
+      NodeAssert.equal(encodeJson(snapshot).includes("test-key"), false);
+      const failedQuota = yield* checkProvider(makeOpenCodeSettings()).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({}, { status: 503 }))),
+          ),
+        ),
+      );
+      NodeAssert.equal(failedQuota.status, "ready");
+      NodeAssert.equal(failedQuota.auth.status, "authenticated");
+      NodeAssert.equal(failedQuota.usageLimits?.unavailable?.reason, "probeFailed");
+    }),
+  );
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");

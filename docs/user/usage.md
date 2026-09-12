@@ -56,6 +56,12 @@ Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
+OpenCode connections using **Z.AI Coding Plan** show the coding allowance and reset times
+reported by Z.ai, with MCP tool usage in a separate window. These are account-wide limits,
+including usage outside T3 Code. Refresh Limits to update them; historical OpenCode token and
+cost reporting is separate. Quota reporting requires OpenCode to expose the resolved API key
+and is unavailable for custom API endpoints or plugin-managed authentication.
+
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
