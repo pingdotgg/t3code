@@ -61,6 +61,21 @@ Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
 
+## Stalled turns
+
+If the Claude process behind a thread loses its login while a turn is in flight,
+for example after you sign in to a different Claude account on the same machine,
+it can go quiet without reporting anything.
+
+T3 Code watches for this. When Claude produces no output for ten minutes, or
+thirty minutes while a tool or subagent is running, the turn fails with a message
+that says so and the Claude process is closed. A Claude process that quits in the
+middle of a turn is reported the same way instead of the thread showing as done
+with no answer.
+
+Send your message again to continue. The thread starts a fresh Claude process,
+which uses whatever login is active at that moment.
+
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's

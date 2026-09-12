@@ -133,7 +133,10 @@ export function resolveThreadListV2Enabled(input: {
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "session" | "latestTurn"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -144,7 +147,9 @@ export function resolveThreadListV2Status(
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
-  if (thread.session?.status === "error") {
+  // Providers close the session right after a failed stream, so the turn's
+  // own terminal state is what keeps a dead thread from reading as ready.
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return "failed";
   }
   return "ready";
