@@ -155,11 +155,16 @@ function safeProperty<T>(read: () => T): T | undefined {
   }
 }
 
-export function boundedSnapShotString(value: unknown, maxChars: number): string | undefined {
+export function boundedSnapShotString(
+  value: unknown,
+  maxChars: number,
+  onTruncated?: () => void,
+): string | undefined {
   if (typeof value !== "string") return undefined;
   const candidate = value.replaceAll("\0", "").trim();
   if (!candidate) return undefined;
   if (candidate.length <= maxChars) return candidate;
+  onTruncated?.();
   const end = /[\uD800-\uDBFF]/.test(candidate[maxChars - 1] ?? "") ? maxChars - 1 : maxChars;
   return candidate.slice(0, end).trimEnd();
 }
@@ -204,18 +209,22 @@ function accessibilityNode(
   imageSize: CapturedImageSize,
   isRoot: boolean,
   locationsReliable: boolean,
+  onTruncated: () => void,
 ): MutableAccessibilityNode {
   const name = boundedSnapShotString(
     safeProperty(() => element.name),
     1_000,
+    onTruncated,
   );
   const value = boundedSnapShotString(
     safeProperty(() => element.value),
     8_000,
+    onTruncated,
   );
   const description = boundedSnapShotString(
     safeProperty(() => element.description),
     2_000,
+    onTruncated,
   );
   const checked = safeProperty(() => element.checked);
   const expanded = safeProperty(() => element.expanded);
@@ -389,6 +398,9 @@ export async function accessibleWindowElementTree(
       imageSize,
       required,
       options.locationsReliable !== false,
+      () => {
+        truncated = true;
+      },
     );
     nodes += 1;
     root ??= node;

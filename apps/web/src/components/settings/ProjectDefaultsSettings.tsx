@@ -19,6 +19,7 @@ import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -67,6 +68,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
+  const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
@@ -218,6 +221,67 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               ) : (
                 <span className="text-sm text-muted-foreground">No providers available</span>
               )
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["defaultRuntimeMode"]}
+            mixed={mixedPermissions}
+            {...searchableSetting("default-permissions")}
+            description={
+              isProjectScope
+                ? "Permissions for new threads in this project."
+                : "Default permissions for new threads. Projects can override them."
+            }
+            resetAction={
+              settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
+                <SettingResetButton
+                  label="default permissions"
+                  onClick={() =>
+                    updateSettings({
+                      defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedPermissions ? null : settings.defaultRuntimeMode}
+                onValueChange={(value) => {
+                  if (value) updateSettings({ defaultRuntimeMode: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Default permissions">
+                  {!mixedPermissions && (
+                    <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <SelectValue>
+                    {mixedPermissions
+                      ? "Mixed"
+                      : runtimeModeConfig[settings.defaultRuntimeMode].label}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {runtimeModeOptions.map((mode) => {
+                    const option = runtimeModeConfig[mode];
+                    const Icon = option.icon;
+                    return (
+                      <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                        <div className="grid gap-0.5">
+                          <span className="inline-flex items-center gap-1.5 font-medium">
+                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                            {option.label}
+                          </span>
+                          <span className="text-xs leading-4 text-muted-foreground">
+                            {option.description}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
             }
           />
           <SettingsRow
