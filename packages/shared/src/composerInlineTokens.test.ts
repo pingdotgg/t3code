@@ -114,6 +114,34 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("入力 @expo/ui　を追加")).toEqual([]);
   });
 
+  it.each([
+    "@foo(bar)",
+    "@namespace.foo(bar)",
+    "@_private()",
+    "@$inject(service)",
+    "@écrire(option)",
+    "@工場.監査(値)",
+    "@e\u0301crire(option)",
+    '@factories["audit"](options)',
+  ])("keeps decorator call %s as plain text", (reference) => {
+    expect(collectComposerInlineTokens(`${reference}\nclass Example {}`)).toEqual([]);
+  });
+
+  it.each(['@"foo(bar)"', "[foo(bar)](foo%28bar%29)"])(
+    "keeps an explicit decorator-shaped file reference as a mention: %s",
+    (reference) => {
+      expect(collectComposerInlineTokens(`${reference} `)).toEqual([
+        {
+          type: "mention",
+          value: "foo(bar)",
+          source: reference,
+          start: 0,
+          end: reference.length,
+        },
+      ]);
+    },
+  );
+
   it("keeps bare non-scoped file paths as mentions", () => {
     expect(collectComposerInlineTokens("Inspect @README.md next")).toEqual([
       {
