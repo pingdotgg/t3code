@@ -222,6 +222,12 @@ export function NativeMarkdownSelectableText(props: {
       }
     }
 
+    // Android renders the icon as an inline Image before the text. A regular space
+    // lets the line break between them, stranding the icon on the previous line.
+    if (Platform.OS === "android" && (run.fileIcon || linkIcon)) {
+      text = `\u00A0${text}`;
+    }
+
     return { key: `${signature}:${occurrence}`, run, text, linkIcon };
   });
   // T3MarkdownText only rebuilds its attributed string during native layout. A

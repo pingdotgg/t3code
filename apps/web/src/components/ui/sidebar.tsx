@@ -156,10 +156,8 @@ function SidebarProvider({
   return (
     <SidebarContext value={contextValue}>
       <div
-        className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
-          className,
-        )}
+        // Inset layouts opt into bg-sidebar through className.
+        className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
         data-sidebar-state={state}
         data-slot="sidebar-wrapper"
         style={
