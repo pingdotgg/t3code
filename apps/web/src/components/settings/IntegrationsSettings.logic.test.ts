@@ -4,6 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   browserProfileRemovalAvailable,
   clearBrowserProfileData,
+  importedBrowserProfileName,
   importFailureReason,
 } from "./IntegrationsSettings";
 
@@ -74,6 +75,54 @@ describe("browserProfileRemovalAvailable", () => {
     expect(browserProfileRemovalAvailable(true, true, 0)).toBe(false);
     expect(browserProfileRemovalAvailable(true, false, 1)).toBe(false);
     expect(browserProfileRemovalAvailable(false, true, 1)).toBe(false);
+  });
+});
+
+describe("importedBrowserProfileName", () => {
+  it("uses the browser and selected source profile names when no name is taken", () => {
+    expect(importedBrowserProfileName("Chrome", "Work", new Set())).toBe("Chrome Work");
+  });
+
+  it("avoids names held by the resolved built-ins and user profiles", () => {
+    expect(
+      importedBrowserProfileName(
+        "Chrome",
+        "Work",
+        new Set(["Default", "Incognito", "Chrome Work"]),
+      ),
+    ).toBe("Chrome Work 2");
+  });
+
+  it("adds the next numeric suffix when prior imported names collide", () => {
+    expect(
+      importedBrowserProfileName("Chrome", "Work", new Set(["Chrome Work", "Chrome Work 2"])),
+    ).toBe("Chrome Work 3");
+  });
+
+  it("truncates an unsuffixed name at the browser profile name limit", () => {
+    expect(importedBrowserProfileName("C".repeat(30), "W".repeat(30), new Set())).toBe(
+      `${"C".repeat(30)} ${"W".repeat(17)}`,
+    );
+  });
+
+  it("reserves room for the numeric suffix when a long imported name collides", () => {
+    const fullName = `${"C".repeat(30)} ${"W".repeat(17)}`;
+    expect(importedBrowserProfileName("C".repeat(30), "W".repeat(30), new Set([fullName]))).toBe(
+      `${"C".repeat(30)} ${"W".repeat(15)} 2`,
+    );
+  });
+
+  it("does not split an astral character at the profile name limit", () => {
+    const sourceName = `${"C".repeat(47)}🚀`;
+    expect(importedBrowserProfileName(sourceName, "Work", new Set())).toBe("C".repeat(47));
+  });
+
+  it("does not split an astral character while reserving suffix space", () => {
+    const sourceName = `${"C".repeat(45)}🚀`;
+    const unsuffixedName = `${sourceName}`;
+    expect(importedBrowserProfileName(sourceName, "Work", new Set([unsuffixedName]))).toBe(
+      `${"C".repeat(45)} 2`,
+    );
   });
 });
 

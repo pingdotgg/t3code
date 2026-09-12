@@ -141,6 +141,13 @@ export function refreshedSourceProfileDirectory(
   return source.profiles[0]?.directory ?? "";
 }
 
+export function resolveSourceProfile(
+  sourceProfileDirectory: string,
+  source: BrowserImportSource,
+): BrowserImportSource["profiles"][number] | undefined {
+  return source.profiles.find((profile) => profile.directory === sourceProfileDirectory);
+}
+
 /**
  * Whether retrying could clear a failure. The keychain prompt can be approved
  * on a second try, a missing key appears once the user signs in to the
