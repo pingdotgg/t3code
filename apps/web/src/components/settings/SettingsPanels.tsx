@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type AgentSessionImportWindow,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -173,6 +174,14 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+/** Selector copy for how far back agent history import reaches. */
+const AGENT_SESSION_IMPORT_WINDOW_LABELS: Record<AgentSessionImportWindow, string> = {
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  "1y": "Last year",
+  all: "All history",
+};
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -2187,6 +2196,82 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("import-agent-history")}
+          description="Bring Claude Code and Codex conversations on this computer into T3 Code as settled threads, and keep importing new ones."
+          resetAction={
+            settings.agentSessionAutoImport !== DEFAULT_UNIFIED_SETTINGS.agentSessionAutoImport ? (
+              <SettingResetButton
+                label="automatic history import"
+                onClick={() =>
+                  updateSettings({
+                    agentSessionAutoImport: DEFAULT_UNIFIED_SETTINGS.agentSessionAutoImport,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.agentSessionAutoImport}
+              onCheckedChange={(checked) =>
+                updateSettings({ agentSessionAutoImport: Boolean(checked) })
+              }
+              aria-label="Import agent history automatically"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("agent-history-window")}
+          description="Conversations older than this stay on disk and are not imported."
+          resetAction={
+            settings.agentSessionImportWindow !==
+            DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindow ? (
+              <SettingResetButton
+                label="history window"
+                onClick={() =>
+                  updateSettings({
+                    agentSessionImportWindow: DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindow,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentSessionImportWindow}
+              onValueChange={(value) => {
+                if (value === "30d" || value === "90d" || value === "1y" || value === "all") {
+                  updateSettings({ agentSessionImportWindow: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="History to import">
+                <SelectValue>
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS[settings.agentSessionImportWindow]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="30d">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["30d"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="90d">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["90d"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="1y">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["1y"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="all">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS.all}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">

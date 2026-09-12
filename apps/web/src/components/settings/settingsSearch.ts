@@ -183,6 +183,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     requiresThreadAutoSettlement: true,
   },
   {
+    id: "import-agent-history",
+    title: "Import agent history automatically",
+    to: "/settings/general",
+    searchTerms: ["claude code codex conversations chats history import migrate existing"],
+  },
+  {
+    id: "agent-history-window",
+    title: "History to import",
+    to: "/settings/general",
+    targetId: "import-agent-history",
+    searchTerms: ["claude codex how far back window days year all history import"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
