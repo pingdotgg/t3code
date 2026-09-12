@@ -210,6 +210,7 @@ const config: ExpoConfig = {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
     infoPlist: {
+      UIBackgroundModes: ["audio"],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },

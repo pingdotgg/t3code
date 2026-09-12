@@ -18,3 +18,13 @@ fires would race that work. The [transcription contract](../../packages/client-r
 therefore requires implementations to settle only after their work has stopped;
 the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
 cancellation between native calls and discards late results.
+
+Mobile's `VoiceInputProvider` keeps one recorder and `VoiceInputSession` above navigation.
+The session owns the original draft key and writes through the composer draft store even
+when its screen is unmounted. It observes draft edits to reject stale transcripts.
+Navigation and app backgrounding preserve active capture; backgrounding still cancels
+preparation. iOS background audio mode and Expo background recording keep capture active.
+Waveform sampling runs only for a focused, foreground composer.
+
+Cleanup tolerates unavailable native recorder properties and releases the audio session
+and recording lock even if Expo has already released the recorder.
