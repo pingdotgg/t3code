@@ -20,6 +20,9 @@ import type {
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
+import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -1102,6 +1105,129 @@ it.effect("refuses an action this viewer may not take, and says what access it t
     // What the author keeps whatever their access is still theirs to take.
     yield* service.runAction({ ...reference, action: "close" });
     assert.strictEqual(ran, "close");
+  }),
+);
+
+for (const permission of ["read", "write", "admin"] as const) {
+  it.effect(`checks Bitbucket workspace permissions before merging with ${permission} access`, () =>
+    Effect.gen(function* () {
+      const calls: Array<Parameters<BitbucketApi.BitbucketApi["Service"]["request"]>[0]> = [];
+      const provider = yield* BitbucketPullRequestProvider.make.pipe(
+        Effect.provide(
+          BitbucketPullRequestApi.layer.pipe(
+            Layer.provide(
+              Layer.mock(BitbucketApi.BitbucketApi)({
+                request: (input) => {
+                  calls.push(input);
+                  const url = new URL(input.url, "https://api.bitbucket.org");
+                  if (url.pathname === "/user/workspaces/acme/permissions/repositories") {
+                    assert.strictEqual(
+                      url.searchParams.get("q"),
+                      'repository.full_name="acme/web"',
+                    );
+                    return Effect.succeed({
+                      body: JSON.stringify({
+                        values: [
+                          { repository: { name: "Web App", full_name: "acme/web" }, permission },
+                        ],
+                      }),
+                      truncated: false,
+                    });
+                  }
+                  if (
+                    input.method === "POST" &&
+                    url.pathname === "/repositories/acme/web/pullrequests/1/merge"
+                  ) {
+                    return Effect.succeed({ body: "{}", truncated: false });
+                  }
+                  return Effect.die(`Unexpected Bitbucket request: ${input.method} ${input.url}`);
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository: "acme/web",
+            provider: "bitbucket",
+            host: "bitbucket.org",
+          }),
+        ],
+        providers: [
+          {
+            ...provider,
+            getChangeRequestSummary: () =>
+              Effect.succeed({ ...changeRequest(1, "2026-07-02T00:00:00Z"), state: "merged" }),
+          },
+        ],
+      });
+      const merge = service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action: "merge",
+        mergeMethod: "squash",
+      });
+      if (permission === "read") {
+        const error = yield* Effect.flip(merge);
+        assert.include(error.message, "You need write access on this repository to merge.");
+        assert.strictEqual(calls.length, 1);
+      } else {
+        yield* merge;
+        assert.strictEqual(calls.length, 2);
+        assert.strictEqual(calls[1]?.body, '{"merge_strategy":"squash"}');
+      }
+    }),
+  );
+}
+
+it.effect("identifies a Bitbucket permission lookup failure before attempting a merge", () =>
+  Effect.gen(function* () {
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getRepositoryPermission: () =>
+            Effect.fail(
+              new BitbucketApi.BitbucketResponseError({
+                operation: "request",
+                status: 404,
+                responseBodyLength: 0,
+              }),
+            ),
+          runAction: () => Effect.die("A failed permission check must not attempt a merge"),
+        }),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [provider],
+    });
+    const error = yield* Effect.flip(
+      service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action: "merge",
+      }),
+    );
+    assert.include(
+      error.message,
+      "Could not check your Bitbucket repository permissions. Bitbucket returned HTTP 404.",
+    );
   }),
 );
 
