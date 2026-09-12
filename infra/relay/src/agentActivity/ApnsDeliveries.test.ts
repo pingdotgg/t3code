@@ -34,6 +34,9 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
+import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import { FcmDeliveries } from "./FcmDeliveries.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -146,6 +149,7 @@ const target: LiveActivities.TargetRow = {
   last_live_activity_delivery_at: null,
 };
 
+/** Shares test persistence and queue services between delivery and publisher tests. */
 function makeLayer(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
@@ -179,7 +183,7 @@ function makeLayer(input: {
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
           upsert: () => Effect.void,
@@ -257,6 +261,156 @@ function makeLayer(input: {
 }
 
 describe("ApnsDeliveries", () => {
+  for (const liveActivitiesEnabled of [false, true]) {
+    for (const [phase, maxAgeMs] of [
+      ["waiting_for_input", 24 * 60 * 60 * 1_000],
+      ["waiting_for_approval", 24 * 60 * 60 * 1_000],
+      ["completed", 2 * 60 * 1_000],
+      ["failed", 2 * 60 * 1_000],
+    ] as const) {
+      for (const expired of [false, true]) {
+        it.effect(
+          `${expired ? "skips" : "queues"} the published ${phase} alert ${expired ? "after" : "at"} its age limit, Live Activities ${liveActivitiesEnabled ? "unarmed" : "disabled"}`,
+          () => {
+            const queuedJobs: SignedApnsDeliveryJob[] = [];
+            return Effect.gen(function* () {
+              const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+              yield* deliveries.sendForTarget({
+                target: {
+                  ...target,
+                  push_token: "push-token",
+                  activity_push_token: liveActivitiesEnabled ? null : target.activity_push_token,
+                  preferences_json: liveActivitiesEnabled
+                    ? enabledPreferences
+                    : disabledPreferences,
+                },
+                aggregate: null,
+                notificationState: { ...state, phase },
+                nowMs: maxAgeMs + (expired ? 1 : 0),
+              });
+              expect(
+                queuedJobs.filter((job) => job.payload.kind === "push_notification"),
+              ).toHaveLength(expired ? 0 : 1);
+            }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+          },
+        );
+      }
+    }
+  }
+
+  for (const scenario of ["deleted", "replay", "muted", "event muted"] as const) {
+    it.effect(`keeps a ${scenario} published input state silent`, () => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.sendForTarget({
+          target: {
+            ...target,
+            push_token: "push-token",
+            activity_push_token: null,
+            preferences_json: JSON.stringify({
+              ...JSON.parse(enabledPreferences),
+              notificationsEnabled: scenario !== "muted",
+              notifyOnInput: scenario !== "event muted",
+            }),
+          },
+          aggregate: {
+            ...aggregate,
+            activities: [{ ...aggregate.activities[0]!, phase: "waiting_for_input" }],
+          },
+          notificationState:
+            scenario === "deleted" ? null : { ...state, phase: "waiting_for_input" },
+          replay: scenario === "replay",
+          nowMs: 0,
+        });
+        expect(queuedJobs).toEqual([]);
+      }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+    });
+  }
+
+  for (const environment of [
+    { name: "both channels", liveActivitiesEnabled: true, notificationsEnabled: true },
+    { name: "notifications only", liveActivitiesEnabled: false, notificationsEnabled: true },
+    { name: "Live Activities only", liveActivitiesEnabled: true, notificationsEnabled: false },
+  ]) {
+    for (const deviceLiveActivitiesEnabled of [false, true]) {
+      for (const phase of ["completed", "failed"] as const) {
+        it.effect(
+          `${environment.notificationsEnabled ? "queues" : "skips"} the published ${phase} alert with other work, environment ${environment.name}, device Live Activities ${deviceLiveActivitiesEnabled ? "unarmed" : "disabled"}`,
+          () => {
+            const queuedJobs: SignedApnsDeliveryJob[] = [];
+            const finished = { ...state, phase };
+            const device = {
+              ...target,
+              push_token: "push-token",
+              activity_push_token: deviceLiveActivitiesEnabled ? null : target.activity_push_token,
+              preferences_json: deviceLiveActivitiesEnabled
+                ? enabledPreferences
+                : disabledPreferences,
+            };
+            const otherWork = Array.from({ length: phase === "completed" ? 1 : 5 }, (_, index) => ({
+              ...state,
+              threadId: `other-${index}` as RelayAgentActivityState["threadId"],
+            }));
+            return Effect.gen(function* () {
+              const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+              yield* publisher.publish({
+                environmentId: finished.environmentId,
+                environmentPublicKey: "key",
+                threadId: finished.threadId,
+                state: finished,
+              });
+              expect(
+                queuedJobs
+                  .filter((job) => job.payload.kind === "push_notification")
+                  .map((job) => job.payload.notification),
+              ).toMatchObject(
+                environment.notificationsEnabled ? [{ threadId: finished.threadId, phase }] : [],
+              );
+            }).pipe(
+              Effect.provide(
+                AgentActivityPublisher.layer.pipe(
+                  Layer.provide(
+                    makeLayer({
+                      attempts: [],
+                      queuedJobs,
+                      activityStates: [...otherWork, finished],
+                      currentTargets: [device],
+                    }),
+                  ),
+                  Layer.provide(
+                    Layer.succeed(FcmDeliveries, {
+                      enqueue: () => Effect.succeed(null),
+                      process: () => Effect.void,
+                    }),
+                  ),
+                  Layer.provide(
+                    Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
+                      upsert: () => Effect.void,
+                      listUsersForEnvironment: () => Effect.succeed([device.user_id]),
+                      listDeliveryUsersForEnvironment: () =>
+                        Effect.succeed([
+                          {
+                            userId: device.user_id,
+                            notificationsEnabled: environment.notificationsEnabled,
+                            liveActivitiesEnabled: environment.liveActivitiesEnabled,
+                          },
+                        ]),
+                      listPublicKeysForEnvironment: () => Effect.succeed([]),
+                      listForUser: () => Effect.succeed([]),
+                      getForUser: () => Effect.succeed(null),
+                      revokeForUser: () => Effect.succeed(false),
+                    }),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      }
+    }
+  }
+
   it.effect("skips Apple delivery when an Android-only relay disables APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
@@ -567,6 +721,7 @@ describe("ApnsDeliveries", () => {
             last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
           },
           aggregate: waitingAggregate,
+          notificationState: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -1983,8 +2138,13 @@ describe("fast completion delivery", () => {
     };
     return Effect.gen(function* () {
       const d = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* d.sendForTarget({ target: device, aggregate, nowMs: 0 });
-      yield* d.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+      yield* d.sendForTarget({ target: device, aggregate, notificationState: state, nowMs: 0 });
+      yield* d.sendForTarget({
+        target: device,
+        aggregate: done,
+        notificationState: { ...state, phase: "completed" },
+        nowMs: 0,
+      });
       expect(
         queuedJobs.some((x) => x.payload.alert !== null && x.payload.alert !== undefined),
       ).toBe(true);
