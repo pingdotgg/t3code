@@ -236,6 +236,39 @@ describe("readEnvironmentFromWindowsShell", () => {
     });
   });
 
+  it("reads the persisted User and Machine stores, not only the process copy", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+
+    readEnvironmentFromWindowsShell(["PATH", "FNM_DIR"], execFile);
+
+    // A desktop launch inherits a PATH snapshot that predates `winget install`,
+    // so the persisted stores are the only place the new entry exists.
+    const command = execFile.mock.calls[0]?.[1]?.at(-1) ?? "";
+    // Machine PATH is REG_EXPAND_SZ, and .NET expands its `%VAR%` references
+    // against the reading process, so the persisted variables have to land in
+    // the probe's own block before any value is read - filling gaps only, so a
+    // value the launching shell set deliberately still wins.
+    expect(command).toContain("foreach ($target in @('User', 'Machine'))");
+    expect(command).toContain("-not [Environment]::GetEnvironmentVariable($entry.Key, 'Process')");
+    expect(command).toContain(
+      "[Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')",
+    );
+    expect(command).toContain(
+      "@('Process', 'User', 'Machine') | ForEach-Object { try { [Environment]::GetEnvironmentVariable('PATH', $_) } catch { $null } }",
+    );
+    expect(command).toContain("$value = $candidates -join ';'");
+    expect(command).toContain(
+      "@('Process', 'User', 'Machine') | ForEach-Object { try { [Environment]::GetEnvironmentVariable('FNM_DIR', $_) } catch { $null } }",
+    );
+    expect(command).toContain("$value = @($candidates)[0]");
+  });
+
   it("omits -NoProfile when loadProfile is enabled", () => {
     const execFile = vi.fn<
       (
@@ -327,6 +360,7 @@ describe("resolveKnownWindowsCliDirs", () => {
       "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
       "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+      "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
       "C:\\Users\\testuser\\.local\\bin",
       "C:\\Users\\testuser\\.bun\\bin",
       "C:\\Users\\testuser\\scoop\\shims",
@@ -587,6 +621,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
@@ -635,6 +670,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links",
           "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",

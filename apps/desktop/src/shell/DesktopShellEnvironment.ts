@@ -209,7 +209,12 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.LOCALAPPDATA).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\Programs\\nodejs`, `${value}\\Volta\\bin`, `${value}\\pnpm`],
+      onSome: (value) => [
+        `${value}\\Programs\\nodejs`,
+        `${value}\\Volta\\bin`,
+        `${value}\\pnpm`,
+        `${value}\\Microsoft\\WinGet\\Links`,
+      ],
     }),
   ),
   ...trimNonEmpty(env.USERPROFILE).pipe(
@@ -246,13 +251,43 @@ const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
     })
     .join("; ");
 
+/**
+ * Reads a variable from the process copy and from the persisted User and Machine
+ * stores. The process copy alone is a snapshot taken when the launching shell
+ * started, so an entry a package manager persisted afterwards (`winget install`
+ * appending to User PATH, say) stays invisible to a Start Menu launch until the
+ * user signs out. PATH keeps every source and is deduped downstream; any other
+ * variable takes the first store that has it. A store that cannot be read yields
+ * nothing rather than failing the whole probe.
+ */
+const windowsEnvironmentValueExpressions = (name: string): ReadonlyArray<string> => [
+  `$candidates = @('Process', 'User', 'Machine') | ForEach-Object { try { [Environment]::GetEnvironmentVariable('${name}', $_) } catch { $null } } | Where-Object { $_ }`,
+  name === "PATH" ? "$value = $candidates -join ';'" : "$value = @($candidates)[0]",
+];
+
+/**
+ * Fills gaps in this probe's own process block from the persisted stores before
+ * any value is read. Machine and User `PATH` are `REG_EXPAND_SZ`, and .NET expands
+ * their `%VAR%` references against the reading process, so an installer that
+ * persisted both a new variable and a `PATH` entry referencing it would otherwise
+ * yield a literal `%VAR%\bin` that resolves to nothing.
+ *
+ * Only names the process does not already carry are filled, and User is applied
+ * before Machine, which keeps the same Process before User before Machine order
+ * the capture below relies on. A value the launching shell set deliberately is
+ * never replaced. `PATH` is skipped outright: it is the value being measured.
+ */
+const windowsPersistedEnvironmentHydration =
+  "foreach ($target in @('User', 'Machine')) { try { foreach ($entry in ([Environment]::GetEnvironmentVariables($target)).GetEnumerator()) { if ($entry.Key -ne 'PATH' -and -not [Environment]::GetEnvironmentVariable($entry.Key, 'Process')) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') } } } catch { } }";
+
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
     "$ErrorActionPreference = 'Stop'",
+    windowsPersistedEnvironmentHydration,
     ...names.flatMap((name) => {
       return [
         `Write-Output '${startMarker(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...windowsEnvironmentValueExpressions(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${endMarker(name)}'`,
       ];
