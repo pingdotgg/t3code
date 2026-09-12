@@ -1,13 +1,56 @@
-import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
+import type {
+  PullRequestComment,
+  PullRequestDetail,
+  PullRequestReaction,
+  PullRequestReactionContent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyPendingPullRequestReactions,
+  canReactPullRequestComment,
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
 } from "./pullRequestReactions.logic";
+
+describe("comment reaction permissions", () => {
+  it.each<{
+    provider: PullRequestDetail["provider"];
+    kind: PullRequestComment["kind"];
+    expected: boolean;
+  }>([
+    { provider: "gitlab", kind: "review", expected: false },
+    { provider: "gitlab", kind: "issue-comment", expected: true },
+    { provider: "gitlab", kind: "review-comment", expected: true },
+    { provider: "github", kind: "review", expected: true },
+  ])("$provider $kind is reactable: $expected", ({ provider, kind, expected }) => {
+    const capabilities: PullRequestDetail["capabilities"] = {
+      diff: true,
+      comment: true,
+      actions: [],
+      mergeMethods: [],
+      search: true,
+      reactions: true,
+      review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+      reviewers: { request: true, listCandidates: true },
+    };
+    expect(canReactPullRequestComment({ provider, capabilities }, { kind })).toBe(expected);
+    expect(
+      canReactPullRequestComment(
+        { provider, capabilities: { ...capabilities, reactions: false } },
+        { kind },
+      ),
+    ).toBe(false);
+    expect(
+      canReactPullRequestComment(
+        { provider, capabilities: { ...capabilities, reactions: undefined } },
+        { kind },
+      ),
+    ).toBe(false);
+  });
+});
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
   return {
