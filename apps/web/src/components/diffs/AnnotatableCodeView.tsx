@@ -86,7 +86,7 @@ interface AnnotatableCodeViewProps {
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
-  renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
+  renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata, fileKey: string) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
     fileKey: string,
@@ -255,7 +255,7 @@ export function AnnotatableCodeView({
         onGutterUtilityClick: beginComment,
       }}
       renderHeaderFilenameSuffix={(item) =>
-        item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
+        item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff, item.id) : null
       }
       renderHeaderPrefix={(item) =>
         item.type === "diff"

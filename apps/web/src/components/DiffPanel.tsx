@@ -955,14 +955,10 @@ export default function DiffPanel({
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
                     );
-                    const headerFilePath = header
-                      ?.querySelector("[data-title]")
-                      ?.textContent?.trim();
-                    if (!headerFilePath) return;
-                    const file = codeViewFiles.find(
-                      (candidate) => candidate.filePath === headerFilePath,
-                    );
-                    if (file) toggleDiffFileCollapsed(file.fileKey);
+                    const fileKey =
+                      header?.querySelector<HTMLElement>("[data-diff-file-key]")?.dataset
+                        .diffFileKey;
+                    if (fileKey) toggleDiffFileCollapsed(fileKey);
                   }}
                 >
                   <AnnotatableCodeView
@@ -974,8 +970,11 @@ export default function DiffPanel({
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
-                    renderHeaderFilenameSuffix={(fileDiff) => (
-                      <DiffFilePathCopyButton filePath={resolveFileDiffPath(fileDiff)} />
+                    renderHeaderFilenameSuffix={(fileDiff, fileKey) => (
+                      <>
+                        <span data-diff-file-key={fileKey} />
+                        <DiffFilePathCopyButton filePath={resolveFileDiffPath(fileDiff)} />
+                      </>
                     )}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       const filePath = resolveFileDiffPath(fileDiff);
