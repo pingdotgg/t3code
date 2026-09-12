@@ -7,6 +7,7 @@ import {
 } from "../diffs/nativeReviewDiffHighlighter";
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
+import { logReviewDiffDiagnostic } from "./useReviewDiffData";
 
 interface NativeReviewVisibleRange {
   readonly firstRowIndex: number;
@@ -15,23 +16,6 @@ interface NativeReviewVisibleRange {
 
 function createEmptyTokenPatch(resetKey: string): string {
   return JSON.stringify({ resetKey, tokensByRowId: {} });
-}
-
-function isReviewDiffDebugLoggingEnabled(): boolean {
-  return typeof __DEV__ !== "undefined" ? __DEV__ : false;
-}
-
-function logReviewDiffDiagnostic(message: string, details?: Record<string, unknown>): void {
-  if (!isReviewDiffDebugLoggingEnabled()) {
-    return;
-  }
-
-  if (details) {
-    console.log(`[review-sheet] ${message}`, details);
-    return;
-  }
-
-  console.log(`[review-sheet] ${message}`);
 }
 
 export function useNativeReviewDiffHighlighting(input: {

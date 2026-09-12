@@ -586,7 +586,13 @@ export function useThreadListActions(): {
               input: { threadId: thread.id, ...(orderKey === undefined ? {} : { orderKey }) },
             });
             if (result._tag === "Failure") {
-              Alert.alert("Could not pin thread", String(Cause.squash(result.cause)));
+              const error = Cause.squash(result.cause);
+              Alert.alert(
+                "Could not pin thread",
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "The thread could not be pinned.",
+              );
               return false;
             }
           } else {
