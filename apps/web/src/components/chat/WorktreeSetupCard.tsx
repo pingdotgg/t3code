@@ -163,7 +163,9 @@ function headerLabel(snapshot: WorktreeSetupSnapshot): string {
     case "running":
       return "Creating worktree";
     case "done":
-      return "Worktree ready";
+      return snapshot.stages.some((stage) => stage.status === "failed")
+        ? "Worktree ready, setup script failed"
+        : "Worktree ready";
     case "failed":
       return "Worktree setup failed";
     case "cancelled":
@@ -187,11 +189,15 @@ export function WorktreeSetupCard({
   })();
   const setupStage = snapshot.stages.find((stage) => stage.id === "setup-script");
   const failed = snapshot.phase === "failed";
+  const finishedWithFailedStage =
+    snapshot.phase === "done" && snapshot.stages.some((stage) => stage.status === "failed");
   const headerClassName = failed
     ? "text-destructive-foreground"
-    : snapshot.phase === "cancelled"
-      ? "text-muted-foreground"
-      : "text-secondary-label";
+    : finishedWithFailedStage
+      ? "text-warning-foreground"
+      : snapshot.phase === "cancelled"
+        ? "text-muted-foreground"
+        : "text-secondary-label";
 
   return (
     <section

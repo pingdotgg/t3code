@@ -343,7 +343,7 @@ export const make = Effect.gen(function* () {
       ? yield* observeTerminalCompletion({
           threadId: input.threadId,
           terminalId,
-          echoedWrapperLines: commandLine.split("\r"),
+          echoedWrapperLines: commandLine.split("\r").filter((line) => line.length > 0),
           onOutputLine: observe.onOutputLine,
         })
       : undefined;
