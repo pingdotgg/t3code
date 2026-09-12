@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
@@ -85,6 +87,48 @@ describe("ElectronProtocol", () => {
       assert.isNull(forwardedHeaders.get("referer"));
       assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["t3code-dev"]]);
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
+  it.effect("follows the live target override once the backend resolves its URL", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockResolvedValue(new Response("ok"));
+      // The resolved URL arrives after registration (backend onReady), so the
+      // override starts empty and falls back to the registered loopback.
+      const resolvedOrigin = yield* Ref.make<Option.Option<URL>>(Option.none());
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            targetOriginOverride: Effect.map(
+              Ref.get(resolvedOrigin),
+              (resolved) =>
+                Option.isSome(resolved)
+                  ? resolved.value
+                  : new URL("http://127.0.0.1:3773/"),
+            ),
+            backendOrigin: new URL("http://127.0.0.1:3774/"),
+            clerkFrontendApiHostname: undefined,
+          });
+
+          yield* Effect.promise(() => handler!(new Request("t3code-dev://app/api/health")));
+          assert.equal(netFetchMock.mock.calls[0]?.[0], "http://127.0.0.1:3773/api/health");
+
+          yield* Ref.set(
+            resolvedOrigin,
+            Option.some(new URL("http://172.27.0.99:3773/")),
+          );
+          yield* Effect.promise(() => handler!(new Request("t3code-dev://app/api/health")));
+          assert.equal(netFetchMock.mock.calls[1]?.[0], "http://172.27.0.99:3773/api/health");
+        }),
+      );
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 

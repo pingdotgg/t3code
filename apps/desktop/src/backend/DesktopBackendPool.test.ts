@@ -16,6 +16,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import type { DesktopBackendSnapshot, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 
@@ -83,6 +84,16 @@ function makePoolLayer(
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
+        Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+          getState: Effect.die("unexpected getState"),
+          backendConfig: Effect.die("unexpected backendConfig"),
+          backendProxyOrigin: Effect.die("unexpected backendProxyOrigin"),
+          noteResolvedBackendOrigin: () => Effect.void,
+          configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+          setMode: () => Effect.die("unexpected setMode"),
+          setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+          getAdvertisedEndpoints: Effect.succeed([]),
+        } satisfies DesktopServerExposure.DesktopServerExposure["Service"]),
         DesktopAppSettings.layerTest(),
         DesktopWslEnvironment.layerTest(),
         ElectronDialog.layer,
