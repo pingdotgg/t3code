@@ -17,7 +17,7 @@ import {
   MessageSquareIcon,
   PencilIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -565,27 +565,41 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
 }) {
-  const events = buildPullRequestTimeline(detail);
-  const newestCommitAt = newestPullRequestCommitAt(detail.commits);
-  const reactions: ReactionSurface = {
-    canReact: detail.capabilities.reactions === true,
-    environmentId,
-    threadRef,
-    reference,
-    onRefresh,
-  };
+  // Memoized keyed by the detail: every tab stays mounted behind the active one, so a
+  // panel-level state change (a tab switch, a handoff, a draft-store update) re-renders this
+  // tab too, and each of those rebuilt the whole event list, the editable map and the grouped
+  // rows from scratch.
+  const events = useMemo(() => buildPullRequestTimeline(detail), [detail]);
+  const newestCommitAt = useMemo(() => newestPullRequestCommitAt(detail.commits), [detail.commits]);
+  const reactions: ReactionSurface = useMemo(
+    () => ({
+      canReact: detail.capabilities.reactions === true,
+      environmentId,
+      threadRef,
+      reference,
+      onRefresh,
+    }),
+    [detail.capabilities.reactions, environmentId, onRefresh, reference, threadRef],
+  );
   // A timeline entry keeps only what it draws, so the remarks this reader may rewrite are looked
   // up here by the id the entry carries.
-  const editable = new Map(
-    detail.comments
-      .filter((comment) => canEditPullRequestComment(detail, comment))
-      .map((comment) => [comment.id, comment] as const),
+  const editable = useMemo(
+    () =>
+      new Map(
+        detail.comments
+          .filter((comment) => canEditPullRequestComment(detail, comment))
+          .map((comment) => [comment.id, comment] as const),
+      ),
+    [detail],
   );
-  const orderedEvents = order === "newest" ? events : events.toReversed();
-  const rows = groupPullRequestTimelineConversations(orderedEvents);
-  const openOnHost = (url: string) => {
+  const orderedEvents = useMemo(
+    () => (order === "newest" ? events : events.toReversed()),
+    [events, order],
+  );
+  const rows = useMemo(() => groupPullRequestTimelineConversations(orderedEvents), [orderedEvents]);
+  const openOnHost = useCallback((url: string) => {
     void readLocalApi()?.shell.openExternal(url);
-  };
+  }, []);
 
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
