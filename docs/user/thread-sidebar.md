@@ -125,3 +125,10 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+## Window title
+
+The window title follows the thread you have open. Desktop shows the project and
+thread, like `my-project / Fix login bug`, and browser tabs add the app name as a
+suffix. Titles update when a thread is renamed or a generated title arrives, and
+return to the app name with no thread open.

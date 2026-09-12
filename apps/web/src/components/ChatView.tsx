@@ -108,6 +108,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { clearWindowTitleContext, setWindowTitleContext } from "../windowTitleStore";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -2063,6 +2064,12 @@ export default function ChatView(props: ChatViewProps) {
     [activeProject, settings],
   );
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  const activeProjectTitle = activeProject?.title ?? null;
+  const activeThreadTitle = activeThread?.title ?? null;
+  useEffect(() => {
+    setWindowTitleContext({ projectTitle: activeProjectTitle, threadTitle: activeThreadTitle });
+  }, [activeProjectTitle, activeThreadTitle]);
+  useEffect(() => clearWindowTitleContext, []);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
