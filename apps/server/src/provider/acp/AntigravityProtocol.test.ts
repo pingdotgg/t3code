@@ -482,4 +482,112 @@ describe("Antigravity tool results", () => {
     );
     expect(isAntigravityOpenCommand(completed)).toBe(false);
   });
+
+  it("extracts output from rawOutput strings and alternative fields", () => {
+    const fromString = normalizeAntigravityToolCall({
+      toolCallId: "str-1",
+      kind: "execute",
+      command: "sample-command",
+      data: {
+        command: "sample-command",
+        rawOutput: "sample direct output\n",
+      },
+    });
+    expect(fromString.data.item).toMatchObject({
+      command: "sample-command",
+      aggregatedOutput: "sample direct output\n",
+    });
+
+    const fromObjectFields = normalizeAntigravityToolCall({
+      toolCallId: "obj-1",
+      kind: "execute",
+      command: "sample-tool",
+      data: {
+        command: "sample-tool",
+        rawOutput: {
+          output: "sample structured output\n",
+          exitCode: 0,
+        },
+      },
+    });
+    expect(fromObjectFields.data.item).toMatchObject({
+      command: "sample-tool",
+      aggregatedOutput: "sample structured output\n",
+      exitCode: 0,
+    });
+
+    const fromSeparateStreams = normalizeAntigravityToolCall({
+      toolCallId: "obj-2",
+      kind: "execute",
+      command: "sample-tool",
+      data: {
+        command: "sample-tool",
+        rawOutput: {
+          stdout: "stdout line\n",
+          stderr: "stderr warning\n",
+          exitCode: 0,
+        },
+      },
+    });
+    expect(fromSeparateStreams.data.item).toMatchObject({
+      command: "sample-tool",
+      aggregatedOutput: "stdout line\n\nstderr warning\n",
+      exitCode: 0,
+    });
+
+    const fromStderrOnly = normalizeAntigravityToolCall({
+      toolCallId: "obj-3",
+      kind: "execute",
+      command: "sample-tool",
+      data: {
+        command: "sample-tool",
+        rawOutput: {
+          stderr: "stderr only message\n",
+          exitCode: 1,
+        },
+      },
+    });
+    expect(fromStderrOnly.data.item).toMatchObject({
+      command: "sample-tool",
+      aggregatedOutput: "stderr only message\n",
+      exitCode: 1,
+    });
+
+    const fromStructuredResultObject = normalizeAntigravityToolCall({
+      toolCallId: "obj-4",
+      kind: "execute",
+      command: "sample-tool",
+      data: {
+        command: "sample-tool",
+        rawOutput: {
+          result: { content: "sample inner content\n" },
+          exitCode: 0,
+        },
+      },
+    });
+    expect(fromStructuredResultObject.data.item).toMatchObject({
+      command: "sample-tool",
+      aggregatedOutput: "sample inner content\n",
+      exitCode: 0,
+    });
+
+    const fromEmptyOutputWithStderr = normalizeAntigravityToolCall({
+      toolCallId: "obj-5",
+      kind: "execute",
+      command: "sample-tool",
+      data: {
+        command: "sample-tool",
+        rawOutput: {
+          output: "",
+          stderr: "failure\n",
+          exitCode: 1,
+        },
+      },
+    });
+    expect(fromEmptyOutputWithStderr.data.item).toMatchObject({
+      command: "sample-tool",
+      aggregatedOutput: "failure\n",
+      exitCode: 1,
+    });
+  });
 });

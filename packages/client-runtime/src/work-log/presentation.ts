@@ -245,6 +245,7 @@ export function extractCommandOutputText(dataValue: unknown): string | null {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const rawOutput = asRecord(data?.rawOutput);
+  const rawOutputDirect = nonEmptyString(data?.rawOutput);
   const outputStreams = [
     nonEmptyString(rawOutput?.stdout),
     nonEmptyString(rawOutput?.stderr),
@@ -263,10 +264,16 @@ export function extractCommandOutputText(dataValue: unknown): string | null {
   const candidates = [
     item?.aggregatedOutput,
     itemResult?.content,
+    rawOutputDirect,
     data?.rawOutput,
     rawOutput?.content,
+    rawOutput?.combinedOutput,
+    rawOutput?.combined_output,
+    rawOutput?.formatted_output,
+    rawOutput?.formattedOutput,
     outputStreams.length > 0 ? outputStreams.join("\n") : null,
     rawOutput?.output,
+    rawOutput?.result,
     acpContent,
     data?.result,
   ];
