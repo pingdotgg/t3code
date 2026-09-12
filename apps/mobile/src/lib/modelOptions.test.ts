@@ -249,6 +249,7 @@ describe("mobile model options", () => {
           displayName: "Muse Work",
           enabled: true,
           installed: true,
+          status: "ready",
           auth: { status: "unknown" },
           models: [
             {
@@ -306,6 +307,32 @@ describe("mobile model options", () => {
         expect(restored?.selection).toEqual(selection);
       },
     );
+
+    it("permits a saved model retry after a failed probe until a ready catalog removes it", () => {
+      const failedProbeConfig = {
+        ...config,
+        providers: config.providers.map((provider) => ({
+          ...provider,
+          status: "error" as const,
+          models: [],
+        })),
+      };
+      expect(isModelSelectionUnavailable(failedProbeConfig, selection)).toBe(false);
+      expect(buildModelOptions(failedProbeConfig, selection)).toMatchObject([{ selection }]);
+      expect(buildModelOptions(failedProbeConfig, selection)[0]?.isUnavailable).not.toBe(true);
+
+      const refreshedConfig = {
+        ...failedProbeConfig,
+        providers: failedProbeConfig.providers.map((provider) => ({
+          ...provider,
+          status: "ready" as const,
+        })),
+      };
+      expect(isModelSelectionUnavailable(refreshedConfig, selection)).toBe(true);
+      expect(buildModelOptions(refreshedConfig, selection)).toMatchObject([
+        { selection, isUnavailable: true },
+      ]);
+    });
 
     it("marks a model removed by refresh unavailable without changing the instance", () => {
       const changedConfig = {
