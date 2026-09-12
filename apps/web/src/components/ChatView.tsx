@@ -8534,9 +8534,11 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
+        key={activeThreadKey}
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        threadKey={activeThreadKey}
       />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
