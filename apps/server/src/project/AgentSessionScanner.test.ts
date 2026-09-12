@@ -974,6 +974,48 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("reads a Jujutsu workspace's remote from the main workspace root", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const base = yield* makeTempDir("t3code-workspace-jj-");
+        const main = path.join(base, "project");
+        const workspace = path.join(base, "thread");
+
+        yield* fileSystem.makeDirectory(path.join(main, ".jj", "repo"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(main, ".git"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(main, ".git", "config"),
+          '[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n',
+        );
+        // A secondary workspace's `.jj/repo` is a pointer file, relative to `<workspace>/.jj`.
+        yield* fileSystem.makeDirectory(path.join(workspace, ".jj"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(workspace, ".jj", "repo"),
+          "../../project/.jj/repo",
+        );
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug-jj", "a.jsonl"),
+          contents: claudeSessionLine(workspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(
+          result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+        ).toEqual([
+          {
+            path: workspace,
+            git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+          },
+        ]);
+      }),
+    );
+
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

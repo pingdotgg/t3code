@@ -111,6 +111,11 @@ export const make = Effect.gen(function* () {
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
+    // jj is probed first because a colocated repo answers yes to both probes, and probing git first would write git worktrees into a jj repo.
+    const jjDetected = yield* detectWithDriver("jj", jj, input.cwd);
+    if (jjDetected) {
+      return jjDetected;
+    }
     return yield* detectWithDriver("git", git, input.cwd);
   });
 

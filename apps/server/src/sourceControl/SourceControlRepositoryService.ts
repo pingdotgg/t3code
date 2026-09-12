@@ -19,8 +19,10 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
@@ -84,6 +86,8 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const jjWorkflow = yield* JjWorkflow.JjWorkflow;
 
   const ensureConcreteProvider = (input: {
     readonly operation: string;
@@ -222,9 +226,32 @@ export const make = Effect.gen(function* () {
         visibility: input.visibility,
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
+      const preferredRemoteName = input.remoteName?.trim() || "origin";
+
+      const kind = yield* vcsRegistry.detect({ cwd: input.cwd }).pipe(
+        Effect.map((handle) => handle?.kind ?? null),
+        Effect.orElseSucceed(() => null),
+      );
+      // In a colocated Jujutsu repository Git's own HEAD is usually detached, so the Git path
+      // either fails confusingly or publishes `@-`.
+      if (kind === "jj") {
+        const published = yield* jjWorkflow.publishRepository({
+          cwd: input.cwd,
+          remoteName: preferredRemoteName,
+          remoteUrl,
+        });
+        return {
+          repository: toRepositoryInfo(providerKind, urls),
+          remoteName: preferredRemoteName,
+          remoteUrl,
+          branch: published.refName,
+          status: published.status,
+        };
+      }
+
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
-        preferredName: input.remoteName?.trim() || "origin",
+        preferredName: preferredRemoteName,
         url: remoteUrl,
       });
 

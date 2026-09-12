@@ -52,6 +52,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveJjRepoPaths } from "../vcs/JjRepo.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -703,9 +704,22 @@ export const make = Effect.gen(function* () {
   > {
     const gitPath = path.join(directory, ".git");
     const gitStats = yield* statOption(gitPath);
-    if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
-    if (gitStats.value.type !== "Directory") {
+    if (Option.isNone(gitStats)) {
+      // A user's own `jj workspace add` directory holds `.jj` and no `.git`; without this it is
+      // imported with no remote and never groups with its repository.
+      const jjStats = yield* statOption(path.join(directory, ".jj"));
+      if (Option.isNone(jjStats) || jjStats.value.type !== "Directory") {
+        return { _tag: "NotGit" } as const;
+      }
+      const jjPaths = yield* resolveJjRepoPaths(fileSystem, path, directory).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (jjPaths === null) {
+        return { _tag: "NotGit" } as const;
+      }
+      gitDir = path.join(jjPaths.mainWorkspaceRoot, ".git");
+    } else if (gitStats.value.type !== "Directory") {
       const pointer = yield* fileSystem
         .readFileString(gitPath)
         .pipe(Effect.orElseSucceed(() => ""));

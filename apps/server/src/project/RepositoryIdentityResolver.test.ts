@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { createJjRepo, JJ_AVAILABLE, runJj } from "../vcs/testing/JjTestSupport.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
@@ -346,5 +347,57 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         ),
       ),
     ),
+  );
+  it.effect.skipIf(!JJ_AVAILABLE)(
+    "resolves a secondary Jujutsu workspace through the main workspace root",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-identity-jj-test-" }),
+        );
+        const root = path.join(base, "project");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* createJjRepo(root);
+        yield* git(root, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+        yield* fileSystem.writeFileString(path.join(root, "seed.txt"), "seed\n");
+        yield* runJj(root, ["commit", "-m", "seed"]);
+        const workspace = path.join(base, "thread");
+        yield* runJj(root, ["workspace", "add", "--name", "t3-thread", workspace]);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const identity = yield* resolver.resolve(workspace);
+
+        expect(identity).not.toBeNull();
+        expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+        expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(root));
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect.skipIf(!JJ_AVAILABLE)(
+    "keeps a Git worktree nested under a Jujutsu root on the Git path",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-identity-nested-" }),
+        );
+        const jjRoot = path.join(base, "outer");
+        yield* fileSystem.makeDirectory(jjRoot, { recursive: true });
+        yield* createJjRepo(jjRoot);
+        yield* git(jjRoot, ["remote", "add", "origin", "git@github.com:T3Tools/outer.git"]);
+
+        const nested = path.join(jjRoot, "nested");
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* git(nested, ["init"]);
+        yield* git(nested, ["remote", "add", "origin", "git@github.com:T3Tools/nested.git"]);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const identity = yield* resolver.resolve(nested);
+
+        expect(identity?.canonicalKey).toBe("github.com/t3tools/nested");
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 });

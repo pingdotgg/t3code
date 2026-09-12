@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - the marker walk is a handful of sync stats beside a
+// subprocess this resolver already spawns, and the module deliberately takes no FileSystem or Path
+// dependency: its layer is constructed in three places this workstream does not own.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
@@ -10,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
+import { mainWorkspaceRootFromRepoPointer } from "../vcs/JjRepo.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -90,11 +97,55 @@ function buildRepositoryIdentity(input: {
   };
 }
 
+function isDirectorySync(candidate: string): boolean {
+  try {
+    return NodeFS.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The root of the repository `cwd` belongs to, resolved from the nearest `.jj` or `.git` marker.
+ * A secondary Jujutsu workspace has no `.git` at all, so `git rev-parse --show-toplevel` returns
+ * nothing there, and every consumer of the repository identity (pull-request sync, the projector,
+ * the decider) goes dark with no error surfaced anywhere.
+ */
+export function resolveRepositoryRootFromMarkers(cwd: string): string | null {
+  let current = cwd;
+  for (;;) {
+    if (isDirectorySync(NodePath.join(current, ".jj"))) {
+      const repoPointer = NodePath.join(current, ".jj", "repo");
+      if (isDirectorySync(repoPointer)) {
+        return current;
+      }
+      try {
+        return mainWorkspaceRootFromRepoPointer(current, NodeFS.readFileSync(repoPointer, "utf8"));
+      } catch {
+        return current;
+      }
+    }
+    if (NodeFS.existsSync(NodePath.join(current, ".git"))) {
+      return null;
+    }
+    const parent = NodePath.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
 
-    // git is a real executable on every platform — no cmd.exe shell mode, which
+    const jjRoot = resolveRepositoryRootFromMarkers(cwd);
+    if (jjRoot !== null) {
+      return jjRoot;
+    }
+
+    // git is a real executable on every platform, no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
     const topLevelResult = yield* processRunner
       .run({
