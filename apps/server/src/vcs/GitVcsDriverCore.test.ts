@@ -1794,6 +1794,24 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("ensureRemote keeps drive-relative Windows remote paths separate", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const firstUrl = "C:Repos\\Repo";
+        const secondUrl = "C:Repos\\Repo.git";
+        yield* git(cwd, ["remote", "add", "origin", firstUrl]);
+
+        assert.equal(
+          yield* driver.ensureRemote({ cwd, preferredName: "origin", url: secondUrl }),
+          "origin-1",
+        );
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin"]), firstUrl);
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin-1"]), secondUrl);
+      }),
+    );
+
     it.effect("ensureRemote keeps local repositories with different suffixes separate", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

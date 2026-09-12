@@ -119,7 +119,7 @@ export function normalizeGitRemoteUrl(value: string): string {
   if (
     colon === -1 ||
     (separator !== -1 && separator < colon) ||
-    /^(?:[a-z]:[\\/]|file:\/\/)/i.test(value)
+    /^(?:[a-z]:|file:\/\/)/i.test(value)
   ) {
     return value;
   }
