@@ -626,6 +626,54 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
+/**
+ * Every executable on PATH that `command` could resolve to, in PATH order.
+ * Callers that must choose between same-named installs (for example stable
+ * and nightly Zed both shipping a `zed` CLI) use this instead of the
+ * first-match `resolveCommandPath`. Explicit paths yield at most one entry.
+ * Never cached and never fails: an empty PATH yields an empty list.
+ */
+export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const env = options.env ?? (yield* HostProcessEnvironment);
+  const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  const commandCandidates = resolveCommandCandidates(
+    command,
+    platform,
+    windowsPathExtensions,
+    path.extname,
+  );
+
+  if (command.includes("/") || command.includes("\\")) {
+    for (const candidate of commandCandidates) {
+      if (yield* isExecutableFile(candidate, platform, windowsPathExtensions)) {
+        return [candidate];
+      }
+    }
+    return [];
+  }
+
+  const resolvedPaths: string[] = [];
+  for (const entry of resolvePathEnvironmentVariable(env).split(
+    pathDelimiterForPlatform(platform),
+  )) {
+    const pathEntry = stripWrappingQuotes(entry.trim());
+    if (pathEntry.length === 0) continue;
+    for (const candidate of commandCandidates) {
+      const candidatePath = path.join(pathEntry, candidate);
+      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        resolvedPaths.push(candidatePath);
+        break;
+      }
+    }
+  }
+  return resolvedPaths;
+});
+
 export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(function* (
   command: string,
   args: ReadonlyArray<string>,
