@@ -3,6 +3,7 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { windowGroup } from "@t3tools/shared/usageLimits";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -18,11 +19,26 @@ export function clampPercent(value: number): number {
 function sortWindows(
   windows: Iterable<ServerProviderUsageWindow>,
 ): ReadonlyArray<ServerProviderUsageWindow> {
-  return [...windows].toSorted(
-    (left, right) =>
+  const windowList = [...windows];
+  const groupOrder = new Map<string, number>();
+  for (const window of windowList) {
+    const group = windowGroup(window);
+    if (!groupOrder.has(group)) {
+      groupOrder.set(group, groupOrder.size);
+    }
+  }
+
+  return windowList.toSorted((left, right) => {
+    const leftGroupOrder = groupOrder.get(windowGroup(left)) ?? 0;
+    const rightGroupOrder = groupOrder.get(windowGroup(right)) ?? 0;
+    if (leftGroupOrder !== rightGroupOrder) {
+      return leftGroupOrder - rightGroupOrder;
+    }
+    return (
       WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind] ||
-      left.id.localeCompare(right.id),
-  );
+      left.id.localeCompare(right.id)
+    );
+  });
 }
 
 export function makeUsageLimits(input: {

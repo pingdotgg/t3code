@@ -433,6 +433,12 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
+export function windowGroup(window: { readonly label?: string | null }): string {
+  if (!window.label || typeof window.label !== "string") return "";
+  const match = window.label.match(/^([^(]+?)\s*\(/);
+  return match ? match[1]!.trim().toLowerCase() : "";
+}
+
 function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
@@ -485,7 +491,22 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       resets,
     };
   });
-  return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
+  const groupOrder = new Map<string, number>();
+  for (const pool of pools) {
+    const group = windowGroup(pool);
+    if (!groupOrder.has(group)) {
+      groupOrder.set(group, groupOrder.size);
+    }
+  }
+
+  return pools.sort((left, right) => {
+    const leftGroupOrder = groupOrder.get(windowGroup(left)) ?? 0;
+    const rightGroupOrder = groupOrder.get(windowGroup(right)) ?? 0;
+    if (leftGroupOrder !== rightGroupOrder) {
+      return leftGroupOrder - rightGroupOrder;
+    }
+    return WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind];
+  });
 }
 
 /** The one-line status under a provider heading when there are no bars to draw. */

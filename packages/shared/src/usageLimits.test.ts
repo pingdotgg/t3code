@@ -782,6 +782,36 @@ describe("pools", () => {
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
   });
+
+  it("preserves group appearance order while sorting session before weekly within each group", () => {
+    const multiGroupAccount: LimitAccount = {
+      key: "native:antigravity",
+      driver: ProviderDriverKind.make("antigravity"),
+      displayName: "Antigravity",
+      email: undefined,
+      plan: undefined,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: {
+        checkedAt,
+        windows: [
+          { id: "gemini-5h", kind: "session", label: "Gemini (5-hour)", usedPercent: 40 },
+          { id: "gemini-weekly", kind: "weekly", label: "Gemini (Weekly)", usedPercent: 20 },
+          { id: "3p-5h", kind: "session", label: "Claude & GPT (5-hour)", usedPercent: 0 },
+          { id: "3p-weekly", kind: "weekly", label: "Claude & GPT (Weekly)", usedPercent: 0 },
+        ],
+      },
+    };
+    const pools = collectLimitPools([multiGroupAccount], now);
+    expect(pools[0]?.windows.map((w) => w.label)).toEqual([
+      "Gemini (5-hour)",
+      "Gemini (Weekly)",
+      "Claude & GPT (5-hour)",
+      "Claude & GPT (Weekly)",
+    ]);
+  });
 });
 
 describe("pooled account columns", () => {
