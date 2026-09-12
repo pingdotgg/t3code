@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./delimitedPreview": {
+      "types": "./src/delimitedPreview.ts",
+      "import": "./src/delimitedPreview.ts"
+    },
+    "./composerPullRequestMatches": {
+      "types": "./src/composerPullRequestMatches.ts",
+      "import": "./src/composerPullRequestMatches.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
@@ -199,6 +207,22 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./composerContextReferences": {
+      "types": "./src/composerContextReferences.ts",
+      "import": "./src/composerContextReferences.ts"
+    },
+    "./composerContextLegacy": {
+      "types": "./src/composerContextLegacy.ts",
+      "import": "./src/composerContextLegacy.ts"
+    },
+    "./composerContextLegacySend": {
+      "types": "./src/composerContextLegacySend.ts",
+      "import": "./src/composerContextLegacySend.ts"
+    },
+    "./composerContextClipboard": {
+      "types": "./src/composerContextClipboard.ts",
+      "import": "./src/composerContextClipboard.ts"
+    },
     "./terminalLabels": {
       "types": "./src/terminalLabels.ts",
       "import": "./src/terminalLabels.ts"
@@ -230,6 +254,10 @@
     "./video": {
       "types": "./src/video.ts",
       "import": "./src/video.ts"
+    },
+    "./image": {
+      "types": "./src/image.ts",
+      "import": "./src/image.ts"
     },
     "./chatList": {
       "types": "./src/chatList.ts",
@@ -274,6 +302,10 @@
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
+    },
+    "./thirdPartyLicenses": {
+      "types": "./src/thirdPartyLicenses.ts",
+      "import": "./src/thirdPartyLicenses.ts"
     },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",

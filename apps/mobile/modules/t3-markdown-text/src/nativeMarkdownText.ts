@@ -1,4 +1,126 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { imageMimeType } from "@t3tools/shared/image";
+import { videoMimeType } from "@t3tools/shared/video";
+/**
+ * Every accent shares a lightness so no kind reads heavier than another; only hue carries
+ * identity. These are the sRGB form of the same OKLCH set web uses, so a chip looks the
+ * same on every surface. See `composerInlineChip.ts`.
+ */
+const CONTEXT_CHIP_PRESENTATIONS = {
+  image: { accent: "#d55665", symbol: "photo" },
+  video: { accent: "#d06217", symbol: "play.rectangle" },
+  file: { accent: "#0090cd", symbol: "doc" },
+  mention: { accent: "#0096af", symbol: "doc" },
+  terminal: { accent: "#009f6e", symbol: "terminal" },
+  element: { accent: "#b87501", symbol: "cursorarrow.click" },
+  "preview-annotation": { accent: "#b87501", symbol: "cursorarrow.click" },
+  "review-comment": { accent: "#8a70dd", symbol: "text.bubble" },
+  "pull-request": { accent: "#7079e4", symbol: "git-pull-request" },
+  skill: { accent: "#b261be", symbol: "cube" },
+} as const;
+
+/**
+ * The size an attachment chip reports beside its name, matching web. Rendered as its own
+ * smaller run, so it carries no separator. Only attachment-backed records have bytes.
+ */
+export function composerChipSizeSuffix(record?: {
+  readonly kind?: string;
+  readonly sizeBytes?: number;
+}): string {
+  if (record?.kind !== "file" && record?.kind !== "image") return "";
+  return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
+}
+
+/**
+ * A pull request chip is coloured by what the pull request *is*, the way web colours it and
+ * the way the forge itself does: green open, grey draft, purple merged, red closed. The glyph
+ * stays the same across all four, as it does on web — state is carried by colour alone.
+ */
+const PULL_REQUEST_CHIP_PRESENTATIONS = {
+  open: { accent: "#009f6e", symbol: "git-pull-request" },
+  draft: { accent: "#7f8793", symbol: "git-pull-request" },
+  merged: { accent: "#8a70dd", symbol: "git-pull-request" },
+  closed: { accent: "#d55665", symbol: "git-pull-request" },
+} as const;
+
+export function contextChipPresentation(
+  kind: string,
+  record?: {
+    readonly kind?: string;
+    readonly name?: string;
+    readonly mimeType?: string;
+    readonly sectionId?: string;
+    readonly pullRequest?: {
+      readonly state?: string;
+      readonly isDraft?: boolean;
+    };
+  },
+) {
+  const presentationKind =
+    kind === "file" &&
+    videoMimeType({
+      name: record?.name ?? "",
+      mimeType: record?.mimeType ?? "",
+    })
+      ? "video"
+      : // A picture chosen through the file picker is typed `file`, but it is still a
+        // picture: it reads as one to the user and should not wear the generic file chip.
+        kind === "file" &&
+          imageMimeType({ name: record?.name ?? "", mimeType: record?.mimeType ?? "" }) !== null
+        ? "image"
+        : kind === "review-comment" && record?.sectionId?.startsWith("pull-request:")
+          ? "pull-request"
+          : kind;
+  if (presentationKind === "pull-request") {
+    const pullRequest = record?.pullRequest;
+    const state =
+      pullRequest?.state === "open" && pullRequest.isDraft === true
+        ? "draft"
+        : (pullRequest?.state ?? "");
+    if (Object.hasOwn(PULL_REQUEST_CHIP_PRESENTATIONS, state)) {
+      return PULL_REQUEST_CHIP_PRESENTATIONS[state as keyof typeof PULL_REQUEST_CHIP_PRESENTATIONS];
+    }
+  }
+  return Object.hasOwn(CONTEXT_CHIP_PRESENTATIONS, presentationKind)
+    ? CONTEXT_CHIP_PRESENTATIONS[presentationKind as keyof typeof CONTEXT_CHIP_PRESENTATIONS]
+    : CONTEXT_CHIP_PRESENTATIONS.file;
+}
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import {
+  formatComposerContextReference,
+  parseComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
+
+/** Native selections count UTF-16 display units, including each inline image placeholder. */
+export function nativeMarkdownContextCopyRanges(
+  runs: ReadonlyArray<{
+    readonly run: {
+      readonly href?: string;
+      readonly text: string;
+      readonly skillName?: string;
+      readonly fileIcon?: string;
+      readonly sourceText?: string;
+    };
+    readonly text: string;
+    readonly inlineImageLength: number;
+  }>,
+) {
+  let offset = 0;
+  return runs.flatMap(({ run, text, inlineImageLength }) => {
+    const start = offset;
+    offset += text.length + inlineImageLength;
+    const reference = parseComposerContextHref(run.href ?? "");
+    const source = reference
+      ? formatComposerContextReference({ ...reference, label: run.text })
+      : run.skillName
+        ? `$${run.skillName}`
+        : run.fileIcon && run.href
+          ? (run.sourceText ?? `[${run.text}](<${run.href}>)`)
+          : null;
+    return source === null ? [] : [{ start, end: offset, text: source }];
+  });
+}
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
 import {
@@ -18,6 +140,7 @@ export interface NativeMarkdownTextRun {
   readonly fileIcon?: MarkdownFileIcon;
   readonly skillName?: string;
   readonly skillLabel?: string;
+  readonly sourceText?: string;
   readonly role?:
     | "body"
     | "heading"
@@ -259,6 +382,36 @@ function decorateSkillRuns(
   return decorated;
 }
 
+function decorateMentionRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {
+  return runs.flatMap((run) => {
+    if (run.code || run.href || run.skillName || run.role === "code-block") return [run];
+    const decorated: NativeMarkdownTextRun[] = [];
+    let cursor = 0;
+    for (const token of collectComposerInlineTokens(`${run.text} `)) {
+      if (token.type !== "mention" || !token.source.startsWith("@")) continue;
+      // Sentence punctuation is not part of an unquoted file reference.
+      const path = token.source.startsWith('@"')
+        ? token.value
+        : token.value.replace(/[.,;!?]+$/, "");
+      const presentation = resolveMarkdownLinkPresentation(path);
+      if (presentation.kind !== "file") continue;
+      const end = token.end - (token.value.length - path.length);
+      if (token.start > cursor)
+        decorated.push({ ...run, text: run.text.slice(cursor, token.start) });
+      decorated.push({
+        ...run,
+        text: presentation.label,
+        href: presentation.href,
+        fileIcon: presentation.icon,
+        sourceText: run.text.slice(token.start, end),
+      });
+      cursor = end;
+    }
+    if (cursor < run.text.length) decorated.push({ ...run, text: run.text.slice(cursor) });
+    return decorated;
+  });
+}
+
 function appendChildren(
   runs: NativeMarkdownTextRun[],
   node: MarkdownNode,
@@ -310,6 +463,21 @@ function appendNode(
     case "strikethrough":
       return appendChildren(runs, node, { ...context, strikethrough: true });
     case "link": {
+      const reference = parseComposerContextHref(node.href ?? "");
+      if (reference) {
+        // Build the link in isolation: adjacent links with the same href and
+        // style would otherwise merge into one run, collapsing two chips and
+        // their copy ranges into a single reference with a combined label.
+        const referenceRuns: NativeMarkdownTextRun[] = [];
+        appendChildren(referenceRuns, node, {
+          ...context,
+          href: node.href,
+          fileIcon:
+            reference.kind === "image" ? "image" : reference.kind === "terminal" ? "bash" : "text",
+        });
+        runs.push(...referenceRuns);
+        return runs;
+      }
       const presentation = resolveMarkdownLinkPresentation(node.href ?? "");
       if (presentation.kind === "file") {
         return appendRun(runs, presentation.label, {
@@ -792,5 +960,5 @@ export function nativeMarkdownDocumentRuns(
       runs[lastIndex] = { ...last, text };
     }
   }
-  return decorateSkillRuns(runs, skills);
+  return decorateMentionRuns(decorateSkillRuns(runs, skills));
 }
