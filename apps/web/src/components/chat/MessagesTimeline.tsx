@@ -1569,7 +1569,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 className={cn(
                   "bg-background/70",
                   image.source?.kind === "snap-shot" && image.previewUrl
-                    ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
+                    ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
                     : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
                 )}
               >
