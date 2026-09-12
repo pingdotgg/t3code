@@ -256,7 +256,10 @@ interface OpenCodeRequestRelationRetry {
 }
 
 interface OpenCodeSessionRelationRetry {
-  readonly events: Array<OpenCodeChildSessionEvent>;
+  readonly events: Array<{
+    readonly event: OpenCodeChildSessionEvent;
+    readonly turnId: TurnId | undefined;
+  }>;
   fiber?: Fiber.Fiber<void, never>;
 }
 
@@ -362,6 +365,7 @@ interface OpenCodeSessionContext {
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
+  readonly terminalChildSessionIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
   readonly sessionRelationRetries: Map<string, OpenCodeSessionRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
@@ -2058,28 +2062,36 @@ export function makeOpenCodeAdapter(
       function* (context: OpenCodeSessionContext, event: OpenCodeChildSessionEvent) {
         const sessionId = openCodeEventSessionId(event);
         if (sessionId === undefined) return;
+        const turnId = context.activeTurnId;
         const existing = context.sessionRelationRetries.get(sessionId);
         if (existing) {
-          existing.events.push(event);
+          existing.events.push({ event, turnId });
           return;
         }
-        const retry: OpenCodeSessionRelationRetry = { events: [event] };
+        const retry: OpenCodeSessionRelationRetry = { events: [{ event, turnId }] };
         context.sessionRelationRetries.set(sessionId, retry);
         const run = Effect.gen(function* () {
           let retryCount = 0;
           while (context.sessionRelationRetries.get(sessionId) === retry) {
-            const related = yield* isRelatedOpenCodeSession(context, sessionId).pipe(
-              Effect.orElseSucceed(() => false),
+            const relation = yield* isRelatedOpenCodeSession(context, sessionId).pipe(
+              Effect.match({
+                onFailure: () => "unknown" as const,
+                onSuccess: (related) => (related ? "related" : "unrelated") as const,
+              }),
             );
             if (context.sessionRelationRetries.get(sessionId) !== retry) return;
-            if (related) {
+            if (relation === "unrelated") {
               context.sessionRelationRetries.delete(sessionId);
-              for (const replayEvent of retry.events) {
+              return;
+            }
+            if (relation === "related") {
+              context.sessionRelationRetries.delete(sessionId);
+              for (const { event: replayEvent, turnId: replayTurnId } of retry.events) {
                 const replaySession =
                   replayEvent.type === "session.status" ? undefined : replayEvent.properties.info;
                 const base = yield* buildEventBase({
                   threadId: context.session.threadId,
-                  turnId: context.activeTurnId,
+                  turnId: replayTurnId,
                   itemId: sessionId,
                   raw: replayEvent,
                 });
@@ -2113,6 +2125,8 @@ export function makeOpenCodeAdapter(
                 ) {
                   continue;
                 } else {
+                  if (context.terminalChildSessionIds.has(sessionId)) continue;
+                  context.terminalChildSessionIds.add(sessionId);
                   yield* emit({
                     ...base,
                     type: "task.completed",
@@ -2123,7 +2137,7 @@ export function makeOpenCodeAdapter(
                       summary: replaySession?.title ?? "Completed",
                     },
                   });
-                  context.relatedSessionIds.delete(sessionId);
+                  return;
                 }
               }
               return;
@@ -2748,6 +2762,8 @@ export function makeOpenCodeAdapter(
           if (!isParentEvent) {
             if (event.properties.status.type === "idle") {
               const sessionId = event.properties.sessionID;
+              if (context.terminalChildSessionIds.has(sessionId)) break;
+              context.terminalChildSessionIds.add(sessionId);
               yield* emit({
                 ...(yield* buildEventBase({
                   threadId: context.session.threadId,
@@ -3191,6 +3207,7 @@ export function makeOpenCodeAdapter(
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
+          terminalChildSessionIds: new Set(),
           requestRelationRetries: new Map(),
           sessionRelationRetries: new Map(),
           pendingPermissions: new Map(),
