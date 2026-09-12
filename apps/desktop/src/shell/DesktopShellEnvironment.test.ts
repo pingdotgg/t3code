@@ -129,7 +129,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("runs the login-shell probe without interactive job control", () =>
+  it.effect("probes zsh interactively with job control disabled", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -149,10 +149,39 @@ describe("DesktopShellEnvironment", () => {
       const probe = commands[0];
       assert.equal(probe?._tag, "StandardCommand");
       if (probe?._tag === "StandardCommand") {
+        // `+m` clears MONITOR before zsh startup, so the interactive probe
+        // still reads ~/.zshrc (version-manager PATH lives there) without
+        // tcsetpgrp() on a controlling TTY owned by another process group.
+        assert.deepEqual(probe.args.slice(0, 2), ["+m", "-ilc"]);
+      }
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
+    }),
+  );
+
+  it.effect("runs the login-shell probe without interactive job control", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/bash",
+        PATH: "/usr/bin",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+        },
+      });
+
+      const probe = commands[0];
+      assert.equal(probe?._tag, "StandardCommand");
+      if (probe?._tag === "StandardCommand") {
         // `-l` without `-i`: interactive job control stops the probe on
         // SIGTTOU when the session inherits a controlling TTY owned by
-        // another process group.
-        assert.equal(probe.args[0], "-lc");
+        // another process group. bash reads the same files either way.
+        assert.deepEqual(probe.args.slice(0, 1), ["-lc"]);
         assert.notInclude(probe.args, "-i");
       }
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");

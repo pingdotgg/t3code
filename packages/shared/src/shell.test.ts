@@ -71,6 +71,45 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
   });
+
+  it("keeps zsh interactive startup files while disabling job control", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
+
+    expect(readPathFromLoginShell("/bin/zsh", execFile)).toBe("/a:/b");
+
+    const args = execFile.mock.calls[0]?.[1];
+    // `-i` keeps ~/.zshrc, where version managers commonly export PATH, and
+    // `+m` clears MONITOR before startup so the shell never tcsetpgrp()s a
+    // controlling TTY owned by another process group.
+    expect(args).toHaveLength(3);
+    expect(args?.[0]).toBe("+m");
+    expect(args?.[1]).toBe("-ilc");
+    expect(args?.[2]).toContain("printenv PATH || true");
+  });
+
+  it("does not probe bash interactively", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
+
+    expect(readPathFromLoginShell("/bin/bash", execFile)).toBe("/a:/b");
+
+    const args = execFile.mock.calls[0]?.[1];
+    // Login bash never reads ~/.bashrc, so `-i` adds nothing, and bash still
+    // grabs the terminal even with `+m` - it must stay non-interactive.
+    expect(args).toHaveLength(2);
+    expect(args?.[0]).toBe("-lc");
+  });
 });
 
 describe("readPathFromLaunchctl", () => {
