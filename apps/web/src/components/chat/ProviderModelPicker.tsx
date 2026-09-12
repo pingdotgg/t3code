@@ -265,7 +265,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 />
               }
             >
-              <span className="min-w-0 truncate">{props.triggerLabel ?? multipleLabel ?? triggerTitle}</span>
+              <span className="min-w-0 truncate">
+                {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+              </span>
               {triggerSubProvider && !selectedEntries && props.triggerLabel === undefined ? (
                 <span className="min-w-0 truncate text-muted-foreground">
                   · {triggerSubProvider}

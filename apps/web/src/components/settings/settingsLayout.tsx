@@ -140,7 +140,7 @@ export function SettingsSearchTarget({
 /** Layout for the composer model/traits pickers in a settings row: drop the composer's max-width. */
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
 
-export const SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME = `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-full`;
+export const SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME = `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-full sm:max-w-full`;
 
 export const SETTINGS_MODEL_CONTROLS_CLASSNAME =
   "flex max-w-full flex-wrap items-center justify-end sm:max-w-[26rem]";
