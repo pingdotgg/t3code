@@ -487,6 +487,7 @@ import {
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
+  resolveServerInstall,
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
   supportsDesktopAppUpdate,
@@ -2431,6 +2432,7 @@ export default function ChatView(props: ChatViewProps) {
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchDesktopAppUpdate = supportsDesktopAppUpdate(serverConfig);
   const versionMismatchThreadContinuation = supportsServerUpdateThreadContinuation(serverConfig);
+  const versionMismatchInstall = resolveServerInstall(serverConfig);
   const serverUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(serverUpdateEnvironmentId),
   );
@@ -2571,6 +2573,7 @@ export default function ChatView(props: ChatViewProps) {
               selfUpdate={versionMismatchSelfUpdate}
               desktopAppUpdate={versionMismatchDesktopAppUpdate}
               threadContinuation={versionMismatchThreadContinuation}
+              install={versionMismatchInstall}
               targetVersion={versionMismatch.clientVersion}
               label={updateFailed ? "Retry" : "Update"}
               variant="ghost"
