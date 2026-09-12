@@ -706,8 +706,9 @@ function SidebarContent({
         className="h-auto min-h-0 flex-1"
       >
         <div
+          // Reordered rows must not pull the viewport to their new position.
           className={cn(
-            "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
+            "flex w-full min-w-0 flex-col gap-2 [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden",
             className,
           )}
           data-sidebar="content"
