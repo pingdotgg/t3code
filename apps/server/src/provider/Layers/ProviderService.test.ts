@@ -1034,9 +1034,10 @@ declaredCompaction.layer("ProviderService declared compaction", (it) => {
         Effect.forkChild({ startImmediately: true }),
       );
       yield* advanceTestClock(50);
-      yield* provider.compactThread(threadId, undefined, requestId);
+      yield* provider.compactThread(threadId, undefined, requestId, 42);
       const compacted = Option.getOrThrow(yield* Fiber.join(compactedEventFiber));
       assert.equal(compacted.requestId, String(requestId));
+      assert.equal(compacted.requestSequence, 42);
       assert.equal(customNativeCompaction.compactThread.mock.calls.length, 1);
       assert.equal(customNativeCompaction.sendTurn.mock.calls.length, 0);
       yield* provider.stopSession({ threadId });

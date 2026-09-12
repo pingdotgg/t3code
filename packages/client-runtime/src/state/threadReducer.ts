@@ -84,13 +84,43 @@ function turnStartRequestIdClearedByActivity(activity: OrchestrationThreadActivi
   return typeof activity.payload.requestId === "string" ? activity.payload.requestId : null;
 }
 
+function activityTurnStartRequestBound(activity: OrchestrationThreadActivity): number | undefined {
+  if (!Predicate.isObject(activity.payload)) {
+    return undefined;
+  }
+  const bound = activity.payload.throughRequestSequence;
+  return typeof bound === "number" ? bound : undefined;
+}
+
+// A bounded clear only retires starts whose latest request is at or before the
+// bound, so a start re-requested after the bound survives its own cleanup.
+function requestSequenceClearedByBound(
+  requestSequence: number | null | undefined,
+  bound: number | undefined,
+): boolean {
+  return bound === undefined || (requestSequence ?? 0) <= bound;
+}
+
+// An acknowledgement or adoption that names a request sequence only answers
+// that generation; a missing sequence on either side is legacy and matches.
+function isSameTurnStartRequest(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): boolean {
+  return a == null || b == null || a === b;
+}
+
 function activityClearsPendingTurnStart(
   thread: OrchestrationThread,
   activity: OrchestrationThreadActivity,
 ): boolean {
   return (
     thread.pendingTurnStartMessageId != null &&
-    turnStartRequestIdClearedByActivity(activity) === thread.pendingTurnStartMessageId
+    turnStartRequestIdClearedByActivity(activity) === thread.pendingTurnStartMessageId &&
+    requestSequenceClearedByBound(
+      thread.pendingTurnStartRequestSequence,
+      activityTurnStartRequestBound(activity),
+    )
   );
 }
 
@@ -279,7 +309,18 @@ export function applyThreadDetailEvent(
       const acknowledgedRequest =
         acknowledgement === undefined
           ? undefined
-          : rendezvous?.requests.find((request) => request.messageId === acknowledgement.messageId);
+          : ((acknowledgement.requestSequence === undefined
+              ? undefined
+              : rendezvous?.requests.find(
+                  (request) =>
+                    request.messageId === acknowledgement.messageId &&
+                    request.requestSequence === acknowledgement.requestSequence,
+                )) ??
+            rendezvous?.requests.find(
+              (request) =>
+                request.messageId === acknowledgement.messageId &&
+                isSameTurnStartRequest(request.requestSequence, acknowledgement.requestSequence),
+            ));
       const acknowledgedTurnAlreadyRunning =
         acknowledgement !== undefined &&
         thread.session?.status === "running" &&
@@ -304,11 +345,66 @@ export function applyThreadDetailEvent(
         acknowledgedTurnAlreadyObserved ||
         acknowledgedTurnAlreadySettled ||
         acknowledgedSessionDead;
+      // The submitted entry records the generation that was actually
+      // answered: the acknowledgement's own sequence when present, the
+      // selected request's otherwise. An unsequenced acknowledgement that
+      // resolves no request borrows the marker's sequence only while the
+      // marker's own generation is still awaiting a submitted entry — once
+      // that entry exists the stray acknowledgement belongs to no known
+      // generation and must not steal the marker's.
+      const acknowledgedRequestSequence =
+        acknowledgement === undefined
+          ? undefined
+          : (acknowledgement.requestSequence ??
+            (acknowledgedRequest !== undefined
+              ? acknowledgedRequest.requestSequence
+              : acknowledgement.messageId === thread.pendingTurnStartMessageId &&
+                  !(thread.submittedTurnStarts ?? []).some(
+                    (entry) =>
+                      entry.messageId === acknowledgement.messageId &&
+                      isSameTurnStartRequest(
+                        entry.requestSequence,
+                        thread.pendingTurnStartRequestSequence,
+                      ),
+                  )
+                ? (thread.pendingTurnStartRequestSequence ?? undefined)
+                : undefined));
+      // The acknowledgement retires only the generation it answered. For an
+      // unsequenced acknowledgement the first same-message request is the
+      // oldest generation still awaiting one.
       const remainingRequests =
         acknowledgement === undefined
           ? (rendezvous?.requests ?? [])
-          : (rendezvous?.requests ?? []).filter(
-              (request) => request.messageId !== acknowledgement.messageId,
+          : (rendezvous?.requests ?? []).filter((request) => request !== acknowledgedRequest);
+      // The marker tracks the newest same-message generation, so its own
+      // request is the last matching one. The acknowledgement adopts the
+      // marker only when it answered that generation — a legacy
+      // acknowledgement answering an older generation must not clear a newer
+      // marker.
+      const markerRequestSequence = thread.pendingTurnStartRequestSequence ?? undefined;
+      const markerRequest = (rendezvous?.requests ?? []).findLast(
+        (request) =>
+          request.messageId === thread.pendingTurnStartMessageId &&
+          request.requestSequence === markerRequestSequence,
+      );
+      const pendingMarkerAdopted =
+        acknowledgement !== undefined &&
+        acknowledgement.messageId === thread.pendingTurnStartMessageId &&
+        acknowledgementAlreadyAdopted &&
+        (acknowledgedRequest !== undefined
+          ? acknowledgedRequest === markerRequest
+          : acknowledgedRequestSequence === markerRequestSequence);
+      // A re-acknowledged generation replaces its own submitted entry; other
+      // generations of the same message keep theirs. Matching is exact here —
+      // unlike acknowledgement resolution, an unsequenced acknowledgement
+      // must not replace a newer generation's entry.
+      const replacedSubmittedIndex =
+        acknowledgement === undefined || acknowledgementAlreadyAdopted
+          ? -1
+          : (thread.submittedTurnStarts ?? []).findIndex(
+              (entry) =>
+                entry.messageId === acknowledgement.messageId &&
+                entry.requestSequence === acknowledgedRequestSequence,
             );
       return {
         kind: "updated",
@@ -339,20 +435,26 @@ export function applyThreadDetailEvent(
             : {}),
           ...(acknowledgement !== undefined
             ? {
-                pendingTurnStartMessageId:
-                  acknowledgement.messageId === thread.pendingTurnStartMessageId &&
-                  acknowledgementAlreadyAdopted
-                    ? null
-                    : (thread.pendingTurnStartMessageId ?? null),
+                pendingTurnStartMessageId: pendingMarkerAdopted
+                  ? null
+                  : (thread.pendingTurnStartMessageId ?? null),
+                pendingTurnStartRequestSequence: pendingMarkerAdopted
+                  ? null
+                  : (thread.pendingTurnStartRequestSequence ?? null),
                 submittedTurnStarts: acknowledgementAlreadyAdopted
                   ? (thread.submittedTurnStarts ?? []).filter(
                       (entry) => entry.turnId !== acknowledgement.turnId,
                     )
                   : [
                       ...(thread.submittedTurnStarts ?? []).filter(
-                        (entry) => entry.messageId !== acknowledgement.messageId,
+                        (_entry, index) => index !== replacedSubmittedIndex,
                       ),
-                      acknowledgement,
+                      {
+                        ...acknowledgement,
+                        ...(acknowledgedRequestSequence === undefined
+                          ? {}
+                          : { requestSequence: acknowledgedRequestSequence }),
+                      },
                     ],
                 turnStartSubmissionRendezvous:
                   remainingRequests.length === 0
@@ -435,16 +537,23 @@ export function applyThreadDetailEvent(
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
           pendingTurnStartMessageId: event.payload.messageId,
+          pendingTurnStartRequestSequence: event.sequence,
           ...(event.payload.expectsTurnStartAcknowledgement === true
             ? {
                 turnStartSubmissionRendezvous: {
                   requests: [
+                    // Re-requesting a message starts a new generation; the
+                    // older one may still be awaiting its acknowledgement,
+                    // so only an identical generation is replaced.
                     ...(thread.turnStartSubmissionRendezvous?.requests ?? []).filter(
-                      (request) => request.messageId !== event.payload.messageId,
+                      (request) =>
+                        request.messageId !== event.payload.messageId ||
+                        request.requestSequence !== event.sequence,
                     ),
                     {
                       messageId: event.payload.messageId,
                       observedTurnIds: activeTurnId === null ? [] : [activeTurnId],
+                      requestSequence: event.sequence,
                     },
                   ],
                 },
@@ -587,6 +696,57 @@ export function applyThreadDetailEvent(
       const activeTurnId =
         event.payload.session.status === "running" ? event.payload.session.activeTurnId : null;
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+      // A running turn retires the pending marker only when it adopted that
+      // request generation. A tracked adoption of a different generation
+      // leaves a re-requested marker alone, and so does an untracked
+      // lifecycle while an older same-message request still awaits its
+      // acknowledgement — the running turn may belong to that generation.
+      // The marker tracks the newest same-message generation, so its own
+      // request is the last matching one.
+      const markerRequestSequence = thread.pendingTurnStartRequestSequence ?? undefined;
+      const markerRequest = (rendezvous?.requests ?? []).findLast(
+        (request) =>
+          request.messageId === thread.pendingTurnStartMessageId &&
+          request.requestSequence === markerRequestSequence,
+      );
+      const adoptedTurnStarts =
+        activeTurnId === null
+          ? []
+          : (thread.submittedTurnStarts ?? []).filter((entry) => entry.turnId === activeTurnId);
+      const earlierGenerationPending = (rendezvous?.requests ?? []).some(
+        (request) =>
+          request.messageId === thread.pendingTurnStartMessageId && request !== markerRequest,
+      );
+      // A turn the pending request already observed running without
+      // adopting it belongs to an earlier generation; a repeated lifecycle
+      // update for it must not retire the newer marker.
+      const pendingRequestObservedActiveTurn =
+        activeTurnId !== null && (markerRequest?.observedTurnIds.includes(activeTurnId) ?? false);
+      // The marker's own generation may already be acknowledged and awaiting
+      // a different turn; the running turn is then not its adoption and must
+      // not retire the marker.
+      const pendingMarkerGenerationSubmitted =
+        activeTurnId !== null &&
+        (thread.submittedTurnStarts ?? []).some(
+          (entry) =>
+            entry.messageId === thread.pendingTurnStartMessageId &&
+            entry.turnId !== activeTurnId &&
+            isSameTurnStartRequest(entry.requestSequence, thread.pendingTurnStartRequestSequence),
+        );
+      // A submitted entry only proves the running turn adopted the marker's
+      // generation when their sequences match exactly — a legacy entry could
+      // belong to any same-message generation.
+      const runningTurnAdoptsPendingStart =
+        activeTurnId !== null &&
+        (adoptedTurnStarts.length === 0
+          ? !earlierGenerationPending &&
+            !pendingRequestObservedActiveTurn &&
+            !pendingMarkerGenerationSubmitted
+          : adoptedTurnStarts.some(
+              (entry) =>
+                entry.messageId === thread.pendingTurnStartMessageId &&
+                entry.requestSequence === markerRequestSequence,
+            ));
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
@@ -626,11 +786,12 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           session: event.payload.session,
-          pendingTurnStartMessageId:
-            event.payload.session.status === "running" &&
-            event.payload.session.activeTurnId !== null
-              ? null
-              : (thread.pendingTurnStartMessageId ?? null),
+          pendingTurnStartMessageId: runningTurnAdoptsPendingStart
+            ? null
+            : (thread.pendingTurnStartMessageId ?? null),
+          pendingTurnStartRequestSequence: runningTurnAdoptsPendingStart
+            ? null
+            : (thread.pendingTurnStartRequestSequence ?? null),
           submittedTurnStarts:
             activeTurnId !== null
               ? (thread.submittedTurnStarts ?? []).filter((entry) => entry.turnId !== activeTurnId)
@@ -825,19 +986,28 @@ export function applyThreadDetailEvent(
       const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, activity)
         ? null
         : (thread.pendingTurnStartMessageId ?? null);
+      const pendingTurnStartRequestSequence =
+        pendingTurnStartMessageId === null
+          ? null
+          : (thread.pendingTurnStartRequestSequence ?? null);
       const clearedRequestId = turnStartRequestIdClearedByActivity(activity);
+      const requestBound = activityTurnStartRequestBound(activity);
       const submittedTurnStarts =
         clearedRequestId === null
           ? (thread.submittedTurnStarts ?? [])
           : (thread.submittedTurnStarts ?? []).filter(
-              (entry) => entry.messageId !== clearedRequestId,
+              (entry) =>
+                entry.messageId !== clearedRequestId ||
+                !requestSequenceClearedByBound(entry.requestSequence, requestBound),
             );
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const remainingRequests =
         clearedRequestId === null
           ? (rendezvous?.requests ?? [])
           : (rendezvous?.requests ?? []).filter(
-              (request) => request.messageId !== clearedRequestId,
+              (request) =>
+                request.messageId !== clearedRequestId ||
+                !requestSequenceClearedByBound(request.requestSequence, requestBound),
             );
       const turnStartSubmissionRendezvous =
         rendezvous === null
@@ -867,6 +1037,7 @@ export function applyThreadDetailEvent(
             ...thread,
             activities,
             pendingTurnStartMessageId,
+            pendingTurnStartRequestSequence,
             submittedTurnStarts,
             turnStartSubmissionRendezvous,
             updatedAt: event.occurredAt,
@@ -895,6 +1066,7 @@ export function applyThreadDetailEvent(
           ...thread,
           activities,
           pendingTurnStartMessageId,
+          pendingTurnStartRequestSequence,
           submittedTurnStarts,
           turnStartSubmissionRendezvous,
           updatedAt: event.occurredAt,

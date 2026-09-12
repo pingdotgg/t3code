@@ -816,6 +816,10 @@ export const OrchestrationThread = Schema.Struct({
   // explicitly so command admission and revert completion never infer queue
   // order from clocks on remote clients.
   pendingTurnStartMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  // Event sequence of the request that created the pending marker. Activities
+  // that cancel "every start requested through sequence N" use it to leave a
+  // re-requested marker alone.
+  pendingTurnStartRequestSequence: Schema.optional(Schema.NullOr(NonNegativeInt)),
   // Provider-accepted starts that have not yet been matched to a running
   // lifecycle event. Revert admission keeps these starts quiescent even when
   // overlapping session events clear the single UI-facing pending identity.
@@ -824,6 +828,7 @@ export const OrchestrationThread = Schema.Struct({
       Schema.Struct({
         messageId: MessageId,
         turnId: TurnId,
+        requestSequence: Schema.optional(NonNegativeInt),
       }),
     ),
   ),
@@ -837,6 +842,7 @@ export const OrchestrationThread = Schema.Struct({
           Schema.Struct({
             messageId: MessageId,
             observedTurnIds: Schema.Array(TurnId),
+            requestSequence: Schema.optional(NonNegativeInt),
           }),
         ),
       }),
@@ -1600,6 +1606,10 @@ const ThreadTurnStartAcknowledgeCommand = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   turnId: TurnId,
+  // Sequence of the request event the acknowledged send served, so the ack
+  // updates that request generation's row rather than every row sharing the
+  // message id.
+  requestSequence: Schema.optional(NonNegativeInt),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
 });
 
@@ -1838,6 +1848,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
     Schema.Struct({
       messageId: MessageId,
       turnId: TurnId,
+      requestSequence: Schema.optional(NonNegativeInt),
     }),
   ),
   modelSelection: Schema.optional(ModelSelection),

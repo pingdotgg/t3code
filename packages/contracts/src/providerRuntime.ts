@@ -263,6 +263,9 @@ const ProviderRuntimeEventBase = Schema.Struct({
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(RuntimeItemId),
   requestId: Schema.optional(RuntimeRequestId),
+  // Orchestration event sequence of the request that initiated the work this
+  // event answers (server-side correlation for compaction cleanup bounds).
+  requestSequence: Schema.optional(NonNegativeInt),
   providerRefs: Schema.optional(ProviderRefs),
   raw: Schema.optional(RuntimeEventRaw),
 });

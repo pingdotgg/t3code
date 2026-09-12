@@ -76,6 +76,10 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   messageId: MessageId,
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  // Sequence of the turn-start request event that created the row. NULL on
+  // rows written before the column existed; they count as older than every
+  // later request.
+  requestSequence: Schema.optional(Schema.NullOr(NonNegativeInt)),
   requestedAt: IsoDateTime,
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
@@ -102,6 +106,12 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
 
+export const GetProjectionTurnStartByMessageInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+export type GetProjectionTurnStartByMessageInput = typeof GetProjectionTurnStartByMessageInput.Type;
+
 export const GetProjectionAdoptableTurnStartInput = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -114,6 +124,9 @@ export type GetProjectionSubmittedTurnStartInput = typeof GetProjectionSubmitted
 export const DeleteProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  // When set, only rows whose latest turn-start request is at or before this
+  // event sequence are deleted — a start re-requested after the bound survives.
+  throughRequestSequence: Schema.optional(Schema.Number),
 });
 export type DeleteProjectionPendingTurnStartInput =
   typeof DeleteProjectionPendingTurnStartInput.Type;
@@ -122,6 +135,9 @@ export const AcknowledgeProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   turnId: TurnId,
+  // Sequence of the request event the acknowledged send served. When set, only
+  // that generation's row is marked; rows re-requested later are untouched.
+  requestSequence: Schema.optional(NonNegativeInt),
 });
 export type AcknowledgeProjectionPendingTurnStartInput =
   typeof AcknowledgeProjectionPendingTurnStartInput.Type;
@@ -215,6 +231,14 @@ export interface ProjectionTurnRepositoryShape {
   /** Returns the oldest pending start or acknowledgement belonging to this provider turn. */
   readonly getAdoptableTurnStartByThreadId: (
     input: GetProjectionAdoptableTurnStartInput,
+  ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /**
+   * Returns the oldest pending or submitted start requested for this message.
+   * Request-correlated cleanups use its stored request sequence as their bound.
+   */
+  readonly getTurnStartByMessageId: (
+    input: GetProjectionTurnStartByMessageInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /** Returns only the accepted start correlated to this provider turn. */

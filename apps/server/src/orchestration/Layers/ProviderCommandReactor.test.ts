@@ -1608,12 +1608,14 @@ describe("ProviderCommandReactor", () => {
                 payload: {
                   requestId: "user-message-during-compact-recovery-2",
                   detail: expect.any(String),
+                  throughRequestSequence: expect.any(Number),
                 },
               }),
               expect.objectContaining({
                 payload: {
                   requestId: "user-message-blocked-compact",
                   detail: expect.any(String),
+                  throughRequestSequence: expect.any(Number),
                 },
               }),
             ]),

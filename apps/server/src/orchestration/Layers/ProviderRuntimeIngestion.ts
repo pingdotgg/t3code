@@ -2238,6 +2238,7 @@ const make = Effect.gen(function* () {
       }
 
       let activityEvent = event;
+      let synthesizedCompactionRequestSequence: number | undefined;
       if (
         isCompactedThreadState &&
         event.requestId === undefined &&
@@ -2264,7 +2265,30 @@ const make = Effect.gen(function* () {
             ...event,
             requestId: RuntimeRequestId.make(String(pendingTurnStart.value.messageId)),
           };
+          // The synthesized correlation names one request generation; bound the
+          // cleanup so a delayed compaction event cannot retire a newer
+          // same-message request. A missing stored sequence marks a legacy row
+          // and bounds the delete to it alone.
+          synthesizedCompactionRequestSequence = pendingTurnStart.value.requestSequence ?? 0;
         }
+      }
+      if (isCompactedThreadState && event.requestId !== undefined) {
+        // A compaction correlated by an explicit request id names one request
+        // generation. The initiating request's sequence rides on the event;
+        // the projection row is only a fallback for events stamped before it
+        // was captured, and an unrecoverable generation still must not widen
+        // the cleanup to later same-message requests.
+        const correlatedTurnStart =
+          event.requestSequence === undefined
+            ? yield* projectionTurnRepository.getTurnStartByMessageId({
+                threadId: thread.id,
+                messageId: MessageId.make(String(event.requestId)),
+              })
+            : Option.none();
+        synthesizedCompactionRequestSequence =
+          event.requestSequence ??
+          (Option.isSome(correlatedTurnStart) ? correlatedTurnStart.value.requestSequence : null) ??
+          0;
       }
       if (
         activityEvent.type === "thread.state.changed" &&
@@ -2291,7 +2315,19 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(activityEvent, taskTitle);
+      const activities = runtimeEventToActivities(activityEvent, taskTitle).map((activity) =>
+        synthesizedCompactionRequestSequence !== undefined && activity.kind === "context-compaction"
+          ? {
+              ...activity,
+              payload: {
+                ...(typeof activity.payload === "object" && activity.payload !== null
+                  ? activity.payload
+                  : {}),
+                throughRequestSequence: synthesizedCompactionRequestSequence,
+              },
+            }
+          : activity,
+      );
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

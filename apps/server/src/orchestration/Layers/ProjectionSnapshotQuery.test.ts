@@ -2250,6 +2250,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(commandReadModel.threads[0]?.submittedTurnStarts, [
         { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
       ]);
+      assert.deepEqual(commandReadModel.threads[0]?.turnStartSubmissionRendezvous, {
+        requests: [
+          { messageId: asMessageId("message-pending"), observedTurnIds: [] },
+          { messageId: asMessageId("message-pending-latest"), observedTurnIds: [] },
+        ],
+      });
 
       const fullSnapshot = yield* snapshotQuery.getSnapshot();
       assert.equal(
@@ -2259,6 +2265,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(fullSnapshot.threads[0]?.submittedTurnStarts, [
         { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
       ]);
+      assert.deepEqual(fullSnapshot.threads[0]?.turnStartSubmissionRendezvous, {
+        requests: [
+          { messageId: asMessageId("message-pending"), observedTurnIds: [] },
+          { messageId: asMessageId("message-pending-latest"), observedTurnIds: [] },
+        ],
+      });
 
       const threadDetail = yield* snapshotQuery.getThreadDetailById(
         ThreadId.make("thread-pending"),
@@ -2272,8 +2284,810 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.deepEqual(threadDetail.value.submittedTurnStarts, [
           { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
         ]);
+        assert.deepEqual(threadDetail.value.turnStartSubmissionRendezvous, {
+          requests: [
+            { messageId: asMessageId("message-pending"), observedTurnIds: [] },
+            { messageId: asMessageId("message-pending-latest"), observedTurnIds: [] },
+          ],
+        });
       }
     }),
+  );
+
+  it.effect("marks a still-running older turn as already observed by pending turn starts", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-observed',
+          'Observed Project',
+          '/tmp/project-observed',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-observed',
+          'project-observed',
+          'Observed Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          'turn-older',
+          NULL,
+          0,
+          0,
+          0,
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T00:00:02.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-observed',
+          'running',
+          'codex',
+          'provider-session-observed',
+          'provider-thread-observed',
+          'full-access',
+          'turn-older',
+          NULL,
+          '2026-04-06T00:00:01.500Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          submitted_turn_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-observed',
+          'turn-older',
+          'message-older',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          'running',
+          '2026-04-06T00:00:01.000Z',
+          '2026-04-06T00:00:01.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        ),
+        (
+          'thread-observed',
+          NULL,
+          'message-rerequested',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          'pending',
+          '2026-04-06T00:00:02.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+      // The running turn was requested before the pending turn-start row,
+      // so it cannot be that request's provider turn; the reconstructed
+      // request records it as already observed.
+      const expectedRendezvous = {
+        requests: [
+          {
+            messageId: asMessageId("message-rerequested"),
+            observedTurnIds: [asTurnId("turn-older")],
+          },
+        ],
+      };
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(
+        commandReadModel.threads[0]?.turnStartSubmissionRendezvous,
+        expectedRendezvous,
+      );
+      const fullSnapshot = yield* snapshotQuery.getSnapshot();
+      assert.deepEqual(fullSnapshot.threads[0]?.turnStartSubmissionRendezvous, expectedRendezvous);
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-observed"),
+      );
+      assert.equal(threadDetail._tag, "Some");
+      if (threadDetail._tag === "Some") {
+        assert.deepEqual(threadDetail.value.turnStartSubmissionRendezvous, expectedRendezvous);
+      }
+    }),
+  );
+
+  it.effect(
+    "marks the active turn observed on timestamp ties even when it is not the latest turn",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-observed-tie',
+            'Observed Tie Project',
+            '/tmp/project-observed-tie',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-observed-tie',
+            'project-observed-tie',
+            'Observed Tie Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-latest',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL
+          )
+        `;
+
+        // The session's active turn differs from the thread's latest turn
+        // (a delayed lifecycle update repointed latest_turn_id), and the
+        // pending re-request shares the active turn's requested_at.
+        yield* sql`
+          INSERT INTO projection_thread_sessions (
+            thread_id,
+            status,
+            provider_name,
+            provider_session_id,
+            provider_thread_id,
+            runtime_mode,
+            active_turn_id,
+            last_error,
+            updated_at
+          )
+          VALUES (
+            'thread-observed-tie',
+            'running',
+            'codex',
+            'provider-session-observed-tie',
+            'provider-thread-observed-tie',
+            'full-access',
+            'turn-older',
+            NULL,
+            '2026-04-06T00:00:01.500Z'
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id,
+            turn_id,
+            pending_message_id,
+            submitted_turn_id,
+            source_proposed_plan_thread_id,
+            source_proposed_plan_id,
+            assistant_message_id,
+            state,
+            requested_at,
+            started_at,
+            completed_at,
+            checkpoint_turn_count,
+            checkpoint_ref,
+            checkpoint_status,
+            checkpoint_files_json
+          )
+          VALUES (
+            'thread-observed-tie',
+            'turn-older',
+            'message-older',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'running',
+            '2026-04-06T00:00:02.000Z',
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          ),
+          (
+            'thread-observed-tie',
+            'turn-latest',
+            'message-latest',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'completed',
+            '2026-04-06T00:00:01.000Z',
+            '2026-04-06T00:00:01.000Z',
+            '2026-04-06T00:00:01.500Z',
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          ),
+          (
+            'thread-observed-tie',
+            NULL,
+            'message-rerequested',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'pending',
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          )
+        `;
+
+        // The session's active turn is recorded as observed by the pending
+        // request even though their timestamps tie and another turn is the
+        // thread's latest — hydration keys off the session, not latestTurn.
+        const expectedRendezvous = {
+          requests: [
+            {
+              messageId: asMessageId("message-rerequested"),
+              observedTurnIds: [asTurnId("turn-older")],
+            },
+          ],
+        };
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        assert.deepEqual(
+          commandReadModel.threads[0]?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const fullSnapshot = yield* snapshotQuery.getSnapshot();
+        assert.deepEqual(
+          fullSnapshot.threads[0]?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const threadDetail = yield* snapshotQuery.getThreadDetailById(
+          ThreadId.make("thread-observed-tie"),
+        );
+        assert.equal(threadDetail._tag, "Some");
+        if (threadDetail._tag === "Some") {
+          assert.deepEqual(threadDetail.value.turnStartSubmissionRendezvous, expectedRendezvous);
+        }
+      }),
+  );
+
+  it.effect(
+    "marks a checkpointed completed turn observed when the pending request outlived it",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-observed-checkpointed',
+            'Observed Checkpointed Project',
+            '/tmp/project-observed-checkpointed',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-observed-checkpointed',
+            'project-observed-checkpointed',
+            'Observed Checkpointed Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-done',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:05.000Z',
+            NULL,
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_thread_sessions (
+            thread_id,
+            status,
+            provider_name,
+            provider_session_id,
+            provider_thread_id,
+            runtime_mode,
+            active_turn_id,
+            last_error,
+            updated_at
+          )
+          VALUES (
+            'thread-observed-checkpointed',
+            'idle',
+            'codex',
+            'provider-session-observed-checkpointed',
+            'provider-thread-observed-checkpointed',
+            'full-access',
+            NULL,
+            NULL,
+            '2026-04-06T00:00:05.000Z'
+          )
+        `;
+
+        // The turn ran while the request was pending, took a checkpoint, and
+        // completed before the request's acknowledgement — its
+        // checkpoint_turn_count must not exclude it from observed turns.
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id,
+            turn_id,
+            pending_message_id,
+            submitted_turn_id,
+            source_proposed_plan_thread_id,
+            source_proposed_plan_id,
+            assistant_message_id,
+            state,
+            requested_at,
+            started_at,
+            completed_at,
+            checkpoint_turn_count,
+            checkpoint_ref,
+            checkpoint_status,
+            checkpoint_files_json
+          )
+          VALUES (
+            'thread-observed-checkpointed',
+            'turn-done',
+            'message-done',
+            NULL,
+            NULL,
+            NULL,
+            'assistant-done',
+            'completed',
+            '2026-04-06T00:00:01.000Z',
+            '2026-04-06T00:00:01.000Z',
+            '2026-04-06T00:00:05.000Z',
+            1,
+            'provider-diff:checkpoint-1',
+            'ready',
+            '[]'
+          ),
+          (
+            'thread-observed-checkpointed',
+            NULL,
+            'message-rerequested',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'pending',
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          )
+        `;
+
+        const expectedRendezvous = {
+          requests: [
+            {
+              messageId: asMessageId("message-rerequested"),
+              observedTurnIds: [asTurnId("turn-done")],
+            },
+          ],
+        };
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        assert.deepEqual(
+          commandReadModel.threads.find((thread) => thread.id === "thread-observed-checkpointed")
+            ?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const fullSnapshot = yield* snapshotQuery.getSnapshot();
+        assert.deepEqual(
+          fullSnapshot.threads.find((thread) => thread.id === "thread-observed-checkpointed")
+            ?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const threadDetail = yield* snapshotQuery.getThreadDetailById(
+          ThreadId.make("thread-observed-checkpointed"),
+        );
+        assert.equal(threadDetail._tag, "Some");
+        if (threadDetail._tag === "Some") {
+          assert.deepEqual(threadDetail.value.turnStartSubmissionRendezvous, expectedRendezvous);
+        }
+      }),
+  );
+
+  it.effect(
+    "marks the active turn observed when it materialized while requests were still pending",
+    () =>
+      Effect.gen(function* () {
+        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const sql = yield* SqlClient.SqlClient;
+
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            default_model_selection_json,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-observed-generation',
+            'Observed Generation Project',
+            '/tmp/project-observed-generation',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:01.000Z',
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            branch,
+            worktree_path,
+            latest_turn_id,
+            latest_user_message_at,
+            pending_approval_count,
+            pending_user_input_count,
+            has_actionable_proposed_plan,
+            created_at,
+            updated_at,
+            archived_at,
+            deleted_at
+          )
+          VALUES (
+            'thread-observed-generation',
+            'project-observed-generation',
+            'Observed Generation Thread',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            'turn-adopted',
+            NULL,
+            0,
+            0,
+            0,
+            '2026-04-06T00:00:00.000Z',
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL
+          )
+        `;
+
+        yield* sql`
+          INSERT INTO projection_thread_sessions (
+            thread_id,
+            status,
+            provider_name,
+            provider_session_id,
+            provider_thread_id,
+            runtime_mode,
+            active_turn_id,
+            last_error,
+            updated_at
+          )
+          VALUES (
+            'thread-observed-generation',
+            'running',
+            'codex',
+            'provider-session-observed-generation',
+            'provider-thread-observed-generation',
+            'full-access',
+            'turn-adopted',
+            NULL,
+            '2026-04-06T00:00:01.500Z'
+          )
+        `;
+
+        // Both pending generations are inserted before the turn row: the
+        // provider turn only materializes once the session reports it
+        // running, which happened after both re-requests were durable. Its
+        // NULL request_sequence cannot prove which generation produced it,
+        // but live processing recorded it on every pending request when it
+        // started — hydration must do the same.
+        yield* sql`
+          INSERT INTO projection_turns (
+            thread_id,
+            turn_id,
+            pending_message_id,
+            submitted_turn_id,
+            source_proposed_plan_thread_id,
+            source_proposed_plan_id,
+            assistant_message_id,
+            state,
+            request_sequence,
+            requested_at,
+            started_at,
+            completed_at,
+            checkpoint_turn_count,
+            checkpoint_ref,
+            checkpoint_status,
+            checkpoint_files_json
+          )
+          VALUES (
+            'thread-observed-generation',
+            NULL,
+            'message-rerequested',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'pending',
+            2,
+            '2026-04-06T00:00:01.500Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          ),
+          (
+            'thread-observed-generation',
+            NULL,
+            'message-rerequested',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'pending',
+            5,
+            '2026-04-06T00:00:02.000Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          ),
+          (
+            'thread-observed-generation',
+            'turn-adopted',
+            'message-rerequested',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'running',
+            NULL,
+            '2026-04-06T00:00:02.500Z',
+            '2026-04-06T00:00:02.500Z',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '[]'
+          )
+        `;
+
+        const expectedRendezvous = {
+          requests: [
+            {
+              messageId: asMessageId("message-rerequested"),
+              observedTurnIds: [asTurnId("turn-adopted")],
+              requestSequence: 2,
+            },
+            {
+              messageId: asMessageId("message-rerequested"),
+              observedTurnIds: [asTurnId("turn-adopted")],
+              requestSequence: 5,
+            },
+          ],
+        };
+        const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+        assert.deepEqual(
+          commandReadModel.threads.find(
+            (thread) => thread.id === ThreadId.make("thread-observed-generation"),
+          )?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const fullSnapshot = yield* snapshotQuery.getSnapshot();
+        assert.deepEqual(
+          fullSnapshot.threads.find(
+            (thread) => thread.id === ThreadId.make("thread-observed-generation"),
+          )?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+        const threadDetail = yield* snapshotQuery.getThreadDetailById(
+          ThreadId.make("thread-observed-generation"),
+        );
+        assert.equal(threadDetail._tag, "Some");
+        if (threadDetail._tag === "Some") {
+          assert.deepEqual(threadDetail.value.turnStartSubmissionRendezvous, expectedRendezvous);
+        }
+
+        // The observation survives the turn completing and the session going
+        // idle before hydration — the turn row materialized while both
+        // requests were pending, so both still count it as observed.
+        yield* sql`
+          UPDATE projection_turns
+          SET state = 'completed', completed_at = '2026-04-06T00:00:03.000Z'
+          WHERE thread_id = 'thread-observed-generation' AND turn_id = 'turn-adopted'
+        `;
+        yield* sql`
+          UPDATE projection_thread_sessions
+          SET status = 'ready', active_turn_id = NULL, updated_at = '2026-04-06T00:00:03.000Z'
+          WHERE thread_id = 'thread-observed-generation'
+        `;
+        const commandReadModelAfterReady = yield* snapshotQuery.getCommandReadModel();
+        assert.deepEqual(
+          commandReadModelAfterReady.threads.find(
+            (thread) => thread.id === ThreadId.make("thread-observed-generation"),
+          )?.turnStartSubmissionRendezvous,
+          expectedRendezvous,
+        );
+      }),
   );
 
   it.effect("searches active user messages and canonical assistant outputs", () =>

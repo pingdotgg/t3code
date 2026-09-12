@@ -4300,6 +4300,114 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
       }),
     );
 
+    it.effect(
+      "leaves a re-requested start when a bounded failure predates its latest request",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const projectionTurnRepository = yield* ProjectionTurnRepository;
+          const threadId = ThreadId.make("thread-bounded-start-cleanup");
+          const messageId = MessageId.make("message-bounded-start-cleanup");
+
+          const appendRequest = (label: string, createdAt: string) =>
+            eventStore.append({
+              type: "thread.turn-start-requested",
+              eventId: EventId.make(`evt-bounded-start-${label}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: createdAt,
+              commandId: CommandId.make(`cmd-bounded-start-${label}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-bounded-start-${label}`),
+              metadata: {},
+              payload: {
+                threadId,
+                messageId,
+                runtimeMode: "approval-required",
+                createdAt,
+              },
+            });
+          const appendFailure = (label: string, throughRequestSequence: number) =>
+            eventStore.append({
+              type: "thread.activity-appended",
+              eventId: EventId.make(`evt-bounded-failure-${label}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: "2026-02-26T13:00:10.000Z",
+              commandId: CommandId.make(`cmd-bounded-failure-${label}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-bounded-failure-${label}`),
+              metadata: {},
+              payload: {
+                threadId,
+                activity: {
+                  id: EventId.make(`activity-bounded-failure-${label}`),
+                  tone: "error",
+                  kind: "provider.turn.start.failed",
+                  summary: "Queued message was not sent",
+                  payload: {
+                    requestId: messageId,
+                    throughRequestSequence,
+                  },
+                  turnId: null,
+                  createdAt: "2026-02-26T13:00:10.000Z",
+                },
+              },
+            });
+
+          const firstRequest = yield* appendRequest("first", "2026-02-26T13:00:01.000Z");
+          // Acknowledge the first request so its row is submitted while the
+          // second request's row stays pending — same message id, two rows.
+          yield* eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make("evt-bounded-start-acknowledged"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: "2026-02-26T13:00:01.500Z",
+            commandId: CommandId.make("cmd-bounded-start-acknowledged"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-bounded-start-acknowledged"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnStartAcknowledged: {
+                messageId,
+                turnId: TurnId.make("turn-bounded-start-cleanup"),
+              },
+              updatedAt: "2026-02-26T13:00:01.500Z",
+            },
+          });
+          const secondRequest = yield* appendRequest("second", "2026-02-26T13:00:02.000Z");
+          yield* projectionPipeline.bootstrap;
+
+          // The bound predates the re-request, so only the submitted row from
+          // the first request is retired; the newer pending row survives.
+          yield* appendFailure("before-rerequest", firstRequest.sequence);
+          yield* projectionPipeline.bootstrap;
+          const surviving = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+            threadId,
+          });
+          assert.isTrue(Option.isSome(surviving));
+          assert.isTrue(
+            Option.isNone(
+              yield* projectionTurnRepository.getSubmittedTurnStartByTurnId({
+                threadId,
+                turnId: TurnId.make("turn-bounded-start-cleanup"),
+              }),
+            ),
+          );
+
+          // A bound at or past the latest request still retires the row.
+          yield* appendFailure("through-rerequest", secondRequest.sequence);
+          yield* projectionPipeline.bootstrap;
+          const cleared = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+            threadId,
+          });
+          assert.isTrue(Option.isNone(cleared));
+        }),
+    );
+
     it.effect("adopts queued pending starts in request order", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -4703,6 +4811,382 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           },
         ]);
       }),
+    );
+
+    it.effect("marks only the oldest pending generation for an unsequenced acknowledgement", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-legacy-ack");
+        const messageId = MessageId.make("message-legacy-ack");
+        const turnId = TurnId.make("turn-legacy-ack");
+        const createdAt = "2026-02-26T13:50:00.000Z";
+
+        for (const index of [0, 1]) {
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-legacy-ack-requested-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-legacy-ack-requested-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-legacy-ack-requested-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        }
+        // A legacy acknowledgement carries no request sequence; it answers the
+        // oldest pending generation rather than every same-message row.
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-legacy-ack-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-legacy-ack-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-legacy-ack-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: createdAt,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly messageId: string;
+          readonly state: string;
+          readonly submittedTurnId: string | null;
+        }>`
+          SELECT
+            pending_message_id AS "messageId",
+            state,
+            submitted_turn_id AS "submittedTurnId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id ASC
+        `;
+        assert.deepEqual(rows, [
+          {
+            messageId: "message-legacy-ack",
+            state: "submitted",
+            submittedTurnId: "turn-legacy-ack",
+          },
+          {
+            messageId: "message-legacy-ack",
+            state: "pending",
+            submittedTurnId: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("retires every submitted generation adopted by a shared provider turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-shared-turn-adoption");
+        const messageId = MessageId.make("message-shared-turn-adoption");
+        const turnId = TurnId.make("turn-shared-turn-adoption");
+        const createdAt = "2026-02-26T13:55:00.000Z";
+
+        const appendRequest = (label: string) =>
+          eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-shared-turn-requested-${label}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-shared-turn-requested-${label}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-shared-turn-requested-${label}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        const firstRequest = yield* appendRequest("first");
+        const secondRequest = yield* appendRequest("second");
+        // Both generations acknowledge onto the same provider turn.
+        for (const [label, requestSequence] of [
+          ["first", firstRequest.sequence],
+          ["second", secondRequest.sequence],
+        ] as const) {
+          yield* eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make(`evt-shared-turn-acknowledged-${label}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-shared-turn-acknowledged-${label}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-shared-turn-acknowledged-${label}`),
+            metadata: {},
+            payload: {
+              threadId,
+              turnStartAcknowledged: { messageId, turnId, requestSequence },
+              updatedAt: createdAt,
+            },
+          });
+        }
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-shared-turn-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-shared-turn-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-shared-turn-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly state: string;
+          readonly submittedTurnId: string | null;
+        }>`
+          SELECT
+            state,
+            submitted_turn_id AS "submittedTurnId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+          ORDER BY row_id ASC
+        `;
+        // The running turn adopted both generations; no submitted turn-start
+        // row survives to be resurrected by a later snapshot.
+        assert.deepEqual(rows, []);
+      }),
+    );
+
+    it.effect("keeps an unacknowledged generation when a newer turn starts running", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-unadopted-generation");
+        const messageId = MessageId.make("message-unadopted-generation");
+        const turnId = TurnId.make("turn-unadopted-generation");
+        const createdAt = "2026-02-26T13:57:00.000Z";
+
+        const appendRequest = (label: string) =>
+          eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-unadopted-requested-${label}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-unadopted-requested-${label}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-unadopted-requested-${label}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId,
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        const firstRequest = yield* appendRequest("first");
+        const secondRequest = yield* appendRequest("second");
+        // Only the newer generation is acknowledged onto turn's provider id.
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-unadopted-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-unadopted-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-unadopted-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: {
+              messageId,
+              turnId,
+              requestSequence: secondRequest.sequence,
+            },
+            updatedAt: createdAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-unadopted-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-unadopted-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-unadopted-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly state: string;
+          readonly requestSequence: number | null;
+        }>`
+          SELECT
+            state,
+            request_sequence AS "requestSequence"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NULL
+          ORDER BY row_id ASC
+        `;
+        // The running turn adopted only the acknowledged generation; the
+        // older unacknowledged request's pending row keeps its identity.
+        assert.deepEqual(rows, [{ state: "pending", requestSequence: firstRequest.sequence }]);
+      }),
+    );
+
+    it.effect(
+      "keeps a newer submitted generation when an unsequenced acknowledgement matches nothing",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread-orphaned-ack");
+          const messageId = MessageId.make("message-orphaned-ack");
+          const firstTurnId = TurnId.make("turn-orphaned-ack-first");
+          const secondTurnId = TurnId.make("turn-orphaned-ack-second");
+          const createdAt = "2026-02-26T13:58:00.000Z";
+
+          const appendRequest = (label: string) =>
+            eventStore.append({
+              type: "thread.turn-start-requested",
+              eventId: EventId.make(`evt-orphaned-ack-requested-${label}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: createdAt,
+              commandId: CommandId.make(`cmd-orphaned-ack-requested-${label}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-orphaned-ack-requested-${label}`),
+              metadata: {},
+              payload: {
+                threadId,
+                messageId,
+                runtimeMode: "approval-required",
+                createdAt,
+              },
+            });
+          const appendAcknowledgement = (
+            label: string,
+            turnId: TurnId,
+            requestSequence: number | undefined,
+          ) =>
+            eventStore.append({
+              type: "thread.meta-updated",
+              eventId: EventId.make(`evt-orphaned-ack-acknowledged-${label}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: createdAt,
+              commandId: CommandId.make(`cmd-orphaned-ack-acknowledged-${label}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-orphaned-ack-acknowledged-${label}`),
+              metadata: {},
+              payload: {
+                threadId,
+                turnStartAcknowledged: { messageId, turnId, requestSequence },
+                updatedAt: createdAt,
+              },
+            });
+
+          const firstRequest = yield* appendRequest("first");
+          yield* appendAcknowledgement("first", firstTurnId, firstRequest.sequence);
+          // The provider turn starts running, which retires the first
+          // generation's submitted row.
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make("evt-orphaned-ack-running"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make("cmd-orphaned-ack-running"),
+            causationEventId: null,
+            correlationId: CorrelationId.make("cmd-orphaned-ack-running"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: firstTurnId,
+                lastError: null,
+                updatedAt: createdAt,
+              },
+            },
+          });
+          const secondRequest = yield* appendRequest("second");
+          yield* appendAcknowledgement("second", secondTurnId, secondRequest.sequence);
+          // A delayed legacy acknowledgement for the first turn arrives after
+          // its generation is gone. Owning no sequence bound, it must not
+          // delete the newer same-message generation by message id alone.
+          yield* appendAcknowledgement("delayed", firstTurnId, undefined);
+
+          yield* projectionPipeline.bootstrap;
+
+          const rows = yield* sql<{
+            readonly state: string;
+            readonly submittedTurnId: string | null;
+          }>`
+            SELECT
+              state,
+              submitted_turn_id AS "submittedTurnId"
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+              AND turn_id IS NULL
+            ORDER BY row_id ASC
+          `;
+          assert.deepEqual(rows, [
+            { state: "submitted", submittedTurnId: "turn-orphaned-ack-second" },
+          ]);
+        }),
     );
 
     it.effect("keeps newer pending turn starts when a stale session reaches a terminal state", () =>

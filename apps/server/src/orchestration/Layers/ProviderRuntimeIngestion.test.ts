@@ -4187,7 +4187,139 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(activity?.summary).toBe("Compacted context 899K → 0 tokens");
     expect(activity?.tone).toBe("info");
-    expect(activity?.payload).toMatchObject({ requestId: "message-compact" });
+    expect(activity?.payload).toMatchObject({
+      requestId: "message-compact",
+      throughRequestSequence: expect.any(Number),
+    });
+  });
+
+  it("bounds a request-correlated compaction cleanup to its initiating generation", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const messageId = asMessageId("message-compact");
+
+    const dispatchCompactRequest = (commandId: string) =>
+      harness.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make(commandId),
+        threadId,
+        message: {
+          messageId,
+          role: "user",
+          text: "/compact",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      } satisfies OrchestrationCommand);
+
+    await dispatchCompactRequest("cmd-compact-first");
+    const firstRequest = await waitForThread(
+      harness.readModel,
+      (entry) => entry.pendingTurnStartMessageId === messageId,
+    );
+    const firstSequence = firstRequest.pendingTurnStartRequestSequence;
+    expect(firstSequence).toEqual(expect.any(Number));
+    if (firstSequence == null) throw new Error("expected a request sequence");
+
+    // The first generation's request is reported failed; its row is retired
+    // while the re-request below is still pending.
+    await harness.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make("cmd-compact-first-failed"),
+      threadId,
+      activity: {
+        id: asEventId("evt-compact-first-failed"),
+        kind: "provider.turn.start.failed",
+        tone: "error",
+        summary: "Context compaction failed",
+        turnId: null,
+        payload: {
+          requestId: messageId,
+          throughRequestSequence: firstSequence,
+          detail: "Provider request failed",
+        },
+        createdAt: now,
+      },
+      createdAt: now,
+    });
+    await dispatchCompactRequest("cmd-compact-second");
+    const secondRequest = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.pendingTurnStartMessageId === messageId &&
+        entry.pendingTurnStartRequestSequence !== firstSequence,
+    );
+    const secondSequence = secondRequest.pendingTurnStartRequestSequence;
+
+    // The delayed compaction event carries the generation it was initiated
+    // for; it must not retire the newer same-message request.
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-compacted-stale"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      createdAt: now,
+      threadId,
+      requestId: RuntimeRequestId.make(String(messageId)),
+      requestSequence: firstSequence,
+      payload: {
+        state: "compacted",
+        detail: { source: "provider" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-compacted-stale",
+      ),
+    );
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-compacted-stale",
+    );
+    expect(activity?.payload).toMatchObject({
+      requestId: "message-compact",
+      throughRequestSequence: firstSequence,
+    });
+    expect(thread.pendingTurnStartMessageId).toBe(messageId);
+    expect(thread.pendingTurnStartRequestSequence).toBe(secondSequence);
+  });
+
+  it("bounds a request-correlated compaction cleanup even when no generation is recoverable", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+
+    harness.emit({
+      type: "thread.state.changed",
+      eventId: asEventId("evt-compacted-unrecoverable"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      createdAt: now,
+      threadId,
+      requestId: RuntimeRequestId.make("message-compact-gone"),
+      payload: {
+        state: "compacted",
+        detail: { source: "provider" },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-compacted-unrecoverable",
+      ),
+    );
+    const activity = thread.activities.find(
+      (candidate: ProviderRuntimeTestActivity) => candidate.id === "evt-compacted-unrecoverable",
+    );
+    // The row the request named is already gone; bound 0 keeps the cleanup
+    // from reaching any later same-message generation.
+    expect(activity?.payload).toMatchObject({
+      requestId: "message-compact-gone",
+      throughRequestSequence: 0,
+    });
   });
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {

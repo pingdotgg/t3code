@@ -984,11 +984,15 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           });
         }
       }
-      expect(acknowledgedReadModel.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      // The unrelated running turn is not the acknowledged generation's
+      // adoption, so the marker stays until that turn actually starts; the
+      // submitted entry alone still blocks a revert either way.
+      expect(acknowledgedReadModel.threads[0]?.pendingTurnStartMessageId).toBe(pendingMessageId);
       expect(acknowledgedReadModel.threads[0]?.submittedTurnStarts).toEqual([
         {
           messageId: pendingMessageId,
           turnId: TurnId.make("turn-acknowledged-before-running"),
+          requestSequence: expect.any(Number),
         },
       ]);
       const acknowledgedError = yield* decideOrchestrationCommand({

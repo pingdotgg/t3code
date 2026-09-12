@@ -17,6 +17,7 @@ import {
   DeleteProjectionTurnsAfterCheckpointInput,
   DeleteProjectionTurnsByThreadInput,
   GetProjectionAdoptableTurnStartInput,
+  GetProjectionTurnStartByMessageInput,
   GetProjectionPendingTurnStartInput,
   GetProjectionSubmittedTurnStartInput,
   GetProjectionTurnByTurnIdInput,
@@ -108,29 +109,78 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
 
   const deletePendingProjectionTurn = SqlSchema.void({
     Request: DeleteProjectionPendingTurnStartInput,
-    execute: ({ threadId, messageId }) =>
-      sql`
+    execute: ({ threadId, messageId, throughRequestSequence }) => {
+      // Rows without a stored request sequence predate the column and count as
+      // older than every bound.
+      const requestBound =
+        throughRequestSequence === undefined
+          ? sql`1 = 1`
+          : sql`(request_sequence IS NULL OR request_sequence <= ${throughRequestSequence})`;
+      return sql`
         DELETE FROM projection_turns
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
           AND state IN ('pending', 'submitted')
           AND pending_message_id = ${messageId}
           AND checkpoint_turn_count IS NULL
-      `,
+          AND ${requestBound}
+      `;
+    },
   });
 
   const markPendingProjectionTurnSubmitted = SqlSchema.void({
     Request: AcknowledgeProjectionPendingTurnStartInput,
-    execute: ({ threadId, messageId, turnId }) =>
-      sql`
+    execute: ({ threadId, messageId, turnId, requestSequence }) => {
+      // An acknowledgement answers exactly one request generation. A
+      // sequenced acknowledgement prefers the exact row and otherwise falls
+      // back to the oldest unsequenced (pre-migration) row; an unsequenced
+      // acknowledgement resolves to only the oldest matching generation.
+      const requestMatch =
+        requestSequence === undefined
+          ? sql`row_id = (
+              SELECT oldest.row_id
+              FROM projection_turns AS oldest
+              WHERE oldest.thread_id = ${threadId}
+                AND oldest.turn_id IS NULL
+                AND oldest.state = 'pending'
+                AND oldest.pending_message_id = ${messageId}
+                AND oldest.checkpoint_turn_count IS NULL
+              ORDER BY oldest.row_id ASC
+              LIMIT 1
+            )`
+          : sql`row_id = (
+              SELECT candidate.row_id
+              FROM projection_turns AS candidate
+              WHERE candidate.thread_id = ${threadId}
+                AND candidate.turn_id IS NULL
+                AND candidate.state = 'pending'
+                AND candidate.pending_message_id = ${messageId}
+                AND candidate.checkpoint_turn_count IS NULL
+                AND (
+                  candidate.request_sequence IS NULL
+                  OR candidate.request_sequence = ${requestSequence}
+                )
+              ORDER BY
+                CASE WHEN candidate.request_sequence = ${requestSequence} THEN 0 ELSE 1 END,
+                candidate.row_id ASC
+              LIMIT 1
+            )`;
+      // A sequenced acknowledgement that claims a legacy unsequenced row
+      // records the generation it answered so later bounds treat the row as
+      // that generation rather than "older than everything".
+      const sequenceClaim =
+        requestSequence === undefined ? sql`` : sql`, request_sequence = ${requestSequence}`;
+      return sql`
         UPDATE projection_turns
-        SET state = 'submitted', submitted_turn_id = ${turnId}
+        SET state = 'submitted', submitted_turn_id = ${turnId}${sequenceClaim}
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
           AND state = 'pending'
           AND pending_message_id = ${messageId}
           AND checkpoint_turn_count IS NULL
-      `,
+          AND ${requestMatch}
+      `;
+    },
   });
 
   const deleteSubmittedProjectionTurnsByTurn = SqlSchema.void({
@@ -171,6 +221,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id,
           assistant_message_id,
           state,
+          request_sequence,
           requested_at,
           started_at,
           completed_at,
@@ -188,6 +239,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.sourceProposedPlanId},
           NULL,
           'pending',
+          ${row.requestSequence ?? null},
           ${row.requestedAt},
           NULL,
           NULL,
@@ -220,6 +272,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_id,
           assistant_message_id,
           state,
+          request_sequence,
           requested_at,
           started_at,
           completed_at,
@@ -237,6 +290,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.sourceProposedPlanId},
           NULL,
           'submitted',
+          ${row.requestSequence ?? null},
           ${row.requestedAt},
           NULL,
           NULL,
@@ -258,6 +312,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          request_sequence AS "requestSequence",
           requested_at AS "requestedAt"
         FROM projection_turns
         WHERE thread_id = ${threadId}
@@ -302,6 +357,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          candidate.request_sequence AS "requestSequence",
           requested_at AS "requestedAt"
         FROM projection_turns AS candidate
         WHERE candidate.thread_id = ${threadId}
@@ -333,6 +389,29 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       `,
   });
 
+  const getProjectionTurnStartByMessage = SqlSchema.findOneOption({
+    Request: GetProjectionTurnStartByMessageInput,
+    Result: ProjectionPendingTurnStart,
+    execute: ({ threadId, messageId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId",
+          request_sequence AS "requestSequence",
+          requested_at AS "requestedAt"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id IS NULL
+          AND state IN ('pending', 'submitted')
+          AND pending_message_id = ${messageId}
+          AND checkpoint_turn_count IS NULL
+        ORDER BY row_id ASC
+        LIMIT 1
+      `,
+  });
+
   const getSubmittedProjectionTurn = SqlSchema.findOneOption({
     Request: GetProjectionSubmittedTurnStartInput,
     Result: ProjectionPendingTurnStart,
@@ -343,6 +422,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
+          request_sequence AS "requestSequence",
           requested_at AS "requestedAt"
         FROM projection_turns
         WHERE thread_id = ${threadId}
@@ -538,6 +618,15 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const getTurnStartByMessageId: ProjectionTurnRepositoryShape["getTurnStartByMessageId"] = (
+    input,
+  ) =>
+    getProjectionTurnStartByMessage(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionTurnRepository.getTurnStartByMessageId:query"),
+      ),
+    );
+
   const getSubmittedTurnStartByTurnId: ProjectionTurnRepositoryShape["getSubmittedTurnStartByTurnId"] =
     (input) =>
       getSubmittedProjectionTurn(input).pipe(
@@ -613,6 +702,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     getPendingTurnStartByThreadId,
     getUnresolvedTurnStartByThreadId,
     getAdoptableTurnStartByThreadId,
+    getTurnStartByMessageId,
     getSubmittedTurnStartByTurnId,
     deletePendingTurnStart,
     deleteTurnsAfterCheckpoint,
