@@ -5,7 +5,10 @@ import { act, type MouseEvent, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { FileDiffMetadata } from "@pierre/diffs";
+
 import { DiffFileTree, type DiffFileTreeEntry } from "./DiffFileTree";
+import { diffFileTreeEntries } from "./diffFileTree.logic";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
 
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -110,6 +113,22 @@ describe("diff tree file activation", () => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("mounts a file-to-symlink type change as one tree row", async () => {
+    // Git carries a type change as a deletion and an addition of the same path.
+    const typeChange = diffFileTreeEntries([
+      { type: "deleted", name: "b/AGENTS.md", prevName: "a/AGENTS.md" } as FileDiffMetadata,
+      { type: "new", name: "b/AGENTS.md", prevName: "a/AGENTS.md" } as FileDiffMetadata,
+      { type: "change", name: "b/CLAUDE.md", prevName: "a/CLAUDE.md" } as FileDiffMetadata,
+    ]);
+    await mount({ files: [...typeChange] });
+
+    const tree = model();
+    expect(tree.getItem("AGENTS.md")?.isDirectory()).toBe(false);
+    expect(tree.getItem("CLAUDE.md")?.isDirectory()).toBe(false);
+    await activate("AGENTS.md");
+    expect(targets).toEqual([{ type: "item", id: "AGENTS.md\u0000AGENTS.md", align: "start" }]);
   });
 
   it("reissues the reveal when the sole selected file is activated again", async () => {
