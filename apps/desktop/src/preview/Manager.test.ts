@@ -181,6 +181,7 @@ const {
   createFromPath,
   fromId,
   getFocusedWebContents,
+  getFocusedWindow,
   mkdir,
   showItemInFolder,
   webviewSend,
@@ -188,6 +189,7 @@ const {
   writeClipboard,
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
+  getFocusedWindow: vi.fn<() => Electron.BrowserWindow | null>(() => null),
   clipboardItemConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean; readonly toPNG: () => Buffer } => ({
     isEmpty: () => false,
@@ -203,7 +205,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
-  BrowserWindow: browserWindowConstructor,
+  BrowserWindow: Object.assign(browserWindowConstructor, { getFocusedWindow }),
   ClipboardItem: class {
     constructor(data: Record<string, unknown>) {
       clipboardItemConstructor(data);
@@ -542,6 +544,8 @@ describe("PreviewManager", () => {
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
+    getFocusedWindow.mockReset();
+    getFocusedWindow.mockReturnValue({} as Electron.BrowserWindow);
     mkdir.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
@@ -3919,6 +3923,107 @@ describe("PreviewManager", () => {
         });
       }),
     ),
+  );
+
+  effectIt.effect(
+    "hands keyboard focus back to the previous renderer after an automation click",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+          const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Runtime.evaluate") {
+              return { result: { value: { width: 800, height: 600 } } };
+            }
+            if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
+              humanInput?.({}, { kind: "pointer", x: params.x, y: params.y, button: 0 });
+            }
+            return undefined;
+          });
+          const restoreFocus = vi.fn();
+          getFocusedWebContents.mockReturnValue({
+            id: 7,
+            isDestroyed: () => false,
+            focus: restoreFocus,
+          } as never);
+          fromId.mockReturnValue({
+            id: 42,
+            isDestroyed: () => false,
+            getType: () => "webview",
+            getURL: () => "https://example.com",
+            getTitle: () => "Example",
+            isLoading: () => false,
+            isDevToolsOpened: () => false,
+            getZoomFactor: () => 1,
+            setZoomFactor: vi.fn(),
+            setAudioMuted: vi.fn(),
+            isCurrentlyAudible: () => false,
+            on: vi.fn(),
+            off: vi.fn(),
+            ipc: {
+              on: vi.fn((channel: string, listener: typeof humanInput) => {
+                if (channel === "preview:human-input") humanInput = listener;
+              }),
+              off: vi.fn(),
+            },
+            send: webviewSend,
+            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+            setIgnoreMenuShortcuts: vi.fn(),
+            setWindowOpenHandler: vi.fn(),
+            debugger: {
+              isAttached: () => false,
+              attach: vi.fn(),
+              sendCommand,
+              on: vi.fn(),
+              off: vi.fn(),
+            },
+          } as never);
+
+          yield* manager.createTab("tab_1");
+          yield* manager.registerWebview("tab_1", 42);
+          const click = yield* manager
+            .automationClick("tab_1", { x: 120, y: 80 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(200);
+          yield* Fiber.join(click);
+
+          expect(restoreFocus).toHaveBeenCalledTimes(1);
+          expect(restoreFocus.mock.invocationCallOrder[0]).toBeGreaterThan(
+            sendCommand.mock.invocationCallOrder.at(-1) ?? 0,
+          );
+
+          const offscreen = yield* manager
+            .automationClick("tab_1", { x: 5000, y: 80 })
+            .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(200);
+          expect((yield* Fiber.join(offscreen))._tag).toBe("Failure");
+          expect(restoreFocus).toHaveBeenCalledTimes(2);
+
+          // Focus that moved to a third renderer while the click ran is left alone.
+          getFocusedWebContents
+            .mockReturnValueOnce({ id: 7, isDestroyed: () => false, focus: restoreFocus } as never)
+            .mockReturnValue({ id: 9, isDestroyed: () => false, focus: vi.fn() } as never);
+          const moved = yield* manager
+            .automationClick("tab_1", { x: 120, y: 80 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(200);
+          yield* Fiber.join(moved);
+          expect(restoreFocus).toHaveBeenCalledTimes(2);
+
+          // The user switched to another app while the click ran: T3 has no focused
+          // window and no focused renderer, so nothing pulls them back.
+          getFocusedWebContents
+            .mockReturnValueOnce({ id: 7, isDestroyed: () => false, focus: restoreFocus } as never)
+            .mockReturnValue(null);
+          getFocusedWindow.mockReturnValue(null);
+          const left = yield* manager
+            .automationClick("tab_1", { x: 120, y: 80 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(200);
+          yield* Fiber.join(left);
+          expect(restoreFocus).toHaveBeenCalledTimes(2);
+        }),
+      ),
   );
 
   effectIt.effect("types in background webviews and enables native key input", () =>

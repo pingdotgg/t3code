@@ -3719,7 +3719,59 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // Dispatching input moves keyboard focus into the guest renderer as a side
+  // effect. Hand it back to whatever had it before, so the user's next keystroke
+  // does not land in the previewed page, which may not even be visible.
+  const restoreFocusedWebContents = Effect.fn("PreviewManager.restoreFocusedWebContents")(
+    function* (
+      operation: string,
+      tabId: string,
+      wc: Electron.WebContents,
+      previouslyFocused: Electron.WebContents | null,
+    ) {
+      if (!previouslyFocused || previouslyFocused.id === wc.id || previouslyFocused.isDestroyed()) {
+        return;
+      }
+      // A newer selection the user made while the action ran wins over the restore.
+      const focusedNow = yield* attempt({ operation, tabId, webContentsId: wc.id }, () =>
+        webContents.getFocusedWebContents(),
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (focusedNow && focusedNow.id !== wc.id && focusedNow.id !== previouslyFocused.id) {
+        return;
+      }
+      // The user left T3 for another app while the action ran; do not pull them back.
+      if (focusedNow === null && BrowserWindow.getFocusedWindow() === null) {
+        return;
+      }
+      yield* attempt({ operation, tabId, webContentsId: previouslyFocused.id }, () =>
+        previouslyFocused.focus(),
+      ).pipe(Effect.ignore);
+    },
+  );
+
   const performAutomationClick = Effect.fn("PreviewManager.performAutomationClick")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    input: PreviewAutomationClickInput,
+    send: SendCommand,
+  ) {
+    const previouslyFocused = yield* attempt(
+      { operation: "automationClick.getFocusedWebContents", tabId, webContentsId: wc.id },
+      () => webContents.getFocusedWebContents(),
+    );
+    yield* dispatchAutomationClick(tabId, input, send).pipe(
+      Effect.ensuring(
+        restoreFocusedWebContents(
+          "automationClick.restoreFocusedWebContents",
+          tabId,
+          wc,
+          previouslyFocused,
+        ),
+      ),
+    );
+  });
+
+  const dispatchAutomationClick = Effect.fn("PreviewManager.dispatchAutomationClick")(function* (
     tabId: string,
     input: PreviewAutomationClickInput,
     send: SendCommand,
@@ -3782,7 +3834,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+      performAutomationClick(tabId, wc, input, send),
     );
   });
 
@@ -3935,16 +3987,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
         Effect.ignore,
       );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
-        yield* attempt(
-          {
-            operation: "automationPress.restoreFocusedWebContents",
-            tabId,
-            webContentsId: previouslyFocused.id,
-          },
-          () => previouslyFocused.focus(),
-        ).pipe(Effect.ignore);
-      }
+      yield* restoreFocusedWebContents(
+        "automationPress.restoreFocusedWebContents",
+        tabId,
+        wc,
+        previouslyFocused,
+      );
     });
 
     // Focus the guest WebContents itself, not its containing BrowserWindow. This
