@@ -196,6 +196,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["claude codex how far back window days year all history import"],
   },
   {
+    id: "import-agent-history-now",
+    title: "Import existing conversations now",
+    to: "/settings/general",
+    targetId: "import-agent-history",
+    searchTerms: ["claude codex import now manually existing conversations chats migrate bring in"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

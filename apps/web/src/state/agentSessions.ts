@@ -2,6 +2,7 @@ import { WS_METHODS } from "@t3tools/contracts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -23,3 +24,22 @@ export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRunt
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
 });
+
+export const agentSessionImportAll = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:import-all",
+  tag: WS_METHODS.agentSessionsImportAll,
+});
+
+/**
+ * Live status of an environment's background agent session importer. The idle
+ * TTL drops the server subscription shortly after the last reader unmounts, so
+ * a status row can follow a run without holding the stream open permanently.
+ */
+export const agentSessionImportStatus = createEnvironmentRpcSubscriptionAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "environment-data:agent-sessions:status",
+    tag: WS_METHODS.agentSessionsSubscribeStatus,
+    idleTtlMs: 60_000,
+  },
+);

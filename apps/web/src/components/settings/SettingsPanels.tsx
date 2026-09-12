@@ -73,6 +73,7 @@ import {
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { agentSessionImportAll, agentSessionImportStatus } from "../../state/agentSessions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -93,6 +94,8 @@ import {
 } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -2015,6 +2018,65 @@ function LegacyFeaturesSection() {
   );
 }
 
+const IMPORT_FAILURE_FALLBACK = "The last import failed. Try again.";
+
+/** First line of a server-reported import failure, short enough for one row. */
+function summarizeImportFailure(error: string | null): string {
+  const firstLine = error
+    ?.split("\n")
+    .find((line) => line.trim().length > 0)
+    ?.trim();
+  if (firstLine === undefined || firstLine.length === 0) return IMPORT_FAILURE_FALLBACK;
+  return firstLine.length > 160 ? `${firstLine.slice(0, 159)}…` : firstLine;
+}
+
+/**
+ * The import-now row owns the status subscription, so the stream is only live
+ * while this row is mounted and updates re-render just this row.
+ */
+function AgentHistoryImportNowRow() {
+  const environmentId = usePrimaryEnvironmentId();
+  const statusQuery = useEnvironmentQuery(
+    environmentId === null ? null : agentSessionImportStatus({ environmentId, input: {} }),
+  );
+  const importAll = useAtomCommand(agentSessionImportAll, { reportFailure: false });
+  const status = statusQuery.data;
+  const isImporting = status?.state === "scanning" || status?.state === "importing";
+  let description: string;
+  if (isImporting) {
+    description = "Importing…";
+  } else if (status?.state === "completed") {
+    description = `Imported ${status.threadsImported} ${
+      status.threadsImported === 1 ? "conversation" : "conversations"
+    } into ${status.projectsCreated} ${status.projectsCreated === 1 ? "project" : "projects"}.`;
+  } else if (status?.state === "failed") {
+    // The server stores a pretty-printed cause here, which can run to many
+    // lines. A settings row gets the first line only; the full cause is in the
+    // server log.
+    description = summarizeImportFailure(status.error);
+  } else {
+    description = "Bring existing conversations in now.";
+  }
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("import-agent-history-now")}
+      description={description}
+      control={
+        <Button
+          size="sm"
+          disabled={environmentId === null || isImporting}
+          onClick={() => {
+            if (environmentId !== null) void importAll({ environmentId, input: {} });
+          }}
+        >
+          Import now
+        </Button>
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2272,6 +2334,8 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <AgentHistoryImportNowRow />
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">
