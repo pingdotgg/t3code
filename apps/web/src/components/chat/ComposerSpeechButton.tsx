@@ -94,7 +94,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: { level: number }) {
   return (
     <div
       aria-hidden
-      className="flex h-8 min-w-16 flex-1 items-center justify-between gap-1 overflow-hidden"
+      className="flex h-5 min-w-0 flex-1 items-center justify-between gap-px overflow-hidden"
     >
       {WAVEFORM_BAR_IDS.map((id, index) => (
         <span
@@ -102,7 +102,7 @@ const VoiceWaveform = memo(function VoiceWaveform(props: { level: number }) {
           ref={(bar) => {
             barsRef.current[index] = bar;
           }}
-          className="h-full w-0.5 shrink-0 origin-center rounded-full bg-foreground opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none"
+          className="h-full w-0.5 shrink-0 origin-center rounded-full bg-primary opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none"
           style={{ transform: `scaleY(${prefersReducedMotion ? 0.35 : 0.08})` }}
         />
       ))}
@@ -125,6 +125,7 @@ function RecordingStatus(props: { level: number }) {
   return (
     <>
       <VoiceWaveform level={props.level} />
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
       <span className="shrink-0 text-secondary-label text-xs tabular-nums">
         {formatElapsed(elapsedSeconds)}
       </span>
@@ -145,7 +146,7 @@ export function ComposerSpeechStatus(props: {
 
   return (
     <div
-      className="me-2 flex h-9 min-w-0 flex-1 items-center gap-2"
+      className="flex h-7 min-w-0 flex-1 items-center gap-2"
       role="status"
       aria-live={isRecording ? "off" : "polite"}
       aria-label={presentation.status}
@@ -181,7 +182,7 @@ export function ComposerSpeechCancelButton(props: { state: VoiceInputState; onCa
             aria-label={label}
             onPointerDown={(event) => event.preventDefault()}
             onClick={props.onCancel}
-            className="shrink-0"
+            className="shrink-0 rounded-full"
           >
             <XIcon />
           </Button>
@@ -197,20 +198,13 @@ export function ComposerSpeechButton(props: {
   progress: { downloaded: number; total: number } | null;
   disabled?: boolean;
   onStart(): void;
-  onStop(): void;
   onCancel(): void;
 }) {
   const navigate = useNavigate();
   const presentation = resolveSpeechPresentation(props.state, props.progress);
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
-  const confirmDisabled = presentation.showsConfirm && !presentation.confirmEnabled;
-  const label = presentation.showsConfirm
-    ? presentation.confirmEnabled
-      ? "Finish voice input"
-      : (presentation.status ?? "Voice input is busy")
-    : openSettings
-      ? "Open voice settings"
-      : "Start voice input";
+  const isBusy = presentation.showsConfirm;
+  const label = openSettings ? "Open voice settings" : "Start voice input";
 
   return (
     <Tooltip>
@@ -219,13 +213,12 @@ export function ComposerSpeechButton(props: {
           <Button
             type="button"
             size="icon-sm"
-            variant={presentation.showsConfirm ? "default" : "ghost"}
+            variant="ghost"
             aria-label={label}
-            aria-disabled={props.disabled || confirmDisabled}
+            aria-disabled={props.disabled || isBusy}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
-              if (props.disabled || confirmDisabled) return;
-              if (presentation.showsConfirm) return props.onStop();
+              if (props.disabled || isBusy) return;
               if (openSettings) {
                 props.onCancel();
                 void navigate({ to: "/settings/voice" });
@@ -235,23 +228,54 @@ export function ComposerSpeechButton(props: {
             }}
             className={cn(
               "relative shrink-0",
-              (props.disabled || confirmDisabled) &&
-                "cursor-not-allowed opacity-64 hover:bg-transparent!",
+              (props.disabled || isBusy) && "cursor-not-allowed opacity-64 hover:bg-transparent!",
             )}
           >
-            {presentation.showsConfirm ? (
-              presentation.confirmEnabled ? (
-                <CheckIcon />
-              ) : (
-                <Spinner aria-hidden />
-              )
-            ) : (
-              <MicIcon />
-            )}
+            <MicIcon />
           </Button>
         }
       />
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+export function ComposerSpeechRecordingPill(props: {
+  state: VoiceInputState;
+  progress: { downloaded: number; total: number } | null;
+  level: number;
+  onStop(): void;
+  onCancel(): void;
+}) {
+  const presentation = resolveSpeechPresentation(props.state, props.progress);
+  if (!presentation.showsConfirm) return null;
+
+  const label = presentation.confirmEnabled
+    ? "Finish voice input"
+    : (presentation.status ?? "Voice input is busy");
+
+  return (
+    <div className="flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64">
+      <ComposerSpeechCancelButton state={props.state} onCancel={props.onCancel} />
+      <ComposerSpeechStatus state={props.state} progress={props.progress} level={props.level} />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-sm"
+              aria-label={label}
+              disabled={!presentation.confirmEnabled}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={props.onStop}
+              className="shrink-0 rounded-full"
+            >
+              {presentation.confirmEnabled ? <CheckIcon /> : <Spinner aria-hidden />}
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{label}</TooltipPopup>
+      </Tooltip>
+    </div>
   );
 }

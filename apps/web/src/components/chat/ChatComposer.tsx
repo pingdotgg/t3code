@@ -229,7 +229,7 @@ import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechRecordingPill, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
@@ -3551,13 +3551,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
                         }
                         onStart={() => void speechInput.start()}
-                        onStop={() => void speechInput.stop()}
                         onCancel={() => void speechInput.cancel()}
                       />
-                      <ComposerSpeechCancelButton
-                        state={speechInput.state}
-                        onCancel={() => void speechInput.cancel()}
-                      />
+                      {speechInput.state.phase === "error" ? (
+                        <ComposerSpeechCancelButton
+                          state={speechInput.state}
+                          onCancel={() => void speechInput.cancel()}
+                        />
+                      ) : null}
                     </>
                   ) : null}
                   <ComposerFooterPrimaryActions
@@ -3619,6 +3620,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
+                  {speechInput.available ? (
+                    <ComposerSpeechRecordingPill
+                      state={speechInput.state}
+                      progress={speechInput.progress}
+                      level={speechInput.level}
+                      onStop={() => void speechInput.stop()}
+                      onCancel={() => void speechInput.cancel()}
+                    />
+                  ) : null}
                 </div>
               </div>
             )}
