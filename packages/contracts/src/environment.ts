@@ -189,6 +189,17 @@ export const RepositoryIdentityLocator = Schema.Struct({
 });
 export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
+/**
+ * The checkout's own remote when it names a different repository than the canonical one, such as
+ * a fork that tracks its upstream. Clients group and label by it so a fork stays distinct from the
+ * repository it forked, while pull request features keep the canonical identity.
+ */
+export const RepositoryOrigin = Schema.Struct({
+  canonicalKey: TrimmedNonEmptyString,
+  displayName: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type RepositoryOrigin = typeof RepositoryOrigin.Type;
+
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
@@ -197,8 +208,21 @@ export const RepositoryIdentity = Schema.Struct({
   provider: Schema.optionalKey(TrimmedNonEmptyString),
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  origin: Schema.optionalKey(RepositoryOrigin),
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
+
+/** Key clients group checkouts by: a fork's own remote, otherwise the canonical repository. */
+export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
+  return identity.origin?.canonicalKey ?? identity.canonicalKey;
+}
+
+/** Label clients show for a checkout's repository, matching `repositoryGroupingKeyOf`. */
+export function repositoryGroupingDisplayNameOf(identity: RepositoryIdentity): string | undefined {
+  return identity.origin
+    ? (identity.origin.displayName ?? identity.origin.canonicalKey)
+    : identity.displayName;
+}
 
 export const ScopedProjectRef = Schema.Struct({
   environmentId: EnvironmentId,
