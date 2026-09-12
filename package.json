@@ -50,10 +50,8 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
-    "@oxlint/plugins": "1.82.0",
     "@types/node": "catalog:",
     "knip": "6.34.0",
-    "oxlint": "1.82.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
