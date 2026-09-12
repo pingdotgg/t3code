@@ -3350,21 +3350,23 @@ export default function ChatView(props: ChatViewProps) {
   );
   const latestWorktreeSetup = worktreeSetupQuery.data;
   useEffect(() => {
-    if (!latestWorktreeSetup) return;
-    if (latestWorktreeSetup.phase === "done") {
-      // The turn is running now; the timeline hands over to the agent.
-      setWorktreeSetupRef(null);
-      setHeldWorktreeSetup(null);
-      return;
-    }
     // The server drops finished snapshots after a grace period and emits null.
-    // Hold the last real snapshot so the failed card does not vanish.
-    setHeldWorktreeSetup(latestWorktreeSetup);
+    // Hold the last real snapshot so a settled card does not vanish.
+    if (latestWorktreeSetup) setHeldWorktreeSetup(latestWorktreeSetup);
   }, [latestWorktreeSetup]);
   const worktreeSetup =
     worktreeSetupActive && heldWorktreeSetup?.threadId === worktreeSetupRef.threadId
       ? heldWorktreeSetup
       : null;
+  // A finished card is dropped once the agent's turn shows in the timeline:
+  // the card belongs to the send, and the agent takes over from there.
+  const worktreeSetupDoneAndTurnVisible =
+    worktreeSetup?.phase === "done" && activeThread?.latestTurn?.startedAt != null;
+  useEffect(() => {
+    if (!worktreeSetupDoneAndTurnVisible) return;
+    setWorktreeSetupRef(null);
+    setHeldWorktreeSetup(null);
+  }, [worktreeSetupDoneAndTurnVisible]);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -3372,13 +3374,18 @@ export default function ChatView(props: ChatViewProps) {
     if (!worktreeSetup || worktreeSetup.phase !== "running") return;
     void cancelWorktreeSetup({ environmentId, input: { threadId: worktreeSetup.threadId } });
   }, [cancelWorktreeSetup, environmentId, worktreeSetup]);
-  const onOpenWorktreeSetupTerminal = useCallback(
-    (terminalId: string) => {
-      if (!activeThreadRef) return;
-      storeEnsureTerminal(activeThreadRef, terminalId, { open: true, active: true });
-    },
-    [activeThreadRef, storeEnsureTerminal],
-  );
+  // The setup terminal belongs to the thread that was set up. A failed
+  // bootstrap deletes that thread and closes its terminals, so only offer the
+  // terminal while the setup thread is still the active one.
+  const onOpenWorktreeSetupTerminal = useMemo(() => {
+    if (!worktreeSetup || !activeThreadRef || worktreeSetup.threadId !== activeThreadRef.threadId) {
+      return null;
+    }
+    const setupThreadRef = activeThreadRef;
+    return (terminalId: string) => {
+      storeEnsureTerminal(setupThreadRef, terminalId, { open: true, active: true });
+    };
+  }, [activeThreadRef, storeEnsureTerminal, worktreeSetup]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const manualCompactionProviderAvailable = useMemo(
@@ -8734,8 +8741,8 @@ export default function ChatView(props: ChatViewProps) {
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
                 onCancelWorktreeSetup={onCancelWorktreeSetup}
-                onWorktreeSetupWorkLocally={onWorktreeSetupWorkLocally}
-                onOpenWorktreeSetupTerminal={onOpenWorktreeSetupTerminal}
+                {...(isLocalDraftThread ? { onWorktreeSetupWorkLocally } : {})}
+                {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 latestTurn={paintOnlyDisplayedTimeline ? null : activeLatestTurn}

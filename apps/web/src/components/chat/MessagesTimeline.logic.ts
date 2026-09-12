@@ -1242,12 +1242,23 @@ export function deriveMessagesTimelineRows(input: {
   // while a worktree is being prepared. It stays after the setup settles so a
   // failure and its actions remain visible until the thread state moves on.
   if (input.worktreeSetup) {
-    nextRows.push({
+    const setupRow = {
       kind: "worktree-setup",
       id: WORKTREE_SETUP_ROW_ID,
       createdAt: input.worktreeSetup.startedAt,
       snapshot: input.worktreeSetup,
-    });
+    } as const;
+    // Sit directly under the first user message: a finished snapshot can
+    // outlive the first assistant reply, and it belongs to the send, not the
+    // end of the thread.
+    const firstUserRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && row.message.role === "user",
+    );
+    if (firstUserRowIndex >= 0) {
+      nextRows.splice(firstUserRowIndex + 1, 0, setupRow);
+    } else {
+      nextRows.push(setupRow);
+    }
     return attachTrailingToolGroupsToAssistant(nextRows);
   }
 

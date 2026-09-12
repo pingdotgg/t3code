@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -1168,6 +1169,9 @@ const makeWsRpcLayer = (
               if (!tracked || !setupResult?.completion) {
                 return;
               }
+              // The setup script is best effort, like the untracked path: a
+              // failed install must not throw away the worktree the user just
+              // waited for. The card keeps the failed stage and its terminal.
               const completion = yield* setupResult.completion;
               if (completion.exitCode === 0) {
                 yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
@@ -1178,9 +1182,6 @@ const makeWsRpcLayer = (
                   ? "terminal closed before the script finished"
                   : `exit ${completion.exitCode}`;
               yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "failed", detail);
-              return yield* new OrchestrationDispatchCommandError({
-                message: `Setup script failed (${detail}). Open the setup terminal for details.`,
-              });
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -1402,17 +1403,22 @@ const makeWsRpcLayer = (
                 // created thread is rolled back like any other failure so the
                 // draft returns to the composer. The setup terminal is closed
                 // first so a still-running script cannot hold files open in
-                // the worktree while git removes it.
+                // the worktree while git removes it. Closing kills the
+                // process asynchronously, so the removal retries briefly.
                 const removeCreatedWorktree =
                   tracked && targetWorktreePath && bootstrap?.prepareWorktree
                     ? terminalManager.close({ threadId, deleteHistory: true }).pipe(
                         Effect.ignoreCause({ log: true }),
                         Effect.andThen(
-                          gitWorkflow.removeWorktree({
-                            cwd: bootstrap.prepareWorktree.projectCwd,
-                            path: targetWorktreePath,
-                            force: true,
-                          }),
+                          gitWorkflow
+                            .removeWorktree({
+                              cwd: bootstrap.prepareWorktree.projectCwd,
+                              path: targetWorktreePath,
+                              force: true,
+                            })
+                            .pipe(
+                              Effect.retry({ times: 4, schedule: Schedule.spaced("500 millis") }),
+                            ),
                         ),
                         Effect.ignoreCause({ log: true }),
                         Effect.uninterruptible,

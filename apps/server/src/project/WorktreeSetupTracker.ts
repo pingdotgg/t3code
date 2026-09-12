@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -104,6 +105,9 @@ export const make = Effect.gen(function* () {
     readonly snapshot: WorktreeSetupSnapshot | null;
   }>();
   const retentionFibers = new Map<ThreadId, Fiber.Fiber<void, never>>();
+  // Sequences keep increasing across setups of the same thread so a stream
+  // opened during a previous setup still accepts the next one's first snapshot.
+  const lastSequenceByThread = new Map<ThreadId, number>();
 
   const publish = (threadId: ThreadId, snapshot: WorktreeSetupSnapshot | null) =>
     PubSub.publish(changes, { threadId, snapshot }).pipe(Effect.asVoid);
@@ -120,6 +124,7 @@ export const make = Effect.gen(function* () {
         ...nextTracked.snapshot,
         sequence: existing.snapshot.sequence + 1,
       };
+      lastSequenceByThread.set(threadId, nextSnapshot.sequence);
       const next = new Map(current);
       next.set(threadId, { ...nextTracked, snapshot: nextSnapshot });
       return [nextSnapshot, next] as const;
@@ -155,8 +160,9 @@ export const make = Effect.gen(function* () {
         setupScript: null,
         stages: ordered.map(emptyStage),
         error: null,
-        sequence: 0,
+        sequence: (lastSequenceByThread.get(input.threadId) ?? -1) + 1,
       };
+      lastSequenceByThread.set(input.threadId, snapshot.sequence);
       yield* Ref.update(setups, (current) => {
         const next = new Map(current);
         next.set(input.threadId, { snapshot, fiber: input.fiber });
@@ -240,6 +246,12 @@ export const make = Effect.gen(function* () {
       yield* clearRetention(threadId);
       const fiber = yield* remove(threadId).pipe(
         Effect.delay(FINISHED_RETENTION),
+        Effect.ensuring(
+          Effect.sync(() => {
+            // Only drop our own entry: a newer setup may have replaced it.
+            if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
+          }),
+        ),
         Effect.forkDetach,
       );
       retentionFibers.set(threadId, fiber);
@@ -259,26 +271,34 @@ export const make = Effect.gen(function* () {
   const get: WorktreeSetupTracker["Service"]["get"] = (threadId) =>
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));
 
+  /**
+   * Each subscriber gets a one-slot sliding mailbox: a slow WebSocket only
+   * ever holds the newest snapshot, so a chatty setup script cannot grow the
+   * server heap. Snapshots are whole states, so skipping intermediates is safe.
+   */
   const stream: WorktreeSetupTracker["Service"]["stream"] = (threadId) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(changes);
-        const initial = yield* get(threadId);
-        // Changes published between subscribing and reading `initial` are
-        // already folded into it. Drop them so the client never steps back.
-        const initialSequence = initial?.sequence ?? -1;
-        return Stream.concat(
-          Stream.make(initial),
-          Stream.fromSubscription(subscription).pipe(
-            Stream.filter(
-              (change) =>
-                change.threadId === threadId &&
-                (change.snapshot === null || change.snapshot.sequence > initialSequence),
+    Stream.callback<WorktreeSetupSnapshot | null>(
+      (mailbox) =>
+        Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changes);
+          const initial = yield* get(threadId);
+          // Changes published between subscribing and reading `initial` are
+          // already folded into it. Drop them so the client never steps back.
+          let lastSequence = initial?.sequence ?? -1;
+          Queue.offerUnsafe(mailbox, initial);
+          yield* Stream.fromSubscription(subscription).pipe(
+            Stream.runForEach((change) =>
+              Effect.sync(() => {
+                if (change.threadId !== threadId) return;
+                if (change.snapshot !== null && change.snapshot.sequence <= lastSequence) return;
+                lastSequence = change.snapshot?.sequence ?? lastSequence;
+                Queue.offerUnsafe(mailbox, change.snapshot);
+              }),
             ),
-            Stream.map((change) => change.snapshot),
-          ),
-        );
-      }),
+            Effect.forkScoped,
+          );
+        }),
+      { bufferSize: 1, strategy: "sliding" },
     );
 
   return WorktreeSetupTracker.of({
