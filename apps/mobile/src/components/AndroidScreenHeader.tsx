@@ -50,13 +50,12 @@ export function AndroidScreenHeader(props: {
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
-  readonly backDisabled?: boolean;
   readonly embedded?: boolean;
   readonly showNavigationHistory?: boolean;
   readonly hideBottomBorder?: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const navigationHistoryVisible = !props.embedded && props.showNavigationHistory !== false;
+  const navigationHistoryVisible = !props.embedded && props.showNavigationHistory === true;
   const actions = props.actions ?? [];
   const collapseActions = navigationHistoryVisible && actions.length > 2;
   const visibleActions = collapseActions ? actions.slice(0, 1) : actions;
@@ -81,13 +80,9 @@ export function AndroidScreenHeader(props: {
           <Pressable
             accessibilityLabel="Back"
             accessibilityRole="button"
-            disabled={props.backDisabled}
             hitSlop={8}
             onPress={props.onBack}
-            className={cn(
-              "-mr-2 size-11 items-center justify-center",
-              props.backDisabled && "opacity-55",
-            )}
+            className="-mr-2 size-11 items-center justify-center"
           >
             <SymbolView
               name="chevron.left"

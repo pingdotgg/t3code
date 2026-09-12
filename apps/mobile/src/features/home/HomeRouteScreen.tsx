@@ -113,12 +113,7 @@ export function HomeRouteScreen() {
           options={
             Platform.OS === "android"
               ? { headerShown: false }
-              : {
-                  title: "",
-                  headerTitle: "",
-                  headerLeft: () => null,
-                  unstable_headerLeftItems: () => [],
-                }
+              : { title: "", headerTitle: "", unstable_headerLeftItems: () => [] }
           }
         />
         <WorkspaceSidebarToolbar
