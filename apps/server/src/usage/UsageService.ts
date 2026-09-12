@@ -1,9 +1,10 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
- * Grok Build) rather than T3 Code's orchestration projections, so usage covers
- * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * The scan reads the provider CLIs' own session files (Claude Code, Codex,
+ * Grok Build, and OpenCode's message store) rather than T3 Code's orchestration
+ * projections, so usage covers turns driven outside T3 Code too. This is the
+ * approach `ccusage` takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -45,6 +46,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { readOpenCodeUsageRecords } from "./opencodeUsageStore.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -259,6 +261,14 @@ export const make = Effect.gen(function* () {
       grokHomeEnv.length > 0
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
+    // OpenCode resolves its data dir per the XDG rules in its own `Global.Path`:
+    // `$XDG_DATA_HOME/opencode` when set, else `~/.local/share/opencode` on
+    // every platform. Empty/whitespace XDG_DATA_HOME must fall back.
+    const openCodeDataHome = hostEnvironment["XDG_DATA_HOME"]?.trim() ?? "";
+    const openCodeDataDir =
+      openCodeDataHome.length > 0
+        ? path.resolve(expandHomePath(openCodeDataHome), "opencode")
+        : path.join(NodeOS.homedir(), ".local", "share", "opencode");
 
     return [
       { provider: "claude" as const, dir: claudeDir },
@@ -268,6 +278,7 @@ export const make = Effect.gen(function* () {
         dir: path.join(grokHome, "sessions"),
         fileName: "updates.jsonl",
       },
+      { provider: "opencode" as const, dir: openCodeDataDir, kind: "opencode-db" as const },
     ];
   });
 
@@ -372,11 +383,29 @@ export const make = Effect.gen(function* () {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
-    /** Parsed records per file, or `null` when the directory does not exist. */
+    /** Parsed records per file, or `null` when the source is not readable. */
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
+    /** Set when a readable-looking source could not be read at all. */
+    readonly readError?: string;
   }
+
+  /** Reads one OpenCode data dir's message store into the shared source shape. */
+  const collectOpenCodeDir = Effect.fn("UsageService.collectOpenCodeDir")(function* (
+    provider: UsageProviderKind,
+    dir: string,
+    volumeId: string,
+    windowStartMs: number,
+  ) {
+    const dbPath = path.join(dir, "opencode.db");
+    const read = yield* Effect.promise(() => readOpenCodeUsageRecords(dbPath, windowStartMs));
+    if (read.kind === "missing") return { provider, dir, volumeId, files: null };
+    if (read.kind === "failed") {
+      return { provider, dir, volumeId, files: null, readError: read.message };
+    }
+    return { provider, dir, volumeId, files: [{ path: dbPath, records: read.records }] };
+  });
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
@@ -388,8 +417,14 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
+    for (const { provider, dir, fileName, kind } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+      // OpenCode keeps one SQLite store per data dir rather than append-only
+      // transcripts, so it bypasses the file walk and its per-file cache.
+      if (kind === "opencode-db") {
+        scanned.push(yield* collectOpenCodeDir(provider, dir, volumeId, windowStartMs));
+        continue;
+      }
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -481,16 +516,17 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
+    for (const { provider, dir, volumeId, files, readError } of scannedDirs) {
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-          status: "missing",
+          status: readError === undefined ? "missing" : "failed",
           scannedFiles: 0,
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message:
+            readError === undefined ? "No transcript directory on this environment." : readError,
         });
         continue;
       }

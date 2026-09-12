@@ -485,4 +485,81 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   return results;
 }
 
+/* -------------------------------------------------------------------------- */
+/* OpenCode                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parses the `data` JSON document of one row of OpenCode's `message` table.
+ *
+ * OpenCode stores each message as a row in `<data dir>/opencode.db`; assistant
+ * rows carry the turn's token counts and a provider-reported cost. The session
+ * id lives only in the table's `session_id` column, so the caller passes it in.
+ * `tokens.input` is exclusive of the cache counters, matching Claude's
+ * accounting, and `tokens.total` re-adds reasoning on top, so `total` is
+ * ignored in favour of the disjoint fields.
+ *
+ * A zero-token row (errored or synthetic turns) is skipped, matching Codex and
+ * Grok. A cost of exactly 0 is treated as unknown rather than free: OpenCode
+ * writes 0 whenever it has no rate for the model, and falling through to the
+ * rate table yields a better estimate than a confident $0.
+ *
+ * Rows are the unit of record — a retried turn updates its row in place — so
+ * no dedupe key is needed.
+ */
+export function parseOpenCodeMessageData(raw: string, sessionId: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record["role"] !== "assistant") return null;
+
+  const tokens = record["tokens"];
+  if (typeof tokens !== "object" || tokens === null) return null;
+  const tokensRecord = tokens as Record<string, unknown>;
+
+  const cache = tokensRecord["cache"];
+  const cacheRecord =
+    typeof cache === "object" && cache !== null ? (cache as Record<string, unknown>) : {};
+
+  const outputTokens = int(tokensRecord["output"]);
+  const totals: UsageTokenTotals = {
+    // OpenCode reports `input` exclusive of the cached portion.
+    uncachedInputTokens: int(tokensRecord["input"]),
+    cachedInputTokens: int(cacheRecord["read"]),
+    cacheCreationTokens: int(cacheRecord["write"]),
+    outputTokens,
+    // Reported inside output_tokens, surfaced separately for the token mix.
+    reasoningTokens: Math.min(outputTokens, int(tokensRecord["reasoning"])),
+  };
+  if (totalTokens(totals) === 0) return null;
+
+  const model = typeof record["modelID"] === "string" ? record["modelID"] : "";
+  if (model.length === 0) return null;
+
+  const time = record["time"];
+  const timestampMs =
+    typeof time === "object" && time !== null
+      ? int((time as Record<string, unknown>)["created"])
+      : 0;
+  if (timestampMs === 0) return null;
+
+  const cost = record["cost"];
+
+  return {
+    provider: "opencode",
+    timestampMs,
+    model,
+    sessionId,
+    totals,
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    dedupeKey: null,
+  };
+}
+
 export { EMPTY_TOTALS };

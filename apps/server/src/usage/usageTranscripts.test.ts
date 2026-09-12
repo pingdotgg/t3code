@@ -6,6 +6,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parseOpenCodeMessageData,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -234,6 +235,101 @@ describe("parseCodexLine", () => {
         state,
       );
       expect(record).not.toBeNull();
+    });
+  });
+});
+
+describe("parseOpenCodeMessageData", () => {
+  /** Shaped after a real OpenCode `message.data` assistant row. */
+  function messageData(overrides?: {
+    sessionId?: string;
+    role?: string;
+    modelID?: string;
+    cost?: number;
+    tokens?: Record<string, unknown>;
+    createdMs?: number;
+  }): string {
+    return JSON.stringify({
+      parentID: "msg_parent",
+      role: overrides?.role ?? "assistant",
+      mode: "build",
+      agent: "build",
+      path: { cwd: "/repo", root: "/repo" },
+      cost: overrides?.cost ?? 0.001063965,
+      tokens: overrides?.tokens ?? {
+        total: 66_423,
+        input: 375,
+        output: 123,
+        reasoning: 69,
+        cache: { read: 65_856, write: 0 },
+      },
+      modelID: overrides?.modelID ?? "z-ai/glm-5.3-flash",
+      providerID: "openrouter",
+      time: {
+        created: overrides?.createdMs ?? 1_788_951_671_960,
+        completed: 1_788_951_683_087,
+      },
+    });
+  }
+
+  it("extracts disjoint token totals and the session id passed by the caller", () => {
+    const record = parseOpenCodeMessageData(messageData(), "ses_1");
+
+    expect(record?.provider).toBe("opencode");
+    expect(record?.model).toBe("z-ai/glm-5.3-flash");
+    expect(record?.sessionId).toBe("ses_1");
+    expect(record?.timestampMs).toBe(1_788_951_671_960);
+    expect(record?.totals).toEqual({
+      // OpenCode reports input exclusive of the cached portion.
+      uncachedInputTokens: 375,
+      cachedInputTokens: 65_856,
+      cacheCreationTokens: 0,
+      outputTokens: 123,
+      reasoningTokens: 69,
+    });
+    // tokens.total re-adds reasoning on top and is ignored.
+    expect(totalTokens(record!.totals)).toBe(66_354);
+    expect(record?.dedupeKey).toBeNull();
+  });
+
+  it("keeps a positive provider-reported cost and treats zero as unknown", () => {
+    expect(parseOpenCodeMessageData(messageData({ cost: 0.5 }), "ses_1")?.reportedCostUsd).toBe(
+      0.5,
+    );
+    // OpenCode writes 0 when it has no rate for the model; the rate table
+    // should get a chance to price the tokens instead of a confident $0.
+    expect(parseOpenCodeMessageData(messageData({ cost: 0 }), "ses_1")?.reportedCostUsd).toBeNull();
+  });
+
+  it("skips zero-token, non-assistant, and shapeless rows", () => {
+    expect(
+      parseOpenCodeMessageData(
+        messageData({
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
+        "ses_1",
+      ),
+    ).toBeNull();
+    expect(parseOpenCodeMessageData(messageData({ role: "user" }), "ses_1")).toBeNull();
+    expect(parseOpenCodeMessageData("not json", "ses_1")).toBeNull();
+    expect(parseOpenCodeMessageData(messageData({ modelID: "" }), "ses_1")).toBeNull();
+    expect(parseOpenCodeMessageData(messageData({ createdMs: 0 }), "ses_1")).toBeNull();
+  });
+
+  it("clamps reasoning into output and defaults missing cache counters", () => {
+    const record = parseOpenCodeMessageData(
+      messageData({
+        tokens: { input: 10, output: 5, reasoning: 9 },
+      }),
+      "ses_1",
+    );
+
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 10,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 5,
+      reasoningTokens: 5,
     });
   });
 });

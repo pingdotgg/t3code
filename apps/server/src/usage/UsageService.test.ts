@@ -1,8 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - the suite seeds and grows real
-// transcript trees on disk, outside the service's Effect FileSystem.
+// transcript trees on disk, outside the service's Effect FileSystem, and seeds
+// a real OpenCode SQLite store.
+// @effect-diagnostics preferSchemaOverJson:off - fixtures stringify payload
+// shapes to mirror the exact on-disk transcript documents the parsers see.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -89,7 +93,11 @@ const serviceLayers = (input: {
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+      Layer.succeed(HostProcessEnvironment, {
+        GROK_HOME: NodePath.join(input.home, "grok"),
+        // Keeps the OpenCode source away from the developer's real store.
+        XDG_DATA_HOME: NodePath.join(input.home, "xdg-data"),
+      }),
     ),
   );
 
@@ -156,6 +164,93 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("folds OpenCode's message store into the same summary", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+
+      const dataDir = NodePath.join(home, "xdg-data", "opencode");
+      const dbPath = NodePath.join(dataDir, "opencode.db");
+      yield* Effect.promise(() => NodeFSP.mkdir(dataDir, { recursive: true }));
+      const messageStore = new NodeSqlite.DatabaseSync(dbPath);
+      messageStore.exec(
+        "CREATE TABLE `message` (`id` text PRIMARY KEY, `session_id` text NOT NULL, `time_created` integer NOT NULL, `data` text NOT NULL)",
+      );
+      const insert = messageStore.prepare(
+        "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+      );
+      const messageData = (tokens: Record<string, unknown>, cost: number, createdMs: number) =>
+        JSON.stringify({
+          role: "assistant",
+          cost,
+          tokens,
+          modelID: "example-opencode-model",
+          providerID: "openrouter",
+          time: { created: createdMs },
+        });
+      const august1 = Date.parse("2026-08-01T10:00:00Z");
+      insert.run(
+        "msg_1",
+        "ses_1",
+        august1,
+        messageData(
+          { input: 100, output: 5, reasoning: 0, cache: { read: 50, write: 0 } },
+          0.001,
+          august1,
+        ),
+      );
+      insert.run(
+        "msg_2",
+        "ses_2",
+        Date.parse("2026-08-01T11:00:00Z"),
+        messageData(
+          { input: 10, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+          0.002,
+          Date.parse("2026-08-01T11:00:00Z"),
+        ),
+      );
+      insert.run(
+        "msg_3",
+        "ses_1",
+        Date.parse("2026-08-01T12:00:00Z"),
+        JSON.stringify({ role: "user" }),
+      );
+      insert.run(
+        "msg_4",
+        "ses_1",
+        Date.parse("2026-08-03T10:00:00Z"),
+        messageData(
+          { input: 999, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+          0.5,
+          Date.parse("2026-08-03T10:00:00Z"),
+        ),
+      );
+      messageStore.close();
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-opencode-test", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+
+      const bucket = summary.buckets.find((entry) => entry.provider === "opencode");
+      assert.strictEqual(bucket?.model, "example-opencode-model");
+      assert.deepStrictEqual(bucket?.totals, {
+        uncachedInputTokens: 110,
+        cachedInputTokens: 50,
+        cacheCreationTokens: 0,
+        outputTokens: 7,
+        reasoningTokens: 0,
+      });
+      // A row outside the window and a non-assistant row contribute nothing.
+      assert.strictEqual(bucket?.records, 2);
+      assert.strictEqual(bucket?.costSource, "providerReported");
+
+      const source = summary.sources.find((entry) => entry.fingerprint.provider === "opencode");
+      assert.strictEqual(source?.status, "ok");
+      assert.strictEqual(source?.fingerprint.resolvedHomePath, dataDir);
+      assert.strictEqual(source?.distinctSessions, 2);
     }).pipe(Effect.scoped),
   );
 
