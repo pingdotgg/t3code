@@ -8,10 +8,12 @@ import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
@@ -145,6 +147,44 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(version).toBe("9.9.9");
       }),
     ),
+  );
+
+  it.effect(
+    "retries a failed registry lookup on the next probe instead of caching it for an hour",
+    () =>
+      Effect.gen(function* () {
+        const cache = new Map<string, { expiresAt: number; version: string | null }>();
+        const registry = (status: number, body: string) =>
+          HttpClient.make(() =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                HttpClientRequest.get("https://registry.npmjs.org/"),
+                new Response(body, { status }),
+              ),
+            ),
+          );
+        const failing = registry(503, "");
+        const serving = registry(200, '{"version":"2.0.0"}');
+        const resolve = (client: HttpClient.HttpClient) =>
+          resolveLatestProviderVersion(manualPackageTool).pipe(
+            Effect.provideService(ProviderVersionCache, cache),
+            Effect.provideService(HttpClient.HttpClient, client),
+          );
+
+        expect(yield* resolve(failing)).toBeNull();
+        const failed = cache.get("@example/package-tool");
+        expect(failed?.version).toBeNull();
+        expect(failed!.expiresAt - DateTime.toEpochMillis(yield* DateTime.now)).toBe(60_000);
+
+        // Still within the retry window: the failure is served from cache.
+        expect(yield* resolve(serving)).toBeNull();
+        yield* TestClock.adjust("61 seconds");
+        expect(yield* resolve(serving)).toBe("2.0.0");
+        expect(
+          cache.get("@example/package-tool")!.expiresAt -
+            DateTime.toEpochMillis(yield* DateTime.now),
+        ).toBe(60 * 60 * 1_000);
+      }),
   );
 
   it.effect("prefers the installer's own latest version over the npm registry", () =>
