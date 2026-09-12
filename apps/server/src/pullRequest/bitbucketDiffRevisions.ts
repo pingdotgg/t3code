@@ -26,12 +26,9 @@ function quotedEnd(rest: string): number {
 }
 
 /**
- * `a/x` and `b/x` on a `---` or `+++` line; `/dev/null` is the side that has no file.
- *
- * Git ends these two lines with a tab when the name holds a space, so that a reader can tell where
- * the name stops, and other producers of the format put a timestamp past that tab. A name holding a
- * tab of its own arrives quoted, with that tab written as an escape, so the first literal tab is
- * never part of what the file is called and everything from it on belongs to git.
+ * `a/x`/`b/x` on a `---`/`+++` line; `/dev/null` marks the side that has no file. Git ends the
+ * name with a tab when it holds a space, and a name with a tab of its own arrives quoted with
+ * that tab escaped, so the first literal tab is never part of what the file is called.
  */
 function sidePath(rest: string, prefix: string): string | null {
   const tab = rest.indexOf("\t");
@@ -47,14 +44,10 @@ function headerSide(token: string, prefix: string): string | null {
 }
 
 /**
- * The two names on a `diff --git` line, which git writes with no delimiter between them.
- *
- * `a/one two b/one two` splits in more than one place, so the split that leaves both sides equal
- * wins. A rename is the only entry whose sides differ, and a rename states its names on lines of
- * its own. Anything still ambiguous is left unnamed rather than guessed at.
- *
- * A quoted name ends at its own closing quote, so a header carrying one splits there and needs
- * none of that guessing. Git quotes only the side that needs it, so one side can be quoted alone.
+ * The two names on a `diff --git` line, written with no delimiter between them. `a/one two b/one
+ * two` can split in more than one place, so the split leaving both sides equal wins; a rename
+ * (the only case where sides differ) states its names on separate lines instead. A quoted name
+ * ends at its own closing quote and needs none of that guessing.
  */
 function headerPaths(rest: string): readonly [string | null, string | null] {
   if (rest.startsWith(QUOTE)) {
@@ -87,17 +80,10 @@ function headRevision(rest: string): string | null {
 }
 
 /**
- * What the head has of each file in a unified patch, as the blob ids git writes into it.
- *
- * Bitbucket states a file's version nowhere else: its diffstat entries carry a commit and a path
- * and no blob id, and no endpoint answers what a file is now. Git's own `index <before>..<after>`
- * line is in the patch the diff already reads, so the versions cost no call of their own.
- *
- * Keyed the way the client names files: the head's name for it, except for a deletion, where the
- * head has no name and the one it had is what is on screen. An entry the patch gives no `index`
- * line for, one Bitbucket excluded by pattern most often, is left out. `getFileRevisions` in the
- * provider turns that into the empty revision where it holds the whole patch and keeps it out
- * where the patch was cut, on the tick and the read back alike, so the mark holds either way.
+ * What the head has of each file, as the blob ids from a unified patch's `index <before>..<after>`
+ * line: Bitbucket exposes no blob id for a file anywhere else. Keyed by the head's name, except
+ * for a deletion where only the old name exists. An entry with no `index` line (most often one
+ * Bitbucket excluded by pattern) is left out.
  */
 export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
   const revisions = new Map<string, string>();

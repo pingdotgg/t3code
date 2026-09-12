@@ -949,12 +949,9 @@ export function decodeOwnAwardIdJson(
 }
 
 /**
- * What the given paths are at one revision, as blob ids.
- *
- * Asked for by path rather than by walking the tree: the caller already knows which files it
- * cares about, and GitLab charges this query by how many paths it is given. A path the revision
- * does not have comes back missing rather than as an error, which is the answer for a file the
- * merge request deletes.
+ * What the given paths are at one revision, as blob ids. Asked for by path rather than by walking
+ * the tree, since GitLab charges this query by how many paths it is given. A path the revision
+ * does not have comes back missing rather than as an error, which is the answer for a deleted file.
  */
 export const REPOSITORY_BLOBS_GRAPHQL_QUERY = `query($fullPath: ID!, $ref: String!, $paths: [String!]!) {
   project(fullPath: $fullPath) {
@@ -1002,15 +999,11 @@ const RawRepositoryBlobsSchema = Schema.Struct({
 const decodeRepositoryBlobs = decodeJsonResult(RawRepositoryBlobsSchema);
 
 /**
- * Blob ids by path, or null where GitLab did not answer the query at all.
- *
- * A project the token cannot see comes back as `project: null`, and a repository can come back
- * without a blobs connection, neither of which says anything about the paths that were asked for.
- * That is worth telling apart from a connection that answered: read as "the revision has none of
- * these files", an unanswered query reports every file a reader has cleared as changed.
- *
- * Within an answer, a node missing either half is left out, because half of one names no version,
- * and the caller reads an absent path as one the revision does not carry.
+ * Blob ids by path, or null where GitLab did not answer the query at all (a project the token
+ * cannot see, or a repository with no blobs connection). That case must be told apart from an
+ * empty answer: read as "the revision has none of these files", it would report every cleared
+ * file as changed again. A node missing either half is left out, since the caller treats an
+ * absent path as one the revision does not carry.
  */
 export function decodeRepositoryBlobsJson(
   raw: string,
@@ -1024,9 +1017,8 @@ export function decodeRepositoryBlobsJson(
   const blobs = new Map<string, string>();
   for (const node of nodes) {
     // Not trimmed, unlike everything else read out of this payload: a leading or trailing space
-    // is a legal part of a file's name, so a path trimmed here is filed under a key neither the
-    // asked-for path nor the viewed mark is spelled with, and the caller reads the file it was
-    // asked about as one this revision does not carry.
+    // is a legal part of a file's name, and trimming it would key this map under a name the
+    // caller's asked-for path never matches.
     const path = node?.path;
     const oid = trimmed(node?.oid);
     if (path === undefined || path === null || path.length === 0 || oid === null) continue;

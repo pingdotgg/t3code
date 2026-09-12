@@ -21,20 +21,17 @@ import type { PullRequestError, SupportedProject } from "./PullRequestService.ts
 
 /**
  * How long the head's version of a file is believed, and how long a held answer stands while the
- * next one is fetched. The marks themselves are this environment's own rows and cost nothing to
- * read; this is the host call behind the **Changed** badge alone, so a held answer costs a badge
- * that is a minute behind rather than a stale tick.
+ * next one is fetched. This is the host call behind the **Changed** badge alone, so a held answer
+ * costs a badge that is a minute behind rather than a stale tick.
  */
 const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
 const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
 export const FILE_REVISIONS_CACHE_CAPACITY = 64;
 
 /**
- * How many paths one scope's entry carries. The count above bounds how many scopes are held, not
- * what any one of them holds: a reader ticking one file after another renews the same scope on
- * every press and adds a path to it each time, so a long review of a wide change request grows a
- * single entry without limit. Well over what a scope can report marks for, so a trim here only
- * ever reaches paths carried from earlier presses.
+ * How many paths one scope's entry carries. Bounds a single scope, not how many scopes are held:
+ * a reader ticking one file after another renews the same scope and grows it without limit
+ * otherwise.
  */
 export const MAX_FILE_REVISION_PATHS = 1_000;
 
@@ -50,10 +47,9 @@ interface FileRevisionsDependencies {
 const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
   const { runFork, refEpoch, fileRevisionsEpoch, toPullRequestError } = dependencies;
   /**
-   * What the head has of the files a reader has marked, held between reads. A host says the empty
-   * revision for a file the change request deletes, and leaves out a path it could not look at, so
-   * the entry remembers what it has been asked as well as what it heard: a path asked for and
-   * missing from an answer keeps whatever version was last given for it.
+   * What the head has of the files a reader has marked, held between reads. The entry tracks what
+   * has been asked as well as what was heard, since a path missing from an answer keeps whatever
+   * version was last given for it rather than being cleared.
    */
   interface HeldFileRevisions {
     readonly at: number;
@@ -64,10 +60,9 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
   const refreshingFileRevisions = new Set<string>();
 
   /**
-   * Carries the reference's epoch like the read it serves, so whatever moved the head strands
-   * what was held against the old one, including an answer still in flight, which stores under
-   * the key it began with. Normalised, because a reference arrives spelled however the client
-   * spelled it while the project carries the remote's own spelling.
+   * Carries the reference's epoch, so whatever moved the head strands what was held (or in
+   * flight) against the old one. Normalised, since a reference arrives spelled however the
+   * client spelled it while the project carries the remote's own spelling.
    */
   const fileRevisionsKey = (ref: PullRequestRef) =>
     [
@@ -99,9 +94,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
         asked.delete(path);
         asked.add(path);
         const revision = answer.get(path);
-        // Left out of the answer is the host not saying, not the head having nothing: the
-        // version it last gave stands, since deleting it would turn a file reported as changed
-        // back into a cleared one.
+        // A path left out of the answer keeps its last known version rather than being cleared.
         if (revision !== undefined) {
           revisions.delete(path);
           revisions.set(path, revision);
@@ -117,9 +110,8 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
         const oldest = heldFileRevisions.keys().next().value;
         if (oldest !== undefined) heldFileRevisions.delete(oldest);
       }
-      // The entry is only as fresh as the oldest revision in it: stamping it with now would let
-      // a reader ticking one new file after another carry the first file's revision past the point
-      // it would have been read again, since every press renews the scope while asking one path.
+      // The entry is only as fresh as its oldest revision: stamping it with `now` on a partial
+      // answer would let an old revision ride past the point it should have been re-read.
       const stamped = [...revisions.keys()].every((path) => answer.has(path))
         ? at
         : (carried?.at ?? at);
@@ -140,14 +132,11 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
   };
 
   /**
-   * What the head has of these files, or null where the host cannot say. Null is not an error:
-   * without it the marks simply stop reporting staleness, which is worse than the host's own
-   * record but better than refusing to remember anything.
-   *
-   * `held` answers from a value past its lifetime and fetches the next one off the critical path,
-   * because a badge a moment behind beats a page of ticks that will not paint until a host answers.
-   * `fresh` is for the press itself, which stamps what it stores and would otherwise write a
-   * revision the head had already moved off.
+   * What the head has of these files, or null where the host cannot say (not an error: the marks
+   * just stop reporting staleness). `held` answers from a stale value and refetches off the
+   * critical path, since a badge a moment behind beats a page that won't paint until the host
+   * answers; `fresh` is for the press itself, which must not store a revision the head already
+   * moved off.
    */
   const fileRevisionsOf = (
     project: SupportedProject,
@@ -208,17 +197,17 @@ export interface Dependencies extends FileRevisionsDependencies {
   ) => Effect.Effect<string | null, PullRequestError>;
 }
 
-// A plain factory rather than a `Context.Service`, against the preference in
-// `.repos/effect-smol/LLMS.md`: the held revisions, the refresh set and the write gates are only
-// correct at one instance per service, and a layer provided at two points in the graph would give
-// two of each behind one epoch counter, which reads as a badge that is quietly wrong.
+// A plain factory rather than a `Context.Service` (against the preference in
+// `.repos/effect-smol/LLMS.md`): the held revisions, refresh set, and write gates are only correct
+// at one instance per service, and a layer provided at two points would give two of each behind
+// one epoch counter.
 export const make = (dependencies: Dependencies) => {
   const { filesViewedStore, requireProject, requiredViewerOf, toPullRequestError } = dependencies;
   const { fileRevisionsOf } = makeFileRevisions(dependencies);
   /**
-   * Which change request's marks, and whose. Provider and host lead the table's key because the
-   * same repository exists on more than one install, and the reader is part of it for the reason a
-   * host's own record is per-account. A host that names no reader is one reader, not none.
+   * Which change request's marks, and whose. Provider and host lead the key because the same
+   * repository can exist on more than one install; the reader is part of it because a host's own
+   * record is per-account. A host that names no reader is one reader, not none.
    */
   const filesViewedScope = (project: SupportedProject, number: number, viewer: string | null) => ({
     provider: project.api.kind,
@@ -236,12 +225,10 @@ export const make = (dependencies: Dependencies) => {
     });
 
   /**
-   * The marks this environment keeps for a host that keeps none of its own.
-   *
-   * A file the head still has at the revision it was cleared at is cleared; one the head has
-   * moved on from is reported as changed, which is what GitHub says of a file pushed to since it
-   * was ticked. Revisions are asked for the marked paths alone, so a reader who has marked
-   * nothing costs no host call at all.
+   * The marks this environment keeps for a host that keeps none of its own. A file the head
+   * still has at the revision it was cleared at is cleared; one the head has moved on from is
+   * reported as changed. Revisions are asked for the marked paths alone, so a reader who has
+   * marked nothing costs no host call.
    */
   const environmentFilesViewed = (
     project: SupportedProject,
@@ -254,11 +241,8 @@ export const make = (dependencies: Dependencies) => {
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
       const marks = held.files;
       if (marks.length === 0) return { files: [], truncated: held.truncated };
-      // A host that will not say what its head has of a file costs the marks their staleness,
-      // which is what `fileRevisionsOf` answers null for, rather than costing the reader every
-      // tick they have made. Who the reader is, above, cannot give way like that: these rows are
-      // keyed by it, so a lookup that failed is reported, and the client says the marks could not
-      // be read rather than drawing a reader with marks as one with none.
+      // A host that won't say what its head has costs the marks their staleness (`fileRevisionsOf`
+      // returns null), rather than costing the reader every tick they've made.
       const revisions = yield* fileRevisionsOf(
         project,
         ref,
@@ -274,12 +258,11 @@ export const make = (dependencies: Dependencies) => {
       );
       return {
         files: marks.map((mark) => {
-          // A path the host had no answer for is one it could not look at, so the mark holds; a
-          // file the change request deletes is answered as the empty revision, which is what its
-          // mark was stamped with, so it is cleared once and stays cleared. A mark stamped with
-          // no baseline holds for the same reason, until the reader presses it again.
+          // A mark stamped with no baseline holds until the reader presses it again.
           if (mark.revision === null) return { path: mark.path, state: "viewed" as const };
           const revision = revisions?.get(mark.path);
+          // A deleted file is answered as the empty revision, matching its stamp, so it stays
+          // cleared; a path the host had no answer for (`undefined`) also holds as cleared.
           return {
             path: mark.path,
             state:
@@ -288,18 +271,15 @@ export const make = (dependencies: Dependencies) => {
                 : ("dismissed" as const),
           };
         }),
-        // The store carries a bounded number of marks per scope, so a reader who has ticked more
-        // than that is short of some of them and told so, the same as a host-kept read that ran
-        // out of pages.
+        // The store caps marks per scope; a reader over that cap is told so, like a paginated read.
         truncated: held.truncated,
       };
     });
 
   /**
-   * One environment-backed write at a time per change request. A tick asks the host what it has
-   * of the file before it stores anything and an untick asks nothing at all, so two presses in
-   * quick succession would otherwise finish in the other order and leave the tick's row standing
-   * over the untick that came after it.
+   * One environment-backed write at a time per change request. A tick's host round trip is
+   * slower than an untick's, so unordered presses could finish out of order and leave a stale
+   * tick standing over a later untick.
    */
   const filesViewedGates = new Map<
     string,
@@ -347,11 +327,8 @@ export const make = (dependencies: Dependencies) => {
         cleared.length === 0
           ? null
           : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh").pipe(
-              // A host that will not say what its head has, because it is backing off or because
-              // the CLI is having a bad minute, costs the press its baseline rather than costing
-              // the reader the press. The mark is stored with none, which holds until it is
-              // pressed again: the file stops reporting staleness, and nothing is stamped with a
-              // revision that was never read.
+              // A host that won't say what its head has costs the press its baseline, not the
+              // press itself: the mark is stored with none and holds until pressed again.
               Effect.catch((error) =>
                 Effect.logWarning("recording viewed files without what the head has of them", {
                   operation: "setFilesViewed",
@@ -363,9 +340,9 @@ export const make = (dependencies: Dependencies) => {
       yield* filesViewedStore
         .set({
           ...filesViewedScope(project, input.number, viewer),
-          // A path left out of the answer is the host declining to say, so the mark is stored
-          // with no baseline rather than with the empty revision, which is an answer and would
-          // report the file as changed the moment it turns out to have a version after all.
+          // A path left out of the answer stores with no baseline, not the empty revision, since
+          // the empty revision is itself an answer and would misreport the file once it turns
+          // out to have a version after all.
           files: input.files.map((file) => ({
             path: file.path,
             revision: revisions?.get(file.path) ?? null,

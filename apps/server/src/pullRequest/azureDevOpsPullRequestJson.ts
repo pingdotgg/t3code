@@ -471,12 +471,9 @@ const decodeChangeEntry = Schema.decodeUnknownExit(RawChangeEntrySchema);
 const decodeItemContent = decodeJsonResult(RawItemContentSchema);
 
 /**
- * Azure leads a path with a slash, which is its own spelling rather than part of the name. Every
- * other host, and every patch, names the same file without it.
- *
- * Not trimmed, unlike everything else read out of this payload: a leading or trailing space is a
- * legal part of a file's name, and a path trimmed here no longer matches the one the patch and the
- * viewed mark are keyed by, so the file is filed under a name nothing else uses.
+ * Azure leads a path with a slash that every other host and every patch omits. Not trimmed like
+ * the rest of this payload, since a leading/trailing space is a legal part of a file's name and
+ * the patch and viewed mark are keyed by the untrimmed path.
  */
 function toRepositoryPath(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
@@ -562,10 +559,7 @@ export function decodeIterationChangesJson(
 
 /**
  * Azure answers an absent file with an empty body rather than an error, which reads as empty.
- *
- * Whether the bytes are text is Azure's to say and not this decoder's to guess: a file it calls
- * binary is reported as such however innocent its first bytes look, since Azure hands the body
- * over in an encoding of its own choosing rather than verbatim.
+ * Whether the bytes are text is Azure's own call, not this decoder's to guess from content.
  */
 export function decodeItemContentJson(
   raw: string,

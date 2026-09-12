@@ -2519,12 +2519,9 @@ export function decodePullRequestFilesJson(
 }
 
 /**
- * Which files of a pull request the signed-in account has cleared.
- *
- * GraphQL only, since the REST files endpoint the patch is read from carries no viewed state at
- * all, so this is a second read rather than a wider version of the first. One page of a hundred
- * files costs a single point of the hourly budget, which is why it can ride the diff's own
- * refresh without being noticed.
+ * Which files of a pull request the signed-in account has cleared. GraphQL only, since the REST
+ * files endpoint the patch is read from carries no viewed state, so this is a second read rather
+ * than a wider version of the first.
  */
 export const PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -2610,15 +2607,12 @@ export function decodePullRequestFilesViewedJson(
 
 /**
  * One document that clears and restores as many files as the reader ticked, rather than one
- * request each.
+ * request each. GitHub has no bulk form of `markFileAsViewed`/`unmarkFileAsViewed`, which each
+ * take a single path, so the batching is done with aliases; top-level mutation fields run in
+ * write order, so the last word about a path is the one that sticks.
  *
- * GitHub has no bulk form of either mutation, and `markFileAsViewed` and `unmarkFileAsViewed`
- * take a single path, so the batching is done with aliases. Top-level mutation fields run in the order
- * they are written, so the last word about a path is the one that sticks, and the whole burst
- * costs one HTTP round trip and one subprocess instead of one of each per press.
- *
- * Paths travel as variables rather than inside the document: they are the host's own strings, but
- * a path is data and a document is not, and building one out of the other is how injection starts.
+ * Paths travel as variables rather than interpolated into the document, since a path is data
+ * and a document is not.
  */
 export function buildSetFilesViewedGraphQlMutation(
   files: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,
