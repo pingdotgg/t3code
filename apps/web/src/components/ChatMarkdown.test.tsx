@@ -377,7 +377,10 @@ describe("ChatMarkdown skill chips", () => {
       });
       const mounted = renderer!;
       const labels = (label: string) =>
-        mounted.root.findAllByType("span").filter((node) => node.children.includes(label));
+        mounted.root
+          // The label element is a <bdi> so an RTL message cannot flip the chip's text.
+          .findAll((node) => node.type === "span" || node.type === "bdi")
+          .filter((node) => node.children.includes(label));
       expect(labels("2Spec")).toHaveLength(0);
 
       await act(async () => {
