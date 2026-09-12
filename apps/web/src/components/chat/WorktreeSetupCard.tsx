@@ -121,7 +121,7 @@ function StageRow({
         <StageIcon status={stage.status} />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
+      <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">
         {showBar ? (
           <>
             <span className="h-1 w-18 overflow-hidden rounded-full bg-input">
@@ -147,7 +147,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   return (
     <pre
       className={cn(
-        "mb-1 ml-8 max-h-20 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all select-text",
+        "mb-1 ml-8 rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all select-text",
         failed
           ? "border-destructive/20 bg-error-surface text-destructive-foreground"
           : "border-border bg-code text-muted-foreground",
