@@ -23,6 +23,13 @@ describe("ElectronProtocol", () => {
     unhandleMock.mockReset();
   });
 
+  it("derives renderer URLs from the explicit distribution identity", () => {
+    assert.equal(ElectronProtocol.getDesktopScheme(false, null), "t3code");
+    assert.equal(ElectronProtocol.getDesktopScheme(true, null), "t3code-dev");
+    assert.equal(ElectronProtocol.getDesktopScheme(false, "fork-abc"), "t3code-fork-abc");
+    assert.equal(ElectronProtocol.getDesktopUrl(false, "fork-abc"), "t3code-fork-abc://app/");
+  });
+
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;
