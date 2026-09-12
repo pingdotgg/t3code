@@ -9,7 +9,10 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  DispatchResult,
   EnvironmentOrchestrationHttpApi,
+  OrchestrationReadModel,
+  OrchestrationThreadDetailSnapshot,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,6 +22,8 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
@@ -51,6 +56,18 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
 import packageJson from "../package.json" with { type: "json" };
+
+const encodeDriveJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeDriveReceipt = Schema.decodeUnknownEffect(Schema.fromJsonString(DispatchResult));
+const decodeDriveSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationReadModel),
+);
+const decodeDriveThread = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
+);
+const decodeDriveSchemaDocument = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ $schema: Schema.String })),
+);
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const DisconnectedLauncherChildLayer = Layer.mergeAll(
@@ -823,6 +840,214 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         }),
       );
     }),
+  );
+
+  it.effect("drives live project and thread commands and sends with the current thread modes", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-drive-live-"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+      );
+      const commandFile = NodePath.join(baseDir, "command.json");
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(
+            commandFile,
+            yield* encodeDriveJson({
+              type: "project.create",
+              commandId: "drive-test-project",
+              projectId: "drive-test-project",
+              title: "Drive live project",
+              workspaceRoot: baseDir,
+              createdAt,
+            }),
+          );
+          const projectOutput = yield* captureStdout(
+            runCli(["drive", "dispatch", commandFile, "--home-dir", baseDir]),
+          );
+          const projectReceipt = yield* decodeDriveReceipt(projectOutput.output);
+          assert.isAbove(projectReceipt.sequence, 0);
+          NodeFS.writeFileSync(
+            commandFile,
+            yield* encodeDriveJson({
+              type: "thread.create",
+              commandId: "drive-test-thread",
+              threadId: "drive-test-thread",
+              projectId: "drive-test-project",
+              title: "Drive live thread",
+              modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+              runtimeMode: "full-access",
+              interactionMode: "plan",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            }),
+          );
+          yield* runCliWithRuntime(["drive", "dispatch", commandFile, "--home-dir", baseDir]);
+          const snapshotOutput = yield* captureStdout(
+            runCli(["drive", "snapshot", "--home-dir", baseDir]),
+          );
+          const snapshot = yield* decodeDriveSnapshot(snapshotOutput.output);
+          assert.equal(snapshot.projects[0]?.title, "Drive live project");
+          assert.equal(snapshot.threads[0]?.title, "Drive live thread");
+
+          const sentOutput = yield* captureStdout(
+            runCli([
+              "drive",
+              "send",
+              "drive-test-thread",
+              "Verify this state",
+              "--home-dir",
+              baseDir,
+            ]),
+          );
+          const sent = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                commandId: Schema.String,
+                messageId: Schema.String,
+                sequence: Schema.Number,
+              }),
+            ),
+          )(sentOutput.output);
+          assert.isAbove(sent.sequence, projectReceipt.sequence);
+          assert.isNotEmpty(sent.commandId);
+          const threadOutput = yield* captureStdout(
+            runCli(["drive", "snapshot", "--thread", "drive-test-thread", "--home-dir", baseDir]),
+          );
+          const { thread } = yield* decodeDriveThread(threadOutput.output);
+          assert.equal(thread.runtimeMode, "full-access");
+          assert.equal(thread.interactionMode, "plan");
+          assert.deepEqual(thread.modelSelection, {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          });
+          assert.equal(thread.messages[0]?.id, sent.messageId);
+          assert.equal(thread.messages[0]?.role, "user");
+          assert.equal(thread.messages[0]?.text, "Verify this state");
+        }),
+      );
+      const persisted = yield* readPersistedSnapshot(baseDir);
+      assert.equal(persisted.threads[0]?.messages[0]?.text, "Verify this state");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "prints schemas and rejects synthetic commands before connecting to a live environment",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-drive-schema-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+        );
+        const liveSchema = yield* captureStdout(runCli(["drive", "schema"]));
+        const scenarioSchema = yield* captureStdout(runCli(["drive", "schema", "--scenario"]));
+        const document = yield* decodeDriveSchemaDocument(liveSchema.output);
+        assert.equal(document.$schema, "https://json-schema.org/draft/2020-12/schema");
+        assert.include(liveSchema.output, "thread.turn.start");
+        assert.notInclude(liveSchema.output, "thread.message.assistant.delta");
+        assert.include(scenarioSchema.output, "thread.message.assistant.delta");
+        const commandFile = NodePath.join(baseDir, "command.json");
+        NodeFS.writeFileSync(
+          commandFile,
+          yield* encodeDriveJson({
+            type: "thread.message.assistant.delta",
+            commandId: "synthetic-delta",
+            threadId: "synthetic-thread",
+            messageId: "synthetic-message",
+            delta: "Synthetic content",
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          }),
+        );
+        const error = yield* runCliWithRuntime([
+          "drive",
+          "dispatch",
+          commandFile,
+          "--home-dir",
+          NodePath.join(baseDir, "missing"),
+        ]).pipe(Effect.flip);
+        assert.isTrue(Schema.isSchemaError(error));
+        assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "missing")));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "validates drive scenarios, preserves synthetic states, and refuses an existing home",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-cli-drive-scenario-"),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+        );
+        const scenarioFile = NodePath.join(baseDir, "scenario.json");
+        const homeDir = NodePath.join(baseDir, "new-home");
+        NodeFS.writeFileSync(
+          scenarioFile,
+          yield* encodeDriveJson({
+            version: 1,
+            commands: [{ type: "invalid" }],
+          }),
+        );
+        yield* runCliWithRuntime(["drive", "scenario", scenarioFile, "--home-dir", homeDir]).pipe(
+          Effect.flip,
+        );
+        assert.isFalse(NodeFS.existsSync(homeDir));
+        const example = yield* captureStdout(runCli(["drive", "example", "--workspace", baseDir]));
+        NodeFS.writeFileSync(scenarioFile, example.output);
+        NodeFS.mkdirSync(homeDir);
+        const marker = NodePath.join(homeDir, "keep.txt");
+        NodeFS.writeFileSync(marker, "existing state");
+        const error = yield* runCliWithRuntime([
+          "drive",
+          "scenario",
+          scenarioFile,
+          "--home-dir",
+          homeDir,
+        ]).pipe(Effect.flip);
+        assert.include(String(error), "Scenario homes must not already exist");
+        assert.equal(NodeFS.readFileSync(marker, "utf8"), "existing state");
+        assert.deepEqual(NodeFS.readdirSync(homeDir), ["keep.txt"]);
+
+        const scenarioHome = NodePath.join(baseDir, "scenario-home");
+        yield* runCliWithRuntime(["drive", "scenario", scenarioFile, "--home-dir", scenarioHome]);
+        const snapshot = yield* readPersistedSnapshot(scenarioHome);
+        assert.lengthOf(snapshot.threads, 5);
+        const completed = snapshot.threads.find((thread) => thread.id === "drive-completed");
+        assert.deepEqual(
+          completed?.messages.map((message) => message.role),
+          ["user", "assistant"],
+        );
+        assert.include(completed?.messages[1]?.text ?? "", "Verification");
+        const streaming = snapshot.threads.find((thread) => thread.id === "drive-streaming");
+        assert.equal(streaming?.session?.status, "running");
+        assert.equal(streaming?.messages[1]?.streaming, true);
+        assert.isNotEmpty(streaming?.messages[1]?.text);
+        const config = yield* makeCliTestServerConfig(scenarioHome);
+        const windowed = yield* Effect.gen(function* () {
+          const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+          return yield* query.getThreadDetailSnapshot(ThreadId.make("drive-streaming"), {
+            turnLimit: 1,
+          });
+        }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
+        assert.isTrue(Option.isSome(windowed));
+        if (Option.isSome(windowed)) {
+          assert.deepEqual(
+            windowed.value.thread.messages.map((message) => message.role),
+            ["user", "assistant"],
+          );
+          assert.equal(windowed.value.thread.messages[1]?.streaming, true);
+        }
+        assert.equal(
+          snapshot.threads.find((thread) => thread.id === "drive-error")?.session?.status,
+          "error",
+        );
+        assert.isNotNull(
+          snapshot.threads.find((thread) => thread.id === "drive-archived")?.archivedAt,
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("rejects dev-url on project commands", () =>

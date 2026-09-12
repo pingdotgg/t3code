@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "./config.ts";
+import { DriveMode } from "./driveMode.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -812,6 +813,9 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
 export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
+    const driveCommands = yield* DriveMode;
+    const autoBootstrapProjectFromCwd =
+      driveCommands === undefined && serverConfig.autoBootstrapProjectFromCwd;
     const keybindings = yield* Keybindings.Keybindings;
     const orchestrationReactor = yield* OrchestrationReactor.OrchestrationReactor;
     const providerSessionReaper = yield* ProviderSessionReaper.ProviderSessionReaper;
@@ -871,25 +875,36 @@ export const make = (options?: StartupOptions) =>
         ),
       );
 
-      yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
-      yield* runStartupPhase(
-        "reactors.start",
-        Effect.gen(function* () {
-          yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
-          yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
-        }),
-      );
+      if (driveCommands !== undefined) {
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        yield* runStartupPhase(
+          "drive.scenario",
+          Effect.forEach(driveCommands, (command) => engine.dispatch(command), {
+            concurrency: 1,
+            discard: true,
+          }),
+        );
+      } else {
+        yield* Effect.logDebug("startup phase: parking orchestration roots at activation");
+        yield* runStartupPhase(
+          "reactors.start",
+          Effect.gen(function* () {
+            yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+            yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
+          }),
+        );
 
-      yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+        yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
 
-      yield* Effect.logDebug("startup phase: syncing clean projects");
-      yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+        yield* Effect.logDebug("startup phase: syncing clean projects");
+        yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+      }
 
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
       yield* Effect.logDebug("startup phase: preparing welcome payload");
 
-      if (serverConfig.autoBootstrapProjectFromCwd) {
+      if (autoBootstrapProjectFromCwd) {
         yield* forkParked(
           runStartupPhase(
             "welcome.autobootstrap",
@@ -967,7 +982,7 @@ export const make = (options?: StartupOptions) =>
           payload: {
             environment,
             ...welcomeBase,
-            bootstrapStatus: serverConfig.autoBootstrapProjectFromCwd ? "pending" : "complete",
+            bootstrapStatus: autoBootstrapProjectFromCwd ? "pending" : "complete",
           },
         }),
       );
