@@ -10,6 +10,11 @@ import { useCallback, useRef, useState, type ReactElement } from "react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
+import {
+  remotePathCopyQualifier,
+  remotePathScpHost,
+  useRemoteOpenResolution,
+} from "../../remoteOpen";
 import { assetEnvironment } from "../../state/assets";
 import { readPreparedConnection } from "../../state/session";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -78,6 +83,7 @@ export function MediaActions({
   children: ReactElement;
 }) {
   const { save, copyImage } = useMediaActions(source);
+  const remoteOpen = useRemoteOpenResolution(source.asset?.environmentId ?? null);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
@@ -97,11 +103,16 @@ export function MediaActions({
         typeof navigator !== "undefined" &&
         Boolean(navigator.clipboard?.write) &&
         typeof ClipboardItem !== "undefined";
+      // An off-machine file path is ambiguous to paste, so the menu names the
+      // environment that holds the file.
+      const hostEnvironment = remotePathCopyQualifier(remoteOpen);
+      const copyTitle = (label: string) =>
+        hostEnvironment ? `${label} on ${hostEnvironment}` : label;
       const items: ContextMenuItem<MediaActionId>[] = [];
       if (reference?.kind === "file") {
-        items.push({ id: "copy-full-path", label: "Copy full path" });
+        items.push({ id: "copy-full-path", label: copyTitle("Copy full path") });
         if (reference.relativePath)
-          items.push({ id: "copy-relative-path", label: "Copy relative path" });
+          items.push({ id: "copy-relative-path", label: copyTitle("Copy relative path") });
       } else if (reference?.kind === "url") {
         items.push({ id: "copy-url", label: "Copy URL" });
       }
@@ -118,9 +129,12 @@ export function MediaActions({
       const action = await api.contextMenu.show(items, position);
       if (!action) return;
       failureTitle = `Could not ${items.find((item) => item.id === action)?.label.toLowerCase() ?? "complete media action"}`;
+      const scpHost = remotePathScpHost(remoteOpen.state);
       const text =
         action === "copy-full-path" && reference?.kind === "file"
-          ? reference.path
+          ? scpHost
+            ? `${scpHost}:${reference.path}`
+            : reference.path
           : action === "copy-relative-path" && reference?.kind === "file"
             ? reference.relativePath
             : action === "copy-url" && reference?.kind === "url"
@@ -131,6 +145,7 @@ export function MediaActions({
         toastManager.add({
           type: "success",
           title: action === "copy-url" ? "URL copied" : "Path copied",
+          ...(hostEnvironment ? { description: `Path on ${hostEnvironment}` } : {}),
         });
       } else if (action === "open-file") {
         source.onOpenFile?.();
