@@ -370,6 +370,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
+                accountId: "workspace-a",
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -389,6 +390,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
+          assert.strictEqual(status.auth.accountId, "workspace-a");
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",

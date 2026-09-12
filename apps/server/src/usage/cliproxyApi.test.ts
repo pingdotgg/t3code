@@ -47,7 +47,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      Omit<(typeof accounts)[number], "id_token"> & {
+        disabled?: boolean;
+        id_token?: { chatgpt_account_id?: string };
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -119,6 +124,7 @@ describe("CLIProxyAPI built-in management API", () => {
         const test = fixture();
         const api = yield* test.api;
         const result = yield* api.readAccounts(config);
+        expect(result.map((account) => account.accountId)).toEqual(["account-a", "account-b"]);
         expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
@@ -139,6 +145,33 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("uses trimmed account IDs for quota headers and omits empty IDs", () =>
+    Effect.gen(function* () {
+      const ids = [" account-a ", "", "  ", undefined];
+      const test = fixture({
+        accounts: ids.map((accountId, index) => ({
+          ...accounts[0]!,
+          id: `${index}.json`,
+          auth_index: String(index),
+          id_token: accountId === undefined ? {} : { chatgpt_account_id: accountId },
+        })),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.accountId)).toEqual([
+        "account-a",
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      for (const request of test.requests.filter((request) => request.body?.url)) {
+        expect(request.body?.header?.["Chatgpt-Account-Id"]).toBe(
+          request.body?.auth_index === "0" ? "account-a" : undefined,
+        );
+      }
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>

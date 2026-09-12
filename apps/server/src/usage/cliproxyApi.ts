@@ -151,6 +151,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
+    const accountId = account.id_token?.chatgpt_account_id?.trim();
     const header =
       account.provider === "codex"
         ? {
@@ -158,9 +159,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
             "Content-Type": "application/json",
             "OpenAI-Beta": "codex-1",
             Originator: "Codex Desktop",
-            ...(account.id_token?.chatgpt_account_id
-              ? { "Chatgpt-Account-Id": account.id_token.chatgpt_account_id }
-              : {}),
+            ...(accountId ? { "Chatgpt-Account-Id": accountId } : {}),
           }
         : { Authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" };
     const raw = yield* management(config, "api-call", {
@@ -205,6 +204,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id?.trim()
+        ? { accountId: account.id_token.chatgpt_account_id.trim() }
+        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
