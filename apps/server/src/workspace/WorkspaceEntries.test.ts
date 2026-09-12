@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +14,8 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+import { WorkspaceSearchWorkerPath } from "./WorkspaceSearchProcess.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -339,19 +340,21 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-refresh-failure-" });
         yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
 
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const createSpy = vi.spyOn(FileFinder, "create");
-        yield* workspaceEntries.list({ cwd });
-        expect(createSpy).toHaveBeenCalledTimes(1);
-
-        vi.spyOn(FileFinder.prototype, "scanFiles").mockReturnValueOnce({
-          ok: false,
-          error: "scan failed",
-        });
-        yield* workspaceEntries.refresh(cwd);
-
-        yield* workspaceEntries.list({ cwd });
-        expect(createSpy).toHaveBeenCalledTimes(2);
+        yield* Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.make;
+          const before = yield* workspaceEntries.list({ cwd });
+          yield* workspaceEntries.refresh(cwd);
+          const after = yield* workspaceEntries.list({ cwd });
+          // The fixture returns its PID as the file path and rejects refresh.
+          expect(after.entries).not.toEqual(before.entries);
+          expect(after.entries).toHaveLength(1);
+        }).pipe(
+          Effect.provide(Layer.fresh(WorkspaceSearchIndex.WorkspaceSearchIndexMap.layer)),
+          Effect.provideService(
+            WorkspaceSearchWorkerPath,
+            new URL("../../scripts/workspace-search-mock.ts", import.meta.url),
+          ),
+        );
       }),
     );
   });
