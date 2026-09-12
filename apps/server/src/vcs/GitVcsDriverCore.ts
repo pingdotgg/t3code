@@ -641,6 +641,25 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
   };
 });
 
+const GIT_CHECKOUT_PROGRESS_LINE = /Updating files:\s+(\d+)%\s+\((\d+)\/(\d+)\)/;
+
+/** Parses `Updating files:  78% (2104/2700)` from git's stderr progress output. */
+export function parseGitCheckoutProgressLine(
+  line: string,
+): { percent: number; completed: number; total: number } | null {
+  const match = GIT_CHECKOUT_PROGRESS_LINE.exec(line);
+  if (!match) return null;
+  const percent = Number(match[1]);
+  const completed = Number(match[2]);
+  const total = Number(match[3]);
+  if (!Number.isFinite(percent) || !Number.isFinite(completed) || !Number.isFinite(total)) {
+    return null;
+  }
+  return { percent: Math.max(0, Math.min(100, percent)), completed, total };
+}
+
+const OUTPUT_LINE_SEPARATOR = /\r\n|\r|\n/;
+
 const collectOutput = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
@@ -654,19 +673,21 @@ const collectOutput = Effect.fnUntraced(function* (
   let lineBuffer = "";
   let truncated = false;
 
+  // Git redraws progress with a bare `\r` between updates and only ends the
+  // line once the step is done, so `\r` has to count as a line break here.
   const emitCompleteLines = Effect.fnUntraced(function* (flush: boolean) {
-    let newlineIndex = lineBuffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      const line = lineBuffer.slice(0, newlineIndex).replace(/\r$/, "");
-      lineBuffer = lineBuffer.slice(newlineIndex + 1);
+    let separator = OUTPUT_LINE_SEPARATOR.exec(lineBuffer);
+    while (separator) {
+      const line = lineBuffer.slice(0, separator.index);
+      lineBuffer = lineBuffer.slice(separator.index + separator[0].length);
       if (line.length > 0 && onLine) {
         yield* onLine(line);
       }
-      newlineIndex = lineBuffer.indexOf("\n");
+      separator = OUTPUT_LINE_SEPARATOR.exec(lineBuffer);
     }
 
     if (flush) {
-      const trailing = lineBuffer.replace(/\r$/, "");
+      const trailing = lineBuffer;
       lineBuffer = "";
       if (trailing.length > 0 && onLine) {
         yield* onLine(trailing);
@@ -3010,7 +3031,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
-  )(function* (input) {
+  )(function* (input, options) {
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
@@ -3018,10 +3039,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
+    const progress = options?.progress;
+    const onCheckoutProgress = progress?.onCheckoutProgress;
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
       timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+      ...(onCheckoutProgress
+        ? {
+            // Git only prints checkout progress when stderr is a tty or the
+            // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+            env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+            progress: {
+              onStderrLine: (line) => {
+                const parsed = parseGitCheckoutProgressLine(line);
+                return parsed ? onCheckoutProgress(parsed) : Effect.void;
+              },
+            },
+          }
+        : {}),
     });
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
@@ -3033,18 +3069,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
     if (hasSubmodules) {
-      yield* runGit("GitVcsDriver.createWorktree.updateSubmodules", worktreePath, [
-        "submodule",
-        "update",
-        "--init",
-        "--recursive",
-      ]).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
-            worktreePath,
-            cause,
-          }),
-        ),
+      if (progress?.onSubmodulesStarted) {
+        yield* progress.onSubmodulesStarted();
+      }
+      const onSubmoduleLine = progress?.onSubmoduleLine;
+      yield* runGit(
+        "GitVcsDriver.createWorktree.updateSubmodules",
+        worktreePath,
+        ["submodule", "update", "--init", "--recursive"],
+        onSubmoduleLine
+          ? {
+              env: { LC_ALL: "C" },
+              progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+            }
+          : {},
+      ).pipe(
+        Effect.matchEffect({
+          onFailure: (cause) =>
+            Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
+              worktreePath,
+              cause,
+            }).pipe(
+              Effect.andThen(
+                progress?.onSubmodulesFinished
+                  ? progress.onSubmodulesFinished({ ok: false, detail: cause.message })
+                  : Effect.void,
+              ),
+            ),
+          onSuccess: () =>
+            progress?.onSubmodulesFinished
+              ? progress.onSubmodulesFinished({ ok: true, detail: null })
+              : Effect.void,
+        }),
       );
     }
 
@@ -3496,7 +3552,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     getReviewDiffFileContents,
     readConfigValue,
     listRefs,
-    createWorktree: (input) => withListRefsInvalidation(input.cwd, createWorktree(input)),
+    createWorktree: (input, options) =>
+      withListRefsInvalidation(input.cwd, createWorktree(input, options)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
     fetchPullRequestHeadCommit,

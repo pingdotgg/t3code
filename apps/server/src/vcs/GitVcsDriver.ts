@@ -102,6 +102,29 @@ export interface ExecuteGitProgress {
   }) => Effect.Effect<void, never>;
 }
 
+/**
+ * Progress callbacks for `createWorktree`. Git prints `Updating files: 78% (2104/2700)`
+ * to stderr during checkout, and `Submodule path 'x': checked out` during
+ * submodule init. The tracker uses these to drive the worktree setup card.
+ */
+export interface CreateWorktreeProgress {
+  readonly onCheckoutProgress?: (input: {
+    percent: number;
+    completed: number;
+    total: number;
+  }) => Effect.Effect<void, never>;
+  readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
+  readonly onSubmoduleLine?: (line: string) => Effect.Effect<void, never>;
+  readonly onSubmodulesFinished?: (input: {
+    ok: boolean;
+    detail: string | null;
+  }) => Effect.Effect<void, never>;
+}
+
+export interface CreateWorktreeOptions {
+  readonly progress?: CreateWorktreeProgress;
+}
+
 export interface GitCommitProgress {
   readonly onOutputLine?: (input: {
     stream: "stdout" | "stderr";
@@ -280,6 +303,7 @@ export class GitVcsDriver extends Context.Service<
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
+      options?: CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
