@@ -1,5 +1,6 @@
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -227,6 +228,21 @@ describe("isPendingThreadCreationVisible", () => {
 });
 
 describe("pendingThreadCreationMessage", () => {
+  it("keeps inline context available while the thread is being created", () => {
+    const record = {
+      version: 1 as const,
+      kind: "mention" as const,
+      contextId: ComposerContextId.make("setup-file"),
+      label: "Checkout.tsx",
+      path: "src/Checkout.tsx",
+    };
+    const context = { version: 1 as const, records: [record] };
+    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
+    const message = pendingThreadCreationMessage({ ...creation, text, context });
+    expect(message.text).toBe(text);
+    expect(message.context).toEqual(context);
+  });
+
   it("renders the queued prompt as the first user message", () => {
     expect(pendingThreadCreationMessage(creation)).toEqual({
       id: creation.messageId,

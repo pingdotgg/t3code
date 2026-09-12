@@ -64,6 +64,16 @@ describe("stripDisplayedPlanMarkdown", () => {
 });
 
 describe("resolvePlanFollowUpSubmission", () => {
+  it.each(["", "Consider this "])(
+    "keeps context-bearing feedback in plan mode with prose %j",
+    (prose) => {
+      const draftText = `${prose}[PR #42](t3-context://v1/review-comment/pr-42)`;
+      expect(resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" })).toEqual({
+        text: draftText,
+        interactionMode: "plan",
+      });
+    },
+  );
   it("switches to default mode when implementing the ready plan without extra text", () => {
     expect(
       resolvePlanFollowUpSubmission({

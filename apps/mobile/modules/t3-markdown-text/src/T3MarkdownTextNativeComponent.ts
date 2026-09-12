@@ -28,6 +28,7 @@ interface SelectionChangeEvent extends TargetedEvent {
 type EllipsizeMode = "head" | "middle" | "tail" | "clip";
 
 interface NativeProps extends ViewProps {
+  contextClipboardConfig?: string;
   numberOfLines?: Int32;
   allowFontScaling?: WithDefault<boolean, true>;
   ellipsizeMode?: WithDefault<EllipsizeMode, "tail">;

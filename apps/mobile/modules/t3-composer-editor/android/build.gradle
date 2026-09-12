@@ -16,4 +16,5 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  implementation project(':t3tools-mobile-markdown-text')
 }

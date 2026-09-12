@@ -8,7 +8,7 @@ import {
   usePreventRemove,
   type NavigationAction,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -23,9 +23,15 @@ import { useFontFamily } from "../../lib/useFontFamily";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import { composerContextImportsAtom } from "../../state/use-composer-drafts";
+import {
+  composerContextSendBlockReason,
+  type ComposerDocumentAttachment,
+} from "../../lib/composerContext";
 import {
   ComposerActionButton,
   ComposerInlineControl,
@@ -34,6 +40,8 @@ import {
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
+import { composerStripAttachments } from "../../lib/composerImages";
+import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
@@ -100,6 +108,7 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { fileRoutePathSegments } from "../files/filePath";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -315,7 +324,10 @@ export function NewTaskDraftScreen(props: {
     cancelledIncomingShareId !== props.incomingShareId &&
     !isIncomingShareAwaitingServerConfig,
   );
-  const isComposerInteractionLocked = isIncomingShareTransferPending || flow.submitting;
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
+  const isComposerInteractionLocked =
+    isIncomingShareTransferPending || flow.submitting || isImportingContext;
   // Also guard while a submit is in flight: an Android back press or iOS
   // Cancel would otherwise abandon the screen while the task still starts.
   // T3 owns /usage-limits only where Limits has data for the selected provider.
@@ -326,14 +338,32 @@ export function NewTaskDraftScreen(props: {
       selectedEnvironmentServerConfig?.providers ?? [],
       selectedEnvironmentServerConfig?.usageLimitSources ?? [],
     );
+  const composerWorkspaceCwd =
+    (flow.workspaceMode === "worktree"
+      ? selectedProject?.workspaceRoot
+      : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
+  // Media needs its thumbnail; every other file already reads as its inline chip.
+  const stripAttachments = useMemo(
+    () =>
+      composerStripAttachments(
+        flow.attachments,
+        new Set(
+          collectComposerContextReferences(flow.prompt).map(
+            (occurrence) => occurrence.contextId as string,
+          ),
+        ),
+      ),
+    [flow.attachments, flow.prompt],
+  );
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
     ownerKey: flow.draftKey,
     environmentId: selectedProject?.environmentId ?? null,
-    projectCwd:
-      (flow.workspaceMode === "worktree"
-        ? selectedProject?.workspaceRoot
-        : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
+    pullRequestProjectId: selectedEnvironmentServerConfig?.environment.capabilities.pullRequests
+      ? (selectedProject?.id ?? null)
+      : null,
+    pullRequestRepository: selectedProject?.repositoryIdentity?.displayName ?? null,
+    projectCwd: composerWorkspaceCwd,
     selectedProviderStatus: flow.selectedProviderStatus,
     hasThread: false,
     hasCompactableConversation: false,
@@ -946,6 +976,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
+    if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return;
     // Read the latest explicit pick. Antigravity selections stay unchanged
     // when setup or a catalog change makes them unavailable.
     const modelSelection =
@@ -998,6 +1029,12 @@ export function NewTaskDraftScreen(props: {
         "Too many attachments",
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
+      return;
+    }
+
+    const contextBlockReason = composerContextSendBlockReason(draft.context);
+    if (contextBlockReason) {
+      Alert.alert("Too much context", contextBlockReason);
       return;
     }
 
@@ -1093,6 +1130,7 @@ export function NewTaskDraftScreen(props: {
 
   const isAndroid = Platform.OS === "android";
   const canStart =
+    !isImportingContext &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
@@ -1103,34 +1141,71 @@ export function NewTaskDraftScreen(props: {
     !flow.submitting &&
     !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+  const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
+    // A draft attachment lives only in the draft. Without its key the screen would fall through
+    // to a remote lookup for bytes the server has never seen.
+    const draftKey = flow.draftKey;
+    if (!draftKey) return;
+    promptInputRef.current?.blur();
+    void KeyboardController.dismiss({ animated: true });
+    navigation.dispatch(
+      StackActions.push("NewTaskAttachment", {
+        environmentId: String(selectedProject.environmentId),
+        attachmentId: attachment.attachmentId,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: String(attachment.sizeBytes),
+        draftKey,
+      }),
+    );
+  };
   const promptEditor = (
-    <ComposerEditor
-      ref={promptInputRef}
-      // The context-first screen intentionally opens with the keyboard closed.
-      // Focusing is a user action, so presenting the form sheet has one motion.
-      autoFocus={false}
-      editable={!isComposerInteractionLocked}
-      readOnly={voiceInput.freezesEditor}
-      multiline
-      scrollEnabled
-      value={flow.prompt}
-      skills={composerMenu.skills}
-      selection={composerMenu.selection}
-      onChangeText={flow.setPrompt}
-      onSelectionChange={composerMenu.onSelectionChange}
-      onFocus={() => setIsComposerFocused(true)}
-      onBlur={() => setIsComposerFocused(false)}
-      onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder="Ask anything…"
-      singleLineCentered={false}
-      contentInsetVertical={0}
-      style={{
-        minHeight: 72,
-        maxHeight: 160,
-        paddingVertical: 4,
-      }}
-      textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
-    />
+    <>
+      <ComposerEditor
+        draftKey={flow.draftKey}
+        environmentId={selectedProject.environmentId}
+        onOpenAttachment={openDraftDocument}
+        onOpenMention={(path) => {
+          if (!composerWorkspaceCwd) return;
+          promptInputRef.current?.blur();
+          void KeyboardController.dismiss({ animated: true });
+          navigation.dispatch(
+            StackActions.push("NewTaskFile", {
+              environmentId: String(selectedProject.environmentId),
+              cwd: composerWorkspaceCwd,
+              projectName: selectedProject.title,
+              path: fileRoutePathSegments(path),
+            }),
+          );
+        }}
+        ref={promptInputRef}
+        // The context-first screen intentionally opens with the keyboard closed.
+        // Focusing is a user action, so presenting the form sheet has one motion.
+        autoFocus={false}
+        // Clipboard imports use the editor's read-only mode to retain keyboard focus.
+        editable={!isIncomingShareTransferPending && !flow.submitting}
+        readOnly={voiceInput.freezesEditor}
+        multiline
+        scrollEnabled
+        value={flow.prompt}
+        skills={composerMenu.skills}
+        selection={composerMenu.selection}
+        onChangeText={flow.setPrompt}
+        onSelectionChange={composerMenu.onSelectionChange}
+        onFocus={() => setIsComposerFocused(true)}
+        onBlur={() => setIsComposerFocused(false)}
+        onPasteImages={(uris) => void handleNativePasteImages(uris)}
+        placeholder="Ask anything…"
+        singleLineCentered={false}
+        contentInsetVertical={0}
+        style={{
+          minHeight: 72,
+          maxHeight: 160,
+          paddingVertical: 4,
+        }}
+        textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
+      />
+    </>
   );
 
   const closeNewTask = () => {
@@ -1257,12 +1332,15 @@ export function NewTaskDraftScreen(props: {
 
   const composerDock = (
     <View className="bg-sheet px-[12px] pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
+      {!voiceInput.isBusy &&
+      composerMenu.trigger &&
+      (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
             triggerKind={composerMenu.trigger.kind}
             isLoading={composerMenu.isLoading}
+            error={composerMenu.error}
             onSelect={composerMenu.onSelect}
           />
         </View>
@@ -1289,11 +1367,11 @@ export function NewTaskDraftScreen(props: {
           paddingTop: 14,
         }}
       >
-        {flow.attachments.length > 0 ? (
+        {stripAttachments.length > 0 ? (
           <View className="px-[14px] pb-2.5">
             <ComposerAttachmentStrip
               environmentId={selectedProject.environmentId}
-              attachments={flow.attachments}
+              attachments={stripAttachments}
               imageBorderRadius={16}
               imageSize={72}
               onRemove={
@@ -1306,6 +1384,17 @@ export function NewTaskDraftScreen(props: {
               }
               onPressVideo={
                 isComposerInteractionLocked || voiceInput.isBusy ? undefined : openVideoPreview
+              }
+              onPressDocument={
+                isComposerInteractionLocked || voiceInput.isBusy
+                  ? undefined
+                  : (attachment) =>
+                      openDraftDocument({
+                        attachmentId: attachment.id,
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        sizeBytes: attachment.sizeBytes,
+                      })
               }
             />
           </View>

@@ -56,6 +56,7 @@ import {
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
+  restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
   observeProactivePanelUserChoice,
@@ -1555,7 +1556,7 @@ describe("buildRunningThreadTurnInterruptInput", () => {
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
-      prompt: "\uFFFC",
+      prompt: "[Terminal 1 line 4](t3-context://v1/terminal/ctx-expired)",
       imageCount: 0,
       terminalContexts: [
         {
@@ -1579,7 +1580,7 @@ describe("deriveComposerSendState", () => {
 
   it("keeps text sendable while excluding expired terminal pills", () => {
     const state = deriveComposerSendState({
-      prompt: `yoo \uFFFC waddup`,
+      prompt: "yoo [Terminal 1 line 4](t3-context://v1/terminal/ctx-expired) waddup",
       imageCount: 0,
       terminalContexts: [
         {
@@ -2378,5 +2379,68 @@ describe("rewind draft recovery", () => {
     expect(files[0]?.name).toBe("notes.txt");
     expect(await files[0]?.text()).toBe("original bytes");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://server.test/asset/signed");
+  });
+});
+
+describe("restorePlanFollowUpComposer", () => {
+  it("writes back every field a cleared plan follow-up composer held", () => {
+    const snapshot = {
+      prompt: "Follow up on the plan",
+      terminalContexts: [
+        {
+          id: "terminal-1",
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-09-11T00:00:00.000Z",
+          terminalId: "main",
+          terminalLabel: "Main",
+          lineStart: 1,
+          lineEnd: 2,
+          text: "output",
+        },
+      ],
+      reviewComments: [
+        {
+          id: "review-1",
+          sectionId: "file:a.ts",
+          sectionTitle: "File comment",
+          filePath: "a.ts",
+          startIndex: 0,
+          endIndex: 0,
+          rangeLabel: "L1",
+          text: "look here",
+          diff: "",
+        },
+      ],
+      previewAnnotations: [],
+    };
+    const writePrompt = vi.fn();
+    const writeTerminalContexts = vi.fn();
+    const writeReviewComments = vi.fn();
+    const writePreviewAnnotations = vi.fn();
+    const resetCursor = vi.fn();
+
+    restorePlanFollowUpComposer({
+      snapshot,
+      writePrompt,
+      writeTerminalContexts,
+      writeReviewComments,
+      writePreviewAnnotations,
+      resetCursor,
+    });
+
+    expect(writePrompt).toHaveBeenCalledTimes(1);
+    expect(writePrompt).toHaveBeenCalledWith("Follow up on the plan");
+    expect(writeTerminalContexts).toHaveBeenCalledTimes(1);
+    expect(writeTerminalContexts).toHaveBeenCalledWith(snapshot.terminalContexts);
+    expect(writeReviewComments).toHaveBeenCalledTimes(1);
+    expect(writeReviewComments).toHaveBeenCalledWith(snapshot.reviewComments);
+    expect(writePreviewAnnotations).toHaveBeenCalledTimes(1);
+    expect(writePreviewAnnotations).toHaveBeenCalledWith(snapshot.previewAnnotations);
+    expect(resetCursor).toHaveBeenCalledTimes(1);
+    expect(resetCursor).toHaveBeenCalledWith({
+      cursor: expect.any(Number),
+      prompt: "Follow up on the plan",
+      detectTrigger: true,
+    });
   });
 });

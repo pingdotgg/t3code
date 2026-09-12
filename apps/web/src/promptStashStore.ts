@@ -1,3 +1,4 @@
+import { ComposerContextRecord, ForwardCompatibleArray } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
@@ -55,6 +56,12 @@ const StashEntrySchema = Schema.Struct({
    * `finalizeEntryImages` lands, and flags entries orphaned by a reload.
    */
   pendingImageCount: Schema.optionalKey(Schema.Number),
+  /**
+   * Payloads behind the prompt's context links (terminal excerpts, review comments, preview
+   * annotations). Images and files have their own fields above. Optional: older entries
+   * decode without it.
+   */
+  records: Schema.optionalKey(ForwardCompatibleArray(ComposerContextRecord)),
 });
 export type PromptStashEntry = typeof StashEntrySchema.Type;
 

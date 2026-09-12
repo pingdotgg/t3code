@@ -1,4 +1,5 @@
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { composerContextEditorTokens } from "../lib/composerContext";
 import { requireNativeView } from "expo";
 import {
   useCallback,
@@ -13,8 +14,13 @@ import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "reac
 import { Image, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
+import {
+  composerChipSizeSuffix,
+  contextChipPresentation,
+} from "@t3tools/mobile-markdown-text/markdown";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { flattenThemeColor } from "../lib/mobileTheme";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
@@ -55,6 +61,7 @@ interface NativeComposerEditorRef {
 interface NativeComposerEditorProps extends ViewProps {
   readonly ref?: Ref<NativeComposerEditorRef>;
   readonly controlledDocumentJson: string;
+  readonly clipboardFragment: string;
   readonly themeJson: string;
   readonly placeholder: string;
   readonly fontFamily: string;
@@ -70,6 +77,12 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  readonly onComposerContextPress?: (
+    event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
+  ) => void;
+  readonly onComposerPasteContext?: (
+    event: NativeSyntheticEvent<{ text: string; fragment: string; html: string }>,
+  ) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
   readonly onComposerSubmit?: () => void;
@@ -135,19 +148,37 @@ export function ComposerEditor({
     });
     confirmedTokensRef.current = tokens;
     return JSON.stringify(
-      tokens.map((token) => ({
-        type: token.type,
-        source: token.source,
-        start: token.start,
-        end: token.end,
-        label:
-          token.type === "skill"
-            ? (skillLabels.get(token.value) ?? token.value)
-            : basename(token.value),
-        iconUri: token.type === "mention" ? fileIconUri(token.value) : null,
-      })),
+      composerContextEditorTokens(props.value, tokens).map((token) => {
+        const record =
+          token.type === "context"
+            ? props.context?.records.find((record) => record.contextId === token.contextId)
+            : undefined;
+        return {
+          type: token.type,
+          source: token.source,
+          start: token.start,
+          end: token.end,
+          ...contextChipPresentation(token.type === "context" ? token.kind : token.type, record),
+          label:
+            token.type === "skill"
+              ? (skillLabels.get(token.value) ?? token.value)
+              : token.type === "context"
+                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                : basename(token.value),
+          detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
+          // Only a mention wears per-filetype artwork. An attachment chip keeps the tinted
+          // monochrome glyph web draws for it: coloured artwork ignores the chip's accent and
+          // makes the composer chip read differently from the same chip in a sent message.
+          iconUri:
+            token.type === "mention"
+              ? fileIconUri(token.value)
+              : record?.kind === "mention" && "path" in record
+                ? fileIconUri(record.path)
+                : null,
+        };
+      }),
     );
-  }, [props.value, skillLabels]);
+  }, [props.value, props.context, skillLabels]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -215,7 +246,8 @@ export function ComposerEditor({
     text: theme["--color-foreground"],
     placeholder: theme["--color-placeholder"],
     chipBackground: theme["--color-subtle"],
-    chipBorder: theme["--color-border"],
+    // Native chip drawing parses opaque hex only, and this role is translucent.
+    chipBorder: flattenThemeColor(theme["--color-border"], theme["--color-user-bubble"]),
     chipText: theme["--color-foreground"],
     skillBackground: theme["--color-inline-skill-background"],
     skillBorder: theme["--color-inline-skill-border"],
@@ -227,6 +259,7 @@ export function ComposerEditor({
     <NativeView
       ref={nativeRef}
       controlledDocumentJson={controlledDocumentJson}
+      clipboardFragment={props.clipboardFragment ?? ""}
       themeJson={themeJson}
       placeholder={props.placeholder ?? ""}
       fontFamily={
@@ -281,6 +314,8 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+      onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
+      onComposerPasteContext={(event) => props.onPasteContext?.(event.nativeEvent)}
       onComposerFocus={onFocus}
       onComposerBlur={onBlur}
       onComposerSubmit={onSubmit}

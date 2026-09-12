@@ -21,7 +21,7 @@ interface MediaVideoPlayerProps {
   readonly stateClassName?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly copyMarkdown?: string | undefined;
-  readonly onRetry?: (() => Promise<void>) | undefined;
+  readonly onRetry?: (() => Promise<unknown>) | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
 }
 

@@ -1,6 +1,6 @@
-import { type ThreadId } from "@t3tools/contracts";
-
-import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
+import type { ThreadId } from "@t3tools/contracts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { toKindScopedComposerContextId } from "./composerContextReferences";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -16,36 +16,24 @@ export interface TerminalContextDraft extends TerminalContextSelection {
   createdAt: string;
 }
 
-export interface ExtractedTerminalContexts {
-  promptText: string;
-  contextCount: number;
-  previewTitle: string | null;
-  contexts: ParsedTerminalContextEntry[];
-}
-
-export interface DisplayedUserMessageState {
-  visibleText: string;
-  copyText: string;
-  contextCount: number;
-  previewTitle: string | null;
-  contexts: ParsedTerminalContextEntry[];
-  /**
-   * Element-context entries extracted from the trailing `<element_context>`
-   * block (if any). Stripped from `visibleText` so the raw block doesn't
-   * leak into the user's bubble.
-   */
-  elementContexts: ParsedElementContextEntry[];
-}
-
-export interface ParsedTerminalContextEntry {
-  header: string;
-  body: string;
-}
-
+/** Legacy ordinal placeholder from drafts saved before context references. Migration only. */
 export const INLINE_TERMINAL_CONTEXT_PLACEHOLDER = "\uFFFC";
 
-const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
-  /\n*<terminal_context>\n([\s\S]*?)\n<\/terminal_context>\s*$/;
+export interface TerminalContextReferenceSource {
+  id: string;
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+}
+
+/** The canonical inline link that stands for this context in the prompt. */
+export function formatTerminalContextReference(context: TerminalContextReferenceSource): string {
+  return formatComposerContextReference({
+    kind: "terminal",
+    contextId: toKindScopedComposerContextId("terminal", context.id),
+    label: formatTerminalContextLabel(context),
+  });
+}
 
 export function normalizeTerminalContextText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
@@ -99,236 +87,16 @@ export function formatTerminalContextLabel(selection: {
   return `${selection.terminalLabel} ${formatTerminalContextRange(selection)}`;
 }
 
-export function formatInlineTerminalContextLabel(selection: {
-  terminalLabel: string;
-  lineStart: number;
-  lineEnd: number;
-}): string {
-  const terminalLabel = selection.terminalLabel.trim().toLowerCase().replace(/\s+/g, "-");
-  const range =
-    selection.lineStart === selection.lineEnd
-      ? `${selection.lineStart}`
-      : `${selection.lineStart}-${selection.lineEnd}`;
-  return `@${terminalLabel}:${range}`;
-}
-
-function buildTerminalContextBodyLines(selection: TerminalContextSelection): string[] {
-  return normalizeTerminalContextText(selection.text)
-    .split("\n")
-    .map((line, index) => `  ${selection.lineStart + index} | ${line}`);
-}
-
-export function buildTerminalContextBlock(
-  contexts: ReadonlyArray<TerminalContextSelection>,
+/** Binds legacy U+FFFC placeholders to contexts in array order; leftover placeholders vanish. */
+export function migrateLegacyTerminalContextPlaceholders(
+  prompt: string,
+  contexts: ReadonlyArray<TerminalContextReferenceSource>,
 ): string {
-  const normalizedContexts: TerminalContextSelection[] = [];
-  for (const context of contexts) {
-    const normalized = normalizeTerminalContextSelection(context);
-    if (normalized !== null) {
-      normalizedContexts.push(normalized);
-    }
-  }
-  if (normalizedContexts.length === 0) {
-    return "";
-  }
-  const lines: string[] = [];
-  for (let index = 0; index < normalizedContexts.length; index += 1) {
-    const context = normalizedContexts[index]!;
-    lines.push(`- ${formatTerminalContextLabel(context)}:`);
-    lines.push(...buildTerminalContextBodyLines(context));
-    if (index < normalizedContexts.length - 1) {
-      lines.push("");
-    }
-  }
-  return ["<terminal_context>", ...lines, "</terminal_context>"].join("\n");
-}
-
-export function materializeInlineTerminalContextPrompt(
-  prompt: string,
-  contexts: ReadonlyArray<{
-    terminalLabel: string;
-    lineStart: number;
-    lineEnd: number;
-  }>,
-): string {
-  let nextContextIndex = 0;
-  let result = "";
-
-  for (const char of prompt) {
-    if (char !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
-      result += char;
-      continue;
-    }
-    const context = contexts[nextContextIndex] ?? null;
-    nextContextIndex += 1;
-    if (!context) {
-      continue;
-    }
-    result += formatInlineTerminalContextLabel(context);
-  }
-
-  return result;
-}
-
-export function appendTerminalContextsToPrompt(
-  prompt: string,
-  contexts: ReadonlyArray<TerminalContextSelection>,
-): string {
-  const trimmedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts).trim();
-  const contextBlock = buildTerminalContextBlock(contexts);
-  if (contextBlock.length === 0) {
-    return trimmedPrompt;
-  }
-  return trimmedPrompt.length > 0 ? `${trimmedPrompt}\n\n${contextBlock}` : contextBlock;
-}
-
-export function extractTrailingTerminalContexts(prompt: string): ExtractedTerminalContexts {
-  const match = TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN.exec(prompt);
-  if (!match) {
-    return {
-      promptText: prompt,
-      contextCount: 0,
-      previewTitle: null,
-      contexts: [],
-    };
-  }
-  const promptText = prompt.slice(0, match.index).replace(/\n+$/, "");
-  const parsedContexts = parseTerminalContextEntries(match[1] ?? "");
-  return {
-    promptText,
-    contextCount: parsedContexts.length,
-    previewTitle:
-      parsedContexts.length > 0
-        ? parsedContexts
-            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
-            .join("\n\n")
-        : null,
-    contexts: parsedContexts,
-  };
-}
-
-export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
-  // Order matters: send-time appends `<terminal_context>` first, then
-  // `<element_context>` last. Strip element first so the (now-trailing)
-  // terminal block can be matched by `extractTrailingTerminalContexts`.
-  const extractedElement = extractTrailingElementContexts(prompt);
-  const extractedTerminal = extractTrailingTerminalContexts(extractedElement.promptText);
-  return {
-    visibleText: extractedTerminal.promptText,
-    copyText: prompt,
-    contextCount: extractedTerminal.contextCount,
-    previewTitle: extractedTerminal.previewTitle,
-    contexts: extractedTerminal.contexts,
-    elementContexts: extractedElement.contexts,
-  };
-}
-
-function parseTerminalContextEntries(block: string): ParsedTerminalContextEntry[] {
-  const entries: ParsedTerminalContextEntry[] = [];
-  let current: { header: string; bodyLines: string[] } | null = null;
-
-  const commitCurrent = () => {
-    if (!current) {
-      return;
-    }
-    entries.push({
-      header: current.header,
-      body: current.bodyLines.join("\n").trimEnd(),
-    });
-    current = null;
-  };
-
-  for (const rawLine of block.split("\n")) {
-    const headerMatch = /^- (.+):$/.exec(rawLine);
-    if (headerMatch) {
-      commitCurrent();
-      current = {
-        header: headerMatch[1]!,
-        bodyLines: [],
-      };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (rawLine.startsWith("  ")) {
-      current.bodyLines.push(rawLine.slice(2));
-      continue;
-    }
-    if (rawLine.length === 0) {
-      current.bodyLines.push("");
-    }
-  }
-
-  commitCurrent();
-  return entries;
-}
-
-export function countInlineTerminalContextPlaceholders(prompt: string): number {
-  let count = 0;
-  for (const char of prompt) {
-    if (char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-export function ensureInlineTerminalContextPlaceholders(
-  prompt: string,
-  terminalContextCount: number,
-): string {
-  const missingCount = terminalContextCount - countInlineTerminalContextPlaceholders(prompt);
-  if (missingCount <= 0) {
-    return prompt;
-  }
-  return `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER.repeat(missingCount)}${prompt}`;
-}
-
-function isInlineTerminalContextBoundaryWhitespace(char: string | undefined): boolean {
-  return char === undefined || char === " " || char === "\n" || char === "\t" || char === "\r";
-}
-
-export function insertInlineTerminalContextPlaceholder(
-  prompt: string,
-  cursorInput: number,
-): { prompt: string; cursor: number; contextIndex: number } {
-  const cursor = Math.max(0, Math.min(prompt.length, Math.floor(cursorInput)));
-  const needsLeadingSpace = !isInlineTerminalContextBoundaryWhitespace(prompt[cursor - 1]);
-  const replacement = `${needsLeadingSpace ? " " : ""}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} `;
-  const rangeEnd = prompt[cursor] === " " ? cursor + 1 : cursor;
-  return {
-    prompt: `${prompt.slice(0, cursor)}${replacement}${prompt.slice(rangeEnd)}`,
-    cursor: cursor + replacement.length,
-    contextIndex: countInlineTerminalContextPlaceholders(prompt.slice(0, cursor)),
-  };
-}
-
-export function stripInlineTerminalContextPlaceholders(prompt: string): string {
-  return prompt.replaceAll(INLINE_TERMINAL_CONTEXT_PLACEHOLDER, "");
-}
-
-export function removeInlineTerminalContextPlaceholder(
-  prompt: string,
-  contextIndex: number,
-): { prompt: string; cursor: number } {
-  if (contextIndex < 0) {
-    return { prompt, cursor: prompt.length };
-  }
-
-  let placeholderIndex = 0;
-  for (let index = 0; index < prompt.length; index += 1) {
-    if (prompt[index] !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
-      continue;
-    }
-    if (placeholderIndex === contextIndex) {
-      return {
-        prompt: prompt.slice(0, index) + prompt.slice(index + 1),
-        cursor: index,
-      };
-    }
-    placeholderIndex += 1;
-  }
-
-  return { prompt, cursor: prompt.length };
+  if (!prompt.includes(INLINE_TERMINAL_CONTEXT_PLACEHOLDER)) return prompt;
+  let index = 0;
+  return prompt.replaceAll(INLINE_TERMINAL_CONTEXT_PLACEHOLDER, () => {
+    const context = contexts[index];
+    index += 1;
+    return context ? formatTerminalContextReference(context) : "";
+  });
 }

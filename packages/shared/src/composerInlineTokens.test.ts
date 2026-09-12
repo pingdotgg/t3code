@@ -163,6 +163,15 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
   });
 
+  it("leaves a context reference link alone", () => {
+    expect(
+      collectComposerInlineTokens("see [checkout.png](t3-context://v1/image/ctx_abc) ok"),
+    ).toEqual([]);
+    expect(collectComposerInlineTokens("see ![ctx_abc](t3-context://v1/image/ctx_abc) ok")).toEqual(
+      [],
+    );
+  });
+
   it("stays fast on unterminated bracket runs", () => {
     // Unbounded, the label body rescanned the rest of the text from every
     // whitespace: this input took seconds.

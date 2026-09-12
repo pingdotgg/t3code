@@ -25,6 +25,8 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly appearanceScheme?: "light" | "dark";
   readonly autoFocus?: boolean;
   readonly focusRequest?: number;
+  readonly captureRequest?: number;
+  readonly onCapture?: (event: NativeSyntheticEvent<{ readonly text: string }>) => void;
   readonly themeConfig?: string;
   readonly backgroundColor?: string;
   readonly foregroundColor?: string;

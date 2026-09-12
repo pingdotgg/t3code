@@ -9,11 +9,14 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert, View } from "react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useNavigation } from "@react-navigation/native";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { useServerConfigs } from "../../state/entities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -38,6 +41,9 @@ export function QuestionAttachments(props: {
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
   const { selectedThread } = useThreadSelection();
+  const navigation = useNavigation();
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const configs = useServerConfigs();
   const drafts = useAtomValue(composerDraftsAtom);
   const scopeKey = JSON.stringify([
@@ -166,7 +172,24 @@ export function QuestionAttachments(props: {
         onRemove={(id) => {
           if (!props.disabled) removeComposerDraftAttachment(key, id);
         }}
+        onPressPreview={setPreviewFile}
+        onPressVideo={(attachment, sourceIdentifier) =>
+          setPreviewVideo({ type: "local", attachment, sourceIdentifier })
+        }
+        onPressDocument={(attachment) =>
+          navigation.navigate("ThreadAttachment", {
+            environmentId: String(environmentId),
+            threadId: String(threadId),
+            attachmentId: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: String(attachment.sizeBytes),
+            draftKey: key,
+          })
+        }
       />
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
+      <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
       <TextInputWrapper onPaste={paste}>
         <TextInput
           value={props.value}

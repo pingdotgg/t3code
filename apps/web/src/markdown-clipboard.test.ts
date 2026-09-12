@@ -109,6 +109,21 @@ function renderedCodeBlock(lines: ReadonlyArray<string>): FakeElement {
 }
 
 describe("serializeRenderedMarkdownFragment", () => {
+  it("copies a popover context reference once, without its details or nested label", () => {
+    const reference = "[Review comment](t3-context://v1/review-comment/review-1)";
+    const container = new FakeElement("DIV").append(
+      new FakeText("Fix "),
+      new FakeElement("BUTTON", [], { "data-markdown-copy": reference }).append(
+        new FakeElement("SPAN", [], { "data-markdown-copy": reference }).append(
+          new FakeText("Review comment"),
+        ),
+      ),
+      new FakeText(" please"),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(`Fix ${reference} please`);
+  });
+
   beforeEach(() => {
     vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
   });

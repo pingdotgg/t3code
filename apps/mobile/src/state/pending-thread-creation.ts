@@ -113,6 +113,7 @@ export function pendingThreadCreationMessage(
     id: message.messageId,
     role: "user",
     text: message.text,
+    context: message.context,
     // Deliberately no attachments. Their ids are local draft ids the server
     // cannot resolve, so the feed's attachment rows would sit on a spinner
     // that only ends when the real message arrives — and never, if the

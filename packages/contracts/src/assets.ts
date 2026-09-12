@@ -23,6 +23,12 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
+  // A workspace file named by a draft that has no thread yet. The draft names
+  // its workspace root explicitly instead of resolving one from a thread.
+  Schema.TaggedStruct("draft-workspace-file", {
+    cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     /** Display name and mime from the `ChatAttachment` the caller holds. The
@@ -174,8 +180,10 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   },
 ) {
   override get message(): string {
-    return this.resource._tag === "media-file"
-      ? "Only images, videos, HTML, and PDF files can be previewed."
+    // Draft resources serve absolute paths through the same host-media
+    // validation as media files, so they share its message.
+    return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
+      ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
   }
 }

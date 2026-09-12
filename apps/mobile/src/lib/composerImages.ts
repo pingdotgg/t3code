@@ -17,6 +17,8 @@ import {
   isComposerAttachmentFileRetained,
   resolveOwnedComposerAttachmentFileUri,
 } from "./composerAttachmentFiles";
+import { imageMimeType } from "@t3tools/shared/image";
+import { videoMimeType } from "@t3tools/shared/video";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
@@ -44,6 +46,34 @@ export interface DraftComposerFileAttachment {
 
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
+/**
+ * What the strip above the composer shows. Media previews there because a thumbnail is the
+ * only way to see it; every other file is already legible as its inline chip, so it only
+ * falls back to the strip when the prompt carries no reference to it. Mirrors web's
+ * `composerOtherFilesForPresentation`.
+ */
+export function composerStripAttachments(
+  attachments: ReadonlyArray<DraftComposerAttachment>,
+  inlineAttachmentIds: ReadonlySet<string>,
+): ReadonlyArray<DraftComposerAttachment> {
+  return attachments.filter(
+    (attachment) =>
+      isComposerImageAttachment(attachment) ||
+      videoMimeType(attachment) !== null ||
+      !inlineAttachmentIds.has(attachment.id),
+  );
+}
+
+/**
+ * Whether a draft attachment is a picture. The document picker types every pick as a plain
+ * file, so the answer comes from the attachment itself rather than from which picker made it.
+ */
+export function isComposerImageAttachment(
+  attachment: DraftComposerAttachment,
+): attachment is DraftComposerImageAttachment {
+  return attachment.type === "image" || imageMimeType(attachment) !== null;
+}
+
 /** Any composer attachment whose bytes live in the app-owned attachment directory. */
 export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
 
@@ -52,6 +82,19 @@ export function isFileBackedComposerAttachment(
   attachment: DraftComposerAttachment,
 ): attachment is FileBackedComposerAttachment {
   return attachment.fileUri !== undefined;
+}
+
+/**
+ * The bytes a draft attachment can be previewed from without the server. A picture taken from
+ * the photo library or the clipboard owns no file and carries its bytes inline, and its
+ * `attachmentId` is a local draft id the server has never seen — so falling back to a remote
+ * asset for one only ever fails. Returns undefined when the attachment really is remote-only.
+ */
+export function composerAttachmentInlineUri(
+  attachment: DraftComposerAttachment | undefined,
+): string | undefined {
+  if (attachment === undefined || isFileBackedComposerAttachment(attachment)) return undefined;
+  return attachment.type === "image" ? (attachment.dataUrl ?? attachment.previewUri) : undefined;
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";

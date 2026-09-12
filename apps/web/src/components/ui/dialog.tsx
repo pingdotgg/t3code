@@ -6,6 +6,8 @@ import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
+  DIALOG_MEDIA_BACKDROP_CLASS,
+  DIALOG_MEDIA_POPUP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
@@ -25,11 +27,18 @@ function DialogClose(props: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
-function DialogBackdrop({ className, ...props }: DialogPrimitive.Backdrop.Props) {
+function DialogBackdrop({
+  className,
+  variant = "default",
+  ...props
+}: DialogPrimitive.Backdrop.Props & { variant?: "default" | "media" }) {
   return (
     <DialogPrimitive.Backdrop
       forceRender
-      className={cn(DIALOG_BACKDROP_CLASS, className)}
+      className={cn(
+        variant === "media" ? DIALOG_MEDIA_BACKDROP_CLASS : DIALOG_BACKDROP_CLASS,
+        className,
+      )}
       data-slot="dialog-backdrop"
       {...props}
     />
@@ -54,21 +63,31 @@ function DialogPopup({
   children,
   showCloseButton = true,
   bottomStickOnMobile = true,
+  backdropClassName,
+  viewportClassName,
+  variant = "default",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   bottomStickOnMobile?: boolean;
+  backdropClassName?: string;
+  viewportClassName?: string;
+  variant?: "default" | "media";
 }) {
   return (
     <DialogPortal>
-      <DialogBackdrop />
+      <DialogBackdrop className={backdropClassName} variant={variant} />
       <DialogViewport
-        className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}
+        className={cn(
+          bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
+          viewportClassName,
+        )}
       >
         <DialogPrimitive.Popup
           className={cn(
-            DIALOG_POPUP_CLASS,
-            "row-start-2 max-h-full max-w-lg text-popover-foreground",
+            variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+            "row-start-2 text-popover-foreground",
+            variant === "default" && "max-h-full max-w-lg",
             bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
             className,
           )}

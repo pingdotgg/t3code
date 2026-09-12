@@ -36,6 +36,7 @@ export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   nativeTextRef?: Ref<RNText>;
   uiTextView?: boolean;
   contextMenuConfig?: string;
+  contextClipboardConfig?: string;
   onContextMenuAction?: (event: ContextMenuActionEvent) => void;
   /**
    * Fired when the native text selection changes. Only fires on iOS when
@@ -117,7 +118,7 @@ function MarkdownTextPrimitiveInner({ nativeTextRef, ...props }: MarkdownTextPri
 
 export function MarkdownTextPrimitive(props: MarkdownTextPrimitiveProps) {
   if (Platform.OS !== "ios") {
-    const { nativeTextRef, ...textProps } = props;
+    const { nativeTextRef, contextClipboardConfig: _contextClipboardConfig, ...textProps } = props;
     return <RNText ref={nativeTextRef} {...textProps} />;
   }
   return <MarkdownTextPrimitiveInner {...props} />;

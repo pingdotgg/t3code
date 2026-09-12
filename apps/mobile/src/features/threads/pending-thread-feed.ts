@@ -29,6 +29,7 @@ export function appendPendingThreadMessages(
           id: pendingMessage.messageId,
           role: "user",
           text: pendingMessage.text,
+          context: pendingMessage.context,
           createdAt: pendingMessage.createdAt,
           updatedAt: pendingMessage.createdAt,
           turnId: null,

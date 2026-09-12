@@ -12,6 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface T3MarkdownTextRun : RCTViewComponentView
 
 @property (nonatomic, copy, nullable) NSString *text;
+@property (nonatomic, assign) BOOL contextChipInteractive;
 
 - (nullable UIMenu *)contextMenu;
 - (BOOL)hasContextMenu;

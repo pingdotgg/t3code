@@ -5537,6 +5537,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves draft workspace files without a thread", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-draft-media-" });
+      yield* fileSystem.writeFileString(path.join(directory, "note.html"), "<p>draft</p>");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const issued = yield* client[WS_METHODS.assetsCreateUrl]({
+              resource: { _tag: "draft-workspace-file", cwd: directory, path: "note.html" },
+            });
+            const response = yield* HttpClient.get(issued.relativeUrl);
+            assert.equal(response.status, 200);
+            assert.equal(response.headers["content-type"], "text/html; charset=utf-8");
+            assert.equal(yield* response.text, "<p>draft</p>");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
     Effect.gen(function* () {
       const config = yield* buildAppUnderTest();

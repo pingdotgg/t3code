@@ -110,6 +110,31 @@ describe("highlightReviewSelectedLines", () => {
 });
 
 describe("highlightCodeSnippet", () => {
+  it.each(["light", "dark"] as const)(
+    "preserves diff-prefixed TSX review snippets in %s mode",
+    async (theme) => {
+      const lines = [
+        "- onClick={() => submitOrder(cart)}",
+        "+ onClick={handleSubmit}",
+        "+ disabled={isSubmitting}",
+      ];
+      const highlighted = await highlightCodeSnippet({
+        code: lines.join("\n"),
+        language: "tsx",
+        theme,
+      });
+      expect(highlighted.map((line) => line.map((token) => token.content).join(""))).toEqual(lines);
+      expect(
+        new Set(
+          highlighted
+            .flat()
+            .map((token) => token.color)
+            .filter(Boolean),
+        ).size,
+      ).toBeGreaterThan(1);
+    },
+  );
+
   it("resolves language aliases and returns syntax-colored tokens", async () => {
     const source = "const answer: number = 42;";
     const highlighted = await highlightCodeSnippet({

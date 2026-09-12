@@ -23,6 +23,30 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val inputView = EditText(context)
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
+  private val onCapture by EventDispatcher()
+  var captureRequest: Double = 0.0
+    set(value) {
+      if (field == value || value <= 0) return
+      field = value
+      val frame = if (terminalHandle !=
+        0L
+      ) {
+        TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle))
+      } else {
+        null
+      }
+      val text = frame?.let { snapshot ->
+        (0 until snapshot.rows).joinToString("\n") { row ->
+          (0 until snapshot.cols).joinToString("") { col ->
+            snapshot.cellText[
+              row * snapshot.cols +
+                col
+            ]
+          }.trimEnd()
+        }
+      } ?: ""
+      onCapture(mapOf("text" to text))
+    }
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0

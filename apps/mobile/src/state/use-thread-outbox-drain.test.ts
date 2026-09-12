@@ -1,6 +1,7 @@
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
   CommandId,
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -591,6 +592,31 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
+  it("preserves inline context from setup edits when reopening a failed task", async () => {
+    const message = queuedMessage({ messageId: "failed-context", text: "Original prompt" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    const targetKey = "new-task:restored-failed-context";
+    const record = {
+      version: 1 as const,
+      kind: "mention" as const,
+      contextId: ComposerContextId.make("setup-file"),
+      label: "Checkout.tsx",
+      path: "src/Checkout.tsx",
+    };
+    const context = { version: 1 as const, records: [record] };
+    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [targetKey]: { text: message.text, attachments: [] },
+      [sourceKey]: { text, context, attachments: [] },
+    });
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot(targetKey)).toMatchObject({
+      text: `Original prompt\n\n${text}`,
+      context,
+    });
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).context).toBeUndefined();
+  });
+
   it("reopens a rejected task with setup edits and every attachment, even above the send cap", async () => {
     const message = queuedMessage({ messageId: "failed-setup", text: "Original prompt" });
     const sourceKey = `${message.environmentId}:${message.threadId}`;

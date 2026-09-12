@@ -1,7 +1,7 @@
 import type { AssistantCitation } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import {
   findAssistantCitationSourceAnchor,
@@ -18,6 +18,7 @@ import {
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
 } from "../composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -27,16 +28,16 @@ import { composerFloatingLayerProps } from "./composerEventScope";
 
 const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
   COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-  "text-primary/80 hover:bg-primary/10 hover:text-primary",
+  "text-current hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] hover:text-current",
 );
 
 export function AssistantCitationChip({
   citation,
-  onRemove,
+  composer = false,
   commentEditor,
 }: {
   citation: AssistantCitation;
-  onRemove?: () => void;
+  composer?: boolean;
   commentEditor?: {
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
@@ -93,7 +94,7 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-primary"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
@@ -103,7 +104,7 @@ export function AssistantCitationChip({
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
@@ -113,14 +114,14 @@ export function AssistantCitationChip({
   return (
     <span
       className={cn(
-        onRemove ? COMPOSER_INLINE_CHIP_CLASS_NAME : CHAT_INLINE_CHIP_CLASS_NAME,
-        "border-primary/20 bg-primary/8 text-primary",
+        composer ? COMPOSER_INLINE_CHIP_CLASS_NAME : CHAT_INLINE_CHIP_CLASS_NAME,
+        CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.citation,
       )}
       contentEditable={false}
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
     >
-      {onRemove ? (
+      {composer ? (
         composerSourceLink
       ) : (
         <Tooltip>
@@ -180,19 +181,6 @@ export function AssistantCitationChip({
             </PopoverPopup>
           ) : null}
         </Popover>
-      ) : null}
-      {onRemove ? (
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label="Remove assistant citation"
-          className={cn(
-            COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-            "text-primary/85 hover:bg-primary/10 hover:text-primary",
-          )}
-        >
-          <XIcon aria-hidden="true" className="size-[0.85em]" />
-        </button>
       ) : null}
     </span>
   );

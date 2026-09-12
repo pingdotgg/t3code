@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  ComposerContextId,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { appendPendingThreadMessages } from "./pending-thread-feed";
 
@@ -14,6 +20,24 @@ const pending = (id: string): QueuedThreadMessage => ({
 });
 
 describe("pending timeline messages", () => {
+  it("retains context records while a message is waiting for delivery", () => {
+    const record = {
+      version: 1 as const,
+      kind: "mention" as const,
+      contextId: ComposerContextId.make("setup-file"),
+      label: "Checkout.tsx",
+      path: "src/Checkout.tsx",
+    };
+    const context = { version: 1 as const, records: [record] };
+    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
+    const entries = appendPendingThreadMessages([], [], [{ ...pending("context"), text, context }]);
+    const entry = entries[0];
+    expect(entry?.type).toBe("message");
+    if (entry?.type !== "message") throw new Error("Expected a pending message");
+    expect(entry.message.text).toBe(text);
+    expect(entry.message.context).toEqual(context);
+  });
+
   it("keeps pending messages after newer agent activity in queue order", () => {
     const activity = {
       type: "thinking",
