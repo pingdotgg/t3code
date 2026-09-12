@@ -12,7 +12,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - push tag matching `v*.*.*` for a stable release of an explicit commit
   - scheduled nightly check every 30 minutes
   - manual `workflow_dispatch` with `channel=nightly`
-  - manual `workflow_dispatch` with `channel=preview`, a temporary train for dogfooding the archive-based CLI runtime. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`), so nightly and stable clients never see it as an update. It publishes the GitHub Release and the `preview` npm dist-tag only; the hosted web app, AUR, and Discord announcements are skipped. Remove the channel once archives are the default on nightly and stable.
+  - manual `workflow_dispatch` with `channel=preview`, a temporary train for dogfooding the archive-based CLI runtime. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and publishes only a GitHub prerelease. A preview is reachable solely by downloading it from that release: it is not published to npm, its desktop builds are packaged without an update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so stable and nightly installs can never be offered one. The hosted web app, AUR, and Discord announcements are skipped. Remove the channel once archives are the default on nightly and stable.
 - A manual stable release builds the commit of the latest published nightly, not `main` HEAD.
   Nightly is the release candidate: verify the nightly, then promote it. Merges to `main` keep
   landing while you verify and never leak into the stable build.
@@ -42,7 +42,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
-  - preview releases publish npm dist-tag `preview`
+  - preview releases are not published to npm
 - Deploys the hosted web app to Vercel only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
