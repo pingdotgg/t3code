@@ -116,3 +116,26 @@ export class AgentSessionScanError extends Schema.TaggedErrorClass<AgentSessionS
     return `Failed to scan agent sessions during ${this.operation}.`;
   }
 }
+
+/** Live status of the background agent session auto-importer. */
+export const AgentSessionAutoImportStatus = Schema.Struct({
+  state: Schema.Literals(["idle", "scanning", "importing", "completed", "failed"]),
+  startedAt: Schema.NullOr(IsoDateTime),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  projectsCreated: NonNegativeInt,
+  threadsImported: NonNegativeInt,
+  threadsSkipped: NonNegativeInt,
+  error: Schema.NullOr(Schema.String),
+});
+export type AgentSessionAutoImportStatus = typeof AgentSessionAutoImportStatus.Type;
+
+/** All-zero idle status for the service to use as its initial value. */
+export const initialAgentSessionAutoImportStatus: AgentSessionAutoImportStatus = {
+  state: "idle",
+  startedAt: null,
+  finishedAt: null,
+  projectsCreated: 0,
+  threadsImported: 0,
+  threadsSkipped: 0,
+  error: null,
+};

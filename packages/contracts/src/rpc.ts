@@ -29,6 +29,7 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  AgentSessionAutoImportStatus,
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -253,6 +254,9 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  agentSessionsImportAll: "agentSessions.importAll",
+  agentSessionsStatus: "agentSessions.status",
+  agentSessionsSubscribeStatus: "agentSessions.subscribeStatus",
   assetsCreateUrl: "assets.createUrl",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
@@ -839,6 +843,25 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+const WsAgentSessionsImportAllRpc = Rpc.make(WS_METHODS.agentSessionsImportAll, {
+  payload: Schema.Struct({}),
+  success: AgentSessionAutoImportStatus,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+});
+
+const WsAgentSessionsStatusRpc = Rpc.make(WS_METHODS.agentSessionsStatus, {
+  payload: Schema.Struct({}),
+  success: AgentSessionAutoImportStatus,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+});
+
+const WsAgentSessionsSubscribeStatusRpc = Rpc.make(WS_METHODS.agentSessionsSubscribeStatus, {
+  payload: Schema.Struct({}),
+  success: AgentSessionAutoImportStatus,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -1251,6 +1274,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsAgentSessionsImportAllRpc,
+  WsAgentSessionsStatusRpc,
+  WsAgentSessionsSubscribeStatusRpc,
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
