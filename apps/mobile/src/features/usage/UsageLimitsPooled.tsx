@@ -7,6 +7,7 @@ import {
   collectLimitPools,
   formatDuration,
   formatResetsIn,
+  PACE_LABEL,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -26,7 +27,6 @@ import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -111,7 +111,7 @@ function PoolWindowCard({
       </View>
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
+          ↻{pool.members.length > 1 ? ` +${nextRefill.restoresPercent}%` : ""}{" "}
           {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
         </Text>
       ) : null}
