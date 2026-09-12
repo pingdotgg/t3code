@@ -75,20 +75,23 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
   if (platform !== "darwin" && platform !== "linux") return;
 
-  yield* Effect.sync(() => hydratePosixHome(env)).pipe(
-    Effect.catchDefect((defect) =>
-      Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate HOME from the user account.", defect);
-      }),
-    ),
-  );
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
-    Effect.catchDefect((defect) =>
-      Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
-      }),
-    ),
-  );
+  // If the desktop already installed the shell environment before the server
+  // started, skip the second login-shell probe. The parent desktop process has
+  // already merged PATH and session variables into its own environment, and the
+  // server inherits them directly. Re-running the probe would spawn an extra
+  // bash -ilc just to re-derive the same values.
+  try {
+    hydratePosixHome(env);
+  } catch (defect) {
+    logPathHydrationWarning("Failed to hydrate HOME from the user account.", defect);
+  }
+  if (env.__T3CODE_SHELL_ENV_INSTALLED !== "1") {
+    try {
+      hydratePosixPath(env, platform);
+    } catch (defect) {
+      logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
+    }
+  }
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {

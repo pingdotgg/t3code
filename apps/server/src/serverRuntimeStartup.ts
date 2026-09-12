@@ -880,10 +880,11 @@ export const make = (options?: StartupOptions) =>
         }),
       );
 
+      // Reconcile before accepting commands. Deferring it past signalCommandReady
+      // would let a client start a provider session while the reconciler snapshots
+      // the live set, classifying the new session as dead and overwriting its turn
+      // with an error status.
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
-
-      yield* Effect.logDebug("startup phase: syncing clean projects");
-      yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
 
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
@@ -987,6 +988,17 @@ export const make = (options?: StartupOptions) =>
           },
         }),
       );
+
+      // Defer non-critical startup work until after the server is ready to serve
+      // commands. autoPullProjects can run in the background without blocking the
+      // first paint on desktop or the ready event for remote clients.
+      yield* forkParked(
+        Effect.gen(function* () {
+          yield* Effect.logDebug("startup phase: syncing clean projects");
+          yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+        }),
+      );
+
       yield* Effect.logDebug("startup phase: complete");
     }).pipe(
       Effect.annotateSpans({

@@ -12,6 +12,7 @@ const {
   registerSchemesMock,
   setDesktopNameMock,
   mkdirSyncMock,
+  readFileSyncMock,
   writeFileSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
@@ -20,6 +21,7 @@ const {
   registerSchemesMock: vi.fn(),
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
 }));
 
@@ -39,12 +41,15 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
+  readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
 }));
 
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
+import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 
 describe("DesktopPreReadyPlatform", () => {
   beforeEach(() => {
@@ -54,6 +59,7 @@ describe("DesktopPreReadyPlatform", () => {
     registerSchemesMock.mockReset();
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
+    readFileSyncMock.mockReset();
     writeFileSyncMock.mockReset();
   });
 
@@ -83,6 +89,12 @@ describe("DesktopPreReadyPlatform", () => {
         vi.stubEnv("XDG_DATA_HOME", "/xdg");
         vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
         getSwitchValueMock.mockReturnValue("");
+        readFileSyncMock.mockImplementation(() => {
+          if (previousEntry === undefined) {
+            throw new Error("ENOENT");
+          }
+          return previousEntry;
+        });
         let desktopName = "t3code.desktop";
         let desktopEntry = previousEntry;
         setDesktopNameMock.mockImplementation((name: string) => {
@@ -110,6 +122,37 @@ describe("DesktopPreReadyPlatform", () => {
       },
     );
   }
+
+  it.effect("skips rewriting an unchanged Linux desktop entry to avoid cold-boot writes", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    vi.stubEnv("APPIMAGE", "/Applications/current.AppImage");
+    getSwitchValueMock.mockReturnValue("");
+    writeFileSyncMock.mockReset();
+    // The entry on disk already matches what we would render, including the
+    // trailing newline, so the pre-ready path must not write again.
+    readFileSyncMock.mockImplementation(() =>
+      renderUrlHandlerDesktopEntry({
+        displayName: resolveDesktopAppBranding({
+          isDevelopment: false,
+          appVersion: "0.0.37",
+        }).displayName,
+        execTarget: "/Applications/current.AppImage",
+        scheme: ElectronProtocol.getDesktopScheme(false),
+      }),
+    );
+
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.asVoid,
+      Effect.andThen(
+        Effect.sync(() => {
+          assert.equal(writeFileSyncMock.mock.calls.length, 0);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
 
   it.effect("keeps startup available when the early desktop entry cannot be written", () => {
     getSwitchValueMock.mockReturnValue("");
