@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { type DevinSettings, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
@@ -96,16 +96,20 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         }).pipe(
           // The configured text-generation model may not be in the account's
           // catalog; fall back to the model the session already runs on
-          // rather than failing the operation. `catch` (not `catchCause`) so
-          // the prompt timeout's interruption is not swallowed.
+          // rather than failing the operation. Only an invalid-params
+          // rejection means "model unavailable" — transport/protocol failures
+          // still propagate. `catch` (not `catchCause`) so the prompt
+          // timeout's interruption is not swallowed.
           Effect.catch((error) =>
-            Effect.logWarning(
-              "Devin text-generation model selection failed; using the session model.",
-              {
-                errorTag: error._tag,
-                requestedModel: resolvedModel,
-              },
-            ),
+            error._tag === "AcpRequestError" && error.code === -32602
+              ? Effect.logWarning(
+                  "Devin text-generation model selection failed; using the session model.",
+                  {
+                    errorTag: error._tag,
+                    requestedModel: resolvedModel,
+                  },
+                )
+              : Effect.fail(error),
           ),
         );
 
@@ -135,13 +139,16 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
       );
 
       const trimmed = (yield* Ref.get(outputRef)).trim();
+      if (promptResult.stopReason === "cancelled") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Devin ACP request was cancelled.",
+        });
+      }
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Devin ACP request was cancelled."
-              : "Devin returned empty output.",
+          detail: "Devin returned empty output.",
         });
       }
 

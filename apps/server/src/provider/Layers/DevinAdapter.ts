@@ -32,6 +32,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import {
   type ProviderAdapterError,
@@ -522,6 +523,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
         );
 
         return yield* Effect.gen(function* () {
+          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           // The attachments dir grant lets the agent read pasted files at the
           // paths ProviderService injects into the turn text. It is a leaf
           // directory holding only uploads.
@@ -533,7 +535,23 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             // `session/load` replays history without the agent re-running it;
             // Devin advertises loadSession but not session/resume.
             resumeMethod: "load",
-            mcpServers: [],
+            ...(mcpSession
+              ? {
+                  mcpServers: [
+                    {
+                      type: "http" as const,
+                      name: "t3-code",
+                      url: mcpSession.endpoint,
+                      headers: [
+                        {
+                          name: "Authorization",
+                          value: mcpSession.authorizationHeader,
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
             ...makeNativeLoggers({
               nativeEventLogger: options.nativeEventLogger,
               provider: PROVIDER,
@@ -778,14 +796,17 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           }
           const turnId = context.activeTurnId ?? TurnId.make(yield* randomId);
           const steering = context.activeTurnId !== undefined;
-          const turn: TurnIntent = { turnId, generation: ++context.generation, settled: false };
-          intent = turn;
-          context.activeTurnId = turnId;
           const model = yield* applyDevinAcpModelSelection({
             runtime: context.runtime,
             model: requestedUnavailable ? undefined : requestedModel,
             mapError: (cause) => cause,
           });
+          // Register the intent only after model selection so a selection
+          // failure cannot emit `turn.completed` for a turn that never
+          // emitted `turn.started`.
+          const turn: TurnIntent = { turnId, generation: ++context.generation, settled: false };
+          intent = turn;
+          context.activeTurnId = turnId;
           // A selection that resolved normally means the thread's saved model
           // moved on; remembered stale slugs from a resume no longer apply.
           // Turns without an explicit selection leave the memory alone.

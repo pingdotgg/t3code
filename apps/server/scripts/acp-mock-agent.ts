@@ -71,11 +71,17 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
+const devinConfiguredModels = (process.env.T3_ACP_DEVIN_MODELS ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
+const devinInitialModel = devinConfiguredModels.find(() => true) ?? "swe-2-high";
+
 let currentModeId = antigravityProfile ? "default" : devinProfile ? "smart" : "ask";
 let currentModelId = antigravityProfile
   ? "gemini-test-low"
   : devinProfile
-    ? "swe-2-high"
+    ? devinInitialModel
     : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
@@ -123,10 +129,7 @@ process.once("exit", (code) => {
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
   if (devinProfile) {
-    const devinModelValues = (process.env.T3_ACP_DEVIN_MODELS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
+    const devinModelValues = devinConfiguredModels;
     return [
       {
         id: "model",
