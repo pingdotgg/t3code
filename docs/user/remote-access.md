@@ -116,6 +116,18 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+## Open a remote project in your editor
+
+When you view a server from another machine, the **Open** button in the thread
+header opens the project in your local editor over SSH instead of launching an
+editor on the server.
+
+The link uses a hostname the server advertises for itself. If that name does not
+resolve from your machine, or your server uses a non-default SSH port or user,
+set `T3CODE_REMOTE_OPEN_HOST` in the server's environment to a hostname or an
+alias from your `~/.ssh/config`. An alias lets the editor resolve the port, user
+and key from your SSH config. Your SSH key must be authorized on the server.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Connections → Add environment**, choose

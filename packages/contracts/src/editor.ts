@@ -135,11 +135,14 @@ export const buildRemoteOpenUrl = (input: {
 
 /**
  * SSH hostnames an environment advertises for remote open links. Reachability
- * is client-side; the server only advertises names that resolve to itself and
- * gates them on a local sshd listen check. Ordered most-reachable first
- * (tailnet MagicDNS name, then mDNS `<hostname>.local`).
+ * is client-side. A `configured` host is operator-declared
+ * (`T3CODE_REMOTE_OPEN_HOST`) and comes first; as an ssh config alias it is
+ * the only way to carry a non-default port or user through a `vscode-remote`
+ * URI. Probed names follow: the server advertises names that resolve to
+ * itself, gated on a local sshd listen check and ordered most-reachable
+ * first (tailnet MagicDNS name, then mDNS `<hostname>.local`).
  */
-export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
+export const RemoteOpenTargetKind = Schema.Literals(["configured", "tailscale", "mdns"]);
 export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 
 export const RemoteOpenTarget = Schema.Struct({

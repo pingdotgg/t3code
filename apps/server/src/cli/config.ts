@@ -139,6 +139,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  remoteOpenHost: Config.string("T3CODE_REMOTE_OPEN_HOST").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -384,6 +388,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      remoteOpenHost: env.remoteOpenHost?.trim() || undefined,
     };
 
     return config;
