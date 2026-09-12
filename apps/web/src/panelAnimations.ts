@@ -68,11 +68,12 @@ export function observeResponsiveBreakpointFade(options: {
   };
 }
 
-export function usePanelAnimationSettings(): {
+export function usePanelAnimationSettings(minimumDurationMs = 0): {
   active: boolean;
   durationMs: PanelAnimationDurationMs;
 } {
-  const durationMs = useClientSettings((settings) => settings.panelAnimationDurationMs);
+  const configuredDurationMs = useClientSettings((settings) => settings.panelAnimationDurationMs);
+  const durationMs = Math.max(minimumDurationMs, configuredDurationMs);
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const suppressed = useContext(PanelAnimationSuppressionContext);
   return { active: durationMs > 0 && !prefersReducedMotion && !suppressed, durationMs };

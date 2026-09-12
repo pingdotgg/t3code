@@ -371,6 +371,18 @@ export function TerminalViewport({
     reportFailure: false,
   });
   const hasHandledExitRef = useRef(false);
+  // Retained drawers stay mounted while closed, so a failed libghostty setup
+  // no longer remounts on reopen. Retry the setup the next time the viewport
+  // becomes visible to keep "close and reopen the terminal" a working
+  // recovery path for the failure message below.
+  const [setupAttempt, setSetupAttempt] = useState(0);
+  const setupFailedRef = useRef(false);
+  useEffect(() => {
+    if (!visible || !setupFailedRef.current) return;
+    setupFailedRef.current = false;
+    if (containerRef.current) containerRef.current.textContent = "";
+    setSetupAttempt((attempt) => attempt + 1);
+  }, [visible]);
   const selectionActionRequestIdRef = useRef(0);
   // Holds the request id of the selection popup currently on screen, so a
   // popup that was superseded (but whose menu promise has not settled yet)
@@ -909,6 +921,7 @@ export function TerminalViewport({
         setupTerminal?.dispose();
         setupTerminal = null;
         if (cancelled) return;
+        setupFailedRef.current = true;
         const message =
           error instanceof Error ? error.message : "Unable to initialize libghostty-vt";
         mount.textContent = `${message} — close and reopen the terminal to retry.`;
@@ -920,7 +933,7 @@ export function TerminalViewport({
       teardown?.();
       if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [cwd, environmentId, runtimeEnvKey, setupAttempt, terminalId, threadId, worktreePath]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

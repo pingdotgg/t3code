@@ -2,7 +2,11 @@ import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { usePanelNavigationSuppression } from "./panelAnimations";
+import {
+  PanelAnimationSuppressionProvider,
+  usePanelAnimationSettings,
+  usePanelNavigationSuppression,
+} from "./panelAnimations";
 
 let renderer: ReactTestRenderer | null = null;
 let pendingFrames: FrameRequestCallback[] = [];
@@ -62,3 +66,43 @@ describe("usePanelNavigationSuppression", () => {
     expect(observed.at(-1)).toBe(false);
   });
 });
+
+const motionSettings = vi.hoisted(() => ({ durationMs: 0, reducedMotion: false }));
+vi.mock("./hooks/useSettings", () => ({
+  useClientSettings: (select: (settings: { panelAnimationDurationMs: number }) => unknown) =>
+    select({ panelAnimationDurationMs: motionSettings.durationMs }),
+}));
+vi.mock("./hooks/useMediaQuery", () => ({
+  useMediaQuery: () => motionSettings.reducedMotion,
+}));
+
+it.each([
+  { configured: 0, minimum: 200, reduced: false, suppressed: false, duration: 200, active: true },
+  { configured: 100, minimum: 200, reduced: false, suppressed: false, duration: 200, active: true },
+  { configured: 350, minimum: 200, reduced: false, suppressed: false, duration: 350, active: true },
+  { configured: 0, minimum: 200, reduced: true, suppressed: false, duration: 200, active: false },
+  { configured: 0, minimum: 200, reduced: false, suppressed: true, duration: 200, active: false },
+  { configured: 0, minimum: 0, reduced: false, suppressed: false, duration: 0, active: false },
+])(
+  "resolves drawer motion with $configured ms, reduced=$reduced, suppressed=$suppressed",
+  async ({ configured, minimum, reduced, suppressed, duration, active }) => {
+    motionSettings.durationMs = configured;
+    motionSettings.reducedMotion = reduced;
+    let result: ReturnType<typeof usePanelAnimationSettings> | undefined;
+    function Probe() {
+      const settings = usePanelAnimationSettings(minimum);
+      useLayoutEffect(() => {
+        result = settings;
+      }, [settings]);
+      return null;
+    }
+    await act(() => {
+      renderer = create(
+        <PanelAnimationSuppressionProvider value={suppressed}>
+          <Probe />
+        </PanelAnimationSuppressionProvider>,
+      );
+    });
+    expect(result).toEqual({ active, durationMs: duration });
+  },
+);
