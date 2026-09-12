@@ -11,6 +11,7 @@ import {
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
+  usageLimitSnoozePreset,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
@@ -369,5 +370,78 @@ describe("resolveSnoozePresets", () => {
     ]);
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
+  });
+});
+
+describe("usageLimitSnoozePreset", () => {
+  const RESETS_AT = "2026-04-10T14:00:00.000Z";
+
+  it("builds a preset a minute past the reset", () => {
+    expect(usageLimitSnoozePreset(RESETS_AT, new Date(NOW))).toEqual({
+      id: "limits-reset",
+      label: "Until limits reset",
+      whenLabel: expect.any(String),
+      snoozedUntil: "2026-04-10T14:01:00.000Z",
+    });
+  });
+
+  it("qualifies the time with a weekday when the reset is on another day", () => {
+    const now = new Date(2026, 3, 10, 12);
+    const preset = usageLimitSnoozePreset(new Date(2026, 3, 13, 9).toISOString(), now);
+    expect(preset?.whenLabel).toMatch(/^Mon /);
+    expect(
+      usageLimitSnoozePreset(new Date(2026, 3, 10, 18).toISOString(), now)?.whenLabel,
+    ).not.toMatch(/^[A-Z][a-z]{2} /);
+  });
+
+  it("is null once the reset has passed", () => {
+    expect(usageLimitSnoozePreset("2026-04-10T11:00:00.000Z", new Date(NOW))).toBeNull();
+  });
+
+  it("is null on malformed reset data", () => {
+    expect(usageLimitSnoozePreset("not-a-date", new Date(NOW))).toBeNull();
+  });
+});
+
+describe("resolveSnoozePresets with limitsResetAt", () => {
+  const RESETS_AT = "2026-04-10T14:00:00.000Z";
+
+  it("prepends the limits-reset preset when the option resolves to one", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), {
+      limitsResetAt: RESETS_AT,
+    });
+    expect(presets[0]?.id).toBe("limits-reset");
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "limits-reset",
+      "hour",
+      "three-hours",
+      "evening",
+      "tomorrow",
+      "next-week",
+    ]);
+  });
+
+  it("omits the preset when no option is given", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+    expect(presets.some((preset) => preset.id === "limits-reset")).toBe(false);
+  });
+
+  it("omits the preset when limitsResetAt is null, past, or malformed", () => {
+    const now = localDate(2026, 4, 8, 10);
+    expect(
+      resolveSnoozePresets(now, { limitsResetAt: null }).some(
+        (preset) => preset.id === "limits-reset",
+      ),
+    ).toBe(false);
+    expect(
+      resolveSnoozePresets(now, {
+        limitsResetAt: new Date(now.getTime() - 1_000).toISOString(),
+      }).some((preset) => preset.id === "limits-reset"),
+    ).toBe(false);
+    expect(
+      resolveSnoozePresets(now, { limitsResetAt: "not-a-date" }).some(
+        (preset) => preset.id === "limits-reset",
+      ),
+    ).toBe(false);
   });
 });

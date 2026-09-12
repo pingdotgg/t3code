@@ -171,7 +171,13 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "limits-reset"
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -203,13 +209,52 @@ function addSnoozeDays(base: Date, days: number): Date {
 }
 
 /**
+ * Waking exactly at the provider's reset instant races the limit still being
+ * in force, so the offered snooze clears it by a minute.
+ */
+const USAGE_LIMIT_SNOOZE_GRACE_MS = 60_000;
+
+/**
+ * The "Until limits reset" preset, shared by the composer banner offer and
+ * every thread snooze menu so the two entry points can never disagree on the
+ * wake time. Null when there is nothing to offer: no reset reported, a reset
+ * already in the past, or a reset at the edge of the representable Date
+ * range with no valid wake time once the grace is added.
+ */
+export function usageLimitSnoozePreset(resetsAt: string, now: Date): SnoozePreset | null {
+  const resetsAtMs = Date.parse(resetsAt);
+  if (Number.isNaN(resetsAtMs) || resetsAtMs <= now.getTime()) return null;
+  const wake = new Date(resetsAtMs + USAGE_LIMIT_SNOOZE_GRACE_MS);
+  if (Number.isNaN(wake.getTime())) return null;
+  // Day-aware like "Next week": a weekly reset days out must not read as
+  // a time today.
+  const time = snoozeTimeOfDayLabel(wake);
+  return {
+    id: "limits-reset",
+    label: "Until limits reset",
+    whenLabel:
+      wake.toDateString() === now.toDateString()
+        ? time
+        : `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${time}`,
+    snoozedUntil: wake.toISOString(),
+  };
+}
+
+/**
  * Shared "snooze until" choices for every client. "This evening" only
  * appears while it is meaningfully before evening; after that the calendar
  * choices start at "Tomorrow". Calendar presets that land on the same
  * instant collapse: on Sundays "Tomorrow" and "Next week" are both Monday
  * morning, so only "Tomorrow" is offered.
+ *
+ * When `limitsResetAt` resolves to a preset, it is prepended — the same
+ * "snooze until the account serves again" offer the composer banner makes,
+ * surfaced everywhere a thread can be snoozed while the limit is in force.
  */
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(
+  now: Date,
+  options?: { readonly limitsResetAt?: string | null },
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = new Date(now.getTime() + HOUR_MS);
   const inThreeHours = new Date(now.getTime() + 3 * HOUR_MS);
   const presets: SnoozePreset[] = [
@@ -256,7 +301,9 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     });
   }
 
-  return presets;
+  const limitsResetAt = options?.limitsResetAt;
+  const limitsPreset = limitsResetAt != null ? usageLimitSnoozePreset(limitsResetAt, now) : null;
+  return limitsPreset != null ? [limitsPreset, ...presets] : presets;
 }
 
 /**
