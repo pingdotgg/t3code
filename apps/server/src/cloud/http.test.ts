@@ -35,6 +35,7 @@ import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
+  managedTunnelOriginForAddress,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   releaseManagedTunnelOnShutdown,
@@ -607,5 +608,50 @@ describe("link proof provider kinds", () => {
       "managed_tunnels",
     ]);
     expect(linkProofScopes(proofRequest("manual"))).toEqual(["agent_activity_notifications"]);
+  });
+});
+
+describe("managed tunnel listener origins", () => {
+  it("uses an IPv6 loopback listener", () => {
+    expect(
+      managedTunnelOriginForAddress({
+        _tag: "TcpAddress",
+        hostname: "::1",
+        port: 7331,
+      }),
+    ).toEqual({ localHttpHost: "::1", localHttpPort: 7331 });
+  });
+
+  it("maps wildcard listeners to loopback hosts", () => {
+    expect(
+      managedTunnelOriginForAddress({
+        _tag: "TcpAddress",
+        hostname: "0.0.0.0",
+        port: 7331,
+      }),
+    ).toEqual({ localHttpHost: "127.0.0.1", localHttpPort: 7331 });
+    expect(
+      managedTunnelOriginForAddress({
+        _tag: "TcpAddress",
+        hostname: "::",
+        port: 7331,
+      }),
+    ).toEqual({ localHttpHost: "::1", localHttpPort: 7331 });
+  });
+
+  it("rejects listeners that have no loopback origin", () => {
+    expect(
+      managedTunnelOriginForAddress({
+        _tag: "TcpAddress",
+        hostname: "192.168.1.42",
+        port: 7331,
+      }),
+    ).toBeNull();
+    expect(
+      managedTunnelOriginForAddress({
+        _tag: "UnixAddress",
+        path: "/tmp/t3.sock",
+      }),
+    ).toBeNull();
   });
 });
