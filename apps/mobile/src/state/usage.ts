@@ -1,3 +1,4 @@
+import { uuidv4 } from "../lib/uuid";
 /**
  * Multi-environment usage state.
  *
@@ -17,10 +18,16 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { refreshUsage } from "@t3tools/client-runtime/state/usage";
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  mergeUsage,
+  retainUsageStatuses,
+  type SettledUsageStatuses,
+  type EnvironmentUsage,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
@@ -102,7 +109,13 @@ export function useUsage(
     ],
   );
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const currentEnvironments = useAtomValue(atom);
+  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
+  const retained = retainUsageStatuses(windowKey, currentEnvironments, settledStatuses.current);
+  useEffect(() => {
+    settledStatuses.current = retained.settled;
+  }, [retained.settled]);
+  const environments = retained.visible;
   const selectedEnvironments = useMemo(
     () =>
       selectedEnvironmentIds === null
@@ -115,6 +128,7 @@ export function useUsage(
     (nextInput?: UsageSummaryInput) =>
       refreshUsage({
         registry: appAtomRegistry,
+        refreshToken: uuidv4(),
         server: serverEnvironment,
         presentations: environmentPresentations,
         environmentIds: selectedEnvironments.map(({ environmentId }) => environmentId),
