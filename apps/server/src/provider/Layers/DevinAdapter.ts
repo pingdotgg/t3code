@@ -168,10 +168,7 @@ function devinApprovalOptions(request: NativePermission): ReadonlyArray<Provider
 export interface DevinAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (
-    input: Omit<
-      DevinAcpRuntimeInput,
-      "childProcessSpawner" | "devinSettings" | "environment" | "browserAuth"
-    >,
+    input: Omit<DevinAcpRuntimeInput, "childProcessSpawner" | "devinSettings" | "environment">,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
@@ -535,6 +532,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             // `session/load` replays history without the agent re-running it;
             // Devin advertises loadSession but not session/resume.
             resumeMethod: "load",
+            // A resume can run during server-restart recovery where nobody is
+            // watching; only an interactive fresh start may fall back to
+            // `devin-browser` when credentials are missing.
+            browserAuth: Option.isNone(cursor),
             ...(mcpSession
               ? {
                   mcpServers: [

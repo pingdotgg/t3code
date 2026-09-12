@@ -123,15 +123,14 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
           (snapshot) => snapshot.models.find((model) => model.isDefault)?.slug,
         ),
         makeRuntime: (input) =>
+          // The adapter decides `browserAuth`: interactive starts may fall
+          // back to `devin-browser` when no credentials exist, while resumes
+          // and sessions with stored credentials never open a browser.
           makeDevinAcpRuntime({
             ...input,
             devinSettings: effectiveConfig,
             environment: processEnv,
             childProcessSpawner: spawner,
-            // User-initiated sessions may fall back to `devin-browser` when no
-            // credentials exist at all; sessions with stored credentials skip
-            // `authenticate` entirely.
-            browserAuth: true,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
