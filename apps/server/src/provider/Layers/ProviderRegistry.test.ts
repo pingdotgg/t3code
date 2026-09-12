@@ -143,6 +143,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly restrictedModels: ReadonlySet<string>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -153,6 +154,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      restrictedModels: new Set<string>(),
       ...overrides,
     });
 }
@@ -587,6 +589,60 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             skills: scopedSnapshot.skills,
           },
         ]);
+      });
+
+      it("drops Claude models a completed health check leaves out", () => {
+        // The boot-time snapshot lists the whole catalog; the check that
+        // reaches the account leaves out models the CLI is too old for or the
+        // organization has not entitled, and those must stay out.
+        const model = (slug: string, name: string) => ({
+          slug,
+          name,
+          isCustom: false,
+          capabilities: null,
+        });
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          status: "warning",
+          enabled: true,
+          installed: false,
+          auth: { status: "unknown" },
+          checkedAt: "2026-09-06T00:00:00.000Z",
+          version: null,
+          models: [
+            model("claude-fable-5-1", "Claude Fable 5.1"),
+            model("claude-opus-5", "Claude Opus 5"),
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          status: "ready",
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-06T00:01:00.000Z",
+          version: "2.1.261",
+          models: [model("claude-opus-5", "Claude Opus 5")],
+          message: "Restricted by your organization: Claude Fable 5.1.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          model("claude-opus-5", "Claude Opus 5"),
+        ]);
+
+        // A check that never reached the account keeps what was known.
+        const failedRefresh = {
+          ...refreshedProvider,
+          status: "error",
+          auth: { status: "unknown" },
+          models: [model("claude-opus-5", "Claude Opus 5")],
+        } satisfies ServerProvider;
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, failedRefresh).models.map((m) => m.slug),
+          ["claude-opus-5", "claude-fable-5-1"],
+        );
       });
 
       it("preserves previously discovered provider models when a refresh returns none", () => {
@@ -2689,6 +2745,87 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("withholds models the organization restricts and says so", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              apiProvider: "firstParty",
+              restrictedModels: new Set(["claude-fable-5", "claude-fable-5-1"]),
+            }),
+          );
+          // Dropped from the list the way a model the CLI is too old for is,
+          // so no picker offers a model that would run as a different one.
+          const slugs = new Set(status.models.map((model) => model.slug));
+          assert.ok(!slugs.has("claude-fable-5"));
+          assert.ok(!slugs.has("claude-fable-5-1"));
+          assert.ok(slugs.has("claude-opus-5"));
+          assert.strictEqual(
+            status.message,
+            "Restricted by your organization: Claude Fable 5.1, Claude Fable 5.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.259\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("keeps custom models listed even when the organization restricts them", () =>
+        Effect.gen(function* () {
+          // A custom model is the user's own declaration; the CLI reports a
+          // substitution on it rather than the picker second-guessing it.
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, customModels: ["claude-fable-5"] },
+            claudeCapabilities({
+              apiProvider: "firstParty",
+              restrictedModels: new Set(["claude-fable-5"]),
+            }),
+          );
+          const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
+          assert.strictEqual(fable5?.isCustom, true);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.259\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("ignores cached entitlements on a third-party or unnamed backend", () =>
+        Effect.gen(function* () {
+          // Bedrock models come from the AWS account, so an entitlement cache
+          // left behind by an earlier claude.ai login must not hide them; a
+          // handshake that names no backend is just as unknown.
+          for (const apiProvider of ["bedrock", undefined]) {
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              claudeCapabilities({
+                apiProvider,
+                restrictedModels: new Set(["claude-fable-5"]),
+              }),
+            );
+            assert.ok(status.models.some((model) => model.slug === "claude-fable-5"));
+            assert.strictEqual(status.message, undefined);
+          }
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.259\n", stderr: "", code: 0 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),

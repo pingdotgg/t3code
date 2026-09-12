@@ -61,6 +61,19 @@ Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
 
+## Models your organization restricts
+
+A Team or Enterprise organization can disallow individual Claude models. When
+yours does, those models are left out of the model picker, the same way Claude
+Code leaves them out of its own `/model` menu, and the provider's status in
+**Settings > Providers** names them. Without this, picking a restricted model
+would run the organization's default model while the thread kept the restricted
+model's name.
+
+The entitlements come from Claude Code's config directory, so they apply once
+Claude Code has signed in with that account. Until then every model is listed.
+Custom models you add yourself are always listed.
+
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's
