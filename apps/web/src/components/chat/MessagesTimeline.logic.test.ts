@@ -1122,7 +1122,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
-  it("folds a settled subagent spawn row and keeps a live one outside the fold", () => {
+  it("keeps subagent spawn rows outside turn folds even after they settle", () => {
     const firstMessage: ChatMessage = {
       id: MessageId.make("assistant-first-entry"),
       role: "assistant",
@@ -1161,7 +1161,6 @@ describe("deriveMessagesTimelineRows", () => {
     const derive = (
       timelineEntries: typeof direct,
       liveAgentTaskIds: ReadonlySet<string> | undefined,
-      expandedSpawnEntryIds?: ReadonlySet<string>,
       expandedTurnIds?: ReadonlySet<TurnId>,
     ) =>
       deriveMessagesTimelineRows({
@@ -1171,10 +1170,8 @@ describe("deriveMessagesTimelineRows", () => {
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         liveAgentTaskIds,
-        expandedSpawnEntryIds,
         ...(expandedTurnIds ? { expandedTurnIds } : {}),
       }).map((row) => row.id);
-    const folded = ["turn-fold:turn-1", "assistant-final-entry"];
     const unfolded = ["turn-fold:turn-1", "spawn-entry", "assistant-final-entry"];
 
     const activeRows = (
@@ -1237,19 +1234,15 @@ describe("deriveMessagesTimelineRows", () => {
       }
     }
 
-    expect(derive(direct, new Set())).toEqual(folded);
+    expect(derive(direct, new Set())).toEqual(unfolded);
     expect(derive(direct, new Set(["agent-b"]))).toEqual(unfolded);
     // A workflow coordinator between phases keeps its batch out of the fold.
     expect(derive(workflow, new Set(["wf-1"]))).toEqual(unfolded);
-    expect(derive(workflow, new Set())).toEqual(folded);
+    expect(derive(workflow, new Set())).toEqual(unfolded);
     // No live set is known.
     expect(derive(direct, undefined)).toEqual(unfolded);
-    // The user has it open: it stays visible under the collapsed fold and
-    // keeps its place when the fold is expanded.
-    expect(derive(direct, new Set(), new Set(["spawn-entry"]))).toEqual(unfolded);
-    expect(
-      derive(direct, new Set(), new Set(["spawn-entry"]), new Set(["turn-1" as TurnId])),
-    ).toEqual([
+    // Expanding the turn reveals the other work without duplicating the batch.
+    expect(derive(direct, new Set(), new Set(["turn-1" as TurnId]))).toEqual([
       "turn-fold:turn-1",
       "assistant-first-entry",
       "spawn-entry",
