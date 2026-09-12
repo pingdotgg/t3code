@@ -315,7 +315,7 @@ export const ScraperProvider = () =>
             scraper.scrapeConfiguration.configurationBlob,
           );
           const observedDestination =
-            scraper.destination.ampConfiguration.workspaceArn;
+            scraper.destination.ampConfiguration?.workspaceArn;
           const aliasDrifts =
             (news!.alias ?? undefined) !== (scraper.alias ?? undefined);
           const configDrifts = observedConfig !== desiredConfig;

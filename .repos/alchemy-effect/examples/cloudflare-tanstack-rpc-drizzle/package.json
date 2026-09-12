@@ -28,15 +28,15 @@
     "drizzle-orm": "catalog:database",
     "effect": "catalog:effect",
     "pg": "catalog:database",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:cloudflare",
     "@types/pg": "catalog:database",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
     "drizzle-kit": "catalog:database",
     "typescript": "catalog:build",
     "vite": "catalog:build"

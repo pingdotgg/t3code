@@ -11,13 +11,13 @@
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
-    "@types/react-dom": "^19.2.3",
-    "@types/react": "^19.2.14",
+    "@types/react-dom": "catalog:frontend",
+    "@types/react": "catalog:frontend",
     "alchemy": "workspace:*",
     "@monorepo-multi-stack/backend": "workspace:*",
     "effect": "catalog:effect",
-    "react-dom": "^19.2.6",
-    "react": "^19.2.6",
+    "react-dom": "catalog:frontend",
+    "react": "catalog:frontend",
     "vite": "catalog:build"
   },
   "scripts": {
@@ -25,7 +25,7 @@
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "test": "bun test"
   }
 }

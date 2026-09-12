@@ -132,7 +132,7 @@ export type MtlsCertificate = Resource<
  * const cert = yield* Cloudflare.MtlsCertificate.MtlsCertificate("origin-client-cert", {
  *   ca: false,
  *   certificates: leafPem,
- *   privateKey: yield* Config.redacted("ORIGIN_CLIENT_KEY"),
+ *   privateKey: yield* Config.Redacted("ORIGIN_CLIENT_KEY"),
  * });
  * ```
  *

@@ -12,11 +12,46 @@ describe("MutableList", () => {
     strictEqual(list.length, 2)
   })
 
+  it("preserves bulk-prepended values when appending to the list", () => {
+    const list = MutableList.make<number>()
+    MutableList.prependAll(list, [1, 2])
+    MutableList.append(list, 3)
+
+    deepStrictEqual(MutableList.toArray(list), [1, 2, 3], "bulk-prepended values should be preserved")
+  })
+
   it("returns an empty snapshot for a negative bound", () => {
     const list = MutableList.make<number>()
     MutableList.append(list, 1)
 
     deepStrictEqual(MutableList.toArrayN(list, -1), [])
+  })
+
+  it("normalizes bounded operation counts", () => {
+    const takeNaN = MutableList.make<number>()
+    MutableList.appendAll(takeNaN, [1, 2, 3])
+    deepStrictEqual(MutableList.takeN(takeNaN, Number.NaN), [])
+    deepStrictEqual(MutableList.toArray(takeNaN), [1, 2, 3])
+
+    const takeFraction = MutableList.make<number>()
+    MutableList.appendAll(takeFraction, [1, 2, 3])
+    deepStrictEqual(MutableList.takeN(takeFraction, 1.9), [1])
+    deepStrictEqual(MutableList.toArray(takeFraction), [2, 3])
+
+    const discardNaN = MutableList.make<number>()
+    MutableList.appendAll(discardNaN, [1, 2, 3])
+    MutableList.takeNVoid(discardNaN, Number.NaN)
+    deepStrictEqual(MutableList.toArray(discardNaN), [1, 2, 3])
+
+    const discardFraction = MutableList.make<number>()
+    MutableList.appendAll(discardFraction, [1, 2, 3])
+    MutableList.takeNVoid(discardFraction, 1.9)
+    deepStrictEqual(MutableList.toArray(discardFraction), [2, 3])
+
+    const snapshot = MutableList.make<number>()
+    MutableList.appendAll(snapshot, [1, 2, 3])
+    deepStrictEqual(MutableList.toArrayN(snapshot, Number.NaN), [])
+    deepStrictEqual(MutableList.toArrayN(snapshot, 1.9), [1])
   })
 
   it("appendAll returns 0 and leaves an empty list empty", () => {

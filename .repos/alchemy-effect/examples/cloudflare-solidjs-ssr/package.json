@@ -20,11 +20,11 @@
     "vite": "^7.1.4",
     "alchemy": "workspace:*",
     "effect": "catalog:effect",
-    "vite-plugin-solid": "^2.11.8"
+    "vite-plugin-solid": "catalog:frontend"
   },
   "dependencies": {
     "@solidjs/router": "^0.15.1",
-    "solid-js": "^1.9.5"
+    "solid-js": "catalog:frontend"
   },
   "repository": {
     "type": "git",

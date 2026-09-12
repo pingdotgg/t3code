@@ -79,7 +79,7 @@ export default Alchemy.Stack(
 Deploy:
 
 ```sh
-bun alchemy deploy ./stacks/pr-package.ts --stage prod
+bun alchemy deploy --config ./stacks/pr-package.ts --stage prod
 ```
 
 The stack output gives you the worker URL and the auto-generated bearer token. Save the token — you'll need it to publish.
@@ -117,10 +117,19 @@ Headers:
 - `Alchemy-Tarball-Hash: <sha256>` (required)
 - `Alchemy-Tags: <json-array>` (required) — e.g. `["main","abc1234","abc1234abc1234..."]`
 - `Alchemy-TTL: <duration>` (optional) — e.g. `"7 hours"`, `"3 weeks"`. Effect `Duration` syntax.
+- `Alchemy-Pull-Request: <owner/repo#number>` (optional) — e.g. `alchemy-run/alchemy#123` or `https://github.com/alchemy-run/alchemy/pull/123`. Ties this tarball to a GitHub pull request.
 
 If a tag already points elsewhere, it moves to the new tarball. A tarball is deleted after its final tag is removed.
 
-Assigning tags schedules a named Durable Object expiration event. When it fires, the service removes every KV tag that still points to that tarball, deletes the R2 blob, and clears the tarball state. Reassigning the tarball before expiry reschedules the event.
+Assigning tags schedules a named Durable Object expiration event. When it fires:
+
+- If the tarball is **not** tied to a pull request, every KV tag that still points at it is removed, the R2 blob is deleted, and state is cleared.
+- If it **is** tied to one or more pull requests, the service checks each on GitHub. While any tied PR is open the TTL renews. A closed PR releases only the tags that were assigned with that PR and that no other open PR also claims — other tags on the same content-addressed tarball, such as `main` or another PR's commit tag, are left alone. Once no tied PR remains open, the whole tarball expires.
+- A PR GitHub cannot confirm (rate limit, outage, private repo) keeps renewing for up to 28 days after it was last seen open, then is treated as closed.
+
+Reassigning the tarball before expiry reschedules the event.
+
+Set `GITHUB_TOKEN` in the deploy environment to bind a token for these lookups; unauthenticated GitHub requests share a 60/hour limit per egress IP, which is not enough for a busy registry.
 
 ### `GET /<alias-path>` — pretty install URL → 301
 
@@ -137,6 +146,12 @@ Returns the `.tgz` with `cache-control: public, max-age=31536000, immutable`. No
 ### `DELETE /projects/:pkgName/tags/:tag` — remove tag
 
 Auth required. If the tag was the tarball's last one, the backing blob is also deleted.
+
+### `DELETE /projects/:pkgName/pull-requests/:number` — tear down a PR preview
+
+Auth required. Looks up the `pr-<number>` tag and removes every tag that was assigned together with that pull request (commit, branch, and `pr-N` aliases). Tags that were pointed at the same tarball without the PR (for example `main`) or that another open PR also claims are kept. If no tags remain, the backing blob is deleted.
+
+Use this from CI on `pull_request` closed so preview install URLs stop resolving immediately instead of waiting for the next TTL.
 
 ### `GET /projects/:pkgName/packages/:sha256/stats` — download stats
 
@@ -171,15 +186,15 @@ bun add https://pkg.example.com/projects/my-pkg/tags/abc1234
 bun add https://pkg.example.com/my-pkg/abc1234
 ```
 
-See `.github/workflows/pr-package.yaml` in this repo for the full pipeline (publish on push/PR sync, sticky comment with install URLs, tag cleanup on PR close).
+See `.github/workflows/pr-package.yml` in this repo for the full pipeline (publish on push/PR sync, sticky comment with install URLs, PR-tied TTL renewal while the PR is open, tag cleanup and a teardown comment on PR close).
 
 ## Cleaning up state
 
 If a deploy errors mid-flight and leaves orphan state:
 
 ```sh
-bun alchemy state resources <StackName> <stage> ./your/stack.ts --profile <p>
-bun alchemy state clear     <StackName> <stage> ./your/stack.ts --profile <p> --yes
+bun alchemy state list <StackName>/<stage> --config ./your/stack.ts --profile <p>
+bun alchemy state delete <StackName>/<stage> --config ./your/stack.ts --profile <p>
 ```
 
 Then reconcile any actually-created Cloudflare resources via the dashboard before redeploying.

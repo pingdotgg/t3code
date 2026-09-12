@@ -54,7 +54,7 @@ test.provider(
       );
 
       const result = yield* Effect.result(
-        railway.sandboxCreate({
+        railway.createSandbox({
           input: {
             environmentId: created.environment.environmentId,
             idleTimeoutMinutes: 5,

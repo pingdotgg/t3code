@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "next": "catalog:frontend",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare-runtime": "workspace:*",

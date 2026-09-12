@@ -165,7 +165,7 @@ const NAME_LIST = "alchemy_snippet_list_test";
 //   CloudflareHttpError (status 200, "Schema decode failed",
 //   body {"success":true,"result":null,"result_info":{...}})
 // Fixed by the response-schema patch
-//   distilled/packages/cloudflare/patches/snippets/listSnippets.json
+//   submodules/distilled/packages/cloudflare/patches/snippets/listSnippets.json
 //   -> { "response": { "properties": { "result": { "nullable": true } } } }
 // which makes `result` accept `null`. The patch regenerates the distilled
 // `src`, but vitest loads distilled from `lib/`, so this test only passes

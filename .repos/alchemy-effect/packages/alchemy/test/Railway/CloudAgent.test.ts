@@ -48,7 +48,7 @@ const waitUntilAgentGone = (environmentId: string, cloudAgentId: string) =>
 
 const deleteAgent = (id: string) =>
   railway
-    .cloudAgentDelete({ id })
+    .deleteCloudAgent({ id })
     .pipe(Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void));
 
 test.provider(
@@ -65,7 +65,7 @@ test.provider(
       );
 
       const probe = yield* Effect.result(
-        railway.cloudAgentCreate({
+        railway.createCloudAgent({
           input: {
             environmentId: projectOnly.environment.environmentId,
             name: projectOnly.project.name,

@@ -12,9 +12,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    // Solid is the default JSX runtime in this package; React files opt in per-file.
     "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
     "plugins": [
       {
@@ -38,31 +36,31 @@
       "path": "../alchemy-test/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/aws/tsconfig.json"
+      "path": "../../submodules/distilled/packages/aws/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/cloudflare/tsconfig.json"
+      "path": "../../submodules/distilled/packages/cloudflare/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/core/tsconfig.json"
+      "path": "../../submodules/distilled/packages/core/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/planetscale/tsconfig.json"
+      "path": "../../submodules/distilled/packages/planetscale/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/axiom/tsconfig.json"
+      "path": "../../submodules/distilled/packages/axiom/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/neon/tsconfig.json"
+      "path": "../../submodules/distilled/packages/neon/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/hetzner/tsconfig.json"
+      "path": "../../submodules/distilled/packages/hetzner/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/fly-io/tsconfig.json"
+      "path": "../../submodules/distilled/packages/fly-io/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/railway/tsconfig.json"
+      "path": "../../submodules/distilled/packages/railway/tsconfig.json"
     },
     {
       "path": "../cloudflare-runtime/tsconfig.json"

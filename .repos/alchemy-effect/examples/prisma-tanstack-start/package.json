@@ -20,7 +20,7 @@
     "emit": "prisma-next contract emit",
     "seed": "tsx scripts/seed.ts",
     "start": "node .output/server/index.mjs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "typecheck": "tsc -b"
   },
   "dependencies": {
@@ -31,8 +31,8 @@
     "effect": "catalog:effect",
     "nitro": "^3.0.260415-beta",
     "pg": "catalog:database",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
   },
   "devDependencies": {
     "@prisma-next/cli": "^0.8.0",
@@ -40,9 +40,9 @@
     "@prisma-next/vite-plugin-contract-emit": "^0.8.0",
     "@types/node": "catalog:tooling",
     "@types/pg": "catalog:database",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
     "dotenv": "^17.4.2",
     "tsx": "catalog:tooling",
     "typescript": "catalog:build",

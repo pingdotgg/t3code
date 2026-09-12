@@ -441,6 +441,8 @@ export const between: {
  * - If the `number` is less than the `minimum` value, the function returns the `minimum` value.
  * - If the `number` is greater than the `maximum` value, the function returns the `maximum` value.
  * - Otherwise, it returns the original `number`.
+ * - `NaN` is ordered below every non-`NaN` number by `Number.Order`, so it is
+ *   clamped to `minimum`.
  *
  * **Example** (Clamping to a range)
  *
@@ -641,7 +643,7 @@ export const remainder: {
   const selfDecCount = (selfString.split(".")[1] || "").length
   const divisorDecCount = (divisorString.split(".")[1] || "").length
   const decCount = selfDecCount > divisorDecCount ? selfDecCount : divisorDecCount
-  const selfInt = parseInt(self.toFixed(decCount).replace(".", ""))
+  const selfInt = self === 0 ? self : parseInt(self.toFixed(decCount).replace(".", ""))
   const divisorInt = parseInt(divisor.toFixed(decCount).replace(".", ""))
   return (selfInt % divisorInt) / Math.pow(10, decCount)
 })

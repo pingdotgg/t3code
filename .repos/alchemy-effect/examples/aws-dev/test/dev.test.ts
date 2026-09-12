@@ -35,23 +35,30 @@
  *                          the new marker; restoring it must swap back
  */
 import { afterAll, expect, test } from "bun:test";
-import { spawn, spawnSync } from "node:child_process";
+import { DevCli, fetchOk } from "alchemy-test/DevCli";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-// Spawn the CLI entry directly (not through `bun run` / the cli.js
-// launcher) so signals hit the actual CLI process, whose scope teardown
-// kills the exec child and the provider sidecars.
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.ts",
-);
-// Isolated stage so this suite never fights other local runs over state.
 const STAGE = "dev-cli-test";
+// Credential-free dev, deterministically: an isolated (unconfigured)
+// alchemy profile plus stripped AWS env credentials keep this suite
+// hermetic — it must pass on a machine with zero AWS configuration, and
+// must never touch a developer's real profile. (Action data-plane calls
+// are routed to the emulator per bound resource by the engine regardless
+// of ambient credentials — see Binding.Service's data-plane routing.)
+const cli = new DevCli({
+  root,
+  stage: STAGE,
+  env: {
+    ALCHEMY_PROFILE: "aws-dev-cli-test",
+    AWS_ACCESS_KEY_ID: undefined,
+    AWS_SECRET_ACCESS_KEY: undefined,
+    AWS_SESSION_TOKEN: undefined,
+    AWS_PROFILE: undefined,
+  },
+});
 
 const markerPath = path.join(root, "src", "marker.ts");
 const markerSource = fs.readFileSync(markerPath, "utf8");
@@ -59,140 +66,26 @@ const markerSource = fs.readFileSync(markerPath, "utf8");
 // The whole suite needs docker (floci runs as a container).
 const dockerAvailable =
   spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
-
-// Credential-free dev, deterministically: an isolated (unconfigured)
-// alchemy profile plus stripped AWS env credentials keep this suite
-// hermetic — it must pass on a machine with zero AWS configuration, and
-// must never touch a developer's real profile. (Action data-plane calls
-// are routed to the emulator per bound resource by the engine regardless
-// of ambient credentials — see Binding.Service's data-plane routing.)
-const devEnv: NodeJS.ProcessEnv = {
-  ...process.env,
-  ALCHEMY_PROFILE: "aws-dev-cli-test",
-};
-delete devEnv.AWS_ACCESS_KEY_ID;
-delete devEnv.AWS_SECRET_ACCESS_KEY;
-delete devEnv.AWS_SESSION_TOKEN;
-delete devEnv.AWS_PROFILE;
-
-let proc: ReturnType<typeof spawn> | undefined;
-let output = "";
-
-const pump = (stream: NodeJS.ReadableStream) => {
-  stream.on("data", (chunk: Buffer) => {
-    const text = chunk.toString();
-    output += text;
-    if (process.env.DEBUG) process.stderr.write(text);
-  });
-};
-
-/** Bounded poll for a (possibly async) producer to yield a value. */
-const pollUntil = async <T>(
-  what: string,
-  f: () => T | undefined | Promise<T | undefined>,
-  { tries = 30, delayMs = 1000 }: { tries?: number; delayMs?: number } = {},
-): Promise<T> => {
-  for (let i = 0; i < tries; i++) {
-    const value = await f();
-    if (value !== undefined) return value;
-    await Bun.sleep(delayMs);
-  }
-  throw new Error(
-    `Timed out waiting for ${what}.\n--- alchemy dev output (tail) ---\n${output.slice(-4000)}`,
-  );
-};
-
-/** Fetch with retries — the emulator's URL proxy takes a moment to serve. */
-const fetchOk = async (
-  url: string | URL,
-  init?: RequestInit,
-  { tries = 20, delayMs = 500 }: { tries?: number; delayMs?: number } = {},
-) => {
-  let last: Response | undefined;
-  for (let i = 0; i < tries; i++) {
-    try {
-      last = await fetch(url, init);
-      if (last.ok) return last;
-    } catch {
-      // proxy not listening yet
-    }
-    await Bun.sleep(delayMs);
-  }
-  throw new Error(
-    `${init?.method ?? "GET"} ${url} never returned 2xx (last status: ${last?.status})`,
-  );
-};
-
-/** Extract the api URL from the stack outputs the CLI prints on stdout. */
-const outputUrl = (key: string) =>
-  output.match(new RegExp(`${key}:\\s*['"]?(http[^\\s'",]+)`))?.[1];
-
-/** Extract a plain (single-token) stack output value from stdout. */
-const outputValue = (key: string) =>
-  output.match(new RegExp(`${key}:\\s*['"]?([^\\s'",]+)`))?.[1];
-
 afterAll(async () => {
   // Always leave the repo tree clean, even on a mid-reload failure.
   fs.writeFileSync(markerPath, markerSource);
 
-  if (proc?.pid) {
-    // Ctrl-C semantics: signal the whole PROCESS GROUP (the CLI, its
-    // `--watch` exec child, and the provider sidecars). Signaling only the
-    // CLI process orphans the exec child, which then keeps the stack's
-    // state locked and blocks the destroy below.
-    const killGroup = (signal: NodeJS.Signals) => {
-      try {
-        process.kill(-proc!.pid!, signal);
-      } catch {
-        // group already gone
-      }
-    };
-    const exited = new Promise((resolve) => proc!.once("exit", resolve));
-    killGroup("SIGINT");
-    await Promise.race([exited, Bun.sleep(15_000)]);
-    if (proc.exitCode === null && proc.signalCode === null) {
-      killGroup("SIGKILL");
-      await Promise.race([exited, Bun.sleep(5_000)]);
-    }
-  }
+  await cli.stop();
   if (!process.env.NO_DESTROY && dockerAvailable) {
-    const destroyed = spawnSync(
-      "bun",
-      [alchemyBin, "destroy", "--stage", STAGE, "--yes"],
-      {
-        cwd: root,
-        stdio: "inherit",
-        timeout: 120_000,
-        env: devEnv,
-      },
-    );
-    if (destroyed.status !== 0) {
-      throw new Error(
-        `alchemy destroy exited ${destroyed.status} — local teardown must succeed`,
-      );
-    }
+    cli.destroy();
   }
 }, 180_000);
 
 test.skipIf(!dockerAvailable)(
   "alchemy dev serves every local AWS binding end-to-end with hot reload",
   async () => {
-    proc = spawn("bun", [alchemyBin, "dev", "--stage", STAGE], {
-      cwd: root,
-      // Own process group, so teardown can deliver Ctrl-C to the whole tree
-      // the way a terminal would.
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: devEnv,
-    });
-    pump(proc.stdout!);
-    pump(proc.stderr!);
+    cli.start();
 
     // The first dev deploy may pull the floci image, provision the local
     // data plane, and package the function before printing stack outputs.
-    const api = await pollUntil(
+    const api = await cli.pollUntil(
       "api url in stack outputs",
-      () => outputUrl("api"),
+      () => cli.outputUrl("api"),
       { tries: 300, delayMs: 1000 },
     );
 
@@ -207,12 +100,13 @@ test.skipIf(!dockerAvailable)(
     // CLI's exec process and put/get an object through the S3 bindings.
     // The dummy account id proves the calls hit the emulator, not real
     // AWS; the roundtripped body proves the put actually landed.
-    const seedAccount = await pollUntil("seedAccount in stack outputs", () =>
-      outputValue("seedAccount"),
+    const seedAccount = await cli.pollUntil(
+      "seedAccount in stack outputs",
+      () => cli.outputValue("seedAccount"),
     );
     expect(seedAccount).toBe("000000000000");
-    const seedText = await pollUntil("seedText in stack outputs", () =>
-      outputValue("seedText"),
+    const seedText = await cli.pollUntil("seedText in stack outputs", () =>
+      cli.outputValue("seedText"),
     );
     expect(seedText).toBe("seed-object-body-v1");
 
@@ -244,7 +138,7 @@ test.skipIf(!dockerAvailable)(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(message),
     });
-    const received = await pollUntil(
+    const received = await cli.pollUntil(
       "queue message to be consumed",
       async () => {
         const res = await fetch(
@@ -269,7 +163,7 @@ test.skipIf(!dockerAvailable)(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(notification),
     });
-    const delivered = await pollUntil(
+    const delivered = await cli.pollUntil(
       "topic notification to be consumed",
       async () => {
         const res = await fetch(
@@ -292,7 +186,7 @@ test.skipIf(!dockerAvailable)(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: itemId }),
     });
-    const change = await pollUntil(
+    const change = await cli.pollUntil(
       "table change record to be consumed",
       async () => {
         const res = await fetch(new URL(`/changes?id=${itemId}`, api));
@@ -311,7 +205,7 @@ test.skipIf(!dockerAvailable)(
       markerPath,
       markerSource.replace("aws-dev-marker-v1", "aws-dev-marker-v2"),
     );
-    await pollUntil(
+    await cli.pollUntil(
       "hot-swapped marker v2",
       async () => {
         try {
@@ -340,7 +234,7 @@ test.skipIf(!dockerAvailable)(
     // Restore the marker — the swap back is itself a second hot reload,
     // and leaves the checked-in tree clean.
     fs.writeFileSync(markerPath, markerSource);
-    await pollUntil(
+    await cli.pollUntil(
       "restored marker v1",
       async () => {
         try {

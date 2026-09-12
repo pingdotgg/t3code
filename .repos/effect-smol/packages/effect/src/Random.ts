@@ -18,6 +18,23 @@ import type * as NonEmptyIterable from "./NonEmptyIterable.ts"
 import * as Predicate from "./Predicate.ts"
 
 /**
+ * The service used to generate pseudo-random numbers.
+ *
+ * @category services
+ * @since 4.0.0
+ */
+export interface Random {
+  /**
+   * Generates a random safe integer.
+   */
+  nextIntUnsafe(): number
+  /**
+   * Generates a random number between 0 (inclusive) and 1 (exclusive).
+   */
+  nextDoubleUnsafe(): number
+}
+
+/**
  * Represents a service for generating pseudo-random numbers.
  *
  * **When to use**
@@ -49,12 +66,9 @@ import * as Predicate from "./Predicate.ts"
  * @category services
  * @since 2.0.0
  */
-export const Random: Context.Reference<{
-  nextIntUnsafe(): number
-  nextDoubleUnsafe(): number
-}> = random.Random
+export const Random: Context.Reference<Random> = random.Random
 
-const randomWith = <A>(f: (random: typeof Random["Service"]) => A): Effect.Effect<A> =>
+const randomWith = <A>(f: (random: Random) => A): Effect.Effect<A> =>
   Effect.withFiber((fiber) => Effect.succeed(f(fiber.getRef(Random))))
 
 /**
@@ -139,7 +153,7 @@ export const nextInt: Effect.Effect<number> = randomWith((r) => r.nextIntUnsafe(
  * @since 4.0.0
  */
 export const nextBetween = (min: number, max: number): Effect.Effect<number> =>
-  randomWith((r) => r.nextDoubleUnsafe() * (max - min) + min)
+  randomWith((r) => random.nextBetween(min, max, r.nextDoubleUnsafe()))
 
 /**
  * Generates a random integer between `min` and `max`.

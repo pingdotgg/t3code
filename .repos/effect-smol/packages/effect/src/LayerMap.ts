@@ -423,7 +423,7 @@ export const Service = <Self>() =>
     : Options extends { readonly layers: infer Layers } ? keyof Layers
     : never,
   Service.Success<Options>,
-  Options extends { readonly preload: true } ? never : Service.Error<Options>,
+  Service.Error<Options>,
   Service.Services<Options>,
   Options extends { readonly preload: true } ? Service.Error<Options>
     : Options extends { readonly preloadKeys: Iterable<any> } ? Service.Error<Options>
@@ -431,11 +431,13 @@ export const Service = <Self>() =>
   Options extends { readonly dependencies: ReadonlyArray<Layer.Layer<any, any, any>> } ? Options["dependencies"][number]
     : never
 > => {
-  const Err = globalThis.Error as any
   const limit = getStackTraceLimit()
-  setStackTraceLimit(2)
-  const creationError = new Err()
-  setStackTraceLimit(limit)
+  let creationError: Error | undefined
+  if (limit !== 0) {
+    setStackTraceLimit(2)
+    creationError = new globalThis.Error()
+    setStackTraceLimit(limit)
+  }
 
   function TagClass() {}
   const TagClass_ = TagClass as any as Mutable<TagClass<Self, Id, string, any, any, any, any, any>>
@@ -443,7 +445,7 @@ export const Service = <Self>() =>
   TagClass.key = id
   Object.defineProperty(TagClass, "stack", {
     get() {
-      return creationError.stack
+      return creationError?.stack
     }
   })
 

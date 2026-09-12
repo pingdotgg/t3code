@@ -1,8 +1,0 @@
-{
-  "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "rules": {
-    "no-misused-new": "off",
-    "require-yield": "off",
-    "no-non-null-asserted-optional-chain": "off"
-  }
-}

@@ -581,7 +581,7 @@ const commitPatch = (input: {
 
 const previewCanvas = (environmentId: string) =>
   railway
-    .canvasViewMergePreview({
+    .previewCanvasViewMerge({
       sourceEnvironmentId: environmentId,
       targetEnvironmentId: environmentId,
     })
@@ -602,7 +602,7 @@ const mergeCanvas = (
   targetEnvironmentId: string,
 ) =>
   railway
-    .canvasViewMerge({
+    .mergeCanvasView({
       sourceEnvironmentId,
       targetEnvironmentId,
     })

@@ -67,12 +67,11 @@ examples/cloudflare-worker/src/scratch.ts
 /packages/alchemy/README.md
 
 !/packages/alchemy/bin/cli.js
-.vendor/*
+!/packages/alchemy/bin/register-dev-mode.js
+!/packages/alchemy/bin/register-oxc.js
 .tmp
 # the lockfile-pinning test fixture is a checked-in lockfile, not a generated one
 !packages/alchemy/test/AWS/Lambda/fixtures/lockfile-pinning/pnpm/pnpm-lock.yaml
-!.vendor/distilled
-!.vendor/floci
 
 .ai-workspace/
 /processes/

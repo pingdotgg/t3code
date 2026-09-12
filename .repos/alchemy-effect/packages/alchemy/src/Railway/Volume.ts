@@ -571,6 +571,58 @@ const waitForInstance = (
     ),
   );
 
+/**
+ * Attach a volume instance to a service and wait until Railway reports
+ * the mount path and service id. Used by Service/Function reconcile
+ * (`MountVolume`); uploading a build before the attach is READY is
+ * how `railway up` deploys land FAILED.
+ */
+export const attachVolumeToService = Effect.fn(function* (input: {
+  environmentId: string;
+  projectId: string;
+  serviceId: string;
+  volumeId: string;
+  mountPath: string;
+}) {
+  if (input.volumeId.length === 0) return;
+  const observed = yield* findInEnvironment(
+    input.environmentId,
+    input.projectId,
+    (instance) => instance.volumeId === input.volumeId,
+  );
+  const already =
+    observed !== undefined &&
+    (observed.serviceId ?? undefined) === input.serviceId &&
+    observed.mountPath === input.mountPath &&
+    !transientState(observed.state);
+  if (!already) {
+    yield* railway
+      .updateVolumeInstance({
+        volumeId: input.volumeId,
+        environmentId: input.environmentId,
+        input: {
+          serviceId: input.serviceId,
+          mountPath: input.mountPath,
+        },
+      })
+      .pipe(
+        Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
+      );
+  }
+  const instance =
+    observed ??
+    (yield* waitForInstance(
+      input.environmentId,
+      input.projectId,
+      input.volumeId,
+    ));
+  if (instance === undefined) return;
+  yield* waitUntilSynced(instance.id, input.volumeId, {
+    mountPath: input.mountPath,
+    serviceId: input.serviceId,
+  });
+});
+
 const waitUntilGone = (input: {
   volumeInstanceId?: string;
   volumeId: string;
@@ -597,7 +649,7 @@ const waitUntilGone = (input: {
 };
 
 const stampName = (volumeId: string, name: string) =>
-  railway.volumeUpdate({
+  railway.updateVolume({
     volumeId,
     input: { name },
   });
@@ -762,7 +814,7 @@ export const VolumeProvider = () =>
 
           if (current === undefined) {
             const created = yield* railway
-              .volumeCreate({
+              .createVolume({
                 input: {
                   projectId,
                   environmentId,
@@ -830,7 +882,7 @@ export const VolumeProvider = () =>
             desiredServiceId !== undefined &&
             desiredServiceId !== observedServiceId;
           if (mountChanged || serviceChanged) {
-            yield* railway.volumeInstanceUpdate({
+            yield* railway.updateVolumeInstance({
               volumeId: current.volumeId,
               environmentId,
               input: {
@@ -860,7 +912,7 @@ export const VolumeProvider = () =>
       const volumeId = output.volumeId;
       if (volumeId.length === 0) return;
       yield* railway
-        .volumeDelete({ volumeId })
+        .deleteVolume({ volumeId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

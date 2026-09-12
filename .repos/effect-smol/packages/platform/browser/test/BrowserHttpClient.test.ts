@@ -7,41 +7,42 @@ import * as Cookies from "effect/unstable/http/Cookies"
 import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as MXHR from "mock-xmlhttprequest"
 
-const layer = (...args: Parameters<typeof MXHR.newServer>) =>
+const layer = (routes: Parameters<typeof MXHR.newServer>[0], responseURL = "") =>
   Layer.unwrap(Effect.sync(() => {
-    const server = MXHR.newServer(...args)
+    const server = MXHR.newServer(routes)
     return BrowserHttpClient.layerXMLHttpRequest.pipe(
-      Layer.provide(Layer.succeed(BrowserHttpClient.XMLHttpRequest, server.xhrFactory))
+      Layer.provide(Layer.succeed(BrowserHttpClient.XMLHttpRequest, () => {
+        const xhr = server.xhrFactory()
+        xhr.responseURL = responseURL
+        return xhr
+      }))
     )
   }))
 
 describe("BrowserHttpClient", () => {
   it.effect("json", () =>
     Effect.gen(function*() {
-      const body = yield* HttpClient.get("http://localhost:8080/my/url").pipe(
-        Effect.flatMap((_) => _.json)
-      )
-      assert.deepStrictEqual(body, { message: "Success!" })
+      const response = yield* HttpClient.get("http://localhost:8080/my/url")
+      assert.strictEqual(response.url, "http://localhost:8080/final?value=1")
+      assert.deepStrictEqual(yield* response.json, { message: "Success!" })
     }).pipe(Effect.provide(layer({
       get: ["http://localhost:8080/my/url", {
         headers: { "Content-Type": "application/json" },
         body: "{ \"message\": \"Success!\" }"
       }]
-    }))))
+    }, "http://localhost:8080/final?value=1#fragment"))))
 
   it.effect("stream", () =>
     Effect.gen(function*() {
-      const body = yield* HttpClient.get("http://localhost:8080/my/url").pipe(
-        Effect.flatMap((response) =>
-          response.stream.pipe(
-            Stream.decodeText(),
-            Stream.mkString
-          )
-        )
-      )
+      const response = yield* HttpClient.get("http://localhost:8080/my/url?existing=1", {
+        urlParams: { value: "a#b" },
+        hash: "fragment"
+      })
+      assert.strictEqual(response.url, "http://localhost:8080/my/url?existing=1&value=a%23b")
+      const body = yield* response.stream.pipe(Stream.decodeText(), Stream.mkString)
       assert.deepStrictEqual(body, "{ \"message\": \"Success!\" }")
     }).pipe(Effect.provide(layer({
-      get: ["http://localhost:8080/my/url", {
+      get: ["http://localhost:8080/my/url?existing=1&value=a%23b#fragment", {
         headers: { "Content-Type": "application/json" },
         body: "{ \"message\": \"Success!\" }"
       }]
@@ -86,6 +87,24 @@ describe("BrowserHttpClient", () => {
       get: ["http://localhost:8080/my/url", {
         headers: { "Content-Type": "application/json" },
         body: "{ \"message\": \"Success!\" }"
+      }]
+    }))))
+
+  it.effect("readers in ArrayBuffer mode", () =>
+    Effect.gen(function*() {
+      const response = yield* HttpClient.get("http://localhost:8080/my/url").pipe(
+        BrowserHttpClient.withXHRArrayBuffer
+      )
+      assert.strictEqual(yield* response.text, "{ \"message\": \"café\" }")
+      assert.deepStrictEqual(yield* response.json, { message: "café" })
+      assert.strictEqual(
+        yield* response.stream.pipe(Stream.decodeText(), Stream.mkString),
+        "{ \"message\": \"café\" }"
+      )
+    }).pipe(Effect.provide(layer({
+      get: ["http://localhost:8080/my/url", {
+        headers: { "Content-Type": "application/json" },
+        body: "{ \"message\": \"café\" }"
       }]
     }))))
 

@@ -139,7 +139,7 @@ describe("Output.evaluate", () => {
       provideState(
         Effect.gen(function* () {
           const result = yield* Output.evaluate(
-            { port: Config.number("PORT").pipe(Config.withDefault(1337)) },
+            { port: Config.Number("PORT").pipe(Config.withDefault(1337)) },
             {},
           ).pipe(
             Effect.provide(

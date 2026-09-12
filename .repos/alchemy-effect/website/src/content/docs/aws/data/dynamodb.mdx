@@ -23,7 +23,7 @@ storage.
 
 DynamoDB tables need a partition key (and optionally a sort key)
 declared up-front. Yield the `Table` resource in the function's
-outer init, mirroring how you added the bucket:
+constructor, mirroring how you added the bucket:
 
 ```diff lang="typescript"
 // src/api.ts

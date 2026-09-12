@@ -116,7 +116,7 @@ export class MetricProducerImpl implements MetricProducer {
               if (typeof currentCount === "bigint" && typeof previousCount === "bigint") {
                 reportValue = currentCount - previousCount
                 // Handle reset: if current < previous, report current value
-                if (reportValue < BigInt(0)) {
+                if (state.state.incremental && reportValue < BigInt(0)) {
                   reportValue = currentCount
                 }
               } else {
@@ -124,7 +124,7 @@ export class MetricProducerImpl implements MetricProducer {
                 const prev = Number(previousCount)
                 reportValue = curr - prev
                 // Handle reset
-                if (reportValue < 0) {
+                if (state.state.incremental && reportValue < 0) {
                   reportValue = curr
                 }
               }
@@ -133,7 +133,7 @@ export class MetricProducerImpl implements MetricProducer {
           }
 
           const descriptor = descriptorFromState(state, attributes)
-          const startTime = this.startTimeFor(descriptor.name, intervalStartTime)
+          const startTime = isDelta ? intervalStartTime : this.startTimeFor(descriptor.name, intervalStartTime)
           const dataPoint: DataPoint<number> = {
             startTime,
             endTime: hrTimeNow,
@@ -217,7 +217,7 @@ export class MetricProducerImpl implements MetricProducer {
           }
 
           const descriptor = descriptorFromState(state, attributes)
-          const startTime = this.startTimeFor(descriptor.name, intervalStartTime)
+          const startTime = isDelta ? intervalStartTime : this.startTimeFor(descriptor.name, intervalStartTime)
           const dataPoint: DataPoint<Histogram> = {
             startTime,
             endTime: hrTimeNow,
@@ -263,7 +263,7 @@ export class MetricProducerImpl implements MetricProducer {
             }
 
             const descriptor = descriptorFromState(state, attributes)
-            const startTime = this.startTimeFor(descriptor.name, intervalStartTime)
+            const startTime = isDelta ? intervalStartTime : this.startTimeFor(descriptor.name, intervalStartTime)
             dataPoints.push({
               startTime,
               endTime: hrTimeNow,

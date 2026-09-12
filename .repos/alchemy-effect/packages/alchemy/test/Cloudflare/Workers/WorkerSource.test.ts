@@ -27,6 +27,7 @@ const invalidModule = new URL(
 const ctx = (props: WorkerProps): SourceContext =>
   makeSourceContext({
     id: "TestWorker",
+    fqn: "TestWorker",
     workerName: "stack-testworker-dev-abc123",
     props,
     compatibility: { date: "2024-01-01", flags: [] },

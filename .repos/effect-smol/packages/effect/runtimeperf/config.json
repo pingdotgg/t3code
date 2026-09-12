@@ -12,6 +12,600 @@
   },
   "suites": [
     {
+      "name": "arbitrary",
+      "fixtures": [
+        {
+          "file": "suites/arbitrary/fixtures/native.ts",
+          "defaults": {
+            "tier": 1,
+            "implementation": "effect",
+            "family": "arbitrary",
+            "astTags": [
+              "Objects",
+              "Arrays",
+              "String",
+              "Number",
+              "Declaration",
+              "Suspend"
+            ],
+            "path": "valid"
+          },
+          "cases": [
+            {
+              "name": "cold-recursive-first-sample-native",
+              "export": "coldRecursiveFirstSample",
+              "scenario": "arbitrary-cold-recursive-first-sample",
+              "operation": "derive-and-sample",
+              "path": "cold",
+              "size": 1
+            },
+            {
+              "name": "recursive-sample-32-native",
+              "export": "recursiveSample32",
+              "scenario": "arbitrary-recursive-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "optional-struct-sample-128-native",
+              "export": "optionalStructSample128",
+              "scenario": "arbitrary-optional-struct-sample-128",
+              "operation": "sample-optional-struct",
+              "astTags": [
+                "Objects",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "constrained-string-sample-128-native",
+              "export": "constrainedStringSample128",
+              "scenario": "arbitrary-constrained-string-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "String"
+              ],
+              "size": 128
+            },
+            {
+              "name": "cold-regexp-first-sample-native",
+              "export": "coldRegExpFirstSample",
+              "scenario": "arbitrary-cold-regexp-first-sample",
+              "operation": "derive-and-sample-pattern",
+              "path": "cold",
+              "astTags": [
+                "String"
+              ],
+              "size": 1
+            },
+            {
+              "name": "regexp-sample-64-native",
+              "export": "regExpSample64",
+              "scenario": "arbitrary-regexp-sample-64",
+              "operation": "sample-pattern",
+              "astTags": [
+                "String"
+              ],
+              "size": 64
+            },
+            {
+              "name": "regexp-check-falsify-shrink-native",
+              "export": "regExpCheckFalsifyAndShrink",
+              "scenario": "arbitrary-regexp-check-falsify-shrink",
+              "operation": "check-pattern-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "String"
+              ],
+              "size": 1
+            },
+            {
+              "name": "bounded-number-sample-128-native",
+              "export": "boundedNumberSample128",
+              "scenario": "arbitrary-bounded-number-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "uint8-array-sample-128-native",
+              "export": "uint8ArraySample128",
+              "scenario": "arbitrary-uint8-array-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Arrays",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "big-decimal-sample-128-native",
+              "export": "bigDecimalSample128",
+              "scenario": "arbitrary-big-decimal-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Objects",
+                "BigInt",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "date-time-utc-sample-128-native",
+              "export": "dateTimeUtcSample128",
+              "scenario": "arbitrary-date-time-utc-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "time-zone-named-sample-128-native",
+              "export": "timeZoneNamedSample128",
+              "scenario": "arbitrary-time-zone-named-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "time-zone-sample-128-native",
+              "export": "timeZoneSample128",
+              "scenario": "arbitrary-time-zone-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Union",
+                "Number",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "date-time-zoned-sample-128-native",
+              "export": "dateTimeZonedSample128",
+              "scenario": "arbitrary-date-time-zoned-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Declaration",
+                "Objects",
+                "Union",
+                "Number",
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "rare-filter-sample-32-native",
+              "export": "rareFilterSample32",
+              "scenario": "arbitrary-rare-filter-sample-32",
+              "operation": "sample",
+              "astTags": [
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "unique-array-sample-32-native",
+              "export": "uniqueArraySample32",
+              "scenario": "arbitrary-unique-array-sample-32",
+              "operation": "sample",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "literal-sample-128-native",
+              "export": "literalSample128",
+              "scenario": "arbitrary-literal-sample-128",
+              "operation": "sample",
+              "astTags": [
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "map-sample-128-native",
+              "export": "mapSample128",
+              "scenario": "arbitrary-map-sample-128",
+              "operation": "sample-map",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "passing-filter-sample-128-native",
+              "export": "passingFilterSample128",
+              "scenario": "arbitrary-passing-filter-sample-128",
+              "operation": "sample-filter",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "selective-filter-sample-32-native",
+              "export": "selectiveFilterSample32",
+              "scenario": "arbitrary-selective-filter-sample-32",
+              "operation": "sample-filter",
+              "astTags": [
+                "Number"
+              ],
+              "size": 32
+            },
+            {
+              "name": "filter-map-sample-128-native",
+              "export": "filterMapSample128",
+              "scenario": "arbitrary-filter-map-sample-128",
+              "operation": "sample-filter-map",
+              "astTags": [
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "filter-check-falsify-shrink-native",
+              "export": "filterCheckFalsifyAndShrink",
+              "scenario": "arbitrary-filter-check-falsify-shrink",
+              "operation": "check-filter-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "all-tuple-sample-128-native",
+              "export": "allTupleSample128",
+              "scenario": "arbitrary-all-tuple-sample-128",
+              "operation": "sample-all-tuple",
+              "astTags": [
+                "Literal"
+              ],
+              "size": 128
+            },
+            {
+              "name": "all-record-sample-128-native",
+              "export": "allRecordSample128",
+              "scenario": "arbitrary-all-record-sample-128",
+              "operation": "sample-all-record",
+              "astTags": [
+                "Union",
+                "Literal",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "flat-map-sample-128-native",
+              "export": "flatMapSample128",
+              "scenario": "arbitrary-flat-map-sample-128",
+              "operation": "sample-flat-map",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 128
+            },
+            {
+              "name": "flat-map-check-falsify-shrink-native",
+              "export": "flatMapCheckFalsifyAndShrink",
+              "scenario": "arbitrary-flat-map-check-falsify-shrink",
+              "operation": "check-flat-map-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "flat-map-check-replay-native",
+              "export": "flatMapCheckReplay",
+              "scenario": "arbitrary-flat-map-check-replay",
+              "operation": "replay-flat-map",
+              "path": "failure",
+              "astTags": [
+                "Arrays",
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "check-pass-100-native",
+              "export": "checkPass100",
+              "scenario": "arbitrary-check-pass-100",
+              "operation": "check",
+              "astTags": [
+                "Number"
+              ],
+              "size": 100
+            },
+            {
+              "name": "test-schema-verify-generation-100-native",
+              "export": "testSchemaVerifyGeneration100",
+              "scenario": "test-schema-verify-generation-100",
+              "operation": "derive-and-check",
+              "astTags": [
+                "Number"
+              ],
+              "size": 100
+            },
+            {
+              "name": "check-falsify-shrink-native",
+              "export": "checkFalsifyAndShrink",
+              "scenario": "arbitrary-check-falsify-shrink",
+              "operation": "check-and-shrink",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            },
+            {
+              "name": "check-replay-native",
+              "export": "checkReplay",
+              "scenario": "arbitrary-check-replay",
+              "operation": "replay",
+              "path": "failure",
+              "astTags": [
+                "Number"
+              ],
+              "size": 1
+            }
+          ]
+        },
+        {
+          "file": "suites/arbitrary/fixtures/fast-check-v4.ts",
+          "defaults": {
+            "tier": 1,
+            "implementation": "fast-check-v4",
+            "family": "arbitrary",
+            "astTags": [],
+            "path": "valid"
+          },
+          "cases": [
+            {
+              "name": "cold-recursive-first-sample-fast-check-v4",
+              "export": "coldRecursiveFirstSample",
+              "scenario": "arbitrary-cold-recursive-first-sample",
+              "operation": "derive-and-sample",
+              "path": "cold",
+              "size": 1
+            },
+            {
+              "name": "recursive-sample-32-fast-check-v4",
+              "export": "recursiveSample32",
+              "scenario": "arbitrary-recursive-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "optional-struct-sample-128-fast-check-v4",
+              "export": "optionalStructSample128",
+              "scenario": "arbitrary-optional-struct-sample-128",
+              "operation": "sample-optional-struct",
+              "size": 128
+            },
+            {
+              "name": "constrained-string-sample-128-fast-check-v4",
+              "export": "constrainedStringSample128",
+              "scenario": "arbitrary-constrained-string-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "cold-regexp-first-sample-fast-check-v4",
+              "export": "coldRegExpFirstSample",
+              "scenario": "arbitrary-cold-regexp-first-sample",
+              "operation": "derive-and-sample-pattern",
+              "path": "cold",
+              "size": 1
+            },
+            {
+              "name": "regexp-sample-64-fast-check-v4",
+              "export": "regExpSample64",
+              "scenario": "arbitrary-regexp-sample-64",
+              "operation": "sample-pattern",
+              "size": 64
+            },
+            {
+              "name": "regexp-check-falsify-shrink-fast-check-v4",
+              "export": "regExpCheckFalsifyAndShrink",
+              "scenario": "arbitrary-regexp-check-falsify-shrink",
+              "operation": "check-pattern-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "bounded-number-sample-128-fast-check-v4",
+              "export": "boundedNumberSample128",
+              "scenario": "arbitrary-bounded-number-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "uint8-array-sample-128-fast-check-v4",
+              "export": "uint8ArraySample128",
+              "scenario": "arbitrary-uint8-array-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "big-decimal-sample-128-fast-check-v4",
+              "export": "bigDecimalSample128",
+              "scenario": "arbitrary-big-decimal-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "date-time-utc-sample-128-fast-check-v4",
+              "export": "dateTimeUtcSample128",
+              "scenario": "arbitrary-date-time-utc-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "time-zone-named-sample-128-fast-check-v4",
+              "export": "timeZoneNamedSample128",
+              "scenario": "arbitrary-time-zone-named-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "time-zone-sample-128-fast-check-v4",
+              "export": "timeZoneSample128",
+              "scenario": "arbitrary-time-zone-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "date-time-zoned-sample-128-fast-check-v4",
+              "export": "dateTimeZonedSample128",
+              "scenario": "arbitrary-date-time-zoned-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "rare-filter-sample-32-fast-check-v4",
+              "export": "rareFilterSample32",
+              "scenario": "arbitrary-rare-filter-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "unique-array-sample-32-fast-check-v4",
+              "export": "uniqueArraySample32",
+              "scenario": "arbitrary-unique-array-sample-32",
+              "operation": "sample",
+              "size": 32
+            },
+            {
+              "name": "literal-sample-128-fast-check-v4",
+              "export": "literalSample128",
+              "scenario": "arbitrary-literal-sample-128",
+              "operation": "sample",
+              "size": 128
+            },
+            {
+              "name": "map-sample-128-fast-check-v4",
+              "export": "mapSample128",
+              "scenario": "arbitrary-map-sample-128",
+              "operation": "sample-map",
+              "size": 128
+            },
+            {
+              "name": "passing-filter-sample-128-fast-check-v4",
+              "export": "passingFilterSample128",
+              "scenario": "arbitrary-passing-filter-sample-128",
+              "operation": "sample-filter",
+              "size": 128
+            },
+            {
+              "name": "selective-filter-sample-32-fast-check-v4",
+              "export": "selectiveFilterSample32",
+              "scenario": "arbitrary-selective-filter-sample-32",
+              "operation": "sample-filter",
+              "size": 32
+            },
+            {
+              "name": "filter-map-sample-128-fast-check-v4",
+              "export": "filterMapSample128",
+              "scenario": "arbitrary-filter-map-sample-128",
+              "operation": "sample-filter-map",
+              "size": 128
+            },
+            {
+              "name": "filter-check-falsify-shrink-fast-check-v4",
+              "export": "filterCheckFalsifyAndShrink",
+              "scenario": "arbitrary-filter-check-falsify-shrink",
+              "operation": "check-filter-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "all-tuple-sample-128-fast-check-v4",
+              "export": "allTupleSample128",
+              "scenario": "arbitrary-all-tuple-sample-128",
+              "operation": "sample-all-tuple",
+              "size": 128
+            },
+            {
+              "name": "all-record-sample-128-fast-check-v4",
+              "export": "allRecordSample128",
+              "scenario": "arbitrary-all-record-sample-128",
+              "operation": "sample-all-record",
+              "size": 128
+            },
+            {
+              "name": "flat-map-sample-128-fast-check-v4",
+              "export": "flatMapSample128",
+              "scenario": "arbitrary-flat-map-sample-128",
+              "operation": "sample-flat-map",
+              "size": 128
+            },
+            {
+              "name": "flat-map-check-falsify-shrink-fast-check-v4",
+              "export": "flatMapCheckFalsifyAndShrink",
+              "scenario": "arbitrary-flat-map-check-falsify-shrink",
+              "operation": "check-flat-map-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "flat-map-check-replay-fast-check-v4",
+              "export": "flatMapCheckReplay",
+              "scenario": "arbitrary-flat-map-check-replay",
+              "operation": "replay-flat-map",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "check-pass-100-fast-check-v4",
+              "export": "checkPass100",
+              "scenario": "arbitrary-check-pass-100",
+              "operation": "check",
+              "size": 100
+            },
+            {
+              "name": "test-schema-verify-generation-100-fast-check-v4",
+              "export": "testSchemaVerifyGeneration100",
+              "scenario": "test-schema-verify-generation-100",
+              "operation": "derive-and-check",
+              "size": 100
+            },
+            {
+              "name": "check-falsify-shrink-fast-check-v4",
+              "export": "checkFalsifyAndShrink",
+              "scenario": "arbitrary-check-falsify-shrink",
+              "operation": "check-and-shrink",
+              "path": "failure",
+              "size": 1
+            },
+            {
+              "name": "check-replay-fast-check-v4",
+              "export": "checkReplay",
+              "scenario": "arbitrary-check-replay",
+              "operation": "replay",
+              "path": "failure",
+              "size": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "schema",
       "fixtures": [
         {
@@ -449,6 +1043,45 @@
               "size": 32
             },
             {
+              "name": "array-32-suspended-concurrency-4",
+              "export": "array32SuspendedConcurrent4",
+              "scenario": "array-32-suspended-concurrency-4",
+              "family": "arrays",
+              "astTags": [
+                "Arrays",
+                "String",
+                "Transformation"
+              ],
+              "path": "valid",
+              "size": 32
+            },
+            {
+              "name": "object-32-suspended-concurrency-4",
+              "export": "object32SuspendedConcurrent4",
+              "scenario": "object-32-suspended-concurrency-4",
+              "family": "objects",
+              "astTags": [
+                "Objects",
+                "String",
+                "Transformation"
+              ],
+              "path": "valid",
+              "size": 32
+            },
+            {
+              "name": "record-32-suspended-concurrency-4",
+              "export": "record32SuspendedConcurrent4",
+              "scenario": "record-32-suspended-concurrency-4",
+              "family": "records",
+              "astTags": [
+                "Objects",
+                "String",
+                "Transformation"
+              ],
+              "path": "valid",
+              "size": 32
+            },
+            {
               "name": "literal-2-valid-last",
               "export": "literal2ValidLast",
               "scenario": "literal-2-valid-last",
@@ -511,17 +1144,6 @@
               "size": 2
             },
             {
-              "name": "property-order-original",
-              "export": "propertyOrderOriginal",
-              "scenario": "property-order-original",
-              "family": "parse-options",
-              "astTags": [
-                "Objects"
-              ],
-              "path": "valid",
-              "size": 3
-            },
-            {
               "name": "recursive-tree-depth-16-valid",
               "export": "recursiveTreeDepth16Valid",
               "scenario": "recursive-tree-depth-16-valid",
@@ -549,6 +1171,13 @@
             "size": 2
           },
           "cases": [
+            {
+              "name": "adapter-make-valid",
+              "export": "makeValid",
+              "scenario": "adapter-make-valid",
+              "operation": "make",
+              "adapter": "Sync"
+            },
             {
               "name": "adapter-parser-decode-exit-invalid",
               "export": "parserExitInvalid",
@@ -625,6 +1254,44 @@
           },
           "cases": [
             {
+              "name": "schema-creation-object-2-effect",
+              "export": "effectSchemaCreationObject2",
+              "scenario": "schema-creation-object-2",
+              "implementation": "effect",
+              "operation": "schema",
+              "size": 2
+            },
+            {
+              "name": "schema-creation-object-32-effect",
+              "export": "effectSchemaCreationObject32",
+              "scenario": "schema-creation-object-32",
+              "implementation": "effect",
+              "operation": "schema"
+            },
+            {
+              "name": "schema-creation-object-256-effect",
+              "export": "effectSchemaCreationObject256",
+              "scenario": "schema-creation-object-256",
+              "implementation": "effect",
+              "operation": "schema",
+              "size": 256
+            },
+            {
+              "name": "schema-creation-encoded-record-effect",
+              "export": "effectSchemaCreationEncodedRecord",
+              "scenario": "schema-creation-encoded-record",
+              "implementation": "effect",
+              "operation": "schema"
+            },
+            {
+              "name": "first-make-object-2-effect",
+              "export": "effectFirstMakeObject2",
+              "scenario": "first-make-object-2",
+              "implementation": "effect",
+              "operation": "first-make",
+              "size": 2
+            },
+            {
               "name": "schema-creation-template-literal-effect",
               "export": "effectSchemaCreationTemplateLiteral",
               "scenario": "schema-creation-template-literal",
@@ -634,6 +1301,17 @@
                 "TemplateLiteral"
               ],
               "size": 5
+            },
+            {
+              "name": "schema-creation-template-literal-256-effect",
+              "export": "effectSchemaCreationTemplateLiteral256",
+              "scenario": "schema-creation-template-literal-256",
+              "implementation": "effect",
+              "operation": "schema",
+              "astTags": [
+                "TemplateLiteral"
+              ],
+              "size": 256
             },
             {
               "name": "first-decode-checked-object-32-effect",

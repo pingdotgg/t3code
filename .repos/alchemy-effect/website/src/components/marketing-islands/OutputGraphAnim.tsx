@@ -131,7 +131,7 @@ export default function OutputGraphAnim() {
   );
 
   return (
-    <div ref={wrapRef} className="output-anim-grid">
+    <div ref={wrapRef} className="output-anim-grid" data-nosnippet="">
       {/* LEFT — code panel with progressive highlight */}
       <div className="alc-code-block">
         <div className="alc-code-block__header">

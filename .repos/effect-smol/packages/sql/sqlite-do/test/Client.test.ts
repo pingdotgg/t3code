@@ -1,7 +1,7 @@
 import type { DurableObjectStorage, SqlStorage } from "@cloudflare/workers-types"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-do"
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Effect, Fiber } from "effect"
+import { Deferred, Effect, Fiber, Stream } from "effect"
 import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as SqlClient from "effect/unstable/sql/SqlClient"
 
@@ -190,6 +190,22 @@ describe("Client", () => {
       const client = yield* makeClient({ db: failingDb })
       const error = yield* Effect.flip(client`SELECT 1`)
       assert.strictEqual(error.reason._tag, "UnknownError")
+    }))
+
+  it.effect("classifies streaming native errors without stable sqlite codes as UnknownError", () =>
+    Effect.gen(function*() {
+      const driverError = new Error("boom")
+      const failingDb = {
+        exec: () => {
+          throw driverError
+        }
+      } as unknown as SqlStorage
+
+      const client = yield* makeClient({ db: failingDb })
+      const error = yield* client`SELECT 1`.stream.pipe(Stream.runCollect, Effect.flip)
+      assert.strictEqual(error._tag, "SqlError")
+      assert.strictEqual(error.reason._tag, "UnknownError")
+      assert.strictEqual(error.reason.cause, driverError)
     }))
 
   it.effect("db-only clients support normal queries", () =>

@@ -1,12 +1,16 @@
 import { AlchemyContext } from "@/AlchemyContext";
 import { AuthProviders } from "@/Auth/AuthProvider";
+import * as CliKit from "@/Cli/CliKit";
 import * as Provider from "@/Provider";
 import * as Prisma from "@/Prisma";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "alchemy-test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import { v4 as uuidv4 } from "uuid";
 
 const devAlchemyContext = Layer.succeed(AlchemyContext, {
   dotAlchemy: ".alchemy-test",
@@ -24,6 +28,7 @@ const providePrismaDev = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       ),
     ),
     Effect.provide(devAlchemyContext),
+    Effect.provide(CliKit.layer({ input: false })),
   );
 
 const reconcileInput = (id: string, news: unknown, output?: unknown) =>
@@ -211,28 +216,31 @@ describe("Prisma providers", () => {
     }).pipe(providePrismaDev),
   );
 
-  it.effect(
-    "provides PrismaClient for operation helpers through managementApi()",
-    () =>
-      Effect.gen(function* () {
-        const client = yield* Prisma.PrismaClient;
-
-        expect(typeof client.listProjects).toBe("function");
-        expect(typeof client.createApp).toBe("function");
-        expect(typeof client.getDeploymentLogsRequest).toBe("function");
-      }).pipe(
-        Effect.provide(Prisma.managementApi()),
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              // Route credential resolution down the env path — without CI the
-              // profile store is consulted and errors when the machine has no
-              // 'Prisma' credentials configured for the default profile.
-              CI: true,
-              PRISMA_SERVICE_TOKEN: "test-token",
-            }),
+  it.effect("managementApi rejects an unknown explicit profile", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        Effect.sandbox(
+          Effect.gen(function* () {
+            yield* Prisma.PrismaClient;
+          }).pipe(
+            Effect.provide(Prisma.managementApi()),
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  ALCHEMY_PROFILE: `non-existent-${uuidv4()}`,
+                }),
+              ),
+            ),
+            Effect.provide(NodeServices.layer),
+            Effect.provide(CliKit.layer({ input: false })),
           ),
         ),
-      ),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(String(result.failure)).toContain("does not exist");
+        expect(String(result.failure)).toContain("alchemy profile create");
+      }
+    }),
   );
 });

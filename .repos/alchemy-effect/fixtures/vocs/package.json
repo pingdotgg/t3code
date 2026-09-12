@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "hono": "catalog:frontend",
-    "react": "~19.2.6",
-    "react-dom": "~19.2.6",
+    "react": "catalog:frontend-rsc",
+    "react-dom": "catalog:frontend-rsc",
     "react-server-dom-webpack": "catalog:frontend",
     "vocs": "catalog:frontend",
     "waku": "catalog:frontend"
@@ -24,9 +24,9 @@
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@playwright/test": "catalog:testing",
-    "@types/node": "^24.12.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
     "@vitejs/plugin-react": "catalog:frontend",
     "@vitejs/plugin-rsc": "catalog:frontend",
     "effect": "catalog:effect",

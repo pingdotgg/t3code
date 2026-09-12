@@ -18,7 +18,7 @@ export default [
   // }),
   // bundle the dev-mode worker entrypoint. dev.ts spawns this in a child bun
   // process; under a published install it loads from node_modules and would
-  // otherwise need react/ink/pathe at runtime to resolve InkCLI.tsx as source.
+  // otherwise need react/sigil/pathe at runtime to resolve SigilCli.tsx as source.
   // Bundling inlines those so they stay devDependencies (same rationale as
   // the cli bundle below).
   defineConfig({

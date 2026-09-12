@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/pr-package",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.77",
   "description": "Self-hostable PR package registry for Cloudflare built with Alchemy.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -27,7 +27,8 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -b && bun ../../scripts/copy-package-files.ts pr-package"
+    "build": "tsc -b && bun ../../scripts/copy-package-files.ts pr-package",
+    "test": "bun test ./test"
   },
   "exports": {
     ".": {
@@ -43,5 +44,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "typescript": "catalog:build"
   }
 }

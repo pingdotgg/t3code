@@ -130,7 +130,7 @@ Alchemy.Stack(
   "MyApp",
   {
     providers: Prisma.providers(),
-    state: postgresState({ url: Config.redacted("STATE_DATABASE_URL") }),
+    state: postgresState({ url: Config.Redacted("STATE_DATABASE_URL") }),
   },
   Effect.gen(function* () {
     // ...

@@ -225,7 +225,7 @@ export type SpriteRuntimeContext = FlyHostRuntimeContext;
  *
  * Yield `FileSystem.FileSystem` in init, never inside `fetch`.
  *
- * **Example:** Config.redacted
+ * **Example:** Config.Redacted
  * ```typescript
  * import * as Config from "effect/Config";
  * import * as FileSystem from "effect/FileSystem";
@@ -235,7 +235,7 @@ export type SpriteRuntimeContext = FlyHostRuntimeContext;
  *   "Box",
  *   { main: import.meta.url },
  *   Effect.gen(function* () {
- *     const apiKey = yield* Config.redacted("API_KEY");
+ *     const apiKey = yield* Config.Redacted("API_KEY");
  *     const fs = yield* FileSystem.FileSystem;
  *     yield* fs.makeDirectory("/tmp", { recursive: true });
  *

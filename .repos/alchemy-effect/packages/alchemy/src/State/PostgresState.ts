@@ -7,6 +7,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type * as SqlError from "effect/unstable/sql/SqlError";
+import { resolveSsl } from "../SQL/PostgresTls.ts";
 import { recordStateStoreInit } from "../Telemetry/Metrics.ts";
 import { STATE_STORE_VERSION } from "./HttpStateApi.ts";
 import type { ReplacedResourceState } from "./ResourceState.ts";
@@ -47,7 +48,7 @@ export interface PostgresStateOptions<E = never, R = never> {
   client?: SqlClient.SqlClient;
   /**
    * Postgres connection URL, as a `Redacted` value or an Effect yielding one
-   * — `Config.redacted("STATE_DATABASE_URL")` is itself an Effect, so it can
+   * — `Config.Redacted("STATE_DATABASE_URL")` is itself an Effect, so it can
    * be passed directly. The store creates its own `@effect/sql-pg` pool from
    * the URL and closes that pool when the state layer is released.
    */
@@ -142,7 +143,7 @@ interface Lease {
  *   "my-stack",
  *   {
  *     providers: myProviders(),
- *     state: postgresState({ url: Config.redacted("STATE_DATABASE_URL") }),
+ *     state: postgresState({ url: Config.Redacted("STATE_DATABASE_URL") }),
  *   },
  *   Effect.gen(function* () {
  *     // ...
@@ -158,11 +159,11 @@ interface Lease {
  * // A pool, not `PgClient.makeClient`: the store needs a second connection
  * // to verify the advisory lock held on the reserved one.
  * const sql = yield* PgClient.make({
- *   url: yield* Config.redacted("STATE_DATABASE_URL"),
+ *   url: yield* Config.Redacted("STATE_DATABASE_URL"),
  * });
  * const state = postgresState({
  *   client: sql,
- *   lockKeyPrefix: yield* Config.string("STATE_LOCK_PREFIX"),
+ *   lockKeyPrefix: yield* Config.String("STATE_LOCK_PREFIX"),
  * });
  * ```
  */
@@ -274,7 +275,10 @@ export const makePostgresState = <E = never, R = never>(
           ? yield* Effect.provideContext(url, context).pipe(stateError)
           : url;
         const built = yield* Layer.build(
-          PgClient.layer({ url: resolved }),
+          PgClient.layer({
+            url: resolved,
+            ssl: resolveSsl(resolved, undefined),
+          }),
         ).pipe(Scope.provide(scope), stateError);
         return Context.get(built, PgClient.PgClient);
       });

@@ -943,7 +943,7 @@ export const PrivateNetworkEndpointProvider = () =>
           prefix: desiredPrefix,
         });
         if (available) {
-          yield* railway.privateNetworkEndpointRename({
+          yield* railway.renamePrivateNetworkEndpoint({
             dnsName: desiredPrefix,
             id: current.publicId,
             privateNetworkId,
@@ -970,7 +970,7 @@ export const PrivateNetworkEndpointProvider = () =>
       const id = output.publicId;
       if (id.length === 0) return;
       yield* railway
-        .privateNetworkEndpointDelete({ id })
+        .deletePrivateNetworkEndpoint({ id })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

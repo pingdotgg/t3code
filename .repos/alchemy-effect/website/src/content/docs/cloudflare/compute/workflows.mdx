@@ -117,7 +117,7 @@ exactly once. Outside a task it runs on every replay.
 
 ## Use bindings inside tasks
 
-Bind a resource in the outer init phase to get a typed client, then
+Bind a resource in the outer Construction phase to get a typed client, then
 use it inside a step — here a [KV](/cloudflare/data/kv) namespace:
 
 ```typescript
@@ -155,13 +155,56 @@ Per-run resources like `Drizzle.Postgres` pools follow this: the
 pool opens on the first query inside a step, is reused by every
 later step in the same invocation, and closes when the invocation
 settles (the [SQL connection lifecycle](/sql/effect-sql/lifecycle)
-in workflow terms). The workflow's init closure shares the isolate-lifetime
+in workflow terms). The workflow's constructor shares the isolate-lifetime
 layer build with the hosting Worker — pure assembly, no cleanup; see
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope).
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope).
+
+## Schedule a Workflow
+
+Attach cron expressions to the Workflow itself to create a new instance
+on each match — no Worker Cron Trigger and no `scheduled` handler
+that calls `workflow.create()`.
+
+```typescript
+export default class HourlyWorkflow extends Cloudflare.Workflow<HourlyWorkflow>()(
+  "HourlyWorkflow",
+  { schedules: ["0 * * * *"] },
+  Effect.gen(function* () {
+    return Effect.fn(function* () {
+      const event = yield* Cloudflare.Workflows.WorkflowEvent;
+      if (event.schedule) {
+        // Matching cron and the fire time (ms since epoch).
+        return { cron: event.schedule.cron, at: event.schedule.scheduledTime };
+      }
+      return {};
+    });
+  }),
+) {}
+```
+
+The same `schedules` array is wrangler-compatible on the async
+reference form:
+
+```typescript
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: {
+    HOURLY: Cloudflare.Workflow("HourlyWorkflow", {
+      className: "HourlyWorkflow",
+      schedules: ["0 * * * *"],
+    }),
+  },
+});
+```
+
+Pass `schedules: []` to remove them. Cloudflare caps the account at
+100 cron expressions across all Workflows. Use a Worker
+[cron](/cloudflare/messaging/cron) only when you need custom logic
+before deciding whether to create an instance.
 
 ## Trigger from a Worker
 
-Yield the workflow class in a Worker's init phase to get a typed
+Yield the workflow class in a Worker's Construction phase to get a typed
 handle:
 
 ```typescript
@@ -275,8 +318,8 @@ Related:
   workflows call into.
 - [Queues](/cloudflare/messaging/queues) — when buffered messages are enough
   (no checkpointed steps).
-- [Cron triggers](/cloudflare/messaging/cron) — trigger workflows on a
-  schedule.
+- [Cron triggers](/cloudflare/messaging/cron) — Worker-level schedules;
+  prefer native Workflow `schedules` when the job *is* the Workflow.
 
 Reference:
 

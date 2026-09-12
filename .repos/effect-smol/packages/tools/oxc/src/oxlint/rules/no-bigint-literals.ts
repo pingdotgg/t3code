@@ -10,7 +10,7 @@ const rule: CreateRule = {
     return {
       Literal(node) {
         if (typeof node.value === "bigint") {
-          const fixedSource = `BigInt(${node.value})`
+          const fixedSource = `BigInt("${node.value}")`
           context.report({
             node,
             message: "BigInt literals are not allowed",

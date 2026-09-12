@@ -1,6 +1,7 @@
 import type * as Tracer from "../Tracer.ts"
 import { getStackTraceLimit, setStackTraceLimit } from "./stackTraceLimit.ts"
 
+/** @internal */
 export interface ErrorWithStackTraceLimit {
   stackTraceLimit?: number | undefined
 }
@@ -15,6 +16,9 @@ export const addSpanStackTrace = <A extends Tracer.TraceOptions>(
     return options
   }
   const limit = getStackTraceLimit()
+  if (limit === 0 && options?.captureStackTrace !== true) {
+    return { ...options, captureStackTrace: false } as A
+  }
   setStackTraceLimit(3)
   const traceError = new Error()
   setStackTraceLimit(limit)

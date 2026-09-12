@@ -104,7 +104,7 @@ export interface DurableObjectShape {
   fetch?: HttpEffect<DurableObjectState | RuntimeContext>;
   alarm?: (
     alarmInfo?: AlarmInvocationInfo,
-  ) => Effect.Effect<void, never, never>;
+  ) => Effect.Effect<void, never, RuntimeContext>;
   webSocketMessage?: (
     socket: WebSocket,
     message: string | ArrayBuffer,
@@ -115,6 +115,11 @@ export interface DurableObjectShape {
     reason: string,
     wasClean: boolean,
   ) => Effect.Effect<void>;
+  /**
+   * Called when a hibernatable WebSocket errors. The runtime closes the
+   * socket after this handler; use it to drop the peer's session state.
+   */
+  webSocketError?: (socket: WebSocket, error: unknown) => Effect.Effect<void>;
 }
 
 export type DurableObjectServices =
@@ -364,7 +369,7 @@ export class DurableObjectScope extends Context.Service<
  * ```
  *
  * There are two ways to define a Durable Object. See the
- * [Functions & Servers](/infrastructure-as-effects/functions-and-servers) page
+ * [Runtime](/infrastructure-as-effects/runtime) page
  * for the full explanation.
  *
  * - **Inline** — Effect implementation passed directly, single file.
@@ -719,8 +724,8 @@ export class DurableObjectScope extends Context.Service<
  * Durable Objects support WebSocket hibernation — the runtime can
  * evict the object from memory while keeping connections open. Use
  * `Cloudflare.upgrade()` to accept a connection, and return
- * `webSocketMessage` / `webSocketClose` handlers to process events
- * when the object wakes back up.
+ * `webSocketMessage` / `webSocketClose` / `webSocketError` handlers to
+ * process events when the object wakes back up.
  *
  * **Example:** Accepting a WebSocket connection
  * ```typescript
@@ -751,6 +756,13 @@ export class DurableObjectScope extends Context.Service<
  *     reason: string,
  *   ) {
  *     yield* ws.close(code, reason);
+ *   }),
+ *   webSocketError: Effect.fn(function* (
+ *     ws: Cloudflare.WebSocket,
+ *     error: unknown,
+ *   ) {
+ *     // the runtime closes the socket afterwards; clear its session here
+ *     ws.serializeAttachment(null);
  *   }),
  * };
  * ```
@@ -821,6 +833,40 @@ export class DurableObjectScope extends Context.Service<
  *       }
  *     }),
  * };
+ * ```
+ *
+ * ### Aborting a Durable Object
+ * `state.abort(reason?, options?)` forcibly resets the isolate. By
+ * default an in-progress alarm retries after the reset. Pass
+ * `{ retryAlarm: false }` when the alarm should stop instead — for
+ * example an alarm that deletes storage so the constructor does not
+ * recreate it.
+ *
+ * **Example:** Stop alarm retries after cleanup
+ * ```typescript
+ * export class CleanupTask extends Cloudflare.DurableObject<CleanupTask>()(
+ *   "CleanupTask",
+ *   Effect.gen(function* () {
+ *     const state = yield* Cloudflare.DurableObjectState;
+ *
+ *     return Effect.gen(function* () {
+ *       // This won't be re-run after the alarm is aborted
+ *       yield* state.storage.sql.exec(`
+ *         CREATE TABLE IF NOT EXISTS foo (
+ *           id INTEGER PRIMARY KEY
+ *         )
+ *       `);
+ *
+ *       return {
+ *         alarm: () =>
+ *           Effect.gen(function* () {
+ *             yield* state.storage.sql.exec("DROP TABLE foo");
+ *             yield* state.abort("Cleanup complete", { retryAlarm: false });
+ *           }),
+ *       };
+ *     });
+ *   }),
+ * ) {}
  * ```
  *
  * ### Using from a Worker

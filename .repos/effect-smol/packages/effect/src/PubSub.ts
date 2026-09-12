@@ -17,6 +17,7 @@ import * as Effect from "./Effect.ts"
 import * as Exit from "./Exit.ts"
 import type { LazyArg } from "./Function.ts"
 import { dual, identity } from "./Function.ts"
+import * as Count from "./internal/count.ts"
 import * as Latch from "./Latch.ts"
 import * as MutableList from "./MutableList.ts"
 import * as MutableRef from "./MutableRef.ts"
@@ -1239,7 +1240,9 @@ const pollForItem = <A>(self: Subscription<A>) => {
 }
 
 /**
- * Takes up to the specified number of messages from the subscription without suspending.
+ * Takes up to the specified number of messages from the subscription without
+ * suspending. Finite fractional values are rounded down, while `NaN` and
+ * non-positive values are treated as `0`.
  *
  * **Example** (Taking up to a maximum number of messages)
  *
@@ -1278,6 +1281,7 @@ export const takeUpTo: {
 } = dual(2, <A>(self: Subscription<A>, max: number): Effect.Effect<Array<A>> =>
   Effect.suspend(() => {
     if (self.shutdownFlag.current) return Effect.interrupt
+    max = Count.normalize(max)
     let replay: Array<A> | undefined = undefined
     if (self.replayWindow.remaining >= max) {
       return Effect.succeed(self.replayWindow.takeN(max))
@@ -1293,8 +1297,10 @@ export const takeUpTo: {
   }))
 
 /**
- * Takes between the specified minimum and maximum number of messages from the subscription.
- * Will suspend if the minimum number is not immediately available.
+ * Takes between the specified minimum and maximum number of messages from the
+ * subscription. Finite fractional bounds are rounded down, while `NaN` and
+ * non-positive bounds are treated as `0`. Will suspend if the normalized
+ * minimum number is not immediately available.
  *
  * **Example** (Taking between a minimum and maximum)
  *
@@ -1329,7 +1335,7 @@ export const takeBetween: {
 } = dual(
   3,
   <A>(self: Subscription<A>, min: number, max: number): Effect.Effect<Array<A>> =>
-    Effect.suspend(() => takeRemainderLoop(self, min, max, []))
+    Effect.suspend(() => takeRemainderLoop(self, Count.normalize(min), Count.normalize(max), []))
 )
 
 const takeRemainderLoop = <A>(
@@ -1654,6 +1660,7 @@ class BoundedPubSubArbSubscription<in out A> implements PubSub.BackingSubscripti
   }
 
   pollUpTo(n: number): Array<A> {
+    n = Count.normalize(n)
     if (this.unsubscribed) {
       return []
     }
@@ -1850,6 +1857,7 @@ class BoundedPubSubPow2Subscription<in out A> implements PubSub.BackingSubscript
   }
 
   pollUpTo(n: number): Array<A> {
+    n = Count.normalize(n)
     if (this.unsubscribed) {
       return []
     }
@@ -2012,28 +2020,22 @@ class BoundedPubSubSingleSubscription<in out A> implements PubSub.BackingSubscri
     if (this.self.subscribers === 0) {
       this.self.value = AbsentValue as unknown as A
     }
-    this.subscriberIndex += 1
+    this.subscriberIndex = this.self.publisherIndex
     return elem
   }
 
   pollUpTo(n: number): Array<A> {
-    if (this.isEmpty() || n < 1) {
+    if (Count.normalize(n) < 1 || this.isEmpty()) {
       return []
     }
-    const a = this.self.value
-    this.self.subscribers -= 1
-    if (this.self.subscribers === 0) {
-      this.self.value = AbsentValue as unknown as A
-    }
-    this.subscriberIndex += 1
-    return [a]
+    return [this.poll() as A]
   }
 
   unsubscribe(): void {
     if (!this.unsubscribed) {
       this.unsubscribed = true
       this.self.subscriberCount -= 1
-      if (this.subscriberIndex !== this.self.publisherIndex) {
+      if (this.self.subscribers !== 0 && this.subscriberIndex !== this.self.publisherIndex) {
         this.self.subscribers -= 1
         if (this.self.subscribers === 0) {
           this.self.value = AbsentValue as unknown as A
@@ -2210,6 +2212,7 @@ class UnboundedPubSubSubscription<in out A> implements PubSub.BackingSubscriptio
   }
 
   pollUpTo(n: number): Array<A> {
+    n = Count.normalize(n)
     const builder: Array<A> = []
     let i = 0
     while (i !== n) {
@@ -2791,6 +2794,7 @@ class ReplayWindowImpl<A> implements PubSub.ReplayWindow<A> {
     return value as A
   }
   takeN(n: number): Array<A> {
+    n = Count.normalize(n)
     const len = Math.min(n, this.remaining)
     const items = new Array(len)
     for (let i = 0; i < len; i++) {

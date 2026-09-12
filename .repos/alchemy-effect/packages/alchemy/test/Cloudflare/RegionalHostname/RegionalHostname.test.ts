@@ -211,7 +211,7 @@ test.provider(
 //   Forbidden: forbidden  (GET /zones/{zone_id}/addressing/regional_hostnames)
 // `listRegionalHostnames` types its error union as `DefaultErrors` only, so
 // `Forbidden` cannot be `catchTag`ed/skipped yet. Needed distilled patch:
-//   distilled/packages/cloudflare/patches/addressing/listRegionalHostnames.json
+//   submodules/distilled/packages/cloudflare/patches/addressing/listRegionalHostnames.json
 //   -> { "errors": { "Forbidden": [{ "status": 403 }] } }
 // then regenerate addressing and add "Forbidden" to the catch in list().
 // Gate the live run behind CLOUDFLARE_TEST_REGIONAL_HOSTNAME_LIST=1 (run on

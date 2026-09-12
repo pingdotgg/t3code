@@ -1,6 +1,6 @@
 import { describe, it } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { escapeToken, unescapeToken } from "effect/JsonPointer"
+import { escapeToken, formatUriFragment, parseUriFragment, unescapeToken } from "effect/JsonPointer"
 
 describe("JsonPointer", () => {
   describe("escapeToken", () => {
@@ -260,6 +260,88 @@ describe("JsonPointer", () => {
         deepStrictEqual(unescapeToken("name~1alias"), "name/alias")
         deepStrictEqual(unescapeToken("path~1to~0key"), "path/to~key")
       })
+    })
+  })
+
+  describe("parseUriFragment", () => {
+    it("parses the document root", () => {
+      deepStrictEqual(parseUriFragment(""), [])
+      deepStrictEqual(parseUriFragment("#"), [])
+    })
+
+    it("decodes percent-encoding before splitting tokens", () => {
+      deepStrictEqual(parseUriFragment("#/definitions/a%20b"), ["definitions", "a b"])
+      deepStrictEqual(parseUriFragment("#%2Fdefinitions%2FValue"), ["definitions", "Value"])
+      deepStrictEqual(parseUriFragment("#/definitions/a%25b"), ["definitions", "a%b"])
+      deepStrictEqual(parseUriFragment("#/definitions/caf%C3%A9"), ["definitions", "café"])
+    })
+
+    it("distinguishes encoded separators from escaped slashes", () => {
+      deepStrictEqual(parseUriFragment("#/$defs/Box%2Fproperties%2Fvalue"), [
+        "$defs",
+        "Box",
+        "properties",
+        "value"
+      ])
+      deepStrictEqual(parseUriFragment("#/$defs/Box~1properties~1value"), [
+        "$defs",
+        "Box/properties/value"
+      ])
+      deepStrictEqual(parseUriFragment("#/$defs/Box%7E1properties%7E1value"), [
+        "$defs",
+        "Box/properties/value"
+      ])
+    })
+
+    it("rejects invalid fragments", () => {
+      strictEqual(parseUriFragment("/a"), undefined)
+      strictEqual(parseUriFragment("#/%"), undefined)
+      strictEqual(parseUriFragment("#/%FF"), undefined)
+      strictEqual(parseUriFragment("#/a b"), undefined)
+      strictEqual(parseUriFragment("#/a#b"), undefined)
+      strictEqual(parseUriFragment("#/a\\b"), undefined)
+      strictEqual(parseUriFragment("#/café"), undefined)
+      strictEqual(parseUriFragment(`#/${String.fromCharCode(0xd800)}`), undefined)
+      strictEqual(parseUriFragment("#/a~2b"), undefined)
+      strictEqual(parseUriFragment("#/a~"), undefined)
+    })
+  })
+
+  describe("formatUriFragment", () => {
+    it("formats the document root", () => {
+      strictEqual(formatUriFragment([]), "#")
+    })
+
+    it("applies JSON Pointer escaping before URI percent-encoding", () => {
+      strictEqual(
+        formatUriFragment(["$defs", "a b", "a%b", "a/b", "café", "a#b"]),
+        "#/$defs/a%20b/a%25b/a~1b/caf%C3%A9/a%23b"
+      )
+    })
+
+    it("round trips path tokens", () => {
+      const paths = [
+        [],
+        [""],
+        ["$defs", "Rate%"],
+        ["a/b", "c~d"],
+        ["!$&'()*+,;=:@?"],
+        ["café", "世界", "🚀"]
+      ]
+      for (const path of paths) {
+        deepStrictEqual(parseUriFragment(formatUriFragment(path)), path)
+      }
+    })
+
+    it("throws for unpaired surrogates", () => {
+      const path = [String.fromCharCode(0xd800)]
+      let error: unknown
+      try {
+        formatUriFragment(path)
+      } catch (cause) {
+        error = cause
+      }
+      strictEqual(error instanceof URIError, true)
     })
   })
 

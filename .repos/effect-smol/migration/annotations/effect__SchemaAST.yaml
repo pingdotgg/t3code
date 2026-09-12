@@ -1,6 +1,6 @@
 "effect/SchemaAST#Annotated":
-  replacement: "SchemaAST.Base"
-  note: "All v4 AST nodes extend Base, which owns annotations, checks, encoding, and context."
+  replacement: "SchemaAST.AST"
+  note: "The public base type was removed. Use the AST union; every variant still exposes annotations, checks, encoding, and context."
 "effect/SchemaAST#annotations":
   replacement: "SchemaAST.annotate"
   note: "Use the v4 annotation helper and string-keyed Schema.Annotations."
@@ -12,13 +12,13 @@
   note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
 "effect/SchemaAST#ArbitraryAnnotationId":
   replacement: "Schema.Annotations.ToArbitrary"
-  note: "Symbol annotation IDs were removed; use the toArbitrary annotation key and its Schema.Annotations types."
+  note: "Symbol annotation IDs were removed. Declarations use the toCodecArbitrary annotation; filters use arbitraryConstraint."
 "effect/SchemaAST#AST":
   replacement: "SchemaAST.AST"
   note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
 "effect/SchemaAST#BatchingAnnotation":
   replacement: "none"
-  note: "Per-schema batching annotations were removed; control asynchronous parsing with ParseOptions.concurrency."
+  note: "Per-schema batching annotations were removed. They have no direct replacement. ParseOptions.concurrency controls product child parsing only; configure request batching separately."
 "effect/SchemaAST#BatchingAnnotationId":
   replacement: "none"
   note: "Symbol annotation IDs were removed and batching is no longer a schema annotation."
@@ -43,6 +43,9 @@
 "effect/SchemaAST#Compiler":
   replacement: "none"
   note: "The generic AST compiler abstraction was removed; traverse the discriminated SchemaAST.AST union directly or use a higher-level Schema derivation API."
+"effect/SchemaAST#pick":
+  replacement: "none"
+  note: "The low-level AST picker was removed. Keep field selection at the Schema.Struct level with mapFields and Struct.pick, or discriminate and rebuild custom AST nodes explicitly."
 "effect/SchemaAST#composeTransformation":
   replacement: "SchemaAST.Encoding"
   note: "V4 transformations are SchemaAST.Link values in an encoding chain; compose by adding links with SchemaAST.decodeTo."
@@ -50,11 +53,11 @@
   replacement: "SchemaAST.Encoding"
   note: "The marker transformation was replaced by explicit SchemaAST.Link encoding chains."
 "effect/SchemaAST#ConcurrencyAnnotation":
-  replacement: "SchemaAST.ParseOptions[\"concurrency\"]"
-  note: "Concurrency is now a parse option rather than its own annotation type."
+  replacement: "SchemaAST.ParseOptions"
+  note: "Per-schema concurrency annotations were removed. Pass concurrency in runtime ParseOptions when creating or calling a decoder, encoder, or constructor. It applies independently to each tuple, array, struct, record, or struct-with-rest node and does not make Union candidates concurrent."
 "effect/SchemaAST#ConcurrencyAnnotationId":
-  replacement: "Schema.Annotations.Bottom[\"parseOptions\"]"
-  note: "Symbol annotation IDs were removed; put concurrency inside the parseOptions annotation."
+  replacement: "SchemaAST.ParseOptions"
+  note: "The annotation ID was removed. Pass concurrency in runtime ParseOptions; product parsing follows Effect.forEach concurrency semantics while Union candidates remain sequential."
 "effect/SchemaAST#Declaration":
   replacement: "SchemaAST.Declaration"
   note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
@@ -93,7 +96,7 @@
   note: "The separate encoded-bound projection was removed; use the encoded projection and v4 encoding links."
 "effect/SchemaAST#Enums":
   replacement: "SchemaAST.Enum"
-  note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
+  note: "Renamed to Enum in the v4 AST model. Numeric enum members must be finite; NaN and positive or negative Infinity throw at construction."
 "effect/SchemaAST#EquivalenceAnnotation":
   replacement: "Schema.Annotations.ToEquivalence.Declaration"
   note: "Equivalence derivation annotations now use the toEquivalence key in Schema.Annotations."
@@ -114,7 +117,7 @@
   note: "Resolve string-keyed annotations with resolveAt, or use resolveIdentifier, resolveTitle, and resolveDescription."
 "effect/SchemaAST#getBatchingAnnotation":
   replacement: "none"
-  note: "Batching annotations were removed; read ParseOptions.concurrency when controlling asynchronous parsing."
+  note: "Batching annotations were removed. ParseOptions.concurrency controls product child parsing only; configure request batching separately."
 "effect/SchemaAST#getBrandAnnotation":
   replacement: "SchemaAST.resolveAt(\"brands\")"
   note: "Resolve the string-keyed brands annotation."
@@ -122,8 +125,8 @@
   replacement: "none"
   note: "The Match-based compiler was removed; traverse SchemaAST.AST directly or use the relevant Schema derivation API."
 "effect/SchemaAST#getConcurrencyAnnotation":
-  replacement: "SchemaAST.resolveAt(\"parseOptions\")"
-  note: "Resolve parseOptions and read concurrency from it."
+  replacement: "SchemaAST.ParseOptions"
+  note: "Concurrency is no longer read from schema annotations. Pass it in runtime ParseOptions when creating or calling a parser. It applies to product children, not Union candidates."
 "effect/SchemaAST#getDecodingFallbackAnnotation":
   replacement: "none"
   note: "Fallbacks are encoding middleware in v4, not readable annotations; attach them with Schema.catchDecoding."
@@ -161,8 +164,8 @@
   replacement: "none"
   note: "Issue-title callbacks were removed; use message or expected annotations and SchemaIssue formatters."
 "effect/SchemaAST#getParseOptionsAnnotation":
-  replacement: "SchemaAST.resolveAt(\"parseOptions\")"
-  note: "Resolve the string-keyed parseOptions annotation."
+  replacement: "none"
+  note: "Parse options are no longer schema annotations. Pass options when creating or calling a decoder or encoder; there is no annotation-based override for nested schemas."
 "effect/SchemaAST#getPropertySignatures":
   replacement: "SchemaAST.Objects.propertySignatures"
   note: "Narrow to Objects and read propertySignatures directly."
@@ -327,10 +330,10 @@
   note: "Use the built-in JSON string codec instead of checking the old schema ID."
 "effect/SchemaAST#ParseOptions":
   replacement: "SchemaAST.ParseOptions"
-  note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
+  note: "Pass parsing options at runtime. onExcessProperty supports ignore or error, not preserve; model extra values with an explicit Record or StructWithRest. propertyOrder was removed. concurrency follows Effect.forEach semantics for tuple, array, struct, record, and struct-with-rest children, applies independently at each nested product, and does not make Union candidates concurrent. Output key order is unspecified, including in values passed to checks. Handle required presentation or serialization order explicitly outside the parser."
 "effect/SchemaAST#ParseOptionsAnnotationId":
-  replacement: "Schema.Annotations.Bottom[\"parseOptions\"]"
-  note: "Symbol annotation IDs were removed; use the parseOptions key."
+  replacement: "none"
+  note: "Parse options are no longer schema annotations. Pass options when creating or calling a decoder or encoder; there is no annotation-based override for nested schemas."
 "effect/SchemaAST#partial":
   replacement: "Schema.mapFields + Struct.map(Schema.optional)"
   note: "Partial object transforms moved to schema field transforms."
@@ -378,7 +381,7 @@
   note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
 "effect/SchemaAST#TemplateLiteral":
   replacement: "SchemaAST.TemplateLiteral"
-  note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
+  note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model. Parts must not contain encodings, including inside unions or nested templates; use Schema.TemplateLiteralParser for transformed parts."
 "effect/SchemaAST#TemplateLiteralSpan":
   replacement: "SchemaAST.TemplateLiteral"
   note: "Template literal parts are represented directly as AST values in v4."
@@ -396,7 +399,7 @@
   note: "Transformation implementations moved to SchemaTransformation and are stored on SchemaAST.Link."
 "effect/SchemaAST#TupleType":
   replacement: "SchemaAST.Arrays"
-  note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
+  note: "Use Arrays(isMutable, elements, rest, annotations?, checks?, encoding?, context?, encodingChecks?)."
 "effect/SchemaAST#Type":
   replacement: "SchemaAST.AST"
   note: "The tuple-element Type wrapper was removed; optionality and mutability moved to Context."
@@ -411,7 +414,7 @@
   note: "Symbol annotation IDs were removed; use declaration codec annotation keys."
 "effect/SchemaAST#TypeLiteral":
   replacement: "SchemaAST.Objects"
-  note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
+  note: "Use Objects(propertySignatures, indexSignatures, annotations?, checks?, encoding?, context?, encodingChecks?). Output key order is unspecified."
 "effect/SchemaAST#TypeLiteralTransformation":
   replacement: "SchemaAST.Encoding"
   note: "Object transformations are encoding links; use Schema.encodeKeys for key mappings."
@@ -423,7 +426,7 @@
   note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
 "effect/SchemaAST#Union":
   replacement: "SchemaAST.Union"
-  note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
+  note: "Pass member ASTs and an optional options object: new SchemaAST.Union(types, { mode: 'oneOf' }). Read options?.mode ?? 'anyOf' instead of a direct mode field."
 "effect/SchemaAST#UniqueSymbol":
   replacement: "SchemaAST.UniqueSymbol"
   note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."

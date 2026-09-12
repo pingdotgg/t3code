@@ -9,6 +9,7 @@
  *
  * @since 4.0.0
  */
+import type * as ByteSize from "../../ByteSize.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import type * as FileSystem from "../../FileSystem.ts"
@@ -829,6 +830,13 @@ export const bodyStream: {
 /**
  * Creates a file-backed request body from a filesystem path and sets it on the request.
  *
+ * **Details**
+ *
+ * Uses {@link HttpBody.file} to validate ranges lazily and calculate the EOF-clamped content length with exact
+ * bigint arithmetic. Invalid range inputs or a final length above `Number.MAX_SAFE_INTEGER` fail with
+ * `PlatformError` / `BadArgument`. Larger sizes, offsets, and byte counts are valid when the final length is
+ * representable as a safe integer. The request's Content-Length header contains that exact length.
+ *
  * @category combinators
  * @since 4.0.0
  */
@@ -836,9 +844,9 @@ export const bodyFile: {
   (
     path: string,
     options?: {
-      readonly bytesToRead?: FileSystem.SizeInput | undefined
-      readonly chunkSize?: FileSystem.SizeInput | undefined
-      readonly offset?: FileSystem.SizeInput | undefined
+      readonly bytesToRead?: ByteSize.Input | undefined
+      readonly chunkSize?: number | undefined
+      readonly offset?: ByteSize.Input | undefined
       readonly contentType?: string
     }
   ): (self: HttpClientRequest) => Effect.Effect<HttpClientRequest, PlatformError.PlatformError, FileSystem.FileSystem>
@@ -846,9 +854,9 @@ export const bodyFile: {
     self: HttpClientRequest,
     path: string,
     options?: {
-      readonly bytesToRead?: FileSystem.SizeInput | undefined
-      readonly chunkSize?: FileSystem.SizeInput | undefined
-      readonly offset?: FileSystem.SizeInput | undefined
+      readonly bytesToRead?: ByteSize.Input | undefined
+      readonly chunkSize?: number | undefined
+      readonly offset?: ByteSize.Input | undefined
       readonly contentType?: string
     }
   ): Effect.Effect<HttpClientRequest, PlatformError.PlatformError, FileSystem.FileSystem>
@@ -858,9 +866,9 @@ export const bodyFile: {
     self: HttpClientRequest,
     path: string,
     options?: {
-      readonly bytesToRead?: FileSystem.SizeInput | undefined
-      readonly chunkSize?: FileSystem.SizeInput | undefined
-      readonly offset?: FileSystem.SizeInput | undefined
+      readonly bytesToRead?: ByteSize.Input | undefined
+      readonly chunkSize?: number | undefined
+      readonly offset?: ByteSize.Input | undefined
       readonly contentType?: string
     }
   ): Effect.Effect<HttpClientRequest, PlatformError.PlatformError, FileSystem.FileSystem> =>
@@ -906,16 +914,8 @@ const fromWebBody = (request: globalThis.Request, method: HttpMethod): HttpBody.
   }
   return HttpBody.raw(request.body, {
     contentType: request.headers.get("content-type") ?? undefined,
-    contentLength: parseContentLength(request.headers.get("content-length"))
+    contentLength: bodyInternal.parseContentLength(request.headers.get("content-length"))
   })
-}
-
-const parseContentLength = (contentLength: string | null): number | undefined => {
-  if (contentLength === null) {
-    return undefined
-  }
-  const parsed = Number.parseInt(contentLength, 10)
-  return Number.isNaN(parsed) ? undefined : parsed
 }
 
 /**

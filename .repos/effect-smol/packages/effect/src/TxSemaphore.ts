@@ -19,7 +19,7 @@ import { hasProperty } from "./Predicate.ts"
 import type * as Scope from "./Scope.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxSemaphore"
+const TypeId = "~effect/TxSemaphore"
 
 /**
  * A transactional semaphore that manages permits using Software Transactional

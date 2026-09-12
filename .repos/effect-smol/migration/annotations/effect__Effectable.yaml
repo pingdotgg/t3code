@@ -3,7 +3,7 @@
   note: "The public channel brand moved to its owning module; v4 uses a string TypeId rather than the v3 Symbol."
 "effect/Effectable#Class":
   replacement: "Effectable.Class"
-  note: "Still available; replace commit() with an override property or getter returning the Effect."
+  note: "Still available; replace commit() with an asEffect() method returning the Effect. The intermediate v4 override property/getter is no longer supported."
 "effect/Effectable#CommitPrimitive":
   replacement: "new<A, E = never, R = never>() => Effect.Effect<A, E, R>"
   note: "The named constructor interface was removed; inline the constructor type when needed."
@@ -24,7 +24,7 @@
   note: "The public stream brand moved to its owning module; v4 uses a string TypeId rather than the v3 Symbol."
 "effect/Effectable#StructuralClass":
   replacement: "Effectable.Class"
-  note: "Use Class and migrate commit() to override; v4 equality is structural by default."
+  note: "Use Class and migrate commit() to asEffect(); v4 equality is structural by default."
 "effect/Effectable#StructuralCommitPrototype":
   replacement: "Effectable.Prototype"
   note: "Use Prototype with evaluate; a separate structural prototype is unnecessary because v4 equality is structural by default."

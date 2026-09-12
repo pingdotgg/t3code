@@ -77,28 +77,27 @@ Inside the project:
 
 There is no separate credentials step. The first time you run
 `alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
-`Hetzner.providers()`, alchemy walks you through an interactive
-login with two options:
+`Hetzner.providers()`, alchemy prompts for the token you generated
+above (and, optionally, an API endpoint override). It is saved under
+`~/.alchemy/credentials/<profile>/` in the selected
+[profile](/environments/profiles) and reused on subsequent commands.
 
-- **API Token** — paste the token you generated above. It's
-  verified against the Hetzner API and saved under
-  `~/.alchemy/credentials/<profile>/`.
-- **Environment Variables** — reads `HCLOUD_TOKEN` from the
-  environment on every run (plus an optional `HCLOUD_ENDPOINT` to
-  override the API base URL). This is the method for CI — when
-  alchemy detects `CI=true` it skips the prompt and uses the
-  environment automatically.
-
-Either choice is saved to your **`default`**
-[profile](/environments/profiles) and reused on every subsequent
-command.
+In CI (`CI=true`) alchemy skips the prompt and reads `HCLOUD_TOKEN`
+(plus an optional `HCLOUD_ENDPOINT`) from the environment instead.
 
 To re-run the setup later (e.g. to rotate the token, or configure a
 separate `prod` profile):
 
 ```sh
-alchemy login --configure
-alchemy login --profile prod --configure
+# Re-run the interactive setup (e.g. to rotate the token)
+alchemy profile edit --reconfigure Hetzner
+
+# Or connect Hetzner in a separate `prod` profile
+alchemy profile create prod
+alchemy profile edit --profile prod --add Hetzner
+
+# Non-interactive (scripts, agents)
+alchemy profile edit --add Hetzner --method stored --set token=env:HCLOUD_TOKEN
 ```
 
 Inspect what's stored (secrets are redacted):

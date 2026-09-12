@@ -50,14 +50,17 @@ const makeExporter = (
     Effect.provide(OtlpExporter.layerFlusher)
   )
 
-const makeExporterRaw = (maxBatchSize: number | "disabled" = 1) =>
+const makeExporterRaw = (
+  maxBatchSize: number | "disabled" = 1,
+  body: (data: Array<any>) => HttpBody.HttpBody = () => HttpBody.empty
+) =>
   OtlpExporter.make({
     label: "OtlpExporterTest",
     url: "http://localhost:4318/v1/logs",
     headers: undefined,
     exportInterval: "1 hour",
     maxBatchSize,
-    body: () => [HttpBody.empty, Effect.void],
+    body: (data) => [body(data), Effect.void],
     shutdownTimeout: "1 second"
   })
 
@@ -142,12 +145,14 @@ describe("OtlpExporter", () => {
       assert.isFalse(yield* Deferred.isDone(started[1]))
 
       yield* Deferred.succeed(releases[0], undefined)
+      exporter.push({ value: 2 })
       yield* TestClock.adjust("1 second")
       yield* Deferred.await(started[1])
 
+      exporter.push({ value: 3 })
       const closeFiber = yield* Effect.forkChild(Scope.close(scope, Exit.void))
-      yield* Deferred.await(started[2])
       yield* Deferred.succeed(releases[1], undefined)
+      yield* Deferred.await(started[2])
       yield* Deferred.succeed(releases[2], undefined)
       yield* Fiber.join(closeFiber)
     }))
@@ -347,6 +352,53 @@ describe("OtlpExporter", () => {
         )
       }))
 
+    it.effect("does not export empty payloads when batching is disabled", () =>
+      Effect.gen(function*() {
+        const { httpClient } = yield* makeStatusHttpClient(200)
+        const payloads: Array<ReadonlyArray<unknown>> = []
+
+        yield* Effect.scoped(
+          Effect.gen(function*() {
+            yield* makeExporterRaw("disabled", (items) => {
+              payloads.push(items)
+              return HttpBody.empty
+            })
+            const flusher = yield* OtlpExporter.Flusher
+            yield* flusher.flush
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provide(OtlpExporter.layerFlusher)
+          )
+        )
+
+        assert.deepStrictEqual(payloads, [])
+      }))
+
+    it.effect("exports buffered items once when batching is disabled", () =>
+      Effect.gen(function*() {
+        const { httpClient } = yield* makeStatusHttpClient(200)
+        const payloads: Array<ReadonlyArray<unknown>> = []
+
+        yield* Effect.scoped(
+          Effect.gen(function*() {
+            const exporter = yield* makeExporterRaw("disabled", (items) => {
+              payloads.push(items)
+              return HttpBody.empty
+            })
+            const flusher = yield* OtlpExporter.Flusher
+
+            exporter.push({ value: 1 })
+            yield* flusher.flush
+            yield* flusher.flush
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provide(OtlpExporter.layerFlusher)
+          )
+        )
+
+        assert.deepStrictEqual(payloads, [[{ value: 1 }]])
+      }))
+
     it.effect("shares one registry across traces, logs and metrics", () =>
       Effect.gen(function*() {
         const { httpClient, urls } = yield* makeStatusHttpClient(200)
@@ -421,10 +473,11 @@ describe("OtlpExporter", () => {
         const flusher = yield* OtlpExporter.Flusher
         const scope = yield* Scope.make()
 
-        yield* makeExporterRaw("disabled").pipe(
+        const exporter = yield* makeExporterRaw("disabled").pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(Scope.Scope, scope)
         )
+        exporter.push({ value: 1 })
 
         yield* Scope.close(scope, Exit.void)
         assert.strictEqual(yield* Ref.get(attempts), 1)

@@ -10,7 +10,9 @@ const ProxyWorker = {
       "#cloudflare-runtime-core-worker/proxy/WorkerProxy.worker",
     ),
 };
+import { BINDING_PROXY_SHARED_SECRET } from "./ProxyHeaders.shared.ts";
 import * as Internet from "../globals/Internet.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
 import { formatInternalWorkerModules } from "../internal/internal-modules.ts";
 import * as Port from "../internal/Port.ts";
 import type { RuntimeError } from "../RuntimeError.shared.ts";
@@ -49,6 +51,7 @@ export interface ServeOptions {
 const MAX_SERVE_ATTEMPTS = 8;
 
 export interface WorkerProxyInstance {
+  readonly proxySharedSecret: string;
   readonly url: URL;
   readonly set: (upstream: URL) => Effect.Effect<void, SystemError>;
   readonly unset: () => Effect.Effect<void, SystemError>;
@@ -104,6 +107,7 @@ export const WorkerProxyLive = Layer.effect(
         // served verbatim.
         ipv6: options.host === undefined && ipv6Loopback,
         token: crypto.randomUUID(),
+        proxySharedSecret: crypto.randomUUID(),
       };
     });
     type ResolvedOptions = Effect.Success<ReturnType<typeof normalizeOptions>>;
@@ -113,7 +117,13 @@ export const WorkerProxyLive = Layer.effect(
       formatInternalWorkerModules,
     );
 
-    const serve = ({ host, port, token, ipv6 }: ResolvedOptions) =>
+    const serve = ({
+      host,
+      port,
+      token,
+      ipv6,
+      proxySharedSecret,
+    }: ResolvedOptions) =>
       workerd
         .serve({
           sockets: [
@@ -140,7 +150,7 @@ export const WorkerProxyLive = Layer.effect(
             {
               name: "proxy:worker",
               worker: {
-                compatibilityDate: "2026-03-10",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules,
                 bindings: [
                   {
@@ -148,6 +158,10 @@ export const WorkerProxyLive = Layer.effect(
                     durableObjectNamespace: { className: "WorkerProxy" },
                   },
                   { name: "PROXY_TOKEN", text: token },
+                  {
+                    name: BINDING_PROXY_SHARED_SECRET,
+                    text: proxySharedSecret,
+                  },
                 ],
                 durableObjectNamespaces: [
                   {
@@ -209,6 +223,7 @@ export const WorkerProxyLive = Layer.effect(
         }
         return {
           url,
+          proxySharedSecret: resolved.proxySharedSecret,
           set: Effect.fn("WorkerProxyInstance.set")(function* (upstream) {
             const response = yield* Effect.promise(() =>
               fetch(new URL("/cdn-cgi/proxy/controller", url), {

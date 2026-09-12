@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Channel, Context, Fiber, Stream, Tracer } from "effect"
+import { Channel, Context, Fiber, References, Stream, Tracer } from "effect"
 import * as Cause from "effect/Cause"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
@@ -553,6 +553,36 @@ describe("Layer", () => {
   })
 
   describe("tracing", () => {
+    it.effect("withSpan forwards captureStackTrace to the layer stack frame", () =>
+      Effect.gen(function*() {
+        const Frame = Context.Service<References.StackFrame | undefined>("Frame")
+        const layer = Layer.effect(Frame, References.CurrentStackFrame)
+
+        // By default the frame records this call site, not Layer's internals.
+        const captured = yield* Effect.provide(Frame, Layer.withSpan(layer, "captured"))
+        assert.include(captured!.stack()!, "Layer.test.ts")
+
+        const disabled = yield* Effect.provide(
+          Frame,
+          layer.pipe(Layer.withSpan("disabled", { captureStackTrace: false }))
+        )
+        assert.isUndefined(disabled!.stack())
+
+        let calls = 0
+        const supplied = yield* Effect.provide(
+          Frame,
+          Layer.withSpan(layer, "supplied", {
+            captureStackTrace: () => {
+              calls++
+              return "at construct (app.ts:1:1)"
+            }
+          })
+        )
+        assert.strictEqual(calls, 0)
+        assert.strictEqual(supplied!.stack(), "at construct (app.ts:1:1)")
+        assert.strictEqual(calls, 1)
+      }))
+
     it.effect("withSpan supports data-first usage and runs the onEnd finalizer", () =>
       Effect.gen(function*() {
         // Edge case: the data-first overload has separate runtime branching, and onEnd

@@ -623,8 +623,13 @@ const releaseItem = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): Effect.Effec
     if (state.invalidated.has(item)) {
       return invalidatePoolItem(self, item)
     }
-    if (item.refCount === self.config.concurrency - 1) {
-      addAvailable(self, item)
+    // Every release frees one slot, so it can admit one waiter. Reacting only
+    // to the saturated-to-unsaturated transition strands the rest: several
+    // leases returning at once would wake a single waiter and leave the others
+    // asleep against an item that has capacity for them. `addAvailable` is
+    // idempotent, so re-adding an available item is free.
+    if (item.refCount < self.config.concurrency) {
+      addAvailableFront(self, item)
       wakeWaiters(self, fiber, 1)
     }
     return internal.void
@@ -668,8 +673,12 @@ const wakeAll = <A, E>(self: Pool<A, E>): Effect.Effect<void> =>
     return internal.void
   })
 
+// Reservations prevent reuse without extending the lifetime of borrowed items.
+const reservations = new WeakMap<PoolItem<unknown, unknown>, number>()
+
+/** Adds a freshly acquired item, which has no use behind it, at the back. */
 const addAvailable = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): void => {
-  if (item.isAvailable) return
+  if (item.isAvailable || reservations.has(item)) return
   item.isAvailable = true
   item.availablePrevious = self.state.availableTail
   item.availableNext = undefined
@@ -679,6 +688,32 @@ const addAvailable = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): void => {
     self.state.availableHead = item
   }
   self.state.availableTail = item
+}
+
+/**
+ * Returns a released item at the front, so the next borrow gets the one used
+ * most recently. Borrowers take from the front, so the list runs warmest
+ * first.
+ *
+ * Sending it to the back instead spreads a sequence of borrows evenly over
+ * every item the pool has open. For a pool of connections that means none of
+ * them is ever the hot one - each borrow lands on a peer that has been sitting
+ * idle, losing whatever warmth it had - and it means `timeToLive` never
+ * reclaims anything, because a pool that grew for one burst keeps every item
+ * equally fresh forever. Under saturation the two orders agree, since every
+ * item is checked out either way.
+ */
+const addAvailableFront = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): void => {
+  if (item.isAvailable || reservations.has(item)) return
+  item.isAvailable = true
+  item.availablePrevious = undefined
+  item.availableNext = self.state.availableHead
+  if (self.state.availableHead !== undefined) {
+    self.state.availableHead.availablePrevious = item
+  } else {
+    self.state.availableTail = item
+  }
+  self.state.availableHead = item
 }
 
 const removeAvailable = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): void => {
@@ -718,9 +753,9 @@ const removeAvailable = <A, E>(self: Pool<A, E>, item: PoolItem<A, E>): void => 
  * @since 2.0.0
  */
 export const invalidate: {
-  <A>(item: A): <E>(self: Pool<A, E>) => Effect.Effect<void, never, Scope.Scope>
-  <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void, never, Scope.Scope>
-} = dual(2, <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void, never, Scope.Scope> =>
+  <A>(item: A): <E>(self: Pool<A, E>) => Effect.Effect<void>
+  <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void>
+} = dual(2, <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void> =>
   Effect.suspend(() => {
     if (self.state.isShuttingDown) return Effect.void
     for (const poolItem of self.state.items) {
@@ -731,6 +766,60 @@ export const invalidate: {
     }
     return Effect.void
   }))
+
+/**
+ * Reserves a leased item for exclusive use until the scope closes. This
+ * removes the item's remaining capacity from the pool but does not wait
+ * for existing leases to finish. It has no effect when per-item concurrency is
+ * `1` or the pool does not contain the item.
+ *
+ * @see {@link get} for acquiring an item
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const reserve: {
+  <A>(item: A): <E>(self: Pool<A, E>) => Effect.Effect<void, never, Scope.Scope>
+  <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void, never, Scope.Scope>
+} = dual(
+  2,
+  <A, E>(self: Pool<A, E>, item: A): Effect.Effect<void, never, Scope.Scope> =>
+    Effect.asVoid(Effect.acquireRelease(
+      Effect.sync(() => {
+        if (self.config.concurrency === 1) return undefined
+        for (const poolItem of self.state.items) {
+          if (poolItem.exit._tag !== "Success" || poolItem.exit.value !== item) continue
+          const existing = reservations.get(poolItem)
+          if (existing === undefined) self.state.usage += self.config.concurrency - 1
+          reservations.set(poolItem, (existing ?? 0) + 1)
+          removeAvailable(self, poolItem)
+          return poolItem
+        }
+        return undefined
+      }),
+      (poolItem) =>
+        core.withFiber((fiber) => {
+          if (poolItem === undefined) return internal.void
+          const remaining = (reservations.get(poolItem) ?? 1) - 1
+          if (remaining > 0) {
+            reservations.set(poolItem, remaining)
+            return internal.void
+          }
+          reservations.delete(poolItem)
+          self.state.usage -= self.config.concurrency - 1
+          if (
+            !self.state.isShuttingDown &&
+            self.state.items.has(poolItem) &&
+            !self.state.invalidated.has(poolItem) &&
+            poolItem.refCount < self.config.concurrency
+          ) {
+            addAvailableFront(self, poolItem)
+            wakeWaiters(self, fiber, self.config.concurrency - poolItem.refCount)
+          }
+          return internal.void
+        })
+    ))
+)
 
 const invalidatePoolItem = <A, E>(self: Pool<A, E>, poolItem: PoolItem<A, E>): Effect.Effect<void> =>
   Effect.suspend(() => {
@@ -747,7 +836,13 @@ const invalidatePoolItem = <A, E>(self: Pool<A, E>, poolItem: PoolItem<A, E>): E
     }
     self.state.invalidated.add(poolItem)
     removeAvailable(self, poolItem)
-    return Effect.void
+    // An invalidated item stops counting towards the pool's active size, so the
+    // pool is now below target and has to top itself back up. Waiting for the
+    // last lease to be returned would strand anybody already queued: the item
+    // they are waiting for is never coming back.
+    return Effect.asVoid(
+      Effect.forkIn(Effect.interruptible(resize(self)), self.state.scope, { startImmediately: true })
+    )
   })
 
 const resize = <A, E>(self: Pool<A, E>): Effect.Effect<void> =>
@@ -906,7 +1001,7 @@ const strategyUsageTTL = Effect.fnUntraced(function*<A, E>(ttl: Duration.Input) 
           return Effect.undefined
         }
         const item = Iterable.head(
-          Iterable.filter(pool.state.invalidated, (item) => !item.disableReclaim)
+          Iterable.filter(pool.state.invalidated, (item) => !item.disableReclaim && !reservations.has(item))
         )
         if (item._tag === "None") {
           return Effect.undefined

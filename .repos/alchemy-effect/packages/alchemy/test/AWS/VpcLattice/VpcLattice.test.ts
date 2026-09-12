@@ -1,5 +1,5 @@
 import * as AWS from "@/AWS";
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Provider from "@/Provider";
 import { Vpc } from "@/AWS/EC2";
 import { normalizePolicyDocument } from "@/AWS/IAM/Policy.ts";

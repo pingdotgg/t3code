@@ -317,7 +317,7 @@ export const make = <R, ER>(
               self.cachedContext = context
             })
         ),
-        { ...defaultRunOptions, scheduler: fiber.currentScheduler }
+        { ...defaultRunOptions, scheduler: fiber.cache.scheduler }
       )
     }
     return Effect.flatten(Fiber.await(buildFiber))

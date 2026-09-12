@@ -1,6 +1,9 @@
 ---
 title: Getting started
 description: Install Alchemy and create your first Stack in under two minutes.
+next:
+  link: /what-is-alchemy
+  label: What is Alchemy?
 ---
 
 import Terminal from "../../components/Terminal.astro";
@@ -8,6 +11,12 @@ import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 import { effectVersion } from "../../versions";
 
 export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+
+:::tip
+Want the idea before the install? [What is Alchemy?](/what-is-alchemy)
+explains the model in a few minutes. Otherwise, read on and it's the
+next page.
+:::
 
 ## Prerequisites
 
@@ -93,12 +102,13 @@ Run `alchemy deploy` to create the Bucket on Cloudflare:
   </TabItem>
 </Tabs>
 
-The first time you deploy, Alchemy walks each provider in your stack
-(here, Cloudflare) through an interactive login and saves the
-credentials to your **`default`** [profile](/environments/profiles) at
-`~/.alchemy/profiles.json`. For Cloudflare you can sign in with
-OAuth in the browser or paste an API token — no environment
-variables required.
+Connect Cloudflare first with `alchemy profile edit --add Cloudflare`.
+Sign in with OAuth in the browser or paste an API token. The
+credentials are saved to your **`default`**
+[profile](/environments/profiles) at `~/.alchemy/profiles.json`. No
+environment variables required. Logging in only ever happens through the
+`profile` command; a deploy with nothing configured fails with the exact
+command to run.
 
 Once you're authenticated, Alchemy shows a plan, asks for
 confirmation, and provisions the resource:
@@ -119,38 +129,49 @@ Full command reference: [CLI](/cli).
 
 :::tip
 To re-run the credential prompt later (e.g. to switch from OAuth to
-an API token, or to add a `prod` profile) use
-`alchemy login --configure` or `alchemy login --profile prod --configure`.
+an API token), use `alchemy profile edit --reconfigure Cloudflare`.
+For a separate profile, run `alchemy profile create prod` followed by
+`alchemy profile edit --profile prod`.
 See [Profiles](/environments/profiles) for the full picture.
 :::
 
 ## Where next
 
+You have a live Stack. [What is Alchemy?](/what-is-alchemy) explains
+what just happened and the model the rest of the docs build on. The
+[tutorial](/cloudflare/tutorial/part-1) then builds a full app on
+Cloudflare, starting from this exact Stack.
+
 <div class="next-steps">
 
+<a href="/what-is-alchemy" class="next-card next-card--recommended">
+  <strong>What is Alchemy?</strong>
+  <span>Infrastructure as Code built in Effect, with Infrastructure as Effects on top.</span>
+</a>
+
 <a href="/cloudflare/tutorial/part-1" class="next-card">
-  <strong>Tutorial — recommended</strong>
-  <span>Adds a Worker to this Stack and covers the core concepts.</span>
+  <strong>Tutorial</strong>
+  <span>Build a full app on Cloudflare starting from this Stack: a Worker, bindings, tests, local dev, CI, and telemetry.</span>
+</a>
+
+<a href="/infrastructure-as-effects" class="next-card">
+  <strong>Infrastructure as Effects</strong>
+  <span>The model the rest of the docs build on: Runtimes, Bindings, Layers, and the Construction and Runtime phases.</span>
 </a>
 
 <a href="/cloudflare" class="next-card">
   <strong>Cloudflare</strong>
-  <span>Pick your provider — Workers, R2, KV, D1, and more.</span>
+  <span>Workers, Durable Objects, R2, KV, D1, Queues, Workflows, and Containers, with a tutorial and a guide for each.</span>
 </a>
 
 <a href="/aws" class="next-card">
   <strong>AWS</strong>
-  <span>Pick your provider — Lambda, S3, SQS, DynamoDB, and more.</span>
-</a>
-
-<a href="/migrating-from-v1" class="next-card">
-  <strong>Migrating from v1</strong>
-  <span>Upgrading from async/await Alchemy? Start here.</span>
+  <span>Lambda, S3, SQS, DynamoDB, EC2, ECS, and EKS, with a tutorial and a guide for each.</span>
 </a>
 
 <a href="/cli" class="next-card">
   <strong>CLI</strong>
-  <span>Every command — deploy, destroy, dev, tail, state.</span>
+  <span>Every command and its flags: deploy, plan, destroy, dev, tail, logs, and state.</span>
 </a>
 
 </div>

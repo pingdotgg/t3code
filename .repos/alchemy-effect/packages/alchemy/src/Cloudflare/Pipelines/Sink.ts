@@ -235,8 +235,8 @@ export type Sink = Resource<
  *   config: {
  *     bucket: bucket.bucketName,
  *     credentials: {
- *       accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
- *       secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
+ *       accessKeyId: yield* Config.Redacted("R2_ACCESS_KEY_ID"),
+ *       secretAccessKey: yield* Config.Redacted("R2_SECRET_ACCESS_KEY"),
  *     },
  *     path: "ingest",
  *     rollingPolicy: { intervalSeconds: 30 },
@@ -262,7 +262,7 @@ export type Sink = Resource<
  *     bucket: bucket.bucketName,
  *     tableName: "events",
  *     namespace: "default",
- *     token: yield* Config.redacted("CATALOG_TOKEN"),
+ *     token: yield* Config.Redacted("CATALOG_TOKEN"),
  *   },
  * });
  * ```

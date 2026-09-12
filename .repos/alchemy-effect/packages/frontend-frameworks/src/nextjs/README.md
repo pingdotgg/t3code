@@ -36,7 +36,7 @@ import * as Nextjs from "@alchemy.run/frontend-frameworks/nextjs";
 const layer = Nextjs.make({
   dev: { mode: "hmr" },
   vite: {
-    compatibilityDate: "2026-05-12",
+    compatibilityDate: "2026-08-31",
     worker: { name: "my-app", bindings: [Text.local("TEST_TEXT", "value")] },
   },
 });
@@ -85,3 +85,8 @@ source: {
   OpenNext's version probe without installing wrangler.
 - `next` itself is resolved from the _project's_ `node_modules`, never from a
   hoisted sibling.
+
+## Upstream references
+
+- Next.js: [`55d30fb91d8197597c5c400174f1d38a89333de8`](https://github.com/vercel/next.js/tree/55d30fb91d8197597c5c400174f1d38a89333de8)
+- OpenNext for Cloudflare: [`da4b7fc8c89441a6f96205635fa70e329d1f0df7`](https://github.com/opennextjs/opennextjs-cloudflare/tree/da4b7fc8c89441a6f96205635fa70e329d1f0df7)

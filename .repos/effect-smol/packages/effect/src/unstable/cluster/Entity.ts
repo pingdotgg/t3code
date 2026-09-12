@@ -623,6 +623,7 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
       Rpc.ServicesClient<Rpcs> | Rpc.ServicesServer<Rpcs> | Rpc.Middleware<Rpcs> | LR
     >
     readonly concurrency: number | "unbounded"
+    readonly disableFatalDefects: boolean | undefined
     readonly build: Effect.Effect<Context.Context<Rpc.ToHandler<Rpcs>>>
   }>()
   const sharding = shardingTag.of({
@@ -632,6 +633,7 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
         entityMap.set(entity.type, {
           context: context as any,
           concurrency: options?.concurrency ?? 1,
+          disableFatalDefects: options?.disableFatalDefects,
           build: entity.protocol.toHandlers(handlers as any) as any
         })
         return Effect.void
@@ -663,6 +665,7 @@ export const makeTestClient: <Type extends string, Rpcs extends Rpc.Any, LA, LE,
     let client!: Effect.Success<ReturnType<typeof RpcClient.makeNoSerialization<Rpcs, never>>>
     const server = yield* RpcServer.makeNoSerialization(entity.protocol, {
       concurrency: entityEntry.concurrency,
+      disableFatalDefects: entityEntry.disableFatalDefects,
       onFromServer(response) {
         return client.write(response)
       }

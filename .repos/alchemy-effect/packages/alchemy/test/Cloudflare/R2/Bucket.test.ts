@@ -1,8 +1,9 @@
 import { AlchemyContext } from "@/AlchemyContext.ts";
 import { ArtifactStore, createArtifactStore } from "@/Artifacts.ts";
 import * as Cloudflare from "@/Cloudflare";
-import type { CloudflareResolvedCredentials } from "@/Cloudflare/Auth/AuthProvider.ts";
+import type { CloudflareResolvedCredentials } from "@/Cloudflare/Auth/AuthConfig.ts";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import * as Drift from "@/Drift.ts";
 import { LocalRuntimeState } from "@/Cloudflare/LocalRuntime.ts";
 import { InstanceId } from "@/InstanceId.ts";
 import * as RemovalPolicy from "@/RemovalPolicy.ts";
@@ -695,6 +696,109 @@ test.provider("cors reconciliation converges drift and adoption", (stack) =>
     yield* stack.destroy();
     yield* waitForBucketToBeDeleted(bucketName, accountId);
   }).pipe(logLevel),
+);
+
+test.provider(
+  "drift detects and repairs a live storage-class change",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const bucketName = "alchemy-test-r2-drift-repair";
+
+      yield* forceDeleteBucket(accountId, bucketName);
+      yield* stack.destroy();
+
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.R2.Bucket("DriftRepairBucket", {
+            forceDestroy: true,
+            name: bucketName,
+            storageClass: "Standard",
+          });
+        }),
+      );
+
+      yield* r2.patchBucket({
+        accountId,
+        bucketName,
+        storageClass: "InfrequentAccess",
+      });
+
+      const detected = yield* Drift.detect({
+        name: stack.name,
+        stage: "test",
+      }).pipe(Effect.provide(stack.state));
+      expect(detected.resources.DriftRepairBucket).toMatchObject({
+        action: "drifted",
+        resourceType: "Cloudflare.R2.Bucket",
+      });
+
+      const repaired = yield* Drift.repair({
+        name: stack.name,
+        stage: "test",
+      }).pipe(Effect.provide(stack.state));
+      expect(repaired.resources.DriftRepairBucket).toMatchObject({
+        action: "repaired",
+      });
+
+      const bucket = yield* getBucketWhenReady(bucketName, accountId);
+      expect(bucket.storageClass).toEqual("Standard");
+
+      yield* stack.destroy();
+      yield* waitForBucketToBeDeleted(bucketName, accountId);
+    }).pipe(logLevel),
+);
+
+test.provider(
+  "drift detects and recreates a bucket deleted out of band",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const bucketName = "alchemy-test-r2-drift-recreate";
+
+      yield* forceDeleteBucket(accountId, bucketName);
+      yield* stack.destroy();
+
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.R2.Bucket("DriftRecreateBucket", {
+            forceDestroy: true,
+            name: bucketName,
+          });
+        }),
+      );
+      const before = yield* stateOf(stack, "DriftRecreateBucket");
+
+      yield* forceDeleteBucket(accountId, bucketName);
+      yield* waitForBucketToBeDeleted(bucketName, accountId);
+
+      const detected = yield* Drift.detect({
+        name: stack.name,
+        stage: "test",
+      }).pipe(Effect.provide(stack.state));
+      expect(detected.resources.DriftRecreateBucket).toMatchObject({
+        action: "missing",
+        resourceType: "Cloudflare.R2.Bucket",
+      });
+
+      const repaired = yield* Drift.repair({
+        name: stack.name,
+        stage: "test",
+      }).pipe(Effect.provide(stack.state));
+      expect(repaired.resources.DriftRecreateBucket).toMatchObject({
+        action: "recreated",
+      });
+
+      const after = yield* stateOf(stack, "DriftRecreateBucket");
+      expect(after?.instanceId).toEqual(before?.instanceId);
+      expect((yield* getBucketWhenReady(bucketName, accountId)).name).toEqual(
+        bucketName,
+      );
+
+      yield* stack.destroy();
+      yield* waitForBucketToBeDeleted(bucketName, accountId);
+    }).pipe(logLevel),
+  { timeout: 180_000 },
 );
 
 test.provider("cors is applied to the new bucket on replacement", (stack) =>

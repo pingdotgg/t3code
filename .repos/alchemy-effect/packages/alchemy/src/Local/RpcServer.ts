@@ -3,8 +3,10 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import type * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { makePlainConsoleSink } from "../Util/ConsoleSink.ts";
 import type { HttpClient } from "effect/unstable/http/HttpClient";
 import { ArtifactStore, createArtifactStore } from "../Artifacts.ts";
 import type { ProviderService } from "../Provider.ts";
@@ -213,6 +215,15 @@ export const launch = <ROut, E>(
         FetchHttpClient.layer,
         Layer.sync(ArtifactStore, createArtifactStore),
       ),
+    ),
+    // Sidecar stdio is piped, so effect's default pretty logger disables
+    // colors (it only checks `isTTY`, never FORCE_COLOR). The spawner sets
+    // FORCE_COLOR exactly when the destination terminal supports color —
+    // honor it here so sidecar log lines match the rest of the dev output.
+    Layer.provide(
+      process.env.FORCE_COLOR
+        ? Logger.layer([makePlainConsoleSink(true)])
+        : Layer.empty,
     ),
     Layer.launch,
     Effect.scoped,

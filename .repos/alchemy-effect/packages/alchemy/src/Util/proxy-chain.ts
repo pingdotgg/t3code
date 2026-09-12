@@ -122,6 +122,22 @@ const replayArg = (
 export const proxyChain = <T>(cached: Effect.Effect<T, any, any>): T =>
   chain(cached) as T;
 
+/**
+ * Property reads the Effect runtime uses as *brand probes* — `symbol` keys
+ * and `~effect/...` type-id strings (`~effect/Exit`, `~effect/Effect`, …).
+ * The fiber's generator runner distinguishes a yielded Effect from an Exit
+ * with `value[ExitTypeId] !== undefined` (effect ≥ 4.0.0-rc.113; earlier
+ * releases used `in`, which the `has` trap already answers). Recording such
+ * a read as a chain step would hand back a truthy proxy, so the runner
+ * would treat every chain as an already-settled Exit and resume the
+ * generator with `proxy.value` — another proxy — instead of running it.
+ * Brand probes therefore answer `undefined` when the underlying effect
+ * lacks the key; the `has` trap keeps `in`-based probes correct too.
+ */
+const isBrandProbe = (prop: PropertyKey): boolean =>
+  typeof prop === "symbol" ||
+  (typeof prop === "string" && prop.startsWith("~effect/"));
+
 const chain = (
   cached: Effect.Effect<unknown, any, any>,
   ops: ReadonlyArray<Op> = [],
@@ -135,6 +151,9 @@ const chain = (
     get(_, prop) {
       if (Reflect.has(effect, prop)) {
         return Reflect.get(effect, prop);
+      }
+      if (isBrandProbe(prop)) {
+        return undefined;
       }
       return chain(cached, [...ops, { kind: "get", prop }]);
     },

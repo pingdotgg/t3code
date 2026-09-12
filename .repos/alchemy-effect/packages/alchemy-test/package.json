@@ -15,6 +15,11 @@
       "bun": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./DevCli": {
+      "types": "./lib/DevCli.d.ts",
+      "bun": "./src/DevCli.ts",
+      "import": "./src/DevCli.ts"
+    },
     "./*": {
       "types": "./lib/*.d.ts",
       "bun": "./src/*.ts",

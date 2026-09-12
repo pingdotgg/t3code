@@ -24,15 +24,15 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const AWS_REGION = yield* yield* AWS.Region;
-    const DOPPLER_TOKEN = yield* Config.redacted("DOPPLER_TOKEN");
-    const CLOUDFLARE_API_TOKEN = yield* Config.redacted("CLOUDFLARE_API_TOKEN");
-    const TEST_CLOUDFLARE_ACCOUNT_ID = yield* Config.string(
+    const DOPPLER_TOKEN = yield* Config.Redacted("DOPPLER_TOKEN");
+    const CLOUDFLARE_API_TOKEN = yield* Config.Redacted("CLOUDFLARE_API_TOKEN");
+    const TEST_CLOUDFLARE_ACCOUNT_ID = yield* Config.String(
       "TEST_CLOUDFLARE_ACCOUNT_ID",
     );
-    const PROD_CLOUDFLARE_ACCOUNT_ID = yield* Config.string(
+    const PROD_CLOUDFLARE_ACCOUNT_ID = yield* Config.String(
       "PROD_CLOUDFLARE_ACCOUNT_ID",
     );
-    const PR_PACKAGE_TOKEN = yield* Config.string("PR_PACKAGE_TOKEN");
+    const PR_PACKAGE_TOKEN = yield* Config.String("PR_PACKAGE_TOKEN");
 
     const PROD_CLOUDFLARE_API_TOKEN = yield* AccountApiToken("ProdApiToken", {
       accountId: PROD_CLOUDFLARE_ACCOUNT_ID,

@@ -100,7 +100,7 @@ export const resolveKubeConfigPath = Effect.fn(function* (
   explicit: string | undefined,
 ) {
   if (explicit) return yield* expandHome(explicit);
-  const fromEnv = yield* Config.string("KUBECONFIG").pipe(
+  const fromEnv = yield* Config.String("KUBECONFIG").pipe(
     Effect.orElseSucceed(() => undefined),
   );
   // $KUBECONFIG may be a path list; use the first entry like kubectl's

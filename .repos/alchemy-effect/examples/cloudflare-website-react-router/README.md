@@ -9,7 +9,7 @@ they assemble into one Worker.
 
 - `app/routes/home.tsx` is a server component rendered in the Worker on
   every request; it reads the `GREETING` value declared in
-  `alchemy.run.ts` from `process.env` (populated by the `nodejs_compat`
+  `alchemy.run.ts` from `process.env` (populated by date-default Node.js
   compatibility flag).
 - `app/components/Card.tsx` is a React component styled with Tailwind
   utilities (wired through `@tailwindcss/vite` in `vite.config.ts`).

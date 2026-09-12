@@ -420,7 +420,7 @@ const setLimit = (input: {
   softLimitDollars: number;
   hardLimitDollars?: number | null;
 }) =>
-  railway.usageLimitSet({
+  railway.setUsageLimit({
     input: {
       customerId: input.customerId,
       softLimitDollars: input.softLimitDollars,
@@ -558,7 +558,7 @@ export const UsageLimitProvider = () =>
       const workspaceId = output.workspaceId;
       if (customerId.length === 0) return;
       yield* railway
-        .usageLimitRemove({ input: { customerId } })
+        .removeUsageLimit({ input: { customerId } })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type {
   ProjectResponseServicesEdgesItemNode,
-  ServiceCreateResponse,
+  CreateServiceResponse,
   ServiceInstanceResponse,
   ServiceResponse,
-  ServiceUpdateResponse,
+  UpdateServiceResponse,
 } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
@@ -289,8 +289,8 @@ class RedisDeployPending extends Data.TaggedError(
 
 type CloudService =
   | ServiceResponse
-  | ServiceCreateResponse
-  | ServiceUpdateResponse
+  | CreateServiceResponse
+  | UpdateServiceResponse
   | ProjectResponseServicesEdgesItemNode;
 
 const projectIdOf = (value: unknown): string | undefined => {
@@ -486,7 +486,7 @@ const upsertVariable = (input: {
   name: string;
   value: string;
 }) =>
-  railway.variableUpsert({
+  railway.upsertVariable({
     input: {
       projectId: input.projectId,
       environmentId: input.environmentId,
@@ -703,7 +703,7 @@ export const RedisProvider = () =>
 
       if (current === undefined) {
         const created = yield* railway
-          .serviceCreate({
+          .createService({
             input: {
               projectId,
               environmentId,
@@ -728,7 +728,7 @@ export const RedisProvider = () =>
       }
 
       if (current.name !== name) {
-        current = yield* railway.serviceUpdate({
+        current = yield* railway.updateService({
           id: current.id,
           input: { name },
         });
@@ -745,7 +745,7 @@ export const RedisProvider = () =>
       const observedStart = instance?.startCommand ?? undefined;
       const startChanged = (observedStart ?? undefined) !== startCommand;
       if (imageChanged || regionChanged || startChanged) {
-        yield* railway.serviceInstanceUpdate({
+        yield* railway.updateServiceInstance({
           environmentId,
           serviceId: current.id,
           input: {
@@ -791,7 +791,7 @@ export const RedisProvider = () =>
       const serviceId = output.serviceId;
       if (serviceId.length === 0) return;
       yield* railway
-        .serviceDelete({
+        .deleteService({
           id: serviceId,
           ...(output.environmentId.length > 0
             ? { environmentId: output.environmentId }

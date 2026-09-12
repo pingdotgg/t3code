@@ -125,7 +125,7 @@ test.provider.skip(
       expect(updated.network.dnsName).toEqual(created.network.dnsName);
       expect(updated.project.projectId).toEqual(created.project.projectId);
 
-      const service = yield* railway.serviceCreate({
+      const service = yield* railway.createService({
         input: {
           projectId: created.project.projectId,
           environmentId: created.environment.environmentId,

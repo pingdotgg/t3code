@@ -94,7 +94,7 @@ export interface SvelteKitProps<
  * ```typescript
  * const site = yield* Cloudflare.Website.SvelteKit("Website", {
  *   env: {
- *     API_KEY: Config.redacted("API_KEY"),
+ *     API_KEY: Config.Redacted("API_KEY"),
  *   },
  * });
  *

@@ -137,7 +137,7 @@ export type IpsecTunnel = Resource<
  *   cloudflareEndpoint: "203.0.113.1",
  *   customerEndpoint: "198.51.100.1",
  *   interfaceAddress: "10.213.0.10/31",
- *   psk: yield* Config.redacted("IPSEC_PSK"),
+ *   psk: yield* Config.Redacted("IPSEC_PSK"),
  * });
  * ```
  *

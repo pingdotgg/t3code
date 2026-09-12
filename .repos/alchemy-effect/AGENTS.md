@@ -48,6 +48,11 @@ A Resource Provider implements the following Lifecycle Operations:
 
 # File System Conventions
 
+First-class sibling repositories we maintain live in `submodules/`:
+
+- `submodules/distilled` — generated Effect SDKs (workspace packages). Initialized by `git submodule update --init`.
+- `submodules/floci` — our fork of the local AWS emulator. Skipped by default; fetch with `git submodule update --init --checkout -- submodules/floci`.
+
 Each Service's Resources follow the same pattern. Resource contract and provider are co-located in the same file. Each Capability lives in its own file(s) named after the capability and access level (`Binding.Service` contract + the `*Binding` / `*Http` implementations).
 
 ```sh
@@ -108,9 +113,9 @@ Alchemy resource coverage is produced as a **software factory**: fleets of agent
  update statuses <── regenerate service <── patch distilled
 ```
 
-1. **Catalog** — fan out research agents over the provider's distilled service modules (one batch per thematic group). Each agent reads the generated SDK (`distilled/packages/{cloud}/src/services/{service}.ts`), cross-references the vendor API docs, and writes a self-contained design spec to `processes/{Cloud}/catalog/{service}.md`: resources, namespaces, props/attrs with replacement rules, lifecycle-to-operation mapping, scope (account/zone), testability, priority. The coordinator aggregates a machine-readable `summary.json` + human `INDEX.md` that tracks `implemented | partial | missing` per resource — this is the factory's order book.
+1. **Catalog** — fan out research agents over the provider's distilled service modules (one batch per thematic group). Each agent reads the generated SDK (`submodules/distilled/packages/{cloud}/src/services/{service}.ts`), cross-references the vendor API docs, and writes a self-contained design spec to `processes/{Cloud}/catalog/{service}.md`: resources, namespaces, props/attrs with replacement rules, lifecycle-to-operation mapping, scope (account/zone), testability, priority. The coordinator aggregates a machine-readable `summary.json` + human `INDEX.md` that tracks `implemented | partial | missing` per resource — this is the factory's order book.
 2. **Implement + test** in waves (below). Tests run against the real cloud (`pnpm test --profile testing`); zone-scoped tests use the standing test zone (`alchemy-test-2.us` via `findZoneByName`).
-3. **Patch the SDK, never the consumer** — every `UnknownCloudflareError`, out-of-union status error, or wrong request/response schema found by a test becomes an RFC 6902 JSON Patch against the service's Smithy model, under `distilled/packages/{cloud}/patches/{service}/{op}.json` (see the Typed Error Doctrine section). Regenerate only that service. The typed union improves for every future consumer of the SDK — that is the flywheel's output.
+3. **Patch the SDK, never the consumer** — every `UnknownCloudflareError`, out-of-union status error, or wrong request/response schema found by a test becomes an RFC 6902 JSON Patch against the service's Smithy model, under `submodules/distilled/packages/{cloud}/patches/{service}/{op}.json` (see the Typed Error Doctrine section). Regenerate only that service. The typed union improves for every future consumer of the SDK — that is the flywheel's output.
 4. **Update the catalog** statuses after each wave and pick the next batch from the order book. Repeat until everything left is documented as out of scope (deprecated APIs, billing/data-only endpoints, closed-beta, needs-external-systems).
 
 ## Orchestration rules (the coordinator)
@@ -183,7 +188,7 @@ pnpm docs:gen   # -> website/src/content/docs/providers/{Cloud}/{Resource}.md
 This is the only doc generator that produces user-facing output. ([scripts/generate-api-reference.ts](./scripts/generate-api-reference.ts)) does the following:
 
 1. Discovers documented files across its configured source roots — `packages/alchemy/src/{Cloud}/{Service}/` plus flat single-provider packages like `packages/better-auth/src/` (mapped onto a synthetic provider directory, e.g. `BetterAuth/`)
-2. Parses TypeScript with `ts-morph`
+2. Parses TypeScript with the native TypeScript API (`typescript-api` tooling alias)
 3. Extracts the page-level summary plus Markdown section/example blocks from JSDoc on the export tagged `@resource`, `@binding`, or `@layer`
 4. Writes one markdown file per page at `website/src/content/docs/providers/{Provider}/{Name}.md`
 
@@ -712,7 +717,7 @@ See the [VPC Smoke Test](./test/AWS/EC2/Vpc.smoke.test.ts) for an example.
 
 ## How distilled is built (Smithy + JSON Patch)
 
-Distilled is a Smithy-based SDK factory. Every provider package (`distilled/packages/{cloud}`) runs the same pipeline:
+Distilled is a Smithy-based SDK factory. Every provider package (`submodules/distilled/packages/{cloud}`) runs the same pipeline:
 
 1. **Convert** — the provider's spec source is converted into Smithy 2.0 JSON models, one per service, in `.generated-specs/{service}.json`. Cloudflare mines them from the downloaded API docs (`scripts/spec-to-smithy.ts` over `specs/api/resources/**`); AWS consumes the official `api-models-aws` Smithy models submodule directly. Hand-authored models for APIs the spec source doesn't cover live in `manual-specs/`.
 2. **Patch** — an **RFC 6902 JSON Patch chain** (files shaped `{ "description": ..., "patches": [ops] }`) is applied to the provider's intermediary spec before codegen. For Cloudflare, patches in `patches/{service}/*.json` target the **Smithy model**, applied in filename order with `*.manual.json` files last; `_metadata.json` carries service-level `/metadata/keyDictionary` and `/metadata/opAliases`. OpenAPI-sourced providers (Neon, PlanetScale, Stripe, …) patch the **OpenAPI document** upstream of the smithy conversion instead. A patch whose target path is stale (no longer in the model) warns and is skipped; a malformed patch **fails the generator run**.
@@ -730,7 +735,7 @@ Every error a distilled operation can produce in practice MUST be a tagged error
 **When you hit an unmatched error** (an `UnknownCloudflareError`, or you find yourself wanting to check `CloudflareHttpError.status` or an out-of-union `NotFound`), the fix is ALWAYS a distilled patch, never a catch in alchemy:
 
 1. Note the error's code / status / message from the failure output.
-2. Add or extend `distilled/packages/cloudflare/patches/{service}/{operation}.json` with a JSON Patch that (a) adds an error structure carrying the `smithy.api#error` trait and `com.cloudflare.protocols#errorMatchers` matchers, and (b) attaches it to the operation's `errors` list. Use a **meaningful, resource-specific tag** (e.g. `WidgetNotFound`, not a bare `NotFound`):
+2. Add or extend `submodules/distilled/packages/cloudflare/patches/{service}/{operation}.json` with a JSON Patch that (a) adds an error structure carrying the `smithy.api#error` trait and `com.cloudflare.protocols#errorMatchers` matchers, and (b) attaches it to the operation's `errors` list. Use a **meaningful, resource-specific tag** (e.g. `WidgetNotFound`, not a bare `NotFound`):
 
    ```json
    {
@@ -762,10 +767,10 @@ Every error a distilled operation can produce in practice MUST be a tagged error
 
    If the operation already has an `errors` array (from an earlier patch), append with `"path": ".../errors/-"` instead of adding the whole array. Matchers may combine `code`, `status`, and `message` (a string, or `{ "includes": "..." }` / `{ "matches": "..." }`) — e.g. `[{ "status": 400, "message": { "includes": "snippet not found" } }]` when Cloudflare misuses 400 for a missing resource. Prefer matching the Cloudflare error `code` when one exists; fall back to `status` + `message` otherwise. The most specific matcher wins; ties break by declaration order.
 
-3. Regenerate ONLY that service: `cd distilled/packages/cloudflare && bun scripts/generate.ts --resource {service}` (then format: `pnpm exec oxfmt src/services/{service}.ts`). A warned-stale or failed patch is a bug in your patch — fix it; never leave a red generate.
+3. Regenerate ONLY that service: `cd submodules/distilled/packages/cloudflare && bun scripts/generate.ts --resource {service}` (then format: `pnpm exec oxfmt src/services/{service}.ts`). A warned-stale or failed patch is a bug in your patch — fix it; never leave a red generate.
 4. Handle the now-typed tag in alchemy code and re-run the tests.
 
-**AWS is the one exception to the JSON Patch format**: it layers typed-error metadata over the official Smithy models with a per-service schema file `distilled/packages/aws/patches/{service}.json` (error categories, aliases, synthetic errors with message matchers — see `distilled/packages/aws/scripts/spec-schema.ts`), regenerated with `cd distilled/packages/aws && bun scripts/generate.ts --sdk {service}`. The doctrine is identical; only the patch dialect differs.
+**AWS is the one exception to the JSON Patch format**: it layers typed-error metadata over the official Smithy models with a per-service schema file `submodules/distilled/packages/aws/patches/{service}.json` (error categories, aliases, synthetic errors with message matchers — see `submodules/distilled/packages/aws/scripts/spec-schema.ts`), regenerated with `cd submodules/distilled/packages/aws && bun scripts/generate.ts --sdk {service}`. The doctrine is identical; only the patch dialect differs.
 
 **Forbidden patterns** — these defeat the type system and must never appear in alchemy code or tests:
 
@@ -1067,7 +1072,7 @@ Ironing out the AWS suite is an iterative loop, driven by a coordinator, that te
 
 Each iteration:
 
-0. **Clean slate** — first run `aws sso login` (the alchemy `testing` profile and the raw `aws` CLI ride the same SSO session; an expired token mid-round breaks the pipeline with auth errors — only escalate to a human if the login doesn't complete automatically). Then `pnpm nuke --yes` (deletes every alchemy-tagged cloud resource; `scripts/nuke.sh` already spares state buckets, SSO roles, and AWS-managed singletons) then `pnpm alchemy state clear ./stacks/nuke.ts --profile testing --yes`. Never overlap nuke with a running suite. Plain `pnpm clear:state` lacks the profile and dies on expired Cloudflare OAuth; nuke without `--yes` hangs on an interactive confirm in non-interactive shells.
+0. **Clean slate** — first run `aws sso login` (the alchemy `testing` profile and the raw `aws` CLI ride the same SSO session; an expired token mid-round breaks the pipeline with auth errors — only escalate to a human if the login doesn't complete automatically). Then `pnpm nuke --yes` (deletes every alchemy-tagged cloud resource; `scripts/nuke.sh` already spares state buckets, SSO roles, and AWS-managed singletons) then `pnpm alchemy state delete Nuke --config ./stacks/nuke.ts --profile testing --recursive`. Never overlap nuke with a running suite. Plain `pnpm clear:state` lacks the profile and dies on expired Cloudflare OAuth; nuke without `--yes` hangs on an interactive confirm in non-interactive shells.
 1. **Full suite, bounded** — `pnpm test test/AWS --profile testing`. The runner defaults to `--concurrency 32`; NEVER override it to `unbounded` on a full-suite run: all ~775 files' `beforeAll` deploys start at once, the event loop saturates, and hundreds of fake 0ms `beforeAll TimeoutError` failures drown the real signal (heap is ~8.5 GB regardless of N — the constraint is CPU, not memory). Target ≤10 min wall-clock, hard cap 128; measured 32 → ~21 min clean. The saturation tell is `beforeAll` failures at 0ms; real failures fail slow. If the cap can't reach 10 min, the residual is individual slow files — skipIf-gate them per the speed doctrine.
 2. **Leak census** — `pnpm nuke --dry-run` after the suite; diff against the pre-suite baseline. Worklist = **failed services ∪ leaking services** (a service can pass green and still leak). Leave the leaked resources LIVE as forensic evidence for the fix agents; carry-over holdouts that survive repeated nuke passes (stuck deletes) go on the worklist too — their delete path is the bug.
 3. **Fix-fleet workflow** — one agent per service on the worklist (account-singleton services — CloudTrail, Config, SecurityHub, GuardDuty, ControlTower, IdentityCenter — run as a sequential chain; everything else fans out). Each agent gets its exact failures, its leak inventory, and this root-cause priority: **provider bug > distilled patch > test fix** — never paper over a provider leak in the test. Each agent runs ONLY its own suite (`timeout 240 pnpm test test/AWS/{Service} --profile testing`), audits its tests for non-deterministic names (rely on PhysicalName auto-naming; random data in message payloads/idempotency tokens is fine), verifies zero orphans from its service via out-of-band distilled list/describe calls, and reports a structured result. Agents never run tsc/build and never run the account-wide nuke.

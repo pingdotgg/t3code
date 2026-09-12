@@ -33,14 +33,14 @@ export const SandboxLive = Sandbox.make(
         const request = yield* HttpServerRequest;
         // upgrade to web socket
         const socket = yield* request.upgrade;
-        const writeMessage = yield* socket.writer;
+        const writer = yield* socket.writer;
         const cmd = yield* cp.spawn(ChildProcess.make("ffmpeg", ["-version"]));
         const [exitCode] = yield* Effect.all(
           [
             cmd.exitCode,
             // pipe stdout to the websocket
             cmd.stdout.pipe(
-              Stream.tap(writeMessage),
+              Stream.tap((chunk) => writer.write(chunk)),
               Stream.decodeText,
               Stream.mkString,
             ),

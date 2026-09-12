@@ -50,6 +50,28 @@ const get = (
 ) => handler(new Request("http://localhost/", headers === undefined ? {} : { headers }))
 
 describe("NodeHttpCompression", () => {
+  for (
+    const [name, makeResponse] of [
+      ["Stream", () => HttpServerResponse.stream(Stream.succeed(new TextEncoder().encode(bigJson)))],
+      ["Uint8Array", () => HttpServerResponse.uint8Array(new TextEncoder().encode(bigJson))]
+    ] as const
+  ) {
+    it(`preserves a Content-Type header override when compressing ${name} responses`, () => {
+      const original = HttpServerResponse.setHeader(makeResponse(), "content-type", "application/json")
+      assert.strictEqual(original.headers["content-type"], "application/json")
+      return withHandler(
+        Effect.succeed(original),
+        undefined,
+        async (handler) => {
+          const compressed = await get(handler, { "accept-encoding": "gzip" })
+          assert.strictEqual(compressed.headers.get("content-encoding"), "gzip")
+          assert.strictEqual(Zlib.gunzipSync(new Uint8Array(await compressed.arrayBuffer())).toString(), bigJson)
+          assert.strictEqual(compressed.headers.get("content-type"), original.headers["content-type"])
+        }
+      )
+    })
+  }
+
   it.effect("advertises supported algorithms", () =>
     Effect.gen(function*() {
       const platform = yield* HttpPlatform.HttpPlatform
@@ -135,6 +157,32 @@ describe("NodeHttpCompression", () => {
       }
     )
   })
+
+  it.effect("preserves the Content-Type of file responses when compressed with Brotli", () =>
+    Effect.gen(function*() {
+      const directory = Fs.mkdtempSync(Path.join(Os.tmpdir(), "effect-http-compression-"))
+      yield* Effect.addFinalizer(() => Effect.sync(() => Fs.rmSync(directory, { recursive: true })))
+      const path = Path.join(directory, "index.html")
+      const contents = `<!doctype html><html><body>${"<p>Hello world</p>".repeat(100)}</body></html>`
+      Fs.writeFileSync(path, contents)
+
+      yield* HttpRouter.add("GET", "/file", HttpServerResponse.file(path)).pipe(
+        (self) => HttpRouter.serve(self, { middleware: HttpMiddleware.compression() }),
+        Layer.build
+      )
+
+      const uncompressed = yield* HttpClient.get("/file", { headers: { "accept-encoding": "identity" } })
+      assert.strictEqual(uncompressed.status, 200)
+      assert.strictEqual(uncompressed.headers["content-encoding"], undefined)
+      assert.strictEqual(uncompressed.headers["content-type"], "text/html")
+      assert.strictEqual(yield* uncompressed.text, contents)
+
+      const compressed = yield* HttpClient.get("/file", { headers: { "accept-encoding": "br" } })
+      assert.strictEqual(compressed.status, 200)
+      assert.strictEqual(compressed.headers["content-encoding"], "br")
+      assert.strictEqual(yield* compressed.text, contents)
+      assert.strictEqual(compressed.headers["content-type"], uncompressed.headers["content-type"])
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)))
 
   it.effect("closes compressed file bodies for HEAD requests", () =>
     Effect.gen(function*() {

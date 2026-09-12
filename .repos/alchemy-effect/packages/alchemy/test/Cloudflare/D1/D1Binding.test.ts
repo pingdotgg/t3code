@@ -161,7 +161,7 @@ const exercise = (base: string) =>
  *   native `cf.D1Database` via `InferEnv`) and used from a plain async fetch.
  *
  * The stack lives in `fixtures/stack.ts` so it can also be inspected directly,
- * e.g. `alchemy tail --stage test ./test/Cloudflare/D1/fixtures/stack.ts`.
+ * e.g. `alchemy logs --tail --stage test --config ./test/Cloudflare/D1/fixtures/stack.ts`.
  */
 const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {

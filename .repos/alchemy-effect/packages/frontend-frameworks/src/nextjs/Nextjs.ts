@@ -3,6 +3,7 @@ import type {
   Module,
   RuntimeWorker,
 } from "@alchemy.run/cloudflare-runtime/core";
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
 import * as RuntimeServices from "@alchemy.run/cloudflare-runtime/core/RuntimeServices";
 import * as DurableObjectNamespace from "@alchemy.run/cloudflare-runtime/core/bindings/DurableObjectNamespace";
@@ -120,8 +121,7 @@ export const listEdgeFunctions = (manifest: unknown): Array<string> => {
   return functions === undefined ? [] : Object.keys(functions);
 };
 
-/** The default compatibility date when the options provide none. */
-export const DEFAULT_COMPATIBILITY_DATE = "2026-05-12";
+export { DEFAULT_COMPATIBILITY_DATE };
 
 /** The server-module name of the worker entry (`serverModules[0]`). */
 export const WORKER_ENTRY_MODULE = `worker/${Bundle.WORKER_ENTRY_NAME}`;
@@ -486,6 +486,12 @@ export const make = (
         const url = yield* Runtime.Runtime.use((runtime) =>
           runtime.start({
             name: worker?.name ?? "distilled-nextjs-dev",
+            // This workerd sits directly behind the host's WorkerProxy, which
+            // signs every forwarded request with its shared secret. The entry
+            // worker rejects a signed request whose secret it doesn't hold
+            // (400 "Invalid proxy shared secret"), so the host's secret must
+            // reach this start call.
+            proxySharedSecret: worker?.proxySharedSecret,
             compatibilityDate:
               options?.vite?.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
             compatibilityFlags: [

@@ -51,7 +51,7 @@ test can read it back.
 
 ## Bind the Queue producer
 
-In the Worker init phase, yield the queue resource and ask
+In the Worker's Construction phase, yield the queue resource and ask
 `Cloudflare.Queues.WriteQueue` for a typed sender. The sender exposes `send` /
 `sendBatch` that round-trip through Cloudflare's runtime.
 

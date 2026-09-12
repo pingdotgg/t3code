@@ -48,7 +48,7 @@ const waitUntilProxyGone = (
   );
 
 const createTargetService = (projectId: string, environmentId: string) =>
-  railway.serviceCreate({
+  railway.createService({
     input: {
       projectId,
       environmentId,

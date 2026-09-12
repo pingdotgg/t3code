@@ -20,7 +20,7 @@
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@playwright/test": "catalog:testing",
-    "@types/node": "^24.12.0"
+    "@types/node": "catalog:node24"
   },
   "engines": {
     "node": ">=22"

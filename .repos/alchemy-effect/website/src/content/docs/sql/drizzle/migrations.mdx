@@ -140,7 +140,7 @@ drizzle over the instance's own SQLite storage using the
 `drizzle-orm/effect-sqlite-do` integration — the
 same effect-native query surface as [`Drizzle.D1`](/sql/drizzle/d1)
 and [`Drizzle.Postgres`](/sql/drizzle/postgres). It lives in the
-object's inner Effect — the instance init, which runs only in the
+object's inner Effect — the instance constructor, which runs only in the
 deployed object, before any request reaches its methods. The config
 passes the driver's options through — the `relations` make
 `db.query.users.findMany({ with: { posts: true } })` fully typed.

@@ -147,7 +147,7 @@ export const WorkerBundle = Effect.gen(function* () {
       checks: {
         // Suppress unresolved import warnings for unrelated AWS packages
         unresolvedImport: false,
-        // Suppress warning caused by static import of `@effect/platform-node/NodeServices` in `WorkerBridge.ts`
+        // The shared platform boundary keeps guarded Node/Bun adapter imports.
         ineffectiveDynamicImport: false,
       },
     };

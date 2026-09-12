@@ -3,7 +3,8 @@ import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { Project as MorphProject, SyntaxKind } from "ts-morph";
+import * as ts from "typescript-api/unstable/ast";
+import { API } from "typescript-api/unstable/async";
 
 const forbiddenPatterns = [
   {
@@ -88,6 +89,35 @@ const stripStringsAndComments = (source: string) =>
     .replaceAll(/\/\*[\s\S]*?\*\//g, "")
     .replaceAll(/\/\/.*$/gm, "");
 
+const prismaSourceProject = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const sourceRoot = path.resolve(import.meta.dirname, "../../src/Prisma");
+  const configPath = path.join(sourceRoot, "tsconfig.source-conventions.json");
+  const config = JSON.stringify({
+    files: documentedResources.map((resource) =>
+      path.join(sourceRoot, `${resource}.ts`),
+    ),
+    compilerOptions: { noResolve: true, noLib: true, types: [] },
+  });
+  const api = yield* Effect.acquireRelease(
+    Effect.sync(
+      () =>
+        new API({
+          fs: {
+            readFile: (file) => (file === configPath ? config : undefined),
+          },
+        }),
+    ),
+    (api) => Effect.promise(() => api.close()),
+  );
+  const snapshot = yield* Effect.tryPromise(() =>
+    api.updateSnapshot({ openProjects: [configPath] }),
+  );
+  const project = snapshot.getProject(configPath);
+  if (!project) throw new Error(`Missing project ${configPath}`);
+  return project.program;
+});
+
 describe("Prisma source conventions", () => {
   it.effect("keeps provider source in Effect-style lifecycle conventions", () =>
     Effect.gen(function* () {
@@ -163,20 +193,17 @@ describe("Prisma source conventions", () => {
 
   it.effect("documents public Prisma resource props and attributes", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const sourceRoot = path.resolve(import.meta.dirname, "../../src/Prisma");
-      const project = new MorphProject({ useInMemoryFileSystem: true });
+      const program = yield* prismaSourceProject;
       const missingDocs: string[] = [];
 
       for (const resource of documentedResources) {
         const fileName = `${resource}.ts`;
-        const source = yield* fs.readFileString(
-          path.join(sourceRoot, fileName),
+        const sourceFile = yield* Effect.tryPromise(() =>
+          program.getSourceFile(path.join(sourceRoot, fileName)),
         );
-        const sourceFile = project.createSourceFile(fileName, source, {
-          overwrite: true,
-        });
+        if (!sourceFile) throw new Error(`Missing source file ${fileName}`);
         const configInterfaces = [
           `${resource}Props`,
           ...(resourceConfigInterfaces[
@@ -185,55 +212,66 @@ describe("Prisma source conventions", () => {
         ];
 
         for (const interfaceName of configInterfaces) {
-          const declaration = sourceFile.getInterface(interfaceName);
+          const declaration = sourceFile.statements
+            .filter(ts.isInterfaceDeclaration)
+            .find((node) => node.name.text === interfaceName);
           if (declaration === undefined) continue;
-          for (const property of declaration.getProperties()) {
-            if (property.getJsDocs().length === 0) {
+          for (const property of declaration.members.filter(
+            ts.isPropertySignatureDeclaration,
+          )) {
+            if (!property.jsDoc?.length) {
               missingDocs.push(
-                `${fileName}:${interfaceName}.${property.getName()}`,
+                `${fileName}:${interfaceName}.${property.name.getText()}`,
               );
             }
           }
         }
 
-        const resourceDeclaration = sourceFile.getInterface(resource);
-        const attributes = resourceDeclaration
-          ?.getExtends()[0]
-          ?.getTypeArguments()[2]
-          ?.asKind(SyntaxKind.TypeLiteral);
+        const resourceDeclaration = sourceFile.statements
+          .filter(ts.isInterfaceDeclaration)
+          .find((node) => node.name.text === resource);
+        const attrs = resourceDeclaration?.heritageClauses?.find(
+          (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+        )?.types[0]?.typeArguments?.[2];
+        const attributes =
+          attrs && ts.isTypeLiteralNode(attrs) ? attrs : undefined;
         if (attributes === undefined) continue;
-        for (const property of attributes.getProperties()) {
-          if (property.getJsDocs().length === 0) {
+        for (const property of attributes.members.filter(
+          ts.isPropertySignatureDeclaration,
+        )) {
+          if (!property.jsDoc?.length) {
             missingDocs.push(
-              `${fileName}:${resource}.Attributes.${property.getName()}`,
+              `${fileName}:${resource}.Attributes.${property.name.getText()}`,
             );
           }
         }
       }
 
       expect(missingDocs).toEqual([]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps raw artifact bytes out of persisted resource props", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const sourceRoot = path.resolve(import.meta.dirname, "../../src/Prisma");
-      const project = new MorphProject({ useInMemoryFileSystem: true });
+      const program = yield* prismaSourceProject;
 
       for (const resource of ["Compute", "Deployment"] as const) {
-        const source = yield* fs.readFileString(
-          path.join(sourceRoot, `${resource}.ts`),
+        const sourceFile = yield* Effect.tryPromise(() =>
+          program.getSourceFile(path.join(sourceRoot, `${resource}.ts`)),
         );
-        const sourceFile = project.createSourceFile(`${resource}.ts`, source, {
-          overwrite: true,
-        });
-        const props = sourceFile.getInterface(`${resource}Props`);
-        expect(props?.getProperty("artifact")).toBeUndefined();
-        expect(props?.getProperty("artifactPath")).toBeDefined();
+        if (!sourceFile) throw new Error(`Missing source file ${resource}.ts`);
+        const props = sourceFile.statements
+          .filter(ts.isInterfaceDeclaration)
+          .find((node) => node.name.text === `${resource}Props`);
+        const properties = props?.members
+          .filter(ts.isPropertySignatureDeclaration)
+          .map((node) => node.name.getText());
+        expect(properties).not.toContain("artifact");
+        expect(properties).toContain("artifactPath");
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("models deployment environment values as redaction markers", () =>

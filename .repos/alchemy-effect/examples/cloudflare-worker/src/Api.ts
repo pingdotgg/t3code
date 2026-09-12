@@ -38,8 +38,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       bundleAnalyzer: true,
     },
     compatibility: {
-      date: "2026-03-17",
-      flags: ["nodejs_compat"],
+      date: "2026-08-31",
     },
   },
   Effect.gen(function* () {
@@ -196,7 +195,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           if (request.method === "POST") {
             const code = yield* request.text;
             const worker = yield* loader.load({
-              compatibilityDate: "2026-01-28",
+              compatibilityDate: "2026-08-31",
               mainModule: "worker.js",
               modules: {
                 "worker.js": `
