@@ -2350,7 +2350,7 @@ export default function Sidebar() {
     [environmentLabelById],
   );
   // Derive the safe set during render so a catalog change can never paint a
-  // filtered-empty frame before the state synchronization effect runs.
+  // filtered-empty frame before the stored selection is updated.
   const disabledEnvironmentIds = useMemo(
     () =>
       pruneDisabledEnvironmentIds({
@@ -2747,7 +2747,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = `${[...disabledEnvironmentIds].sort().join(",")}\0${projectScopeKey ?? "all"}`;
+  const settledResetKey = JSON.stringify([[...disabledEnvironmentIds].sort(), projectScopeKey]);
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -4660,7 +4660,11 @@ export default function Sidebar() {
                               <SidebarMenuButton
                                 size="icon"
                                 type="button"
-                                aria-label="Filter threads by environment"
+                                aria-label={
+                                  isEnvironmentFilterActive
+                                    ? "Filter threads by environment (filter active)"
+                                    : "Filter threads by environment"
+                                }
                                 className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                               />
                             }
