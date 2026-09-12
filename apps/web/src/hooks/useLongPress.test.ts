@@ -1,4 +1,4 @@
-import { act, createElement, useLayoutEffect, type PointerEvent } from "react";
+import { act, createElement, useLayoutEffect, type MouseEvent, type PointerEvent } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -30,7 +30,7 @@ describe("exceedsMoveTolerance", () => {
   });
 });
 
-describe("long press while starting a drag", () => {
+describe("long-press gestures", () => {
   let renderer: ReactTestRenderer;
   let handlers: ReturnType<typeof useLongPress>;
   const openMenu = vi.fn();
@@ -43,8 +43,14 @@ describe("long press while starting a drag", () => {
     return null;
   }
 
-  function touch(clientX: number) {
-    return { pointerType: "touch", clientX, clientY: 100, target: null } as unknown as PointerEvent;
+  function touch(clientX: number, pointerId = 1) {
+    return {
+      pointerType: "touch",
+      pointerId,
+      clientX,
+      clientY: 100,
+      target: null,
+    } as unknown as PointerEvent;
   }
 
   beforeEach(async () => {
@@ -79,5 +85,60 @@ describe("long press while starting a drag", () => {
       vi.advanceTimersByTime(LONG_PRESS_MS);
     });
     expect(openMenu).toHaveBeenCalledExactlyOnceWith({ x: 100, y: 100 });
+  });
+
+  it.each(["onPointerDown", "onPointerMove", "onPointerUp", "onPointerCancel"] as const)(
+    "ignores a second finger's %s without restarting the hold",
+    async (eventName) => {
+      await act(() => {
+        handlers.onPointerDown(touch(100));
+        vi.advanceTimersByTime(200);
+        handlers[eventName](touch(150, 2));
+        vi.advanceTimersByTime(LONG_PRESS_MS - 200);
+      });
+      expect(openMenu).toHaveBeenCalledExactlyOnceWith({ x: 100, y: 100 });
+    },
+  );
+
+  it.each(["onPointerUp", "onPointerCancel"] as const)(
+    "%s from the owning finger cancels the hold and allows a new gesture",
+    async (eventName) => {
+      await act(() => {
+        handlers.onPointerDown(touch(100));
+        handlers[eventName](touch(100));
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+      });
+      expect(openMenu).not.toHaveBeenCalled();
+      await act(() => {
+        handlers.onPointerDown(touch(150, 2));
+        vi.advanceTimersByTime(LONG_PRESS_MS);
+      });
+      expect(openMenu).toHaveBeenCalledExactlyOnceWith({ x: 150, y: 100 });
+    },
+  );
+
+  it("keeps ownership after firing and suppresses the owner's release click", async () => {
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    const click = { preventDefault, stopPropagation } as unknown as MouseEvent;
+    await act(() => {
+      handlers.onPointerDown(touch(100));
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+      handlers.onPointerDown(touch(150, 2));
+      handlers.onPointerUp(touch(150, 2));
+      vi.advanceTimersByTime(LONG_PRESS_MS);
+      handlers.onPointerUp(touch(100));
+      handlers.onClickCapture(click);
+    });
+    expect(openMenu).toHaveBeenCalledExactlyOnceWith({ x: 100, y: 100 });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
+    await act(() => {
+      handlers.onPointerDown(touch(200, 3));
+      handlers.onPointerUp(touch(200, 3));
+      handlers.onClickCapture(click);
+    });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
   });
 });

@@ -48,6 +48,7 @@ export function exceedsMoveTolerance(start: LongPressPosition, next: LongPressPo
 export function useLongPress(onLongPress: (position: LongPressPosition) => void) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startRef = useRef<LongPressPosition | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
   const firedRef = useRef(false);
 
   const cancel = useCallback(() => {
@@ -56,12 +57,14 @@ export function useLongPress(onLongPress: (position: LongPressPosition) => void)
       timerRef.current = null;
     }
     startRef.current = null;
+    activePointerIdRef.current = null;
   }, []);
 
   useEffect(() => cancel, [cancel]);
 
   const onPointerDown = useCallback(
     (event: PointerEvent) => {
+      if (activePointerIdRef.current !== null) return;
       // A press that never reached its click leaves the suppression armed;
       // clearing it here keeps it from swallowing an unrelated later tap.
       firedRef.current = false;
@@ -69,12 +72,14 @@ export function useLongPress(onLongPress: (position: LongPressPosition) => void)
       if (isInteractiveLongPressTarget(event.target)) return;
 
       cancel();
+      activePointerIdRef.current = event.pointerId;
       const start = { x: event.clientX, y: event.clientY };
       startRef.current = start;
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         startRef.current = null;
         firedRef.current = true;
+        // Keep ownership until release so another finger cannot reset click suppression.
         onLongPress(start);
       }, LONG_PRESS_MS);
     },
@@ -83,6 +88,7 @@ export function useLongPress(onLongPress: (position: LongPressPosition) => void)
 
   const onPointerMove = useCallback(
     (event: PointerEvent) => {
+      if (event.pointerId !== activePointerIdRef.current) return;
       const start = startRef.current;
       if (start === null) return;
       if (exceedsMoveTolerance(start, { x: event.clientX, y: event.clientY })) {
@@ -99,11 +105,18 @@ export function useLongPress(onLongPress: (position: LongPressPosition) => void)
     event.stopPropagation();
   }, []);
 
+  const onPointerEnd = useCallback(
+    (event: PointerEvent) => {
+      if (event.pointerId === activePointerIdRef.current) cancel();
+    },
+    [cancel],
+  );
+
   return {
     onPointerDown,
     onPointerMove,
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
+    onPointerUp: onPointerEnd,
+    onPointerCancel: onPointerEnd,
     onClickCapture,
   };
 }
