@@ -108,6 +108,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
 
+    const parsedThreadCycleRecent = yield* decode(KeybindingRule, {
+      key: "ctrl+tab",
+      command: "thread.cycleRecent",
+    });
+    assert.strictEqual(parsedThreadCycleRecent.command, "thread.cycleRecent");
+
     const parsedThreadSettle = yield* decode(KeybindingRule, {
       key: "mod+shift+s",
       command: "thread.settle",

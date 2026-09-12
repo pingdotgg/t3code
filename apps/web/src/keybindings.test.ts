@@ -145,6 +145,10 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   {
+    shortcut: { ...modShortcut("tab"), modKey: false, ctrlKey: true },
+    command: "thread.cycleRecent",
+  },
+  {
     shortcut: modShortcut("c", { shiftKey: true }),
     command: "thread.copyReference",
     whenAst: whenNot(whenIdentifier("terminalFocus")),

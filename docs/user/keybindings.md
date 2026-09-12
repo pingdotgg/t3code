@@ -56,6 +56,12 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`thread.cycleRecent` (`ctrl+tab` by default) switches to the thread you viewed
+before this one, in most-recently-used order. Hold the modifier and press again to
+step further back; release it to stay. `thread.previous` and `thread.next` walk
+the sidebar in its displayed order instead. Browsers reserve `ctrl+tab` for their
+own tabs, so on the web app rebind this command to an available shortcut.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
