@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -14,6 +14,7 @@ import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
+import { probeSourceControlProvider } from "./SourceControlProviderDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const sourceControlProviderRegistryTestLayer = (input: {
@@ -281,3 +282,62 @@ Logged in to gitlab.com as gitlab-user
     );
   }).pipe(Effect.provide(testLayer));
 });
+
+it.effect.each(["gh", "glab", "az"])(
+  "reports a timed-out %s version probe without claiming the executable is missing",
+  (command) =>
+    Effect.gen(function* () {
+      const calls: VcsProcess.VcsProcessInput[] = [];
+      const probe = (timedOut: boolean) =>
+        probeSourceControlProvider({
+          cwd: "/workspace",
+          spec: {
+            type: "cli",
+            kind: "github",
+            label: "Hosting CLI",
+            executable: command,
+            versionArgs: ["--version"],
+            authArgs: ["auth", "status"],
+            installHint: "Install the CLI",
+            parseAuth: () => ({
+              status: "authenticated",
+              account: Option.some("account"),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+          process: {
+            run: (input) => {
+              calls.push(input);
+              return timedOut
+                ? Effect.fail(
+                    new VcsProcessTimeoutError({
+                      operation: input.operation,
+                      command,
+                      cwd: input.cwd,
+                      timeoutMs: input.timeoutMs!,
+                    }),
+                  )
+                : Effect.succeed(processOutput("CLI 1.0"));
+            },
+          },
+        });
+      const failed = yield* probe(true);
+      assert.strictEqual(failed.status, "available");
+      assert.strictEqual(failed.auth.status, "unknown");
+      assert.strictEqual(Option.isNone(failed.version), true);
+      assert.match(Option.getOrThrow(failed.auth.detail), /timed out.*5000ms/);
+      assert.deepStrictEqual(failed.detail, failed.auth.detail);
+      assert.strictEqual(calls.length, 1);
+
+      const recovered = yield* probe(false);
+      assert.strictEqual(recovered.status, "available");
+      assert.strictEqual(recovered.auth.status, "authenticated");
+      assert.strictEqual(Option.getOrThrow(recovered.version), "CLI 1.0");
+      assert.strictEqual(Option.isNone(recovered.detail), true);
+      assert.deepStrictEqual(
+        calls.slice(1).map((call) => call.args),
+        [["--version"], ["auth", "status"]],
+      );
+    }),
+);
