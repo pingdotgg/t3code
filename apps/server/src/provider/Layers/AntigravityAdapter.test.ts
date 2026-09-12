@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   AntigravitySettings,
   ApprovalRequestId,
@@ -309,6 +310,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
+        const platform = yield* HostProcessPlatform;
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-antigravity-transport-",
@@ -328,6 +330,9 @@ it.layer(layer)("AntigravityAdapter", (it) => {
             makeAntigravityAcpRuntime({
               ...input,
               childProcessSpawner,
+              fileSystem,
+              path,
+              platform,
               spawn: {
                 command: process.execPath,
                 args: [mockAgentPath],

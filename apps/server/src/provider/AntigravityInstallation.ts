@@ -485,6 +485,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           }),
           cwd: profileDirectory,
           childProcessSpawner: spawner,
+          fileSystem: fs,
+          path,
+          platform,
           clientInfo: { name: "t3-code", version: "0.0.0" },
         });
         const initialized = yield* runtime.initialize();

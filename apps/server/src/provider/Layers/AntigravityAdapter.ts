@@ -126,7 +126,10 @@ function mapAntigravityError(threadId: ThreadId, method: string, cause: EffectAc
 export interface AntigravityAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner" | "onAuthorizationUrl">,
+    input: Omit<
+      AntigravityAcpRuntimeInput,
+      "spawn" | "childProcessSpawner" | "fileSystem" | "onAuthorizationUrl" | "path" | "platform"
+    >,
   ) => Effect.Effect<Runtime, EffectAcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
   readonly withProcess: AntigravityAuth["withProcess"];
   readonly onSessionStarted?: (
