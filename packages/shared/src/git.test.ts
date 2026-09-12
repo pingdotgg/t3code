@@ -12,6 +12,20 @@ import {
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
+  it.each([
+    ["/repos/Repo", "/repos/Repo.git"],
+    ["/repos/Repo.git", "/repos/repo.git"],
+    ["Repo", "Repo.git"],
+    ["./Repo.git", "./repo.git"],
+    ["C:\\Repos\\Repo", "C:\\Repos\\Repo.git"],
+    ["file:///repos/Repo", "file:///repos/Repo.git"],
+    [" Repo.git", "Repo.git"],
+  ])("keeps distinct local remote paths %s and %s", (left, right) => {
+    expect(normalizeGitRemoteUrl(left)).toBe(left);
+    expect(normalizeGitRemoteUrl(right)).toBe(right);
+    expect(normalizeGitRemoteUrl(left)).not.toBe(normalizeGitRemoteUrl(right));
+  });
+
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
     expect(normalizeGitRemoteUrl("git@github.com:T3Tools/T3Code.git")).toBe(
       "github.com/t3tools/t3code",

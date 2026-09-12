@@ -1794,6 +1794,31 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("ensureRemote keeps local repositories with different suffixes separate", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const path = yield* Path.Path;
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const firstUrl = path.join(cwd, "Repo");
+        const secondUrl = path.join(cwd, "Repo.git");
+        yield* git(cwd, ["init", "--bare", firstUrl]);
+        yield* git(cwd, ["init", "--bare", secondUrl]);
+        yield* git(cwd, ["remote", "add", "origin", firstUrl]);
+
+        assert.equal(
+          yield* driver.ensureRemote({ cwd, preferredName: "origin", url: secondUrl }),
+          "origin-1",
+        );
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin"]), firstUrl);
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin-1"]), secondUrl);
+        assert.equal(
+          yield* driver.ensureRemote({ cwd, preferredName: "again", url: secondUrl }),
+          "origin-1",
+        );
+      }),
+    );
+
     it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
