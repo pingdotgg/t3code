@@ -949,6 +949,12 @@ function AgentInstallTerminal({
 
 // ── Step 4: import ───────────────────────────────────────────
 
+/**
+ * Import step: a checklist of the projects discovered on the selected
+ * computers. How far back the conversations themselves reach follows the
+ * environment's history window setting, so this step does not restate a
+ * fixed number of days.
+ */
 function ImportStep({
   scans,
   isImporting,
@@ -1262,6 +1268,10 @@ function ImportStep({
           })}
         </div>
       </ScrollArea>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Conversations from Claude Code and Codex come across as settled threads you can continue.
+        Change how far back the import reaches in Settings.
+      </p>
       {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button

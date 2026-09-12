@@ -20,6 +20,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
@@ -33,6 +34,7 @@ import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/pu
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
+import { agentSessionImportAll } from "../../state/agentSessions";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -41,6 +43,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -54,7 +57,12 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import {
+  AGENT_SESSION_IMPORT_WINDOW_LABELS,
+  AGENT_SESSION_IMPORT_WINDOWS,
+  parseAgentSessionImportWindow,
+  resolveAgentAwarenessPlatformPresentation,
+} from "./SettingsRouteScreen.logic";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
@@ -575,6 +583,7 @@ function GeneralSettingsSection() {
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
       <AutoSettleSettingsRows />
+      <AgentHistorySettingsRows />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
   );
@@ -694,6 +703,115 @@ function AutoSettleSettingsRows() {
           </Pressable>
         </View>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Agent history import is a server setting every environment has to hold,
+ * same as auto-settlement: the first eligible sync target provides the
+ * reference value and edits fan out to every eligible target. "Import now"
+ * runs against the reference environment only — the import walks that
+ * machine's disk.
+ */
+function AgentHistorySettingsRows() {
+  const { environments } = useEnvironments();
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "server settings update",
+    reportFailure: true,
+  });
+  const importAll = useAtomCommand(agentSessionImportAll, {
+    label: "environment-data:agent-sessions:import-all",
+    // No live status on mobile to surface a failed run, so at least let the
+    // failure reach the log the neighbouring settings commands report to.
+    reportFailure: true,
+  });
+
+  const syncTargets = environments.filter(supportsSharedSettingsSync);
+  const reference = syncTargets[0] ?? null;
+  const referenceSettings = reference?.serverConfig?.settings ?? null;
+
+  // Mobile has no status subscription, so the row cannot follow a run. Report
+  // only what is true at the moment of the tap rather than showing a state
+  // label that would then go stale.
+  const [importRequested, setImportRequested] = useState(false);
+  const importInFlight = useRef(false);
+
+  if (reference === null || referenceSettings === null) {
+    return null;
+  }
+
+  const writeToAll = (patch: ServerSettingsPatch) => {
+    for (const environment of syncTargets) {
+      void updateSettings({ environmentId: environment.environmentId, input: { patch } });
+    }
+  };
+
+  const importNow = async () => {
+    // `runNow` returns the status as of the request, so the round trip is
+    // quick — but two taps in the same frame would both get through without
+    // the ref.
+    if (importInFlight.current) return;
+    importInFlight.current = true;
+    try {
+      const result = await importAll({ environmentId: reference.environmentId, input: {} });
+      if (result._tag === "Success") {
+        setImportRequested(true);
+      }
+    } finally {
+      importInFlight.current = false;
+    }
+  };
+
+  return (
+    <>
+      <SettingsSwitchRow
+        icon="arrow.clockwise"
+        label="Import agent history automatically"
+        value={referenceSettings.agentSessionAutoImport}
+        onValueChange={(value) => writeToAll({ agentSessionAutoImport: value })}
+      />
+      <ControlPillMenu
+        title="History to import"
+        actions={AGENT_SESSION_IMPORT_WINDOWS.map((window) => ({
+          id: window,
+          title: AGENT_SESSION_IMPORT_WINDOW_LABELS[window],
+          state:
+            referenceSettings.agentSessionImportWindow === window
+              ? ("on" as const)
+              : ("off" as const),
+        }))}
+        onPressAction={({ nativeEvent }) => {
+          const window = parseAgentSessionImportWindow(nativeEvent.event);
+          if (window !== null && window !== referenceSettings.agentSessionImportWindow) {
+            writeToAll({ agentSessionImportWindow: window });
+          }
+        }}
+      >
+        <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+          <Text className="flex-1 text-lg text-foreground">History to import</Text>
+          <Text className="text-base text-foreground-muted">
+            {AGENT_SESSION_IMPORT_WINDOW_LABELS[referenceSettings.agentSessionImportWindow]}
+          </Text>
+        </View>
+      </ControlPillMenu>
+      <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+        <View className="min-w-0 flex-1">
+          <Text className="text-lg text-foreground">Import agent history</Text>
+          {importRequested ? (
+            <Text className="text-sm text-foreground-muted">
+              Import started on {reference.label}. It continues in the background.
+            </Text>
+          ) : null}
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void importNow()}
+          className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
+        >
+          <Text className="text-base font-t3-medium text-foreground">Import now</Text>
+        </Pressable>
+      </View>
     </>
   );
 }

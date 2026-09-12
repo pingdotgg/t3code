@@ -3,6 +3,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import { initialAgentSessionAutoImportStatus } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
@@ -14,6 +16,7 @@ import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
+import * as AgentSessionAutoImporter from "../../project/AgentSessionAutoImporter.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 
 describe("OrchestrationReactor", () => {
@@ -96,6 +99,18 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
+          Layer.succeed(AgentSessionAutoImporter.AgentSessionAutoImporter, {
+            start: () => {
+              started.push("agent-session-auto-importer");
+              return Effect.void;
+            },
+            runNow: Effect.succeed(initialAgentSessionAutoImportStatus),
+            status: Effect.succeed(initialAgentSessionAutoImportStatus),
+            streamStatus: Stream.empty,
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
           Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
             publishThread: () => Effect.void,
             start: () => {
@@ -119,6 +134,7 @@ describe("OrchestrationReactor", () => {
       "thread-pull-request-reactor",
       "thread-settlement-reactor",
       "pull-request-sync-reactor",
+      "agent-session-auto-importer",
       "agent-awareness-relay",
     ]);
 

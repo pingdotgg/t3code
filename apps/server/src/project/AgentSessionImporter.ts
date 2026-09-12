@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ThreadId,
+  resolveAgentSessionImportWindowMs,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type OrchestrationThread,
@@ -27,6 +28,7 @@ import * as Stream from "effect/Stream";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ProviderSessionDirectory from "../provider/Services/ProviderSessionDirectory.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
 const CLAUDE_SESSION_ID_PATTERN =
@@ -128,18 +130,31 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     .pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     );
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const settings = yield* serverSettings.getSettings.pipe(
+    Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
+  );
+  const windowMs = resolveAgentSessionImportWindowMs(
+    input.window ?? settings.agentSessionImportWindow,
+  );
   const threads = scanner.recentThreads(
     workspaceRoot,
     completedSources.map((entry) => entry.source),
+    { windowMs },
   );
   const importedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
   let skippedCount = 0;
+  let remainingCount = 0;
 
   yield* Stream.runForEach(threads, (outcome) =>
     Effect.gen(function* () {
       if (outcome._tag === "Skipped") {
-        skippedCount += 1;
+        if (outcome.reason === "budget") {
+          remainingCount += 1;
+        } else {
+          skippedCount += 1;
+        }
         return;
       }
       if (outcome._tag === "AlreadyImported" || outcome._tag === "Duplicate") {
@@ -293,5 +308,5 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     }),
   );
 
-  return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  return { importedCount, skippedCount, remainingCount } satisfies AgentSessionImportResult;
 });

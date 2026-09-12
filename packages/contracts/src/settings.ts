@@ -24,6 +24,7 @@ import {
   ProjectScript,
   RuntimeMode,
 } from "./orchestration.ts";
+import { AgentSessionImportWindow } from "./agentSessions.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -1061,6 +1062,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  agentSessionAutoImport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  agentSessionImportWindow: AgentSessionImportWindow.pipe(
+    Schema.withDecodingDefault(Effect.succeed("all" as const)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -1355,6 +1360,8 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  agentSessionAutoImport: Schema.optionalKey(Schema.Boolean),
+  agentSessionImportWindow: Schema.optionalKey(AgentSessionImportWindow),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

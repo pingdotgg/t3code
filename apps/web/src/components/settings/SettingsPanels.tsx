@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type AgentSessionImportWindow,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -78,6 +79,7 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { agentSessionImportAll, agentSessionImportStatus } from "../../state/agentSessions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -91,6 +93,9 @@ import {
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -171,6 +176,14 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+/** Selector copy for how far back agent history import reaches. */
+const AGENT_SESSION_IMPORT_WINDOW_LABELS: Record<AgentSessionImportWindow, string> = {
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  "1y": "Last year",
+  all: "All history",
+};
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -2035,6 +2048,73 @@ function LegacyFeaturesSection() {
   );
 }
 
+const IMPORT_FAILURE_FALLBACK = "The last import failed. Try again.";
+
+/** First line of a server-reported import failure, short enough for one row. */
+function summarizeImportFailure(error: string | null): string {
+  const firstLine = error
+    ?.split("\n")
+    .find((line) => line.trim().length > 0)
+    ?.trim();
+  if (firstLine === undefined || firstLine.length === 0) return IMPORT_FAILURE_FALLBACK;
+  return firstLine.length > 160 ? `${firstLine.slice(0, 159)}…` : firstLine;
+}
+
+/**
+ * The import-now row owns the status subscription, so the stream is only live
+ * while this row is mounted and updates re-render just this row.
+ */
+function AgentHistoryImportNowRow() {
+  const environmentId = usePrimaryEnvironmentId();
+  const statusQuery = useEnvironmentQuery(
+    environmentId === null ? null : agentSessionImportStatus({ environmentId, input: {} }),
+  );
+  const importAll = useAtomCommand(agentSessionImportAll, { reportFailure: false });
+  const status = statusQuery.data;
+  const isImporting = status?.state === "scanning" || status?.state === "importing";
+  let description: string;
+  if (isImporting) {
+    description = "Importing…";
+  } else if (status?.state === "completed") {
+    const conversations = `${status.threadsImported} ${
+      status.threadsImported === 1 ? "conversation" : "conversations"
+    }`;
+    // A repeat run usually adds no projects, and "into 0 projects" reads as a
+    // failure rather than as nothing new to create.
+    description =
+      status.projectsCreated === 0
+        ? `Imported ${conversations}.`
+        : `Imported ${conversations} into ${status.projectsCreated} new ${
+            status.projectsCreated === 1 ? "project" : "projects"
+          }.`;
+  } else if (status?.state === "failed") {
+    // The server stores a pretty-printed cause here, which can run to many
+    // lines. A settings row gets the first line only; the full cause is in the
+    // server log.
+    description = summarizeImportFailure(status.error);
+  } else {
+    description = "Bring existing conversations in now.";
+  }
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("import-agent-history-now")}
+      description={description}
+      control={
+        <Button
+          size="sm"
+          disabled={environmentId === null || isImporting}
+          onClick={() => {
+            if (environmentId !== null) void importAll({ environmentId, input: {} });
+          }}
+        >
+          Import now
+        </Button>
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -2235,6 +2315,84 @@ export function GeneralSettingsPanel() {
             ) : null}
           </>
         ) : null}
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("import-agent-history")}
+          description="Bring Claude Code and Codex conversations on this computer into T3 Code as settled threads, and keep importing new ones."
+          resetAction={
+            settings.agentSessionAutoImport !== DEFAULT_UNIFIED_SETTINGS.agentSessionAutoImport ? (
+              <SettingResetButton
+                label="automatic history import"
+                onClick={() =>
+                  updateSettings({
+                    agentSessionAutoImport: DEFAULT_UNIFIED_SETTINGS.agentSessionAutoImport,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.agentSessionAutoImport}
+              onCheckedChange={(checked) =>
+                updateSettings({ agentSessionAutoImport: Boolean(checked) })
+              }
+              aria-label="Import agent history automatically"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("agent-history-window")}
+          description="Conversations older than this stay on disk and are not imported."
+          resetAction={
+            settings.agentSessionImportWindow !==
+            DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindow ? (
+              <SettingResetButton
+                label="history window"
+                onClick={() =>
+                  updateSettings({
+                    agentSessionImportWindow: DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindow,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentSessionImportWindow}
+              onValueChange={(value) => {
+                if (value === "30d" || value === "90d" || value === "1y" || value === "all") {
+                  updateSettings({ agentSessionImportWindow: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="History to import">
+                <SelectValue>
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS[settings.agentSessionImportWindow]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="30d">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["30d"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="90d">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["90d"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="1y">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS["1y"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="all">
+                  {AGENT_SESSION_IMPORT_WINDOW_LABELS.all}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <AgentHistoryImportNowRow />
       </SettingsSection>
 
       <SettingsSection id="behavior" title="Behavior">
