@@ -81,6 +81,51 @@ describe("runtimeEventToActivities task progress", () => {
     expect(usagePayload.usageSnapshot).toBe(true);
     expect(usagePayload).not.toHaveProperty("status");
   });
+
+  it("keeps workflow phases in a dedicated snapshot a plain progress tick cannot blank", () => {
+    const taskId = RuntimeTaskId.make("coordinator-1");
+    const withPhases = {
+      ...base,
+      type: "task.progress",
+      eventId: EventId.make("evt-phases"),
+      payload: {
+        taskId,
+        description: "workflow",
+        phases: [
+          { index: 0, title: "Parallel" },
+          { index: 1, title: "Sequential" },
+        ],
+      },
+    } satisfies ProviderRuntimeEvent;
+    const plainTick = {
+      ...base,
+      type: "task.progress",
+      eventId: EventId.make("evt-plain"),
+      payload: {
+        taskId,
+        description: "workflow",
+        summary: "collecting results",
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const phaseActivities = runtimeEventToActivities(withPhases);
+    const plainActivities = runtimeEventToActivities(plainTick);
+
+    const phaseRow = phaseActivities.find(
+      (activity) => activity.id === "task-phases:thread-1:coordinator-1",
+    );
+    expect(phaseRow).toBeDefined();
+    const phasePayload = phaseRow?.payload as Record<string, unknown>;
+    expect(phasePayload.phases).toEqual([
+      { index: 0, title: "Parallel" },
+      { index: 1, title: "Sequential" },
+    ]);
+    expect(phasePayload.usageSnapshot).toBe(true);
+
+    expect(plainActivities.map((activity) => activity.id)).not.toContain(
+      "task-phases:thread-1:coordinator-1",
+    );
+  });
 });
 describe("runtimeEventToActivities tool streaming persistence", () => {
   const accumulatedStdout = [
