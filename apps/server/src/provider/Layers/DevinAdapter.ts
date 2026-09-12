@@ -157,8 +157,14 @@ function devinApprovalOptions(request: NativePermission): ReadonlyArray<Provider
       case "allow_always":
         return [{ decision: "acceptForSession" as const, label }];
       case "reject_once":
-      case "reject_always":
         return [{ decision: "decline" as const, label }];
+      case "reject_always":
+        // T3's decision set has no persistent decline, so a second
+        // "decline" button would still resolve to reject_once. Surface it
+        // only when it is the sole refusal Devin offered.
+        return request.options.some((entry) => entry.kind === "reject_once")
+          ? []
+          : [{ decision: "decline" as const, label }];
       default:
         return [];
     }
