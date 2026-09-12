@@ -7,18 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { useCallback } from "react";
 
-import { isElectron } from "../../env";
-import { usePrimarySessionState } from "../../environments/primary";
+import { useEnvironmentOperateAccess } from "../../hooks/useEnvironmentOperateAccess";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentSessionState } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  resolvePrimaryOperateAccess,
-  resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
 
 const AUTOMATIC_VALUE = "automatic";
 
@@ -40,31 +33,6 @@ export function resolveEnvironmentIconPickerLock(input: {
     return "Your session on this environment cannot change its settings.";
   }
   return null;
-}
-
-// Same split the provider settings use: the desktop app owns its primary
-// server outright, a browser session on the primary checks its cookie
-// session's scopes, and a remote checks the scopes its own server reports.
-function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
-  const isPrimary = usePrimaryEnvironmentId() === environmentId;
-  const primarySession = usePrimarySessionState();
-  const remoteSession = useEnvironmentSessionState(environmentId);
-  if (isPrimary) {
-    return isElectron
-      ? "granted"
-      : resolvePrimaryOperateAccess({
-          isPrimary: true,
-          hasDesktopBridge: false,
-          session: primarySession.data,
-          isPending: primarySession.isPending,
-          hasError: primarySession.error !== null,
-        });
-  }
-  return resolveRemoteOperateAccess({
-    session: remoteSession.data,
-    isPending: remoteSession.isPending,
-    hasError: remoteSession.hasError,
-  });
 }
 
 /**

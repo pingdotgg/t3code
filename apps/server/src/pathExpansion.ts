@@ -40,3 +40,20 @@ export function expandHomePathWith(value: string, path: Path.Path): string {
   }
   return value;
 }
+
+/**
+ * Inverse of `expandHomePath` for display: a path at or below the current
+ * user's home directory is shown as `~` or `~/…`. Anything else is returned
+ * unchanged, so callers can print server paths without leaking a long home
+ * prefix into every label.
+ */
+export function collapseHomePath(value: string): string {
+  const home = NodeOS.homedir();
+  if (value === home) return "~";
+  for (const separator of ["/", "\\"]) {
+    if (value.startsWith(home + separator)) {
+      return `~${separator}${value.slice(home.length + 1)}`;
+    }
+  }
+  return value;
+}

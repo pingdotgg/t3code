@@ -658,11 +658,13 @@ function makeManager(input?: {
         Layer.provideMerge(VcsProcess.layer),
         Layer.provideMerge(NodeServices.layer),
         Layer.provideMerge(serverConfigLayer),
+        Layer.provide(serverSettingsLayer),
       )
     : GitVcsDriver.layer.pipe(
         Layer.provideMerge(VcsProcess.layer),
         Layer.provideMerge(NodeServices.layer),
         Layer.provideMerge(serverConfigLayer),
+        Layer.provide(serverSettingsLayer),
       );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
@@ -706,6 +708,7 @@ function makeManager(input?: {
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
 const GitManagerTestLayer = GitVcsDriver.layer.pipe(
+  Layer.provide(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),

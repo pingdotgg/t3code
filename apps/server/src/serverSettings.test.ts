@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import {
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
@@ -25,11 +26,17 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { expandHomePath } from "./pathExpansion.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodePersistedWorktreeBaseDirectory = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ worktreeBaseDirectory: Schema.optionalKey(Schema.String) }),
+  ),
+);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -1115,6 +1122,60 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
+  it.effect("rejects an invalid worktree directory before persisting secrets", () => {
+    let secretSetCalled = false;
+    const secretLayer = Layer.effect(
+      ServerSecretStore.ServerSecretStore,
+      Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+        ...store,
+        set: (...args: Parameters<typeof store.set>) => {
+          secretSetCalled = true;
+          return store.set(...args);
+        },
+      })),
+    ).pipe(Layer.provide(ServerSecretStore.layer));
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(secretLayer),
+      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-invalid-worktree-secret-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const original =
+        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}';
+      yield* fs.writeFileString(config.settingsPath, original);
+      const error = yield* Effect.flip(
+        service.updateSettings({
+          worktreeBaseDirectory: "/",
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true }],
+              config: {},
+            },
+          },
+        }),
+      );
+      assert.equal(error.operation, "normalize");
+      assert.equal(secretSetCalled, false);
+      assert.equal(yield* fs.readFileString(config.settingsPath), original);
+      const settings = yield* service.getSettings;
+      assert.equal(
+        settings.providerInstances[instanceId]?.environment?.[0]?.value,
+        "inline-test-token",
+      );
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
   for (const { label, variable, expected, duplicate } of [
     {
       label: "preserves an inline secret on a redacted settings save",
@@ -1392,3 +1453,87 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });
+
+it.effect("isWithinDirectory treats only a full .. segment as leaving the ancestor", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    assert.isTrue(
+      ServerSettingsModule.isWithinDirectory("/workspace/..repos/project", "/workspace", path),
+    );
+    assert.isTrue(ServerSettingsModule.isWithinDirectory("/workspace", "/workspace", path));
+    assert.isFalse(ServerSettingsModule.isWithinDirectory("/other", "/workspace", path));
+    assert.isFalse(ServerSettingsModule.isWithinDirectory("/workspac", "/workspace", path));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects every Windows filesystem root while accepting worktree directories", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+
+    for (const root of ["C:\\", "D:\\", "\\\\server\\share\\"]) {
+      const failure = yield* settings
+        .updateSettings({ worktreeBaseDirectory: root })
+        .pipe(Effect.flip);
+      assert.equal(failure.operation, "normalize", root);
+    }
+
+    for (const directory of ["C:\\Users\\Oliver\\worktrees", "D:\\worktrees"]) {
+      const updated = yield* settings.updateSettings({ worktreeBaseDirectory: directory });
+      assert.equal(updated.worktreeBaseDirectory, directory);
+    }
+  }).pipe(Effect.provide(ServerSettingsModule.layerTest({}, NodePath.layerWin32))),
+);
+
+it.effect("persists and resets the worktree directory and rejects relative paths", () =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const root = path.join(config.baseDir, "custom-worktrees");
+    const updated = yield* settings.updateSettings({ worktreeBaseDirectory: root });
+    assert.equal(updated.worktreeBaseDirectory, root);
+    assert.equal(
+      (yield* decodePersistedWorktreeBaseDirectory(yield* fs.readFileString(config.settingsPath)))
+        .worktreeBaseDirectory,
+      root,
+    );
+    for (const rejected of [
+      "relative/worktrees",
+      path.parse(root).root,
+      "~",
+      "~/",
+      "~/..",
+      path.dirname(expandHomePath("~")),
+    ]) {
+      const failure = yield* settings
+        .updateSettings({ worktreeBaseDirectory: rejected })
+        .pipe(Effect.flip);
+      assert.equal(failure.operation, "normalize", rejected);
+      assert.equal((yield* settings.getSettings).worktreeBaseDirectory, root, rejected);
+    }
+    yield* settings.updateSettings({ worktreeBaseDirectory: "~/worktrees" });
+    assert.equal((yield* settings.getSettings).worktreeBaseDirectory, "~/worktrees");
+    yield* settings.updateSettings({ worktreeBaseDirectory: "" });
+    assert.equal((yield* settings.getSettings).worktreeBaseDirectory, "");
+    assert.isUndefined(
+      (yield* decodePersistedWorktreeBaseDirectory(yield* fs.readFileString(config.settingsPath)))
+        .worktreeBaseDirectory,
+    );
+  }).pipe(Effect.provide(makeServerSettingsLayer().pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("loads with the default worktree directory when settings.json holds an invalid one", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const config = yield* ServerConfig.ServerConfig;
+    yield* fs.writeFileString(
+      config.settingsPath,
+      '{"worktreeBaseDirectory":"relative/worktrees","defaultThreadEnvMode":"worktree"}',
+    );
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+    const loaded = yield* settings.getSettings;
+    assert.equal(loaded.worktreeBaseDirectory, "");
+    assert.equal(loaded.defaultThreadEnvMode, "worktree");
+  }).pipe(Effect.provide(makeServerSettingsLayer().pipe(Layer.provideMerge(NodeServices.layer)))),
+);

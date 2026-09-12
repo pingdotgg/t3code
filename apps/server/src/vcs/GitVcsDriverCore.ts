@@ -37,6 +37,8 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { expandHomePathWith } from "../pathExpansion.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 // `git worktree add` checks out the full tree, so on large repositories it can
@@ -726,6 +728,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
@@ -3014,7 +3017,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    const worktreePath =
+      input.path ??
+      path.join(
+        expandHomePathWith(
+          (yield* serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "GitVcsDriver.createWorktree",
+                  command: "git",
+                  cwd: input.cwd,
+                  detail: "Failed to read server settings.",
+                  cause,
+                }),
+            ),
+          )).worktreeBaseDirectory || worktreesDir,
+          path,
+        ),
+        repoName,
+        sanitizedBranch,
+      );
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
