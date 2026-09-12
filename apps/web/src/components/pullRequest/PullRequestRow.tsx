@@ -12,6 +12,7 @@ import { pullRequestLabelColor, type EnvironmentPullRequestEntry } from "./pullR
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
   PullRequestActorLabel,
+  PullRequestConflictGlyph,
   PullRequestDiffStat,
   PullRequestMetaLine,
   PullRequestApprovalGlyph,
@@ -112,12 +113,15 @@ function PullRequestRowImpl({
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
-      <PullRequestStateGlyph
-        state={entry.state}
-        isDraft={entry.isDraft}
-        mergeability={entry.mergeability}
-        baseBranch={entry.baseBranch}
-      />
+      <span className="flex shrink-0 items-center gap-1">
+        <PullRequestStateGlyph state={entry.state} isDraft={entry.isDraft} />
+        <PullRequestConflictGlyph
+          state={entry.state}
+          isDraft={entry.isDraft}
+          mergeability={entry.mergeability}
+          baseBranch={entry.baseBranch}
+        />
+      </span>
       <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
         <span className="col-start-1 row-start-1 block truncate text-sm font-medium text-foreground">
           {entry.title}

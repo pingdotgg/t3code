@@ -11,9 +11,6 @@ import {
   ExternalLinkIcon,
   FileCode2Icon,
   GitCommitHorizontalIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
   MessageSquareIcon,
   PencilIcon,
 } from "lucide-react";
@@ -51,6 +48,7 @@ import {
   pullRequestReviewOutcomeStaleLabel,
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 /** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
@@ -419,16 +417,16 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
   const presentation =
     event.kind === "opened"
       ? {
-          icon: <GitPullRequestIcon className="size-3.5" />,
+          icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
           label: "Pull request opened",
         }
       : event.kind === "merged"
         ? {
-            icon: <GitMergeIcon className="size-3.5" />,
+            icon: <PullRequestGlyph.merged className="size-3.5" />,
             label: "Pull request merged",
           }
         : {
-            icon: <GitPullRequestClosedIcon className="size-3.5" />,
+            icon: <PullRequestGlyph.closed className="size-3.5" />,
             label: "Pull request closed",
           };
 
@@ -629,7 +627,7 @@ export function PullRequestTimelineTab({
 
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-            <GitPullRequestIcon className="mb-2 size-5" />
+            <PullRequestGlyph.pullRequest className="mb-2 size-5" />
             <p className="text-xs">No activity yet.</p>
           </div>
         ) : null}

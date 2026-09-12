@@ -46,7 +46,6 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
-  GitPullRequestArrowIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -181,6 +180,7 @@ import {
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -1698,7 +1698,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:link-pull-request",
       searchTerms: ["link", "pull request", "pr", "attach", "stack"],
       title: "Link pull request to thread",
-      icon: <GitPullRequestArrowIcon className={ITEM_ICON_CLASS} />,
+      icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         openLinkPullRequestDialog(threadRef);
       },
@@ -1710,7 +1710,7 @@ function OpenCommandPaletteDialog(props: {
         searchTerms: ["pull requests", "linked", "stack", "prs"],
         title: "Show linked pull requests",
         disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
-        icon: <GitPullRequestArrowIcon className={ITEM_ICON_CLASS} />,
+        icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
         run: async () => {
           useRightPanelStore.getState().open(threadRef, "pull-requests");
         },

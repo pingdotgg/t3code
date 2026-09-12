@@ -1,5 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ExternalLinkIcon, GitPullRequestIcon } from "lucide-react";
+import { ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import {
@@ -10,6 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
   title = "Could not load pull requests",
@@ -27,7 +28,7 @@ export function PullRequestsUnavailableState({
   return (
     <Empty className="min-h-0 justify-center-safe overflow-y-auto px-4 py-16 md:px-4 [&>*]:shrink-0">
       <EmptyMedia variant="icon">
-        <GitPullRequestIcon />
+        <PullRequestGlyph.pullRequest />
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>{title}</EmptyTitle>

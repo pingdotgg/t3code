@@ -21,9 +21,6 @@ import {
   ChevronDownIcon,
   ClockIcon,
   EyeIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
   LayersIcon,
   ListChecksIcon,
   PenLineIcon,
@@ -149,6 +146,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   /**
@@ -185,9 +183,9 @@ const INVOLVEMENT_TABS = [
 
 const STATE_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
-  { value: "open", label: "Open", Icon: GitPullRequestIcon },
-  { value: "closed", label: "Closed", Icon: GitPullRequestClosedIcon },
-  { value: "merged", label: "Merged", Icon: GitMergeIcon },
+  { value: "open", label: "Open", Icon: PullRequestGlyph.pullRequest },
+  { value: "closed", label: "Closed", Icon: PullRequestGlyph.closed },
+  { value: "merged", label: "Merged", Icon: PullRequestGlyph.merged },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
 
 const SORT_OPTIONS = [
