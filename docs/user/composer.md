@@ -69,6 +69,17 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Edit an earlier prompt
+
+On web and desktop, choose **Edit from here** beneath a sent message to rewind
+the conversation and workspace files to before that message. The selected prompt
+and its attachments return to the composer for editing and resending. Any unsent
+draft stays above the restored prompt.
+
+This removes the selected message and later conversation from the active thread
+and provider history. It does not undo external actions or separate provider
+memory. The action is available only when the provider supports rewind.
+
 ## Prompt stash
 
 On web and desktop, press `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux to save

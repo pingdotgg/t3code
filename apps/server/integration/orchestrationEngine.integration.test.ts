@@ -888,7 +888,7 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
 );
 
 it.live(
-  "appends checkpoint.revert.failed activity when revert is requested without an active session",
+  "appends checkpoint.revert.failed activity when revert is requested without a provider binding",
   () =>
     withHarness((harness) =>
       Effect.gen(function* () {
@@ -917,7 +917,7 @@ it.live(
         assert.equal(
           String(
             (failureActivity?.payload as { readonly detail?: string } | undefined)?.detail,
-          ).includes("No active provider session"),
+          ).includes("no persisted provider binding exists"),
           true,
         );
       }),
