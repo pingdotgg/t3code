@@ -274,6 +274,13 @@ const decodePersistedThreadWorkspaceTabFields = Schema.decodeUnknownOption(
   PersistedThreadWorkspaceTabFieldsSchema,
 );
 
+export function parsePersistedThreadWorkspaceTabFields(
+  input: unknown,
+): ThreadWorkspaceTabFields | null {
+  const decoded = decodePersistedThreadWorkspaceTabFields(input);
+  return decoded._tag === "None" ? null : normalizePersistedThreadWorkspaceTabFields(decoded.value);
+}
+
 export function createThreadWorkspaceTabFields(
   surfaceIds: readonly string[] = [],
 ): ThreadWorkspaceTabFields {
@@ -794,9 +801,7 @@ export function parsePersistedThreadWorkspaceTabs(input: unknown): {
   }
   const byThreadKey: Record<string, ThreadWorkspaceTabFields> = {};
   for (const [threadKey, rawWorkspace] of Object.entries(rawByThreadKey)) {
-    const decoded = decodePersistedThreadWorkspaceTabFields(rawWorkspace);
-    if (decoded._tag === "None") continue;
-    const workspace = normalizePersistedThreadWorkspaceTabFields(decoded.value);
+    const workspace = parsePersistedThreadWorkspaceTabFields(rawWorkspace);
     if (workspace) byThreadKey[threadKey] = workspace;
   }
   return { byThreadKey };

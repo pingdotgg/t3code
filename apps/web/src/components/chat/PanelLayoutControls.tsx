@@ -1,5 +1,6 @@
 import {
   Columns2Icon,
+  LayoutTemplateIcon,
   Maximize2Icon,
   Minimize2Icon,
   PanelBottomIcon,
@@ -8,6 +9,7 @@ import {
 import { memo } from "react";
 
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -25,6 +27,14 @@ interface PanelLayoutControlsProps {
     readonly shortcutLabel: string | null;
     readonly onSplitRight: () => void;
   };
+  workspaceDefaults?: {
+    readonly hasGlobalDefault: boolean;
+    readonly hasProjectDefault: boolean;
+    readonly onSaveGlobal: () => void;
+    readonly onSaveProject: () => void;
+    readonly onClearGlobal: () => void;
+    readonly onClearProject: () => void;
+  };
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
   onToggleTerminal: () => void;
@@ -41,6 +51,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
   workspaceSplit,
+  workspaceDefaults,
   liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
@@ -132,6 +143,46 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipPopup>
         </Tooltip>
       )}
+      {workspaceDefaults ? (
+        <Menu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <MenuTrigger
+                  render={
+                    <Button
+                      className="shrink-0 [-webkit-app-region:no-drag]"
+                      aria-label="Workspace defaults"
+                      variant="ghost"
+                      size="icon-sm"
+                    />
+                  }
+                />
+              }
+            >
+              <LayoutTemplateIcon className="size-4" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Workspace defaults</TooltipPopup>
+          </Tooltip>
+          <MenuPopup align="end" className="min-w-56">
+            <MenuItem onClick={workspaceDefaults.onSaveGlobal}>Save as global default</MenuItem>
+            <MenuItem onClick={workspaceDefaults.onSaveProject}>Save for this project</MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              onClick={workspaceDefaults.onClearProject}
+              disabled={!workspaceDefaults.hasProjectDefault}
+            >
+              Use global default for this project
+            </MenuItem>
+            <MenuItem
+              onClick={workspaceDefaults.onClearGlobal}
+              disabled={!workspaceDefaults.hasGlobalDefault}
+            >
+              Clear global default
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : null}
     </div>
   );
 });

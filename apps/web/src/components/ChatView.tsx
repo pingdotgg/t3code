@@ -195,6 +195,11 @@ import {
   transitionThreadWorkspaceLayout,
   useThreadWorkspaceLayoutStore,
 } from "../threadWorkspaceLayoutStore";
+import {
+  createThreadWorkspaceDefault,
+  describeThreadWorkspaceDefault,
+} from "../threadWorkspaceDefaults";
+import { useThreadWorkspaceDefaultStore } from "../threadWorkspaceDefaultStore";
 import { workspacePaneShortcutAction } from "../workspacePaneShortcuts";
 import {
   findSurfaceTabs,
@@ -2095,10 +2100,49 @@ export default function ChatView(props: ChatViewProps) {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const activeDraftLogicalProjectKey =
-    !isServerThread && activeProject
-      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
-      : undefined;
+  const activeLogicalProjectKey = activeProject
+    ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
+    : null;
+  const activeDraftLogicalProjectKey = !isServerThread
+    ? (activeLogicalProjectKey ?? undefined)
+    : undefined;
+  const globalWorkspaceDefault = useThreadWorkspaceDefaultStore((state) => state.globalDefault);
+  const projectWorkspaceDefault = useThreadWorkspaceDefaultStore((state) =>
+    activeLogicalProjectKey ? (state.byProjectKey[activeLogicalProjectKey] ?? null) : null,
+  );
+  const saveGlobalWorkspaceDefault = useCallback(() => {
+    const template = createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState);
+    useThreadWorkspaceDefaultStore.getState().saveGlobal(template);
+    toastManager.add({
+      type: "success",
+      title: "Global workspace default saved",
+      description: `${describeThreadWorkspaceDefault(template)}. It will be copied into new threads without a project override.`,
+    });
+  }, [rightPanelState, threadWorkspaceLayout]);
+  const saveProjectWorkspaceDefault = useCallback(() => {
+    if (!activeLogicalProjectKey) return;
+    const template = createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState);
+    useThreadWorkspaceDefaultStore.getState().saveProject(activeLogicalProjectKey, template);
+    toastManager.add({
+      type: "success",
+      title: "Project workspace default saved",
+      description: `${describeThreadWorkspaceDefault(template)}. It will be copied into new threads for this project.`,
+    });
+  }, [activeLogicalProjectKey, rightPanelState, threadWorkspaceLayout]);
+  const clearGlobalWorkspaceDefault = useCallback(() => {
+    useThreadWorkspaceDefaultStore.getState().clearGlobal();
+    toastManager.add({ type: "success", title: "Global workspace default cleared" });
+  }, []);
+  const clearProjectWorkspaceDefault = useCallback(() => {
+    if (!activeLogicalProjectKey) return;
+    useThreadWorkspaceDefaultStore.getState().clearProject(activeLogicalProjectKey);
+    toastManager.add({
+      type: "success",
+      title: globalWorkspaceDefault
+        ? "This project now uses the global default"
+        : "Project workspace default cleared",
+    });
+  }, [activeLogicalProjectKey, globalWorkspaceDefault]);
   const handleOpenDraftProjectSettings = useCallback(() => {
     if (!activeDraftLogicalProjectKey) return;
     void navigate({
@@ -8220,6 +8264,14 @@ export default function ChatView(props: ChatViewProps) {
               available: threadWorkspaceLayout.paneTree.maximizedPaneId === null,
               shortcutLabel: shortcutLabelForCommand(keybindings, "pane.splitRight"),
               onSplitRight: () => splitWorkspacePane("right"),
+            },
+            workspaceDefaults: {
+              hasGlobalDefault: globalWorkspaceDefault !== null,
+              hasProjectDefault: projectWorkspaceDefault !== null,
+              onSaveGlobal: saveGlobalWorkspaceDefault,
+              onSaveProject: saveProjectWorkspaceDefault,
+              onClearGlobal: clearGlobalWorkspaceDefault,
+              onClearProject: clearProjectWorkspaceDefault,
             },
           }
         : {})}

@@ -39,6 +39,7 @@ import { environmentServerConfigsAtom, primaryServerSettingsAtom } from "../stat
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { initializeNewThreadWorkspace } from "../initializeThreadWorkspace";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -306,6 +307,10 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          initializeNewThreadWorkspace(
+            scopeThreadRef(projectRef.environmentId, emptyStoredDraftThread.threadId),
+            logicalProjectKey,
+          );
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
@@ -353,6 +358,10 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        initializeNewThreadWorkspace(
+          scopeThreadRef(projectRef.environmentId, latestActiveDraftThread.threadId),
+          logicalProjectKey,
+        );
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -396,6 +405,10 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
+          initializeNewThreadWorkspace(
+            scopeThreadRef(projectRef.environmentId, racedDraft.threadId),
+            logicalProjectKey,
+          );
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
@@ -418,6 +431,10 @@ export function useNewThreadHandler() {
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
+        initializeNewThreadWorkspace(
+          scopeThreadRef(projectRef.environmentId, threadId),
+          logicalProjectKey,
+        );
         applyStickyState(draftId);
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
         if (modelSelectionOverride) {

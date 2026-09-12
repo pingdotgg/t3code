@@ -104,6 +104,9 @@ vi.mock("../lib/chatThreadActions", () => ({
   resolveNewDraftStartFromOrigin: () => false,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
+vi.mock("../initializeThreadWorkspace", () => ({
+  initializeNewThreadWorkspace: vi.fn(),
+}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFileDefaultThreadEnvMode: () => testState.projectFileRead,
 }));
