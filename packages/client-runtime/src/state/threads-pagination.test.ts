@@ -19,6 +19,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -148,9 +149,14 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   const supervisorState = yield* SubscriptionRef.make<SupervisorConnectionState>(
     AVAILABLE_CONNECTION_STATE,
   );
+  // Preserve each queued backlog as a chunk through the subscription boundary.
   const client = {
     [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: Record<string, unknown>) =>
-      Stream.unwrap(Ref.set(lastSubscribeInput, input).pipe(Effect.as(Stream.fromQueue(inputs)))),
+      Stream.unwrap(
+        Ref.set(lastSubscribeInput, input).pipe(
+          Effect.as(Stream.fromQueue(inputs).pipe(Stream.chunks, Stream.flatMap(Stream.fromArray))),
+        ),
+      ),
   } as unknown as WsRpcProtocolClient;
   const session: RpcSession.RpcSession = {
     client,
@@ -264,9 +270,39 @@ const titleEvent = (title: string, sequence: number): OrchestrationThreadStreamI
   },
 });
 
+const olderMessageEvent = (
+  sequence: number,
+  text: string,
+  streaming = true,
+): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make(`event-message-${sequence}`),
+    sequence,
+    occurredAt: "2026-04-01T01:30:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.message-sent",
+    payload: {
+      threadId: THREAD_ID,
+      messageId: OLDER_MESSAGE.id,
+      role: "assistant",
+      turnId: OLDER_MESSAGE.turnId,
+      text,
+      streaming,
+      createdAt: OLDER_MESSAGE.createdAt,
+      updatedAt: "2026-04-01T01:30:00.000Z",
+    },
+  },
+});
+
 // Reverting to turnCount 1 retains only turns whose checkpoint count is <= 1:
 // turn-1 survives, turn-2 (the loaded window's newest turn) is discarded.
-const revertEvent = (sequence: number): OrchestrationThreadStreamItem => ({
+const revertEvent = (sequence: number, turnCount = 1): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
     eventId: EventId.make(`event-revert-${sequence}`),
@@ -281,7 +317,7 @@ const revertEvent = (sequence: number): OrchestrationThreadStreamItem => ({
     type: "thread.reverted",
     payload: {
       threadId: THREAD_ID,
-      turnCount: 1,
+      turnCount,
     },
   },
 });
@@ -398,6 +434,65 @@ describe("thread pagination state", () => {
     }),
   );
 
+  it.effect("keeps a new page loading when a snapshot replaced a parked older page", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 30,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 30, threadSequence: 30 },
+        }),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("Waiting for old watermark", 11));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Waiting for old watermark"),
+      );
+      expect(
+        Option.getOrThrow((yield* SubscriptionRef.get(harness.threadState)).page).loadingOlder,
+      ).toBe(true);
+
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: 20,
+          thread: { ...BASE_THREAD, title: "Replacement snapshot" },
+          page: { beforeCursor: "cursor-2", hasMore: true, snapshotSequence: 20 },
+        },
+      });
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Replacement snapshot"),
+      );
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.awaitState((value) =>
+        Option.exists(value.page, (page) => page.loadingOlder && page.beforeCursor === "cursor-2"),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("New request still loading", 21));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "New request still loading"),
+      );
+      const loading = yield* SubscriptionRef.get(harness.threadState);
+      expect(Option.getOrThrow(loading.page).loadingOlder).toBe(true);
+      expect(hasMessage(loading, "message-old")).toBe(false);
+      expect((yield* Ref.get(harness.loaderWindows)).map((window) => window?.beforeCursor)).toEqual(
+        [undefined, "cursor-1", "cursor-2"],
+      );
+
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 21,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 21, threadSequence: 21 },
+        }),
+      );
+      const completed = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      expect(Option.getOrThrow(completed.page).loadingOlder).toBe(false);
+      expect(Option.getOrThrow(completed.page).beforeCursor).toBeNull();
+    }),
+  );
+
   it.effect("discards an older page read from a projection behind the loaded state", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
@@ -508,6 +603,117 @@ describe("thread pagination state", () => {
       expect(Option.getOrThrow(state.page).loadingOlder).toBe(false);
     }),
   );
+
+  for (const watermark of [11, 12, 138]) {
+    it.effect(`merges a parked page before later deltas in a batch at watermark ${watermark}`, () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+        yield* harness.awaitState((value) => Option.isSome(value.page));
+        requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+        yield* harness.awaitState((value) =>
+          Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+        );
+        yield* harness.resolveNextPage(
+          Option.some({
+            ...OLDER_PAGE,
+            snapshotSequence: watermark,
+            page: {
+              beforeCursor: null,
+              hasMore: false,
+              snapshotSequence: watermark,
+              threadSequence: watermark,
+            },
+          }),
+        );
+        yield* Effect.yieldNow;
+        expect(hasMessage(yield* SubscriptionRef.get(harness.threadState), "message-old")).toBe(
+          false,
+        );
+
+        // The final title event reaches the watermark (item 128 when it is
+        // 138). The next item intentionally replays that same sequence and
+        // must be ignored, including across the slice boundary. Only the
+        // following, newer message delta should append to the merged page.
+        yield* Queue.offerAll(harness.inputs, [
+          ...Array.from({ length: watermark - 10 }, (_, index) =>
+            titleEvent(`Title ${index}`, 11 + index),
+          ),
+          olderMessageEvent(watermark, " duplicate replay"),
+          olderMessageEvent(watermark + 1, " + next delta"),
+          olderMessageEvent(watermark + 2, "", false),
+          titleEvent("Batch finished", watermark + 3),
+        ]);
+        const state = yield* harness.awaitState((value) =>
+          Option.match(value.data, {
+            onNone: () => false,
+            onSome: (thread) => thread.title === "Batch finished",
+          }),
+        );
+        const thread = Option.getOrThrow(state.data);
+        expect(thread.messages.find((entry) => entry.id === OLDER_MESSAGE.id)?.text).toBe(
+          `${OLDER_MESSAGE.text} + next delta`,
+        );
+        expect(thread.messages.map((entry) => entry.id)).toEqual([
+          OLDER_MESSAGE.id,
+          RECENT_MESSAGE.id,
+        ]);
+        expect(Option.getOrThrow(state.page)).toEqual({
+          beforeCursor: null,
+          hasMore: false,
+          loadingOlder: false,
+        });
+
+        yield* TestClock.adjust("500 millis");
+        yield* Effect.yieldNow;
+        const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+        expect(saved?.snapshotSequence).toBe(watermark + 3);
+        expect(saved?.thread.messages).toEqual(thread.messages);
+        expect(saved?.page?.beforeCursor).toBe(null);
+      }),
+    );
+  }
+
+  for (const revertSequence of [11, 12, 13]) {
+    it.effect(`preserves page ordering when a batch reverts at sequence ${revertSequence}`, () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+        yield* harness.awaitState((value) => Option.isSome(value.page));
+        requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+        yield* harness.awaitState((value) =>
+          Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+        );
+        yield* harness.resolveNextPage(
+          Option.some({
+            ...OLDER_PAGE,
+            snapshotSequence: 12,
+            page: { beforeCursor: null, hasMore: false, snapshotSequence: 12, threadSequence: 12 },
+          }),
+        );
+        yield* Effect.yieldNow;
+        yield* Queue.offerAll(harness.inputs, [
+          ...[11, 12, 13].map((sequence) =>
+            sequence === revertSequence
+              ? revertEvent(sequence, 0)
+              : titleEvent(`Title ${sequence}`, sequence),
+          ),
+          titleEvent("Batch finished", 14),
+        ]);
+        const state = yield* harness.awaitState(
+          (value) =>
+            Option.match(value.data, {
+              onNone: () => false,
+              onSome: (thread) => thread.title === "Batch finished",
+            }) &&
+            Option.match(value.page, { onNone: () => false, onSome: (page) => !page.loadingOlder }),
+        );
+        expect(Option.getOrThrow(state.data).messages).toEqual([]);
+        expect(Option.getOrThrow(state.page).loadingOlder).toBe(false);
+        expect(Option.getOrThrow(state.page).beforeCursor).toBe(
+          revertSequence <= 12 ? "cursor-1" : null,
+        );
+      }),
+    );
+  }
 
   it.effect("a revert keeps the page cursor and triggers no refresh fetch", () =>
     Effect.gen(function* () {

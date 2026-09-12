@@ -619,7 +619,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
     }),
   );
 
-  it.effect.each([1, 16, 500])("publishes each replay batch once (batch size: %i)", (batchSize) =>
+  it.effect.each([1, 16, 500])("publishes bounded replay slices (batch size: %i)", (batchSize) =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       const unmount = h.registry.mount(h.stateAtom);
@@ -669,7 +669,8 @@ describe("createEnvironmentThreadStateAtoms", () => {
       expect(currentThread(h.registry, h.stateAtom).messages[0]?.text).toBe(
         Array.from({ length: 500 }, (_, index) => `${index},`).join(""),
       );
-      expect(updates).toBe(Math.ceil(500 / batchSize));
+      // Large transport batches yield after 128 events so replay does not monopolize the client.
+      expect(updates).toBe(Math.ceil(500 / Math.min(batchSize, 128)));
       stop();
       unmount();
       yield* Deferred.await(first.closed);

@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -20,7 +21,11 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { subscribeDynamic } from "../rpc/client.ts";
+import {
+  type DynamicSubscriptionGeneration,
+  type DynamicSubscriptionItem,
+  subscribeDynamicWithGeneration,
+} from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
@@ -46,6 +51,8 @@ function shellStatusForSnapshot(
 ): EnvironmentShellStatus {
   return Option.isSome(snapshot) ? "cached" : "empty";
 }
+
+const MAX_STREAM_ITEMS_PER_PUBLISH = 128;
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
@@ -74,7 +81,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const awaitingCompletion = yield* Ref.make(false);
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  const activeSubscriptionGeneration = yield* Ref.make<DynamicSubscriptionGeneration | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
+  // Serializes batch folds against the subscription's HTTP seed: the fold is
+  // a read-modify-write over the snapshot, and one interleaving with the seed
+  // would write the fold's older baseline over the seeded snapshot after
+  // afterSequence was already computed from it, silently losing the gap.
+  const applyLock = yield* Semaphore.make(1);
 
   const persist = Effect.fn("EnvironmentShellState.persist")(function* (
     snapshot: OrchestrationShellSnapshot,
@@ -111,7 +124,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   }));
   const setReady = SubscriptionRef.update(state, (current) =>
-    current.status === "live"
+    current.status === "live" || Option.isSome(current.error)
       ? current
       : {
           ...current,
@@ -138,7 +151,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Apply each received batch with one state write. The RPC client's bounded
   // buffer can split a server chunk, so a bulk action can still need several
   // writes, but each write includes every event in that batch.
-  const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
+  const applyItemsLocked = Effect.fn("EnvironmentShellState.applyItemsLocked")(function* (
     items: ReadonlyArray<OrchestrationShellStreamItem>,
   ) {
     const initial = yield* SubscriptionRef.get(state);
@@ -148,8 +161,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     for (const item of items) {
       if (item.kind === "synchronized") {
         waiting = false;
-        if (Option.isSome(next.snapshot)) {
-          next = { ...next, status: "live", error: Option.none() };
+        if (Option.isSome(next.snapshot) && Option.isNone(next.error)) {
+          next = { ...next, status: "live" };
         }
         continue;
       }
@@ -167,8 +180,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       receivedSnapshot ||= item.kind === "snapshot";
       next = {
         snapshot: Option.some(nextSnapshot),
-        status: waiting ? "synchronizing" : "live",
-        error: Option.none(),
+        // Buffered data from a failed attempt cannot declare the shell healthy.
+        status: Option.isSome(next.error) ? "cached" : waiting ? "synchronizing" : "live",
+        error: next.error,
       };
     }
     yield* Ref.set(awaitingCompletion, waiting);
@@ -185,6 +199,35 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
   });
 
+  // Applies a batch of stream items. Batches form adaptively downstream of
+  // the subscription's Stream.buffer: whatever accumulated while the
+  // previous batch applied folds into the next one, so publication count
+  // tracks how fast the client applies instead of how fast the server emits.
+  const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
+    items: ReadonlyArray<DynamicSubscriptionItem<OrchestrationShellStreamItem>>,
+  ) {
+    // Release the lock and yield between slices so session changes and UI
+    // work can interleave with a backlog. Recheck identity for every slice.
+    for (let start = 0; start < items.length; start += MAX_STREAM_ITEMS_PER_PUBLISH) {
+      if (start > 0) yield* Effect.yieldNow;
+      yield* applyLock.withPermits(1)(
+        Effect.gen(function* () {
+          const activeGeneration = yield* Ref.get(activeSubscriptionGeneration);
+          const currentSession = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
+          const activeItems = items
+            .slice(start, start + MAX_STREAM_ITEMS_PER_PUBLISH)
+            .filter(
+              (item) => item.session === currentSession && item.generation === activeGeneration,
+            )
+            .map((item) => item.value);
+          if (activeItems.length > 0) {
+            yield* applyItemsLocked(activeItems);
+          }
+        }),
+      );
+    }
+  });
+
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
     onSome: (service) =>
@@ -193,10 +236,20 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   yield* setSynchronizing;
   yield* Effect.forkScoped(
-    subscribeDynamic(
+    subscribeDynamicWithGeneration(
       ORCHESTRATION_WS_METHODS.subscribeShell,
-      Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        yield* Ref.set(activeSubscriptionSession, session);
+      Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session, generation) {
+        // Wait for an in-flight old-session fold, then invalidate every old
+        // item still buffered downstream before reading the resume baseline.
+        yield* applyLock.withPermits(1)(
+          Effect.all(
+            [
+              Ref.set(activeSubscriptionSession, session),
+              Ref.set(activeSubscriptionGeneration, generation),
+            ],
+            { discard: true },
+          ),
+        );
         const supportsCompletionMarker = yield* session.initialConfig.pipe(
           Effect.map((config) => config.shellResumeCompletionMarker === true),
           Effect.orElseSucceed(() => false),
@@ -227,9 +280,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           );
           const httpSnapshot = yield* snapshotLoader.load(prepared);
           if (Option.isSome(httpSnapshot)) {
-            yield* applyItems([{ kind: "snapshot", snapshot: httpSnapshot.value }]);
+            // Apply the seed and capture the resulting cursor in one critical
+            // section so a batch draining concurrently cannot slip between
+            // them; the fold itself is lock-serialized for the same reason.
+            current = yield* applyLock.withPermits(1)(
+              applyItemsLocked([{ kind: "snapshot", snapshot: httpSnapshot.value }]).pipe(
+                Effect.andThen(SubscriptionRef.get(state)),
+              ),
+            );
             canResume = true;
-            current = yield* SubscriptionRef.get(state);
           }
         }
 
@@ -257,7 +316,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
+    ).pipe(
+      // Decouple delivery from application: the buffer's consumer receives
+      // whatever accumulated while the previous batch applied — one item when
+      // the client keeps up, the whole backlog when it does not — adding no
+      // latency to either case. The finite capacity preserves the transport's
+      // end-to-end backpressure: past it, the un-applied backlog waits on the
+      // server instead of growing this client's heap.
+      Stream.buffer({ capacity: 4096, strategy: "suspend" }),
+      Stream.chunks,
+      Stream.runForEach(applyItems),
+    ),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {

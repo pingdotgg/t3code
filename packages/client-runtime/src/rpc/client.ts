@@ -183,12 +183,24 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
+export type DynamicSubscriptionGeneration = symbol;
+
+export interface DynamicSubscriptionItem<A> {
+  readonly generation: DynamicSubscriptionGeneration;
+  readonly session: RpcSession;
+  readonly value: A;
+}
+
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
   tag: TTag,
-  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  makeInput: (
+    session: RpcSession,
+    generation: DynamicSubscriptionGeneration,
+  ) => Effect.Effect<EnvironmentRpcInput<TTag>>,
   mapStream: (
     session: RpcSession,
     stream: Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>,
+    generation: DynamicSubscriptionGeneration,
   ) => Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>>,
   options?: SubscriptionOptions<TTag>,
 ): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor> {
@@ -222,16 +234,17 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                 EnvironmentRpcStreamFailure<TTag>
               >;
               const subscribeToSession = (): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
-                Stream.suspend(() =>
-                  Stream.unwrap(
+                Stream.suspend(() => {
+                  const generation: DynamicSubscriptionGeneration = Symbol();
+                  return Stream.unwrap(
                     Effect.gen(function* () {
-                      const input = yield* makeInput(session);
+                      const input = yield* makeInput(session, generation);
                       const completeObservation = yield* observer.observe({
                         environmentId: supervisor.target.environmentId,
                         method: tag,
                         input,
                       });
-                      return mapStream(session, method(input)).pipe(
+                      return mapStream(session, method(input), generation).pipe(
                         Stream.ensuring(completeObservation),
                       );
                     }),
@@ -287,8 +300,8 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       }
                       return Stream.failCause(cause);
                     }),
-                  ),
-                );
+                  );
+                });
               return subscribeToSession();
             },
           }),
@@ -302,7 +315,28 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
   );
 }
 
-export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
+export function subscribeDynamicWithGeneration<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (
+    session: RpcSession,
+    generation: DynamicSubscriptionGeneration,
+  ) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  DynamicSubscriptionItem<EnvironmentRpcStreamValue<TTag>>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicMapped(
+    tag,
+    makeInput,
+    (session, stream, generation) =>
+      stream.pipe(Stream.map((value) => ({ generation, session, value }))),
+    options,
+  );
+}
+
+function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
   tag: TTag,
   makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
   options?: SubscriptionOptions<TTag>,
