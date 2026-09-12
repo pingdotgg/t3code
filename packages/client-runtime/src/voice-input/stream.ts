@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - imperative WebSocket callbacks own and clear their response deadline.
 import {
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   SPEECH_STREAM_MAX_QUEUED_BYTES,
@@ -18,11 +19,21 @@ export async function openSpeechStream(input: {
 }) {
   input.signal.throwIfAborted();
   const socket = (input.createSocket ?? ((url) => new WebSocket(url)))(input.url);
-  const ready = Promise.withResolvers<void>();
-  const final = Promise.withResolvers<string>();
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  let resolveFinal!: (text: string) => void;
+  let rejectFinal!: (error: Error) => void;
+  const final = new Promise<string>((resolve, reject) => {
+    resolveFinal = resolve;
+    rejectFinal = reject;
+  });
   // A capture failure can precede stop(), when nobody is awaiting the final result yet.
-  void final.promise.catch(() => undefined);
-  let queue: Uint8Array[] = [];
+  void final.catch(() => undefined);
+  let queue: Uint8Array<ArrayBuffer>[] = [];
   let queuedBytes = 0;
   let inFlight = 0;
   let finishing = false;
@@ -41,8 +52,8 @@ export async function openSpeechStream(input: {
     if (closed) return;
     closed = true;
     cleanup();
-    ready.reject(error);
-    final.reject(error);
+    rejectReady(error);
+    rejectFinal(error);
     socket.close();
     if (notify && isReady) input.onError(error);
   };
@@ -74,7 +85,7 @@ export async function openSpeechStream(input: {
           if (isReady) throw new Error("Unexpected speech stream response.");
           isReady = true;
           clearTimeout(timer);
-          ready.resolve();
+          resolveReady();
           break;
         case "update":
           if (!inFlight || message.revision < revision)
@@ -89,7 +100,7 @@ export async function openSpeechStream(input: {
           if (!finishSent) throw new Error("Unexpected speech stream response.");
           closed = true;
           cleanup();
-          final.resolve(message.text);
+          resolveFinal(message.text);
           socket.close();
           break;
         case "error":
@@ -108,7 +119,7 @@ export async function openSpeechStream(input: {
   input.signal.addEventListener("abort", abort, { once: true });
   armTimeout();
   if (input.signal.aborted) abort();
-  await ready.promise;
+  await ready;
   return {
     feed: (pcm: Float32Array) => {
       if (closed || finishing) return;
@@ -139,7 +150,7 @@ export async function openSpeechStream(input: {
       } catch {
         fail(new Error("Could not finish live transcription."));
       }
-      return final.promise;
+      return final;
     },
     cancel: abort,
   };

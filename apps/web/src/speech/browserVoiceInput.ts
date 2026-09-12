@@ -35,7 +35,9 @@ export function createBrowserVoiceInputPlatform(input: {
   let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let signal: AbortSignal | undefined;
   let live: Awaited<ReturnType<typeof openSpeechStream>> | undefined;
-  let stopped: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+  let stopped:
+    | { readonly resolve: () => void; readonly reject: (error: Error) => void }
+    | undefined;
 
   const cleanupCapture = () => {
     if (durationTimer) clearTimeout(durationTimer);
@@ -125,8 +127,9 @@ export function createBrowserVoiceInputPlatform(input: {
         cleanupCapture();
         return;
       }
-      stopped ??= Promise.withResolvers<void>();
-      const pending = stopped.promise;
+      const pending = new Promise<void>((resolve, reject) => {
+        stopped = { resolve, reject };
+      });
       const timeout = setTimeout(
         () => stopped?.reject(new Error("Microphone capture did not stop.")),
         5_000,

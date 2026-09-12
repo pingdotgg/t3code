@@ -19,7 +19,7 @@ const decodeCommand = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStrea
 /** One socket owns one stream. Each audio frame is acknowledged after inference finishes. */
 export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
-  speech: SpeechService["Service"],
+  speech: Pick<SpeechService["Service"], "startStream">,
 ) {
   const scope = yield* Scope.Scope;
   const write = yield* socket.writer;
@@ -73,7 +73,8 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
     .pipe(
       Effect.timeoutOrElse({
         duration: "10 minutes",
-        orElse: () => fail("Speech stream timed out."),
+        // The socket read loop is already interrupted here; its writer can no longer send.
+        orElse: () => Effect.void,
       }),
       Effect.catch(() => Effect.void),
     );
