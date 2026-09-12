@@ -3,6 +3,7 @@ import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -63,14 +64,74 @@ function pickPrimaryRemote(
   return remoteName && remoteUrl ? { remoteName, remoteUrl } : null;
 }
 
+function parseSshRemoteHost(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (!isSshRemoteUrl(trimmed)) return null;
+
+  if (trimmed.toLowerCase().startsWith("ssh://")) {
+    try {
+      const host = new URL(trimmed).hostname.trim();
+      return host.length > 0 ? host : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const match = /^[^@/\s]+@([^:/\s]+):/u.exec(trimmed);
+  const host = match?.[1]?.trim() ?? "";
+  return host.length > 0 ? host : null;
+}
+
+function parseSshResolvedHostName(stdout: string, fallback: string): string {
+  for (const line of stdout.split(/\r?\n/u)) {
+    const [key, ...rest] = line.trim().split(/\s+/u);
+    const hostname = rest.join(" ").trim();
+    if (key?.toLowerCase() === "hostname" && hostname.length > 0) {
+      return hostname;
+    }
+  }
+  return fallback;
+}
+
+const resolveRepositoryRemoteHost = Effect.fn("RepositoryIdentityResolver.resolveRemoteHost")(
+  function* (remoteUrl: string) {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const host = parseSshRemoteHost(remoteUrl);
+    if (host === null) return undefined;
+
+    const resolved = yield* processRunner
+      .run({
+        command: "ssh",
+        args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-G", "--", host],
+        timeout: Duration.seconds(5),
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    if (resolved._tag === "None" || resolved.value.code !== 0 || resolved.value.timedOut) {
+      return undefined;
+    }
+    const resolvedHost = parseSshResolvedHostName(resolved.value.stdout, host);
+    // GitHub's SSH-over-443 endpoint is a transport host, not its API host.
+    const repositoryHost =
+      resolvedHost.toLowerCase() === "ssh.github.com" ? "github.com" : resolvedHost;
+    return repositoryHost.toLowerCase() === host.toLowerCase() ? undefined : repositoryHost;
+  },
+);
+
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
   readonly rootPath: string;
+  readonly canonicalHost?: string;
 }): RepositoryIdentity {
-  const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
-  const repositoryPath = canonicalKey.split("/").slice(1).join("/");
+  const remoteKey = normalizeGitRemoteUrl(input.remoteUrl);
+  const repositoryPath = remoteKey.split("/").slice(1).join("/");
+  const canonicalHost = input.canonicalHost?.trim().toLowerCase();
+  const canonicalKey =
+    canonicalHost && repositoryPath.length > 0 ? `${canonicalHost}/${repositoryPath}` : remoteKey;
+  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(
+    input.canonicalHost === undefined ? input.remoteUrl : `https://${canonicalKey}`,
+  );
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);
@@ -130,7 +191,14 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
-  return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+  if (remote === null) return null;
+
+  const canonicalHost = yield* resolveRepositoryRemoteHost(remote.remoteUrl);
+  return buildRepositoryIdentity({
+    ...remote,
+    rootPath: cacheKey,
+    ...(canonicalHost === undefined ? {} : { canonicalHost }),
+  });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
