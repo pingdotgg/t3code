@@ -111,7 +111,17 @@ const runCommand = Effect.fn("runCommand")(function* (
   label: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(command);
+  // Output is inherited so the build log shows what each tool did; a failing
+  // signing or packaging step is otherwise a bare exit code.
+  const child = yield* spawner.spawn(
+    ChildProcess.isStandardCommand(command)
+      ? ChildProcess.make(command.command, command.args, {
+          ...command.options,
+          stdout: "inherit",
+          stderr: "inherit",
+        })
+      : command,
+  );
   const exitCode = Number(yield* child.exitCode);
   if (exitCode !== 0) {
     return yield* new CliArchiveCommandFailedError({ command: label, exitCode });
@@ -347,15 +357,20 @@ const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
     yield* Effect.log("[cli-archive] Windows signing disabled (missing Azure Trusted Signing).");
     return;
   }
+  // Mirrors electron-builder's invocation for the installer: every value
+  // single-quoted, the file path in Windows form. `$ErrorActionPreference`
+  // makes a signing failure inside the cmdlet surface as a non-zero exit.
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
   const script = [
+    "$ErrorActionPreference = 'Stop';",
     "Invoke-TrustedSigning",
-    `-Endpoint '${endpoint}'`,
-    `-CodeSigningAccountName '${accountName}'`,
-    `-CertificateProfileName '${profile}'`,
-    "-FileDigest SHA256",
+    `-Endpoint ${quote(endpoint)}`,
+    `-CodeSigningAccountName ${quote(accountName)}`,
+    `-CertificateProfileName ${quote(profile)}`,
+    "-FileDigest 'SHA256'",
     "-TimestampRfc3161 'http://timestamp.acs.microsoft.com'",
-    "-TimestampDigest SHA256",
-    `-Files '${executablePath}'`,
+    "-TimestampDigest 'SHA256'",
+    `-Files ${quote(executablePath)}`,
   ].join(" ");
   yield* runCommand(
     ChildProcess.make("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script]),
