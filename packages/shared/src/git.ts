@@ -114,7 +114,13 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 export function normalizeGitRemoteUrl(value: string): string {
   // Filesystem paths can name distinct repositories by case, whitespace, or a
   // .git suffix. Hosted repository aliases must not collapse those paths.
-  if (!value.includes(":") || /^(?:[\\/]|\.{1,2}[\\/]|[a-z]:[\\/]|file:\/\/)/i.test(value)) {
+  const colon = value.indexOf(":");
+  const separator = value.search(/[\\/]/);
+  if (
+    colon === -1 ||
+    (separator !== -1 && separator < colon) ||
+    /^(?:[a-z]:[\\/]|file:\/\/)/i.test(value)
+  ) {
     return value;
   }
   const normalized = value

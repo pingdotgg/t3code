@@ -16,6 +16,8 @@ describe("normalizeGitRemoteUrl", () => {
     ["/repos/Repo", "/repos/Repo.git"],
     ["/repos/Repo.git", "/repos/repo.git"],
     ["Repo", "Repo.git"],
+    ["repos/team:one/Repo.git", "repos/team:one/repo"],
+    ["repos\\team:one\\Repo.git", "repos\\team:one\\repo"],
     ["./Repo.git", "./repo.git"],
     ["C:\\Repos\\Repo", "C:\\Repos\\Repo.git"],
     ["file:///repos/Repo", "file:///repos/Repo.git"],
