@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  hasCodexAccountChanged,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -160,4 +164,16 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("detects a switch between two signed-in Codex accounts and nothing else", () => {
+  const alice = { status: "authenticated", type: "chatgpt", email: "alice@example.com" } as const;
+  const bob = { status: "authenticated", type: "chatgpt", email: "bob@example.com" } as const;
+  assert.isTrue(hasCodexAccountChanged(alice, bob));
+  assert.isFalse(
+    hasCodexAccountChanged(alice, { ...alice, label: "ChatGPT Pro 20x Subscription" }),
+  );
+  assert.isFalse(hasCodexAccountChanged(null, alice));
+  assert.isFalse(hasCodexAccountChanged(alice, { status: "unauthenticated" }));
+  assert.isFalse(hasCodexAccountChanged({ status: "unknown" }, alice));
 });
