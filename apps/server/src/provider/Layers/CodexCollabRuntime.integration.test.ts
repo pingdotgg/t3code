@@ -615,16 +615,21 @@ describe("CodexSessionRuntime collab integration", () => {
         onlyFirstTurnStarts: true,
         turnIds: [activeTurnId, queuedTurnId],
         expectedActiveTurnId: activeTurnId,
+        goalStatus: "active",
+        recordControlRequests: true,
         notifications: [],
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
       const interruptsPath = `${scriptPath}.interrupts`;
+      const controlPath = `${scriptPath}.control`;
       NodeFS.rmSync(interruptsPath, { force: true });
+      NodeFS.rmSync(controlPath, { force: true });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           NodeFS.rmSync(scriptPath, { force: true });
           NodeFS.rmSync(interruptsPath, { force: true });
+          NodeFS.rmSync(controlPath, { force: true });
         }),
       );
 
@@ -649,6 +654,26 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: ROOT,
         turnId: activeTurnId,
       });
+      const controlRequests = NodeFS.readFileSync(controlPath, "utf8")
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: { threadId?: string; turnId?: string; status?: string };
+            },
+        );
+      assert.deepEqual(controlRequests, [
+        {
+          method: "thread/goal/set",
+          params: { threadId: ROOT, status: "paused" },
+        },
+        {
+          method: "turn/interrupt",
+          params: { threadId: ROOT, turnId: activeTurnId },
+        },
+      ]);
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
