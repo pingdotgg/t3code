@@ -11,6 +11,7 @@ import {
   parseBinaryCookies,
   readSafariCookies,
   safariAccessDenied,
+  safariAccessGranted,
   SafariCookieReadError,
 } from "./SafariCookies.ts";
 
@@ -440,4 +441,37 @@ describe("isPermissionDenied", () => {
   it("does not treat an unrelated failure as permission denied", () => {
     expect(isPermissionDenied(platformError("Unknown", "EIO"))).toBe(false);
   });
+});
+
+describe("safariAccessGranted", () => {
+  it.effect("only reports a successful read-only open as granted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-safari-permission-",
+      });
+      const jar = `${directory}/Cookies.binarycookies`;
+      assert.isFalse(yield* safariAccessGranted(jar));
+      yield* fileSystem.writeFileString(jar, "no cookie parsing needed");
+      assert.isTrue(yield* safariAccessGranted(jar));
+      yield* fileSystem.remove(jar);
+      assert.isFalse(yield* safariAccessGranted(jar));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("does not mistake TCC denial for a grant", () =>
+    Effect.gen(function* () {
+      const denied = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "FileSystem",
+        method: "open",
+        cause: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
+      });
+      assert.isFalse(
+        yield* safariAccessGranted("/protected/Cookies.binarycookies").pipe(
+          Effect.provide(FileSystem.layerNoop({ open: () => Effect.fail(denied) })),
+        ),
+      );
+    }),
+  );
 });
