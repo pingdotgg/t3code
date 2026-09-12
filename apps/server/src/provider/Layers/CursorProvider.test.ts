@@ -5,6 +5,7 @@ import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -316,6 +317,63 @@ const cursorCliCommandMissingMessage = [
 ].join(" ");
 
 describe("Cursor skills", () => {
+  it("rejects an unreadable skill catalog and recovers its metadata on retry", async () =>
+    await runNode(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const temporary = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-skills-" });
+          const workspace = yield* fileSystem.realPath(temporary);
+          const skillDirectory = path.join(workspace, ".cursor", "skills", "review");
+          const skillPath = path.join(skillDirectory, "SKILL.md");
+          yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+          yield* fileSystem.writeFileString(
+            skillPath,
+            "---\ndescription: Review changes\nuser-invocable: false\n---\n",
+          );
+          const unreadableFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            readFileString: (target, ...args) =>
+              target === skillPath
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "readFileString",
+                      pathOrDescriptor: target,
+                    }),
+                  )
+                : fileSystem.readFileString(target, ...args),
+          });
+          const environment = { HOME: path.join(workspace, "home") };
+          const failed = yield* probeCursorSkills(workspace, environment).pipe(
+            Effect.provideService(FileSystem.FileSystem, unreadableFileSystem),
+            Effect.result,
+          );
+          expect(failed._tag).toBe("Failure");
+          if (failed._tag === "Failure") {
+            expect(failed.failure.reason).toBe("filesystem-error");
+          }
+          expect(
+            yield* discoverCursorSkills(workspace, environment).pipe(
+              Effect.provideService(FileSystem.FileSystem, unreadableFileSystem),
+            ),
+          ).toEqual([]);
+          expect(yield* probeCursorSkills(workspace, environment)).toEqual([
+            {
+              name: "review",
+              path: skillPath,
+              scope: "project",
+              enabled: true,
+              description: "Review changes",
+              userInvocable: false,
+            },
+          ]);
+        }),
+      ),
+    ));
+
   it("discovers recursive project skills with project precedence", async () =>
     await runNode(
       Effect.gen(function* () {
