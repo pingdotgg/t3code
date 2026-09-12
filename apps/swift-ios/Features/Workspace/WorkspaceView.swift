@@ -306,6 +306,18 @@ public struct WorkspaceView: View {
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
+                onCanReorder: { thread in
+                    model.canReorder(thread)
+                },
+                onReorder: { thread, section, orderedIDs, completion in
+                    Task {
+                        completion(await model.reorderThread(
+                            thread.id,
+                            section: section,
+                            orderedIDs: orderedIDs
+                        ))
+                    }
+                },
                 onDelete: { thread in
                     deletingThread = thread
                 },

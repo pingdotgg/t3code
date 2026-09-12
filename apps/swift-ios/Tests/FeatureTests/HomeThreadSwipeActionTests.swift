@@ -1184,6 +1184,8 @@ struct HomeThreadSwipeActionTests {
             },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
+            onCanReorder: { _ in false },
+            onReorder: { _, _, _, completion in completion(true) },
             onDelete: { _ in },
             onPullRequestChange: { _, _, _ in }
         )

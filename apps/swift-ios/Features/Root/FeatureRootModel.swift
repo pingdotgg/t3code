@@ -553,6 +553,63 @@ public final class FeatureRootModel {
         }
     }
 
+    /// Whether a thread row can lift for drag reordering: its environment
+    /// accepts reorder writes for its section and is currently connected.
+    public func canReorder(_ thread: FeatureThread) -> Bool {
+        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
+        guard ThreadOrderPlanner.isWritable(thread, section: section) else { return false }
+        return snapshot.environments.contains {
+            $0.id == thread.environmentID && $0.connectionState == .connected
+        }
+    }
+
+    /// Commits a dropped order: `orderedIDs` is the section's displayed order
+    /// with the dragged row already in its new slot. Returns false when the
+    /// write was rejected or failed so the collection view can snap the row
+    /// back.
+    @discardableResult
+    public func reorderThread(
+        _ id: String,
+        section: FeatureThreadOrderSection,
+        orderedIDs: [String]
+    ) async -> Bool {
+        let environment = currentEnvironmentIdentity
+        do {
+            let assignments = try await client.reorderThread(
+                id: id,
+                section: section,
+                orderedIDs: orderedIDs
+            )
+            applyMoveAssignments(assignments, section: section, environment: environment)
+            return !assignments.isEmpty
+        } catch let partial as FeatureThreadMovePartialError {
+            applyMoveAssignments(partial.confirmed, section: section, environment: environment)
+            await perform { throw partial.underlying }
+            // Confirmed keys are in the model; snapping back renders the true
+            // arrangement instead of holding a full order that never landed.
+            return false
+        } catch {
+            await perform { throw error }
+            return false
+        }
+    }
+
+    private func applyMoveAssignments(
+        _ assignments: [FeatureThreadOrderAssignment],
+        section: FeatureThreadOrderSection,
+        environment: String
+    ) {
+        guard currentEnvironmentIdentity == environment else { return }
+        for assignment in assignments {
+            mutateThread(id: assignment.threadID) {
+                switch section {
+                case .pinned: $0.pinOrderKey = assignment.orderKey
+                case .active: $0.activeOrderKey = assignment.orderKey
+                }
+            }
+        }
+    }
+
     func updatePullRequest(
         _ pullRequest: HomeThreadPullRequestPresentation?,
         threadID: String,
