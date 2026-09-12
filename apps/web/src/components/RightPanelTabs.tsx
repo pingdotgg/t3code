@@ -238,13 +238,14 @@ type DraggableWorkspaceTabBag = Pick<
 function DraggableWorkspaceTab(props: {
   readonly fallbackId: string;
   readonly dragData: PaneTabDragData | null;
+  readonly label: string;
   readonly disabled?: boolean;
   readonly children: (bag: DraggableWorkspaceTabBag) => ReactNode;
 }) {
   const draggable = useDraggable({
     id: props.dragData?.sourceTabId ?? props.fallbackId,
     disabled: props.disabled === true || props.dragData === null,
-    ...(props.dragData ? { data: props.dragData } : {}),
+    ...(props.dragData ? { data: { ...props.dragData, label: props.label } } : {}),
   });
   return props.children({
     dragData: props.dragData,
@@ -1220,6 +1221,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               <DraggableWorkspaceTab
                 fallbackId="workspace-tab:thread"
                 dragData={props.tabDragDataForTarget?.({ _tag: "Thread" }) ?? null}
+                label={props.threadTab.title}
               >
                 {({ dragData, isDragging, listeners, setNodeRef }) => {
                   const preview =
@@ -1295,6 +1297,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   key={surface.id}
                   fallbackId={`workspace-tab:${surface.id}`}
                   dragData={dragData}
+                  label={title}
                   disabled={renamingDevice === surface.id}
                 >
                   {({ isDragging, listeners, setNodeRef }) => (
@@ -1407,7 +1410,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                   if (surface.kind === "device" && props.onRenameDevice)
                                     setRenamingDevice(surface.id);
                                 }}
-                                className="flex min-w-0 cursor-inherit items-center"
+                                className={cn(
+                                  "flex min-w-0 items-center",
+                                  dragData
+                                    ? isDragging
+                                      ? "cursor-grabbing"
+                                      : "cursor-grab"
+                                    : "cursor-inherit",
+                                )}
                                 onClick={() => props.onActivate(surface)}
                               >
                                 <span className="truncate">{title}</span>

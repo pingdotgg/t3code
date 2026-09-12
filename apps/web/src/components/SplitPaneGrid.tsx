@@ -1,5 +1,6 @@
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
@@ -250,6 +251,7 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     null,
   );
   const [draggedTab, setDraggedTab] = useState<PaneTabDragData | null>(null);
+  const [draggedTabLabel, setDraggedTabLabel] = useState<string | null>(null);
   const draggedTabRef = useRef<PaneTabDragData | null>(null);
   const [dropPreview, setDropPreviewState] = useState<PaneDragDropPreview | null>(null);
   const dropPreviewRef = useRef<PaneDragDropPreview | null>(null);
@@ -267,6 +269,7 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     draggedTabRef.current = null;
     latestPointerCoordinatesRef.current = null;
     setDraggedTab(null);
+    setDraggedTabLabel(null);
     setDropPreview(null);
   };
   const handleDragStart = (event: DragStartEvent) => {
@@ -274,6 +277,11 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     if (!dragData) return;
     draggedTabRef.current = dragData;
     setDraggedTab(dragData);
+    setDraggedTabLabel(
+      typeof event.active.data.current?.label === "string"
+        ? event.active.data.current.label
+        : "Tab",
+    );
   };
   const handleDragMove = (event: DragMoveEvent) => {
     const dragData = draggedTabRef.current;
@@ -342,7 +350,11 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     >
       <div
         ref={containerRef}
-        className={cn("relative min-h-0 min-w-0 flex-1 overflow-hidden", props.className)}
+        className={cn(
+          "relative min-h-0 min-w-0 flex-1 overflow-hidden",
+          draggedTab && "cursor-grabbing [&_*]:cursor-grabbing",
+          props.className,
+        )}
         data-editor-focus-view={props.tree.maximizedPaneId ? "true" : "false"}
         data-editor-tab-dragging={draggedTab ? "true" : "false"}
         onPointerDownCapture={(event) => {
@@ -380,6 +392,17 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
           />
         ))}
       </div>
+      <DragOverlay adjustScale={false} dropAnimation={null} zIndex={100}>
+        {draggedTabLabel ? (
+          <div
+            aria-hidden
+            className="pointer-events-none flex h-6 max-w-48 cursor-grabbing items-center rounded-md border border-primary/40 bg-popover px-2 text-xs text-foreground shadow-lg"
+            data-editor-tab-drag-overlay=""
+          >
+            <span className="truncate">{draggedTabLabel}</span>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }

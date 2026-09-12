@@ -8891,7 +8891,6 @@ export default function ChatView(props: ChatViewProps) {
       const next = transitionThreadWorkspaceLayout(activeThreadRef, transition);
       if (removedSurfaces.length > 0) finishRightPanelSurfaceClose(removedSurfaces);
       syncFocusedWorkspaceSurface(next);
-      pulseWorkspacePaneFocus(next.paneTree.focusedPaneId);
     };
     closeAfterAgentBrowserConfirmation(removedSurfaces, apply);
   };
@@ -8902,7 +8901,6 @@ export default function ChatView(props: ChatViewProps) {
   ) => {
     if (!activeThreadRef) return;
     transitionThreadWorkspaceLayout(activeThreadRef, { _tag: "ActivateTab", paneId, tabId });
-    pulseWorkspacePaneFocus(paneId);
     if (target._tag === "Surface") activateRightPanelSurface(target.surface);
   };
   const focusWorkspacePane = (paneId: PaneId) => {
@@ -8911,7 +8909,6 @@ export default function ChatView(props: ChatViewProps) {
       _tag: "FocusPane",
       paneId,
     });
-    pulseWorkspacePaneFocus(paneId);
     syncFocusedWorkspaceSurface(next);
   };
 
