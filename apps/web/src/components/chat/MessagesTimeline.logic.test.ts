@@ -1122,6 +1122,91 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("folds a settled subagent spawn row and keeps a live one outside the fold", () => {
+    const entriesWith = (agentSpawn: { workflowId: string | null; agentTaskIds: string[] }) => [
+      {
+        id: "assistant-first-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-first" as never,
+          role: "assistant" as const,
+          text: "Fanning out.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "spawn-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "spawn-1",
+          createdAt: "2026-01-01T00:00:03Z",
+          turnId: "turn-1" as never,
+          label: "Ran 2 subagents",
+          tone: "tool" as const,
+          agentSpawn,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Done.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:06Z",
+          streaming: false,
+        },
+      },
+    ];
+    const direct = entriesWith({ workflowId: null, agentTaskIds: ["agent-a", "agent-b"] });
+    const workflow = entriesWith({ workflowId: "wf-1", agentTaskIds: ["wf-1", "agent-a"] });
+    const derive = (
+      timelineEntries: typeof direct,
+      liveAgentTaskIds: ReadonlySet<string> | undefined,
+      expandedSpawnEntryIds?: ReadonlySet<string>,
+      expandedTurnIds?: ReadonlySet<TurnId>,
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        liveAgentTaskIds,
+        expandedSpawnEntryIds,
+        ...(expandedTurnIds ? { expandedTurnIds } : {}),
+      }).map((row) => row.id);
+    const folded = ["turn-fold:turn-1", "assistant-final-entry"];
+    const unfolded = ["turn-fold:turn-1", "spawn-entry", "assistant-final-entry"];
+
+    expect(derive(direct, new Set())).toEqual(folded);
+    expect(derive(direct, new Set(["agent-b"]))).toEqual(unfolded);
+    // A workflow coordinator between phases keeps its batch out of the fold.
+    expect(derive(workflow, new Set(["wf-1"]))).toEqual(unfolded);
+    expect(derive(workflow, new Set())).toEqual(folded);
+    // No live set is known.
+    expect(derive(direct, undefined)).toEqual(unfolded);
+    // The user has it open: it stays visible under the collapsed fold and
+    // keeps its place when the fold is expanded.
+    expect(derive(direct, new Set(), new Set(["spawn-entry"]))).toEqual(unfolded);
+    expect(
+      derive(direct, new Set(), new Set(["spawn-entry"]), new Set(["turn-1" as TurnId])),
+    ).toEqual([
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "spawn-entry",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

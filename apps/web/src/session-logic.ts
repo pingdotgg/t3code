@@ -83,10 +83,9 @@ export interface WorkLogEntry {
   /** Agent role (subagent_type) for labeled timeline rows. */
   agentRole?: string;
   /**
-   * Present on agent-spawn CTA rows: one per workflow run or per-turn batch
-   * of direct spawns. The row renders as a call-to-action ("Kicked off N
-   * subagents") whose live status is derived from the agent panel model at
-   * render time; clicking opens the Agents panel.
+   * Present on agent-spawn rows: one per workflow run or per-turn batch of
+   * direct spawns. The row ("Kicked off N subagents") derives its live
+   * status and member list from the agent panel model at render time.
    */
   agentSpawn?: {
     /** Workflow coordinator taskId, or null for a direct-spawn batch. */
@@ -102,7 +101,7 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   [workLogCollapseKey]?: string;
   toolCallId?: string;
   isWorkflowCoordinator?: boolean;
-  /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn CTAs. */
+  /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn rows. */
   isBackgroundTask?: boolean;
 }
 
@@ -172,7 +171,7 @@ export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
-  // Spawn CTA rows are never neutral-hidden: mid-run they derive from
+  // Spawn rows are never neutral-hidden: mid-run they derive from
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
   if (entry.agentSpawn !== undefined) {
@@ -397,7 +396,7 @@ export function hasActionableProposedPlan(
  * - task.updated is fold input only (status patches are not narrative).
  * Unattributed rows always stay: over-hiding loses the only terminal signal.
  */
-/** Agent (non-background) task.started rows seed spawn CTA batches. */
+/** Agent (non-background) task.started rows seed spawn batches. */
 function isAgentTaskStartedActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -424,10 +423,10 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
     activity.kind === "task.completed";
   // Task rows classify by the server stamp: a subagent's own background
   // shell (agentId + "background") is agent-internal, but a nested AGENT
-  // (agentId + "agent") stays visible so its rows can anchor a spawn CTA
+  // (agentId + "agent") stays visible so its rows can anchor a spawn row
   // (review finding: hiding on agentId alone removed nested agents and
   // their anchors). Bypassed agent lifecycle rows also pass — collapse
-  // folds every such row into its batch's single CTA row, which is how
+  // folds every such row into its batch's single spawn row, which is how
   // Codex children (whose rows are ALL bypassed) get an anchor at the
   // spawn point.
   if (isTaskRow) {
@@ -456,10 +455,10 @@ export function deriveWorkLogEntries(
   for (const activity of foldUserInputActivities(ordered)) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
-    // Agent task.started rows are CTA seeds: they carry the true spawn turn,
+    // Agent task.started rows are spawn seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They
-    // collapse into the batch's single CTA row, never render standalone.
+    // collapse into the batch's single spawn row, never render standalone.
     if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) continue;
     if (activity.kind === "task.updated") continue;
     if (activity.kind === "tool.progress") continue;
@@ -642,7 +641,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
 /**
  * Spawn-group key for a subagent lifecycle row. Workflow members and their
  * coordinator share the coordinator's group; direct spawns batch per turn.
- * One CTA row per group (A1 design): "Kicked off N subagents".
+ * One row per group: "Kicked off N subagents".
  */
 function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   const taskId = entry.taskId ?? "";
@@ -658,7 +657,7 @@ function agentSpawnGroupKey(entry: DerivedWorkLogEntry): string {
   }
   // No turn id means no batch signal at all: fall back to one group per
   // task. Unrelated turn-less spawns (separate fleets whose rows lost their
-  // turn) must not collapse into one immortal "direct:no-turn" CTA
+  // turn) must not collapse into one immortal "direct:no-turn" spawn
   // accumulating every agent the thread ever ran (review finding). Adapters
   // stamp spawn turns (Codex spawnTurnId; Claude rows ride real turns), so
   // this path is defensive.
@@ -681,7 +680,7 @@ function collapseDerivedWorkLogEntries(
   const collapsed: DerivedWorkLogEntry[] = [];
   // Subagent rows collapse by spawn group, not adjacency: a workflow run (or
   // a turn's batch of direct spawns) is ONE narrative event in the chat — a
-  // CTA row that opens the Agents panel — no matter how many agents it
+  // spawn row in the timeline — no matter how many agents it
   // contains or how their progress rows interleave (quiet-timeline
   // guarantee).
   const spawnRowIndex = new Map<string, number>();
@@ -714,7 +713,7 @@ function collapseDerivedWorkLogEntries(
           : [...(existing.agentSpawn?.agentTaskIds ?? []), entry.taskId];
         collapsed[existingIndex] = {
           ...mergeDerivedWorkLogEntries(existing, entry),
-          // The CTA row keeps the group's ANCHOR identity, not the last
+          // The spawn row keeps the group's ANCHOR identity, not the last
           // agent's: id/createdAt/turnId stay pinned to the spawn point so
           // the row renders where the run launched instead of drifting to
           // the newest progress tick (mid-run it drifted below the whole
