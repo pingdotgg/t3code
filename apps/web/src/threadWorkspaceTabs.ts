@@ -10,6 +10,7 @@ import {
   findPane,
   focusPane,
   getPanes,
+  getVisiblePaneTreeRoot,
   moveTabToPane,
   moveTabToPaneSplit,
   openPaneTab,
@@ -38,6 +39,7 @@ export interface ThreadWorkspaceTabFields {
   readonly paneTree: PaneTree;
   readonly tabsById: Readonly<Record<string, ThreadWorkspaceTab>>;
   readonly nextId: number;
+  readonly rightSidebarVisibility: "open" | "closed";
 }
 
 export type ThreadWorkspaceTabTransition =
@@ -52,6 +54,10 @@ export type ThreadWorkspaceTabTransition =
     }
   | { readonly _tag: "ActivateTab"; readonly paneId: PaneId; readonly tabId: PaneTabId }
   | { readonly _tag: "FocusPane"; readonly paneId: PaneId }
+  | {
+      readonly _tag: "SetRightSidebarVisibility";
+      readonly visibility: "open" | "closed";
+    }
   | { readonly _tag: "TogglePaneMaximized"; readonly paneId: PaneId }
   | { readonly _tag: "ResizeSplit"; readonly splitId: PaneSplitId; readonly ratio: number }
   | {
@@ -268,6 +274,7 @@ const PersistedThreadWorkspaceTabFieldsSchema = Schema.Struct({
   }),
   tabsById: Schema.Record(Schema.String, PersistedThreadWorkspaceTabSchema),
   nextId: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  rightSidebarVisibility: Schema.optional(Schema.Literals(["open", "closed"])),
 });
 
 const decodePersistedThreadWorkspaceTabFields = Schema.decodeUnknownOption(
@@ -288,6 +295,7 @@ export function createThreadWorkspaceTabFields(
     paneTree: createPaneTree({ paneId: ROOT_GROUP_ID, tabIds: [THREAD_TAB_ID] }),
     tabsById: { [THREAD_TAB_ID]: { _tag: "Thread", id: THREAD_TAB_ID } },
     nextId: 1,
+    rightSidebarVisibility: "open",
   };
   for (const surfaceId of surfaceIds) {
     next = addSurfaceTab(next, surfaceId, false);
@@ -314,6 +322,77 @@ function reconcileThreadWorkspaceTabFields(
   return next;
 }
 
+function paneNodeContainsThreadTab(current: ThreadWorkspaceTabFields, node: PaneTreeNode): boolean {
+  return getPanes(node).some((pane) =>
+    pane.tabIds.some((tabId) => current.tabsById[tabId]?._tag === "Thread"),
+  );
+}
+
+/** The collapsible right-side subtree, when the layout has a conventional thread/sidebar split. */
+export function findThreadWorkspaceRightSidebar(
+  current: ThreadWorkspaceTabFields,
+): PaneTreeNode | null {
+  const root = current.paneTree.root;
+  if (root._tag !== "Split" || root.orientation !== "horizontal") return null;
+  if (!paneNodeContainsThreadTab(current, root.first)) return null;
+  return paneNodeContainsThreadTab(current, root.second) ? null : root.second;
+}
+
+/** Selects the pane tree rendered by the workspace without mutating the saved split layout. */
+export function selectVisibleThreadWorkspacePaneTree(current: ThreadWorkspaceTabFields): PaneTree {
+  const focusViewRoot = getVisiblePaneTreeRoot(current.paneTree);
+  if (
+    focusViewRoot !== current.paneTree.root ||
+    current.rightSidebarVisibility === "open" ||
+    findThreadWorkspaceRightSidebar(current) === null
+  ) {
+    return focusViewRoot === current.paneTree.root
+      ? current.paneTree
+      : { ...current.paneTree, root: focusViewRoot };
+  }
+
+  const root = current.paneTree.root;
+  if (root._tag !== "Split") return current.paneTree;
+  const focusedPaneId = findPane(root.first, current.paneTree.focusedPaneId)
+    ? current.paneTree.focusedPaneId
+    : getPanes(root.first)[0]?.id;
+  if (!focusedPaneId) return current.paneTree;
+  return {
+    root: root.first,
+    focusedPaneId,
+    maximizedPaneId: null,
+  };
+}
+
+function setThreadWorkspaceRightSidebarVisibility(
+  current: ThreadWorkspaceTabFields,
+  visibility: "open" | "closed",
+): ThreadWorkspaceTabFields {
+  if (
+    current.rightSidebarVisibility === visibility ||
+    findThreadWorkspaceRightSidebar(current) === null
+  ) {
+    return current;
+  }
+  if (visibility === "open") return { ...current, rightSidebarVisibility: visibility };
+
+  const root = current.paneTree.root;
+  if (root._tag !== "Split") return current;
+  const focusedPaneId = findPane(root.first, current.paneTree.focusedPaneId)
+    ? current.paneTree.focusedPaneId
+    : getPanes(root.first)[0]?.id;
+  if (!focusedPaneId) return current;
+  return {
+    ...current,
+    paneTree: {
+      ...current.paneTree,
+      focusedPaneId,
+      maximizedPaneId: null,
+    },
+    rightSidebarVisibility: visibility,
+  };
+}
+
 /** Applies every thread-workspace rule through the same pure interface used by the store. */
 export function transitionThreadWorkspaceTabs(
   current: ThreadWorkspaceTabFields,
@@ -338,6 +417,8 @@ export function transitionThreadWorkspaceTabs(
       const workspace = focusPane(current.paneTree, input.paneId);
       return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
     }
+    case "SetRightSidebarVisibility":
+      return setThreadWorkspaceRightSidebarVisibility(current, input.visibility);
     case "TogglePaneMaximized": {
       const workspace = toggleMaximizedPane(current.paneTree, input.paneId);
       return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
@@ -475,6 +556,7 @@ function splitThreadWorkspaceTab(
         ? { ...current.tabsById, [targetTabId]: { ...sourceTab, id: targetTabId } }
         : current.tabsById,
     nextId: current.nextId + (input.mode === "copy" ? 3 : 2),
+    rightSidebarVisibility: current.rightSidebarVisibility,
   };
 }
 
@@ -746,6 +828,7 @@ function addSurfaceTab(
       [tabId]: { _tag: "Surface", id: tabId, surfaceId },
     },
     nextId: current.nextId + 1,
+    rightSidebarVisibility: current.rightSidebarVisibility,
   };
 }
 
@@ -854,6 +937,7 @@ function normalizePersistedThreadWorkspaceTabFields(
       persisted.nextId,
       nextAvailableEditorId([...seenGroupIds, ...seenSplitIds, ...referencedTabIds]),
     ),
+    rightSidebarVisibility: persisted.rightSidebarVisibility ?? "open",
   };
 }
 

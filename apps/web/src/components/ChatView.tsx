@@ -182,7 +182,6 @@ import {
   findTopRightPane,
   getPanes,
   getTopPanes,
-  getVisiblePaneTreeRoot,
   type PaneDropZone,
   type PaneId,
   type PaneNode,
@@ -203,7 +202,9 @@ import {
 import { useThreadWorkspaceDefaultStore } from "../threadWorkspaceDefaultStore";
 import { workspacePaneShortcutAction } from "../workspacePaneShortcuts";
 import {
+  findThreadWorkspaceRightSidebar,
   findSurfaceTabs,
+  selectVisibleThreadWorkspacePaneTree,
   threadWorkspaceTabBarDropTransition,
   threadWorkspaceTabDropTransition,
   transitionThreadWorkspaceTabs,
@@ -865,7 +866,7 @@ interface PersistentThreadTerminalDrawerProps {
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
-  workspacePaneFocusShortcutsEnabled: boolean;
+  workspaceShortcutsEnabled: boolean;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -880,7 +881,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   newShortcutLabel,
   closeShortcutLabel,
   keybindings,
-  workspacePaneFocusShortcutsEnabled,
+  workspaceShortcutsEnabled,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -1219,7 +1220,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           newShortcutLabel={visible ? newShortcutLabel : undefined}
           closeShortcutLabel={visible ? closeShortcutLabel : undefined}
           keybindings={keybindings}
-          workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
+          workspaceShortcutsEnabled={workspaceShortcutsEnabled}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
           onHeightChange={setTerminalHeight}
@@ -1239,7 +1240,7 @@ interface PersistentThreadTerminalPanelProps {
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   keybindings: ResolvedKeybindingsConfig;
-  workspacePaneFocusShortcutsEnabled: boolean;
+  workspaceShortcutsEnabled: boolean;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
@@ -1259,7 +1260,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   launchContext,
   focusRequestId,
   keybindings,
-  workspacePaneFocusShortcutsEnabled,
+  workspaceShortcutsEnabled,
   onAddTerminalContext,
   onSplitTerminal,
   onSplitTerminalVertical,
@@ -1402,7 +1403,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       terminalLabelsById={terminalLabelsById}
       terminalLaunchLocationsById={terminalLaunchLocationsById}
       keybindings={keybindings}
-      workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
+      workspaceShortcutsEnabled={workspaceShortcutsEnabled}
     />
   );
 });
@@ -1942,6 +1943,15 @@ export default function ChatView(props: ChatViewProps) {
   const threadWorkspaceLayout = useThreadWorkspaceLayoutStore((state) =>
     selectThreadWorkspaceLayout(state.byThreadKey, activeThreadRef),
   );
+  const visibleWorkspacePaneTree = useMemo(
+    () => selectVisibleThreadWorkspacePaneTree(threadWorkspaceLayout),
+    [threadWorkspaceLayout],
+  );
+  const workspaceRightSidebarAvailable =
+    findThreadWorkspaceRightSidebar(threadWorkspaceLayout) !== null &&
+    threadWorkspaceLayout.paneTree.maximizedPaneId === null;
+  const workspaceRightSidebarOpen =
+    workspaceRightSidebarAvailable && threadWorkspaceLayout.rightSidebarVisibility === "open";
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
@@ -2009,7 +2019,7 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const previewMiniPlayerVisible = workspaceMode
     ? previewMiniPlayerSurfaceId !== null &&
-      !getPanes(threadWorkspaceLayout.paneTree.root).some((pane) => {
+      !getPanes(visibleWorkspacePaneTree.root).some((pane) => {
         const activeTab = pane.activeTabId
           ? threadWorkspaceLayout.tabsById[pane.activeTabId]
           : null;
@@ -4689,7 +4699,8 @@ export default function ChatView(props: ChatViewProps) {
         useThreadWorkspaceLayoutStore.getState().byThreadKey,
         activeThreadRef,
       );
-      const targetPaneId = findAdjacentPanes(current.paneTree, current.paneTree.focusedPaneId)[
+      const visiblePaneTree = selectVisibleThreadWorkspacePaneTree(current);
+      const targetPaneId = findAdjacentPanes(visiblePaneTree, visiblePaneTree.focusedPaneId)[
         direction
       ];
       if (!targetPaneId) return;
@@ -4720,6 +4731,40 @@ export default function ChatView(props: ChatViewProps) {
       workspaceMode,
     ],
   );
+  const toggleWorkspaceRightSidebar = useCallback(() => {
+    if (!workspaceMode || !activeThreadRef) return;
+    const current = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      activeThreadRef,
+    );
+    const visibility = current.rightSidebarVisibility === "open" ? "closed" : "open";
+    const next = transitionThreadWorkspaceLayout(activeThreadRef, {
+      _tag: "SetRightSidebarVisibility",
+      visibility,
+    });
+    if (next === current || visibility === "open") return;
+
+    const targetPaneId = next.paneTree.focusedPaneId;
+    pulseWorkspacePaneFocus(targetPaneId);
+    const targetPane = findPane(next.paneTree.root, targetPaneId);
+    const activeTab = targetPane?.activeTabId ? next.tabsById[targetPane.activeTabId] : null;
+    if (activeTab?._tag === "Thread") {
+      scheduleComposerFocus();
+      return;
+    }
+    if (activeTab?._tag !== "Surface") return;
+    const surface = rightPanelState.surfaces.find(
+      (candidate) => candidate.id === activeTab.surfaceId,
+    );
+    if (surface) activateRightPanelSurface(surface);
+  }, [
+    activateRightPanelSurface,
+    activeThreadRef,
+    pulseWorkspacePaneFocus,
+    rightPanelState.surfaces,
+    scheduleComposerFocus,
+    workspaceMode,
+  ]);
   const toggleFocusedWorkspacePane = useCallback(() => {
     if (!workspaceMode || !activeThreadRef) return;
     const current = selectThreadWorkspaceLayout(
@@ -6479,7 +6524,7 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "rightPanel.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        if (workspaceMode) splitWorkspacePane("right");
+        if (workspaceMode) toggleWorkspaceRightSidebar();
         else toggleRightPanel();
         return;
       }
@@ -6632,6 +6677,7 @@ export default function ChatView(props: ChatViewProps) {
     copyActiveThreadReference,
     previewPanelOpen,
     toggleRightPanel,
+    toggleWorkspaceRightSidebar,
     toggleFocusedWorkspacePane,
     toggleTerminalVisibility,
     workspaceMode,
@@ -8278,9 +8324,10 @@ export default function ChatView(props: ChatViewProps) {
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-      rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen}
+      rightPanelAvailable={workspaceMode ? workspaceRightSidebarAvailable : activeProject !== null}
+      rightPanelOpen={workspaceMode ? workspaceRightSidebarOpen : rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+      {...(workspaceMode ? { rightPanelUnavailableLabel: "No right sidebar to toggle" } : {})}
       {...(workspaceMode
         ? {
             workspaceSplit: {
@@ -8305,10 +8352,13 @@ export default function ChatView(props: ChatViewProps) {
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
       liveAgentCount={
-        rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
+        (workspaceMode ? workspaceRightSidebarOpen : rightPanelOpen) &&
+        activeRightPanelSurface?.kind === "agents"
+          ? 0
+          : agentPanelModel.liveCount
       }
       onToggleTerminal={toggleTerminalVisibility}
-      onToggleRightPanel={toggleRightPanel}
+      onToggleRightPanel={workspaceMode ? toggleWorkspaceRightSidebar : toggleRightPanel}
     />
   );
   const panelLayoutControls = (
@@ -8346,7 +8396,7 @@ export default function ChatView(props: ChatViewProps) {
           launchContext={activeTerminalLaunchContext ?? null}
           focusRequestId={terminalFocusRequestId}
           keybindings={keybindings}
-          workspacePaneFocusShortcutsEnabled={workspaceMode}
+          workspaceShortcutsEnabled={workspaceMode}
           onAddTerminalContext={addTerminalContextToDraft}
           onSplitTerminal={() => splitPanelTerminalSurface(surface)}
           onSplitTerminalVertical={() => splitPanelTerminalSurface(surface, "vertical")}
@@ -8944,7 +8994,7 @@ export default function ChatView(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
         keybindings={keybindings}
-        workspacePaneFocusShortcutsEnabled={workspaceMode}
+        workspaceShortcutsEnabled={workspaceMode}
         onAddTerminalContext={addTerminalContextToDraft}
       />
     ),
@@ -8993,14 +9043,14 @@ export default function ChatView(props: ChatViewProps) {
     syncFocusedWorkspaceSurface(next);
   };
 
-  const visibleWorkspaceRoot = getVisiblePaneTreeRoot(threadWorkspaceLayout.paneTree);
+  const visibleWorkspaceRoot = visibleWorkspacePaneTree.root;
   const topWorkspacePanes = getTopPanes(visibleWorkspaceRoot);
   const topLeftWorkspacePaneId = topWorkspacePanes[0]?.id ?? null;
   const topRightWorkspacePaneId = findTopRightPane(visibleWorkspaceRoot).id;
   const topWorkspacePaneIds = new Set(topWorkspacePanes.map((pane) => pane.id));
   const renderWorkspacePane = (pane: PaneNode, tabDropPreview: PaneTabBarDropPreview | null) => {
     if (!activeThreadRef) return null;
-    const adjacentPanes = findAdjacentPanes(threadWorkspaceLayout.paneTree, pane.id);
+    const adjacentPanes = findAdjacentPanes(visibleWorkspacePaneTree, pane.id);
     const tabs = pane.tabIds.flatMap((tabId) => {
       const tab = threadWorkspaceLayout.tabsById[tabId];
       return tab ? [tab] : [];
@@ -9203,7 +9253,7 @@ export default function ChatView(props: ChatViewProps) {
       >
         {workspaceMode && activeThreadRef ? (
           <SplitPaneGrid
-            tree={threadWorkspaceLayout.paneTree}
+            tree={visibleWorkspacePaneTree}
             canCopyDraggedTabFromSolePane={(draggedTab) =>
               threadWorkspaceLayout.tabsById[draggedTab.sourceTabId]?._tag === "Surface"
             }

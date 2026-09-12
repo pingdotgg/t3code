@@ -49,3 +49,14 @@ export function isWorkspacePaneFocusShortcut(
   if (command === null) return false;
   return workspacePaneShortcutAction(command)?._tag === "Focus";
 }
+
+/** Workspace commands that must bubble past the terminal's input handler. */
+export function isWorkspaceShortcutReleasedFromTerminal(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  if (command === null) return false;
+  return command === "rightPanel.toggle" || workspacePaneShortcutAction(command)?._tag === "Focus";
+}

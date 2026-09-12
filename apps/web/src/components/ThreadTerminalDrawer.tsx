@@ -68,7 +68,7 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
-import { isWorkspacePaneFocusShortcut } from "../workspacePaneShortcuts";
+import { isWorkspaceShortcutReleasedFromTerminal } from "../workspacePaneShortcuts";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   MAX_TERMINALS_PER_GROUP,
@@ -325,7 +325,7 @@ interface TerminalViewportProps {
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
-  workspacePaneFocusShortcutsEnabled?: boolean;
+  workspaceShortcutsEnabled?: boolean;
 }
 
 interface TerminalLaunchLocation {
@@ -352,7 +352,7 @@ export function TerminalViewport({
   resizeEpoch,
   drawerHeight,
   keybindings,
-  workspacePaneFocusShortcutsEnabled = false,
+  workspaceShortcutsEnabled = false,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
@@ -757,8 +757,8 @@ export function TerminalViewport({
           isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
           isTerminalNewShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options) ||
-          (workspacePaneFocusShortcutsEnabled &&
-            isWorkspacePaneFocusShortcut(event, currentKeybindings, options))
+          (workspaceShortcutsEnabled &&
+            isWorkspaceShortcutReleasedFromTerminal(event, currentKeybindings, options))
         ) {
           return false;
         }
@@ -1017,7 +1017,7 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
-  workspacePaneFocusShortcutsEnabled: boolean;
+  workspaceShortcutsEnabled: boolean;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
@@ -1079,7 +1079,7 @@ export default function ThreadTerminalDrawer({
   onHeightChange,
   onAddTerminalContext,
   keybindings,
-  workspacePaneFocusShortcutsEnabled,
+  workspaceShortcutsEnabled,
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
@@ -1555,7 +1555,7 @@ export default function ThreadTerminalDrawer({
                           resizeEpoch={resizeEpoch}
                           drawerHeight={drawerHeight}
                           keybindings={keybindings}
-                          workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
+                          workspaceShortcutsEnabled={workspaceShortcutsEnabled}
                         />
                       </div>
                     </div>
@@ -1586,7 +1586,7 @@ export default function ThreadTerminalDrawer({
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}
                   keybindings={keybindings}
-                  workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
+                  workspaceShortcutsEnabled={workspaceShortcutsEnabled}
                 />
               </div>
             )}

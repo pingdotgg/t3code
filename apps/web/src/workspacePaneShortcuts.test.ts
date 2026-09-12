@@ -3,6 +3,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   isWorkspacePaneFocusShortcut,
+  isWorkspaceShortcutReleasedFromTerminal,
   workspacePaneShortcutAction,
 } from "./workspacePaneShortcuts";
 
@@ -68,5 +69,24 @@ describe("workspacePaneShortcutAction", () => {
         },
       ),
     ).toBe(false);
+  });
+
+  it("releases the right sidebar toggle from the terminal", () => {
+    expect(
+      isWorkspaceShortcutReleasedFromTerminal(
+        {
+          key: "b",
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: true,
+        },
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: true, terminalOpen: true },
+        },
+      ),
+    ).toBe(true);
   });
 });

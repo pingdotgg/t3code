@@ -23,7 +23,10 @@ import { memo } from "react";
 import type { RightPanelSurface } from "../../rightPanelStore";
 import { calculatePaneTreeLayout } from "../../splitPaneTree";
 import type { ThreadWorkspaceDefault } from "../../threadWorkspaceDefaults";
-import type { ThreadWorkspaceTab } from "../../threadWorkspaceTabs";
+import {
+  selectVisibleThreadWorkspacePaneTree,
+  type ThreadWorkspaceTab,
+} from "../../threadWorkspaceTabs";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Toggle } from "../ui/toggle";
@@ -122,7 +125,9 @@ function workspaceTabSurface(
 }
 
 function WorkspaceLayoutMiniature({ template }: { readonly template: ThreadWorkspaceDefault }) {
-  const layout = calculatePaneTreeLayout(template.layout.paneTree.root);
+  const layout = calculatePaneTreeLayout(
+    selectVisibleThreadWorkspacePaneTree(template.layout).root,
+  );
   const surfacesById = new Map(
     template.rightPanel.surfaces.map((surface) => [surface.id, surface]),
   );
@@ -317,6 +322,42 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      <Tooltip>
+        <TooltipTrigger render={<span className="flex shrink-0" />}>
+          <Toggle
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            pressed={rightPanelOpen}
+            onPressedChange={onToggleRightPanel}
+            aria-label={
+              liveAgentCount > 0
+                ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                : "Toggle right panel"
+            }
+            variant="ghost"
+            size="sm"
+            disabled={!rightPanelAvailable}
+          >
+            <PanelRightIcon className="size-4" />
+            {liveAgentCount > 0 ? (
+              <span
+                aria-hidden
+                className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
+              >
+                {liveAgentCount}
+              </span>
+            ) : null}
+          </Toggle>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          {rightPanelAvailable
+            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
+                liveAgentCount > 0
+                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                  : ""
+              }`
+            : rightPanelUnavailableLabel}
+        </TooltipPopup>
+      </Tooltip>
       {workspaceSplit ? (
         <Tooltip>
           <TooltipTrigger
@@ -339,44 +380,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               : "Restore the workspace before splitting"}
           </TooltipPopup>
         </Tooltip>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
-              aria-label={
-                liveAgentCount > 0
-                  ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                  : "Toggle right panel"
-              }
-              variant="ghost"
-              size="sm"
-              disabled={!rightPanelAvailable}
-            >
-              <PanelRightIcon className="size-4" />
-              {liveAgentCount > 0 ? (
-                <span
-                  aria-hidden
-                  className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-                >
-                  {liveAgentCount}
-                </span>
-              ) : null}
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
-                  liveAgentCount > 0
-                    ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                    : ""
-                }`
-              : rightPanelUnavailableLabel}
-          </TooltipPopup>
-        </Tooltip>
-      )}
+      ) : null}
       {workspaceDefaults ? (
         <Menu>
           <Tooltip>

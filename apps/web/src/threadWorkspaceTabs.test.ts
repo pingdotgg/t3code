@@ -3,9 +3,12 @@ import { describe, expect, test } from "vite-plus/test";
 import { findPane, type PaneTabId } from "./splitPaneTree";
 import {
   createThreadWorkspaceTabFields,
+  findThreadWorkspaceRightSidebar,
   findThreadWorkspaceTabGroup,
   findSurfaceTabs,
   parsePersistedThreadWorkspaceTabs,
+  revealThreadWorkspaceSurfaceBesideThread,
+  selectVisibleThreadWorkspacePaneTree,
   threadWorkspaceTabBarDropTransition,
   transitionThreadWorkspaceTabs,
   threadWorkspaceTabDropTransition,
@@ -52,6 +55,52 @@ describe("thread workspace tabs", () => {
     expect(threadActive.tabsById[activeTabId(threadActive) ?? ""]).toMatchObject({
       _tag: "Thread",
     });
+  });
+
+  test("closes and restores a conventional right sidebar without changing its tabs", () => {
+    const initial = createThreadWorkspaceTabFields(["files"]);
+    const split = revealThreadWorkspaceSurfaceBesideThread(initial, "files");
+    const root = split.paneTree.root;
+    const sidebar = findThreadWorkspaceRightSidebar(split);
+    expect(sidebar).not.toBeNull();
+
+    const closed = transitionThreadWorkspaceTabs(split, {
+      _tag: "SetRightSidebarVisibility",
+      visibility: "closed",
+    });
+
+    expect(closed.paneTree.root).toBe(root);
+    expect(closed.tabsById).toBe(split.tabsById);
+    expect(closed.rightSidebarVisibility).toBe("closed");
+    expect(selectVisibleThreadWorkspacePaneTree(closed).root).toBe(
+      root._tag === "Split" ? root.first : root,
+    );
+
+    const reopened = transitionThreadWorkspaceTabs(closed, {
+      _tag: "SetRightSidebarVisibility",
+      visibility: "open",
+    });
+    expect(selectVisibleThreadWorkspacePaneTree(reopened)).toBe(reopened.paneTree);
+  });
+
+  test("does not treat an ordinary vertical split as a right sidebar", () => {
+    const initial = createThreadWorkspaceTabFields(["files"]);
+    const filesTab = findSurfaceTabs(initial, "files")[0]!;
+    const split = transitionThreadWorkspaceTabs(initial, {
+      _tag: "SplitTab",
+      paneId: initial.paneTree.focusedPaneId,
+      tabId: filesTab.id,
+      direction: "down",
+      mode: "move",
+    });
+
+    expect(findThreadWorkspaceRightSidebar(split)).toBeNull();
+    expect(
+      transitionThreadWorkspaceTabs(split, {
+        _tag: "SetRightSidebarVisibility",
+        visibility: "closed",
+      }),
+    ).toBe(split);
   });
 
   test("opens the same surface once in each focused group", () => {
@@ -635,5 +684,6 @@ describe("thread workspace tabs", () => {
     }).byThreadKey.legacy;
 
     expect(parsed?.paneTree.maximizedPaneId).toBeNull();
+    expect(parsed?.rightSidebarVisibility).toBe("open");
   });
 });
