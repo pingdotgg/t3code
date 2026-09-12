@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
+  buildFileDiffIdentityKeys,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
@@ -147,6 +148,25 @@ describe("diff file reconciliation", () => {
     expect(buildFileDiffContentVersion(afterChanged)).not.toBe(
       buildFileDiffContentVersion(beforeChanged),
     );
+  });
+
+  it("disambiguates repeated file identities without dropping either diff", () => {
+    const filePatch = [
+      "diff --git a/scripts/push-release.sh b/scripts/push-release.sh",
+      "--- a/scripts/push-release.sh",
+      "+++ b/scripts/push-release.sh",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+    ].join("\n");
+    const parsed = getRenderablePatch(`${filePatch}\n${filePatch}`);
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    const keys = buildFileDiffIdentityKeys(parsed.files);
+    expect(parsed.files).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    expect(keys[0]).toBe(buildFileDiffIdentityKey(parsed.files[0]!));
   });
 });
 

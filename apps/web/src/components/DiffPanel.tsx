@@ -35,7 +35,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffContentVersion,
-  buildFileDiffIdentityKey,
+  buildFileDiffIdentityKeys,
   getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
@@ -416,15 +416,14 @@ export default function DiffPanel({
       }),
     );
   }, [renderablePatch]);
-  const renderableFileEntries = useMemo(
-    () =>
-      renderableFiles.map((fileDiff) => ({
-        fileDiff,
-        fileKey: buildFileDiffIdentityKey(fileDiff),
-        fileVersion: buildFileDiffContentVersion(fileDiff),
-      })),
-    [renderableFiles],
-  );
+  const renderableFileEntries = useMemo(() => {
+    const fileKeys = buildFileDiffIdentityKeys(renderableFiles);
+    return renderableFiles.map((fileDiff, index) => ({
+      fileDiff,
+      fileKey: fileKeys[index]!,
+      fileVersion: buildFileDiffContentVersion(fileDiff),
+    }));
+  }, [renderableFiles]);
   const codeViewFiles = useMemo(
     () =>
       renderableFileEntries.map(({ fileDiff, fileKey, fileVersion }) => {

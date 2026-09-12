@@ -167,6 +167,16 @@ export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
   return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}`;
 }
 
+export function buildFileDiffIdentityKeys(files: ReadonlyArray<FileDiffMetadata>): string[] {
+  const occurrences = new Map<string, number>();
+  return files.map((file) => {
+    const identity = buildFileDiffIdentityKey(file);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    return occurrence === 0 ? identity : `${identity}\u0000${occurrence}`;
+  });
+}
+
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   const cacheKey = fileDiff.cacheKey;
   if (!cacheKey) return `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
