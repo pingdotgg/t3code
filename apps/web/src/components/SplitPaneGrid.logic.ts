@@ -30,6 +30,7 @@ export function canDropPaneTab(input: {
 export function resolvePaneDropZone(input: {
   readonly clientX: number;
   readonly clientY: number;
+  readonly centerAction: "swap" | "split-vertically";
   readonly bounds: {
     readonly left: number;
     readonly top: number;
@@ -65,7 +66,9 @@ export function resolvePaneDropZone(input: {
     nearestZone = "down";
     nearestDistance = downDistance;
   }
-  return nearestDistance <= PANE_EDGE_DROP_RATIO ? nearestZone : "center";
+  if (nearestDistance <= PANE_EDGE_DROP_RATIO) return nearestZone;
+  if (input.centerAction === "swap") return "center";
+  return vertical < 0.5 ? "up" : "down";
 }
 
 export function calculatePaneSplitRatio(

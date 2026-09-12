@@ -14,12 +14,25 @@ const tabId = (value: string) => `pane-tab:${value}` as PaneTabId;
 describe("split pane pointer and keyboard geometry", () => {
   test("resolves edge and center drop zones", () => {
     const bounds = { left: 100, top: 100, width: 400, height: 300 };
+    const resolveSwapZone = (clientX: number, clientY: number) =>
+      resolvePaneDropZone({ clientX, clientY, bounds, centerAction: "swap" });
 
-    expect(resolvePaneDropZone({ clientX: 110, clientY: 250, bounds })).toBe("left");
-    expect(resolvePaneDropZone({ clientX: 490, clientY: 250, bounds })).toBe("right");
-    expect(resolvePaneDropZone({ clientX: 300, clientY: 110, bounds })).toBe("up");
-    expect(resolvePaneDropZone({ clientX: 300, clientY: 390, bounds })).toBe("down");
-    expect(resolvePaneDropZone({ clientX: 300, clientY: 250, bounds })).toBe("center");
+    expect(resolveSwapZone(110, 250)).toBe("left");
+    expect(resolveSwapZone(490, 250)).toBe("right");
+    expect(resolveSwapZone(300, 110)).toBe("up");
+    expect(resolveSwapZone(300, 390)).toBe("down");
+    expect(resolveSwapZone(300, 250)).toBe("center");
+  });
+
+  test("uses the full center for vertical splits when swapping is unavailable", () => {
+    const bounds = { left: 100, top: 100, width: 400, height: 300 };
+    const resolveSplitZone = (clientX: number, clientY: number) =>
+      resolvePaneDropZone({ clientX, clientY, bounds, centerAction: "split-vertically" });
+
+    expect(resolveSplitZone(300, 200)).toBe("up");
+    expect(resolveSplitZone(300, 300)).toBe("down");
+    expect(resolveSplitZone(110, 250)).toBe("left");
+    expect(resolveSplitZone(490, 250)).toBe("right");
   });
 
   test("clamps pointer ratios to usable pane sizes", () => {

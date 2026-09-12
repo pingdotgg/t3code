@@ -192,9 +192,17 @@ function resolveDragDropPreview(input: {
   const targetPane = paneWithDomId(input.paneById, paneElement?.dataset.editorGroup ?? null);
   if (!paneElement || !targetPane) return null;
   const bounds = paneElement.getBoundingClientRect();
+  const canSwap = canDropPaneTab({
+    tree: input.tree,
+    draggedTab: input.draggedTab,
+    targetPaneId: targetPane.id,
+    zone: "center",
+    canCopyFromSolePane: input.canCopyFromSolePane,
+  });
   const zone = resolvePaneDropZone({
     clientX: input.clientX,
     clientY: input.clientY,
+    centerAction: canSwap ? "swap" : "split-vertically",
     bounds: {
       left: bounds.left,
       top: bounds.top,
