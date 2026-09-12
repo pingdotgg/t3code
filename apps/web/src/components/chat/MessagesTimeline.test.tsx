@@ -348,8 +348,6 @@ describe("MessagesTimeline", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
-        await act(() => toggle.props.onClick());
         const questionToggle = renderer!.root.find(
           (node) =>
             node.props["aria-label"]?.startsWith("Question answer submitted:") &&
