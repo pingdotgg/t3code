@@ -200,6 +200,25 @@ function findCursorEffortConfigOption(
   );
 }
 
+/** True when an ACP select is Cursor Auto's Optimize For (`optimize_for`) control. */
+function isCursorOptimizeForConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  const id = option.id.trim().toLowerCase();
+  const name = option.name.trim().toLowerCase();
+  return id === "optimize_for" || name.includes("optimize");
+}
+
+/** Locates the `model_config` Optimize For select among Cursor ACP session options. */
+function findCursorOptimizeForConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): EffectAcpSchema.SessionConfigOption | undefined {
+  return configOptions.find(
+    (option) =>
+      option.type === "select" &&
+      getCursorConfigOptionCategory(option) === "model_config" &&
+      isCursorOptimizeForConfigOption(option),
+  );
+}
+
 function isCursorContextConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
   const id = option.id.trim().toLowerCase();
   const name = option.name.trim().toLowerCase();
@@ -253,12 +272,35 @@ function getBooleanCurrentValue(
   return undefined;
 }
 
+/**
+ * Converts Cursor ACP session config options into generic model capability
+ * descriptors (Optimize For, reasoning, context, fast/thinking toggles),
+ * marking the ACP current value as the descriptor default when present.
+ */
 export function buildCursorCapabilitiesFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): ModelCapabilities {
   if (!configOptions || configOptions.length === 0) {
     return EMPTY_CAPABILITIES;
   }
+
+  const optimizeForOption = findCursorOptimizeForConfigOption(configOptions);
+  const optimizeForOptions =
+    optimizeForOption?.type === "select"
+      ? flattenSessionConfigSelectOptions(optimizeForOption).map((entry) => {
+          if (optimizeForOption.currentValue === entry.value) {
+            return {
+              value: entry.value,
+              label: entry.name,
+              isDefault: true,
+            };
+          }
+          return {
+            value: entry.value,
+            label: entry.name,
+          };
+        })
+      : [];
 
   const reasoningConfig = findCursorEffortConfigOption(configOptions);
   const reasoningEffortLevels =
@@ -309,6 +351,15 @@ export function buildCursorCapabilitiesFromConfigOptions(
   const fastCurrentValue = getBooleanCurrentValue(fastOption);
   const thinkingCurrentValue = getBooleanCurrentValue(thinkingOption);
   const optionDescriptors = [
+    ...(optimizeForOptions.length > 0
+      ? [
+          buildSelectOptionDescriptor({
+            id: "optimizeFor",
+            label: optimizeForOption?.name?.trim() || "Optimize For",
+            options: optimizeForOptions,
+          }),
+        ]
+      : []),
     ...(reasoningEffortLevels.length > 0
       ? [
           buildSelectOptionDescriptor({
@@ -480,6 +531,10 @@ export function resolveCursorAcpBaseModelId(model: string | null | undefined): s
   return base.includes("[") ? base.slice(0, base.indexOf("[")) : base;
 }
 
+/**
+ * Maps UI provider option selections onto Cursor ACP `session/set_config_option`
+ * updates, preserving each option's original backend config id and value.
+ */
 export function resolveCursorAcpConfigUpdates(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
@@ -495,6 +550,22 @@ export function resolveCursorAcpConfigUpdates(
     readonly configId: string;
     readonly value: string | boolean;
   }> = [];
+
+  const optimizeForOption = findCursorOptimizeForConfigOption(configOptions);
+  const requestedOptimizeFor = getProviderOptionStringSelectionValue(selections, "optimizeFor");
+  if (optimizeForOption && requestedOptimizeFor) {
+    const value = findCursorSelectOptionValue(
+      optimizeForOption,
+      (option) =>
+        normalizeCursorConfigOptionToken(option.value) ===
+          normalizeCursorConfigOptionToken(requestedOptimizeFor) ||
+        normalizeCursorConfigOptionToken(option.name) ===
+          normalizeCursorConfigOptionToken(requestedOptimizeFor),
+    );
+    if (value) {
+      updates.push({ configId: optimizeForOption.id, value });
+    }
+  }
 
   const reasoningOption = findCursorEffortConfigOption(configOptions);
   const requestedReasoning = normalizeCursorReasoningValue(
