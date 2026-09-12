@@ -2629,6 +2629,74 @@ describe("ProviderRuntimeIngestion", () => {
     ).toMatchObject([{ payload: { requestId: request.requestId } }]);
   });
 
+  it("resolves every native callback when the session exits without a terminal turn", async () => {
+    const harness = await createHarness();
+    const parent = userInputEvent("parent-turn", "parent-question");
+    const child = userInputEvent("child-turn", "child-question");
+    const turnless = { ...userInputEvent("unused", "turnless-question"), turnId: undefined };
+    const answered = userInputEvent("parent-turn", "answered-question");
+    const asynchronous = userInputEvent("parent-turn", "async-question", "message");
+    await harness.emitAndDrain([
+      parent,
+      child,
+      turnless,
+      answered,
+      asynchronous,
+      {
+        type: "user-input.resolved",
+        eventId: asEventId("answered-before-exit"),
+        provider: parent.provider,
+        threadId: parent.threadId,
+        requestId: answered.requestId,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        payload: { answers: { first: "yes", second: "yes" } },
+      },
+    ]);
+    const exited: ProviderRuntimeEvent = {
+      type: "session.exited",
+      eventId: asEventId("question-session-exited"),
+      provider: parent.provider,
+      threadId: parent.threadId,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      payload: { reason: "Provider process exited." },
+    };
+    await harness.emitAndDrain([exited]);
+    const resolutions = (await harness.readModel()).threads[0]!.activities.filter(
+      (activity) => activity.kind === "user-input.resolved",
+    );
+    expect(resolutions).toHaveLength(4);
+    expect(resolutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          turnId: parent.turnId,
+          payload: { requestId: parent.requestId },
+        }),
+        expect.objectContaining({ turnId: child.turnId, payload: { requestId: child.requestId } }),
+        expect.objectContaining({ turnId: null, payload: { requestId: turnless.requestId } }),
+      ]),
+    );
+    expect((await harness.readThreadShell()).hasPendingUserInput).toBe(true);
+
+    await harness.emitAndDrain([exited]);
+    expect(
+      (await harness.readModel()).threads[0]!.activities.filter(
+        (activity) => activity.kind === "user-input.resolved",
+      ),
+    ).toEqual(resolutions);
+    await harness.emitAndDrain([
+      {
+        type: "user-input.resolved",
+        eventId: asEventId("async-answer-after-exit"),
+        provider: parent.provider,
+        threadId: parent.threadId,
+        requestId: asynchronous.requestId,
+        createdAt: "2026-01-01T00:00:04.000Z",
+        payload: { answers: { first: "yes", second: "yes" } },
+      },
+    ]);
+    expect((await harness.readThreadShell()).hasPendingUserInput).toBe(false);
+  });
+
   it("preserves answered questions and leaves newer, child and async questions pending", async () => {
     const harness = await createHarness();
     const answered = userInputEvent("old-turn", "answered-question");

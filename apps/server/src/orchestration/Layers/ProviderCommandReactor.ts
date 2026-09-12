@@ -1728,7 +1728,7 @@ const make = Effect.gen(function* () {
       }
       const hasSession = thread.session && thread.session.status !== "stopped";
       if (!hasSession) {
-        return yield* appendProviderFailureActivity({
+        yield* appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.user-input.respond.failed",
           summary: "Provider user input response failed",
@@ -1737,6 +1737,47 @@ const make = Effect.gen(function* () {
           createdAt: event.payload.createdAt,
           requestId: event.payload.requestId,
         });
+        // Requests can survive a server restart or predate session-exit cleanup.
+        // Read the durable request, not the capped command snapshot, and record
+        // dismissal separately from the failed answer so every client can settle.
+        const request = yield* projectionSnapshotQuery.getUserInputActivity(event.payload);
+        if (
+          Option.isSome(request) &&
+          request.value.kind === "user-input.requested" &&
+          !(
+            typeof request.value.payload === "object" &&
+            request.value.payload !== null &&
+            "responseMode" in request.value.payload &&
+            request.value.payload.responseMode === "message"
+          )
+        ) {
+          // Legacy activities have no sequence, so their durable lookup orders
+          // by timestamp even when the client or server clock has moved back.
+          const resolvedAt = DateTime.formatIso(
+            DateTime.makeUnsafe(
+              Math.max(
+                DateTime.toEpochMillis(yield* DateTime.now),
+                DateTime.toEpochMillis(DateTime.makeUnsafe(request.value.createdAt)) + 1,
+              ),
+            ),
+          );
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: yield* serverCommandId("orphaned-user-input-resolved"),
+            threadId: thread.id,
+            activity: {
+              id: yield* serverEventId(),
+              tone: "info",
+              kind: "user-input.resolved",
+              summary: "User input dismissed because the provider session ended",
+              payload: { requestId: event.payload.requestId },
+              turnId: request.value.turnId,
+              createdAt: resolvedAt,
+            },
+            createdAt: resolvedAt,
+          });
+        }
+        return;
       }
 
       yield* providerService
