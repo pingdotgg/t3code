@@ -349,18 +349,23 @@ describe("resolveSnoozePresets", () => {
     ]);
   });
 
-  it("puts next week on the following Monday", () => {
-    const nextWeek = new Date(
-      resolveSnoozePresets(localDate(2026, 4, 6, 10)).find((preset) => preset.id === "next-week")!
-        .snoozedUntil,
+  it("puts next week on the locale's first weekday", () => {
+    const now = localDate(2026, 4, 6, 10);
+    const sundayStart = new Date(
+      resolveSnoozePresets(now, "en-US").find((preset) => preset.id === "next-week")!.snoozedUntil,
     );
-    expect(nextWeek.getDay()).toBe(1);
-    expect(nextWeek.getDate()).toBe(13);
+    const mondayStart = new Date(
+      resolveSnoozePresets(now, "en-GB").find((preset) => preset.id === "next-week")!.snoozedUntil,
+    );
+
+    expect(sundayStart.getDay()).toBe(0);
+    expect(sundayStart.getDate()).toBe(12);
+    expect(mondayStart.getDay()).toBe(1);
+    expect(mondayStart.getDate()).toBe(13);
   });
 
-  it("drops next week on Sundays, when it lands on the same Monday as tomorrow", () => {
-    // Sunday 2026-08-30 07:01: "Tomorrow" and "Next week" are both Monday 9:00.
-    const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1));
+  it("drops next week when it lands on the same day as tomorrow", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1), "en-GB");
     expect(presets.map((preset) => preset.id)).toEqual([
       "hour",
       "three-hours",

@@ -53,6 +53,10 @@ function readHostSystemLocale(): string | null {
 
 const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
 
+export function getTimestampLocale(): string | undefined {
+  return timestampLocale;
+}
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
