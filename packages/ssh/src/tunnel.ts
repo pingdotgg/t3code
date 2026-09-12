@@ -414,8 +414,23 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+resolve_installed_t3_cli() {
+  if command -v t3 >/dev/null 2>&1; then
+    command -v t3
+    return 0
+  fi
+  if [ -n "\${HOME:-}" ]; then
+    for T3_USER_CLI in "$HOME/.local/bin/t3" "$HOME/bin/t3"; do
+      if [ -x "$T3_USER_CLI" ]; then
+        printf '%s\n' "$T3_USER_CLI"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+if T3_CLI_PATH="$(resolve_installed_t3_cli)"; then
+  exec "$T3_CLI_PATH" "$@"
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
