@@ -1,6 +1,7 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { buildRemoteOpenUrl, type EditorId, type ScopedThreadRef } from "@t3tools/contracts";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
+import type { RemoteOpenState } from "./remoteOpen";
 import { useRightPanelStore } from "./rightPanelStore";
 import { resolvePathLinkTarget } from "./terminal-links";
 
@@ -77,24 +78,79 @@ export function resolveDiffPathForWorkspace(input: {
   return relativeSegments.length > 0 ? relativeSegments.join("/") : null;
 }
 
-export function openDiffFilePrimaryAction({
-  threadRef,
-  filePath,
-  activeCwd,
-  repositoryRoot,
-  openInEditor,
-}: OpenDiffFilePrimaryActionInput): void {
-  const workspaceFilePath = resolveDiffPathForWorkspace({
-    filePath,
-    workspaceRoot: activeCwd,
-    repositoryRoot,
-  });
-  if (!workspaceFilePath) return;
+interface DiffFileTarget {
+  readonly workspaceFilePath: string;
+  readonly editorTargetPath: string;
+}
 
-  if (threadRef) {
-    useRightPanelStore.getState().openFile(threadRef, workspaceFilePath);
+/** Resolves a repo-relative diff path to the active workspace: null when it lies outside it. */
+function resolveDiffFileTarget(input: {
+  readonly filePath: string;
+  readonly activeCwd: string | undefined;
+  readonly repositoryRoot?: string | undefined;
+}): DiffFileTarget | null {
+  const workspaceFilePath = resolveDiffPathForWorkspace({
+    filePath: input.filePath,
+    workspaceRoot: input.activeCwd,
+    repositoryRoot: input.repositoryRoot,
+  });
+  if (!workspaceFilePath) return null;
+  return {
+    workspaceFilePath,
+    editorTargetPath: input.activeCwd
+      ? resolvePathLinkTarget(workspaceFilePath, input.activeCwd)
+      : workspaceFilePath,
+  };
+}
+
+export function openDiffFileInEditor(
+  input: Omit<OpenDiffFilePrimaryActionInput, "threadRef">,
+): void {
+  const target = resolveDiffFileTarget(input);
+  if (target) input.openInEditor(target.editorTargetPath);
+}
+
+export function openDiffFilePrimaryAction(input: OpenDiffFilePrimaryActionInput): void {
+  const target = resolveDiffFileTarget(input);
+  if (!target) return;
+
+  if (input.threadRef) {
+    useRightPanelStore.getState().openFile(input.threadRef, target.workspaceFilePath);
     return;
   }
 
-  openInEditor(activeCwd ? resolvePathLinkTarget(workspaceFilePath, activeCwd) : workspaceFilePath);
+  input.openInEditor(target.editorTargetPath);
+}
+
+export type DiffEditorLaunch =
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "remote-url"; readonly url: string }
+  | { readonly kind: "local-exec"; readonly editor: EditorId; readonly reveal: boolean };
+
+/**
+ * Picks how a diff file reaches the user's editor. A client on another machine
+ * gets an SSH deep link; with no SSH route the action is unavailable, since a
+ * server-side exec would open the file where the user cannot see it.
+ */
+export function resolveDiffEditorLaunch(input: {
+  readonly remoteOpen: RemoteOpenState;
+  readonly editor: EditorId | null;
+  readonly targetPath: string;
+  readonly revealInFileManager: boolean;
+}): DiffEditorLaunch {
+  const { remoteOpen, editor } = input;
+  if (editor === null || remoteOpen.mode === "remote-unavailable") return { kind: "unavailable" };
+  if (remoteOpen.mode === "remote-links") {
+    const url = buildRemoteOpenUrl({
+      editor,
+      host: remoteOpen.host.host,
+      absolutePath: input.targetPath,
+    });
+    return url === undefined ? { kind: "unavailable" } : { kind: "remote-url", url };
+  }
+  return {
+    kind: "local-exec",
+    editor,
+    reveal: input.revealInFileManager && editor === "file-manager",
+  };
 }

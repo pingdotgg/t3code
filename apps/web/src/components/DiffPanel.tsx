@@ -25,14 +25,31 @@ import {
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
-import { useOpenInPreferredEditor } from "../editorPreferences";
+import { usePreferredEditor } from "../editorPreferences";
+import { openInEditorMenuLabel } from "../editorLabels";
 import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import {
+  openDiffFileInEditor,
+  openDiffFilePrimaryAction,
+  resolveDiffEditorLaunch,
+} from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
+import { readLocalApi } from "../localApi";
+import {
+  revealInFileExplorerLabelForKind,
+  revealInFileExplorerLabelForOs,
+} from "./preview/fileExplorerLabel";
+import {
+  openRemoteEditorUrl,
+  useRemoteCapableEditors,
+  useRemoteOpenHint,
+  useRemoteOpenResolution,
+} from "../remoteOpen";
+import { shellEnvironment } from "../state/shell";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
@@ -152,10 +169,17 @@ export default function DiffPanel({
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
-  const openInPreferredEditor = useOpenInPreferredEditor(
-    activeThread?.environmentId ?? null,
-    serverConfig?.availableEditors ?? [],
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
+  const remoteOpenResolution = useRemoteOpenResolution(activeThread?.environmentId ?? null);
+  const remoteCapableEditors = useRemoteCapableEditors();
+  // Same rule as the Open picker: off-machine clients pick from editors that
+  // speak SSH deep links, not from what the server found on its PATH.
+  const [preferredEditor] = usePreferredEditor(
+    remoteOpenResolution.state.mode === "local-exec"
+      ? (serverConfig?.availableEditors ?? [])
+      : remoteCapableEditors,
   );
+  const [, markRemoteOpenHintSeen] = useRemoteOpenHint();
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
   const gitStatusQuery = useEnvironmentQuery(
     activeThread !== null && activeThread !== undefined && activeCwd != null
@@ -472,6 +496,53 @@ export default function DiffPanel({
     [codeViewFiles, collapseScopeKey, requestTreeReveal],
   );
 
+  const revealInFileManager = serverConfig?.shellRevealInFileManager === true;
+  const launchDiffFileInEditor = useCallback(
+    (targetPath: string) => {
+      const environmentId = activeThread?.environmentId;
+      if (environmentId === undefined) return;
+      const launch = resolveDiffEditorLaunch({
+        remoteOpen: remoteOpenResolution.state,
+        editor: preferredEditor,
+        targetPath,
+        revealInFileManager,
+      });
+      if (launch.kind === "unavailable") return;
+      if (launch.kind === "remote-url") {
+        void openRemoteEditorUrl(launch.url).then((opened) => {
+          if (opened) markRemoteOpenHintSeen();
+          else console.warn("Failed to open remote diff file in editor.");
+        });
+        return;
+      }
+      void openInEditor({
+        environmentId,
+        input: {
+          cwd: targetPath,
+          editor: launch.editor,
+          ...(launch.reveal ? { reveal: true } : {}),
+        },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          console.warn("Failed to open diff file in editor.", {
+            operation: "open-diff-file",
+            environmentId,
+            ...(routeThreadRef ? { threadId: routeThreadRef.threadId } : {}),
+            ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+          });
+        }
+      });
+    },
+    [
+      activeThread?.environmentId,
+      markRemoteOpenHintSeen,
+      openInEditor,
+      preferredEditor,
+      remoteOpenResolution.state,
+      revealInFileManager,
+      routeThreadRef,
+    ],
+  );
   const openDiffFile = useCallback(
     (filePath: string) => {
       openDiffFilePrimaryAction({
@@ -479,27 +550,23 @@ export default function DiffPanel({
         filePath,
         activeCwd,
         repositoryRoot: activeRepositoryRoot,
-        openInEditor: (targetPath) => {
-          void (async () => {
-            const result = await openInPreferredEditor(targetPath);
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              console.warn("Failed to open diff file in editor.", {
-                operation: "open-diff-file",
-                ...(routeThreadRef
-                  ? {
-                      environmentId: routeThreadRef.environmentId,
-                      threadId: routeThreadRef.threadId,
-                    }
-                  : {}),
-                ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
-              });
-            }
-          })();
-        },
+        openInEditor: launchDiffFileInEditor,
       });
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
+    [activeCwd, activeRepositoryRoot, launchDiffFileInEditor, routeThreadRef],
   );
+  const canOpenDiffFileExternally =
+    activeCwd != null &&
+    activeThread != null &&
+    preferredEditor !== null &&
+    remoteOpenResolution.isResolved &&
+    remoteOpenResolution.state.mode !== "remote-unavailable";
+  const openDiffFileMenuLabel =
+    preferredEditor === "file-manager" && revealInFileManager && serverConfig
+      ? serverConfig.shellRevealInFileManagerKind === undefined
+        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
+        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
+      : openInEditorMenuLabel(preferredEditor);
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
       setCollapsedDiffFiles((current) => {
@@ -932,6 +999,42 @@ export default function DiffPanel({
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div
                   className="min-h-0 min-w-0 flex-1"
+                  onContextMenuCapture={(event) => {
+                    if (!canOpenDiffFileExternally) return;
+                    const header = event.nativeEvent
+                      .composedPath()
+                      .find(
+                        (node): node is HTMLElement =>
+                          node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
+                      );
+                    const filePath = header?.querySelector("[data-title]")?.textContent?.trim();
+                    if (!filePath) return;
+                    const file = codeViewFiles.find((candidate) => candidate.filePath === filePath);
+                    if (!file) return;
+                    const api = readLocalApi();
+                    if (!api) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void api.contextMenu
+                      .show([{ id: "open-in-editor", label: openDiffFileMenuLabel }], {
+                        x: event.clientX,
+                        y: event.clientY,
+                      })
+                      .then((action) => {
+                        if (action !== "open-in-editor") return;
+                        openDiffFileInEditor({
+                          filePath: file.filePath,
+                          activeCwd,
+                          repositoryRoot: activeRepositoryRoot,
+                          openInEditor: launchDiffFileInEditor,
+                        });
+                      })
+                      .catch((error: unknown) => {
+                        console.warn("Diff file context menu failed.", {
+                          ...safeErrorLogAttributes(error),
+                        });
+                      });
+                  }}
                   onClickCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
                     for (const node of composedPath) {
@@ -947,7 +1050,7 @@ export default function DiffPanel({
                         node instanceof HTMLElement && node.hasAttribute("data-title"),
                     );
                     const filePath = title?.textContent?.trim();
-                    // The filename remains the explicit "open in editor" affordance.
+                    // The filename opens the internal file viewer; the rest of the header collapses.
                     if (filePath) {
                       openDiffFile(filePath);
                       return;
