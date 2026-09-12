@@ -192,7 +192,8 @@ struct ThreadOrderPlannerTests {
         let planner = ThreadOrderPlanner.movePlanner(
             ordered: ordered,
             all: all,
-            section: .pinned
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a", "env-b"]
         )
         // Single-key move within the writable environment works.
         let moving = ordered.first { $0.id == "env-a:a-2" }!
@@ -226,7 +227,12 @@ struct ThreadOrderPlannerTests {
         )
         var options: [String: FeatureThreadMoveOptions] = [:]
         for thread in threads {
-            if let value = DailyUXSidebarIndex.moveOptions(for: thread, in: threads, now: now) {
+            if let value = DailyUXSidebarIndex.moveOptions(
+                for: thread,
+                in: threads,
+                now: now,
+                connectedEnvironmentIDs: ["env-a", "env-b"]
+            ) {
                 options[thread.id] = value
             }
         }
@@ -252,11 +258,64 @@ struct ThreadOrderPlannerTests {
         let planner = ThreadOrderPlanner.movePlanner(
             ordered: ordered,
             all: threads,
-            section: .active
+            section: .active,
+            connectedEnvironmentIDs: ["env-a"]
         )
         let assignments = planner(ordered[1], .up)
         #expect(assignments?.count == 1)
         #expect(assignments?[0].threadID == "env-a:a-2")
+    }
+
+    @Test
+    func disconnectedEnvironmentRowsStayAnchorsButAreNeverWritten() {
+        // env-b is reorder-capable but currently disconnected: its last-known
+        // keys are stale, so its rows anchor positions without being writable.
+        let threads = sectionThreads(
+            environmentID: "env-a",
+            pinned: true,
+            keys: ["a-1": "f", "a-2": "t"],
+            supportsPinReorder: true
+        ) + sectionThreads(
+            environmentID: "env-b",
+            pinned: true,
+            keys: ["b-1": "m"],
+            supportsPinReorder: true
+        )
+        let all = threads
+        let ordered = DailyUXSidebarIndex.orderedSection(all, section: .pinned, now: now)
+        #expect(ordered.map(\.id) == ["env-a:a-1", "env-b:b-1", "env-a:a-2"])
+
+        let planner = ThreadOrderPlanner.movePlanner(
+            ordered: ordered,
+            all: all,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a"]
+        )
+        // The disconnected row itself offers no move.
+        let stale = ordered.first { $0.id == "env-b:b-1" }!
+        #expect(planner(stale, .up) == nil)
+        #expect(planner(stale, .down) == nil)
+        // A connected row can still move past it with a single write.
+        let moving = ordered.first { $0.id == "env-a:a-2" }!
+        let assignments = planner(moving, .up)
+        #expect(assignments == [
+            FeatureThreadOrderAssignment(threadID: "env-a:a-2", orderKey: "j")
+        ])
+
+        var options: [String: FeatureThreadMoveOptions] = [:]
+        for thread in threads {
+            if let value = DailyUXSidebarIndex.moveOptions(
+                for: thread,
+                in: threads,
+                now: now,
+                connectedEnvironmentIDs: ["env-a"]
+            ) {
+                options[thread.id] = value
+            }
+        }
+        #expect(options["env-b:b-1"] == nil)
+        #expect(options["env-a:a-1"] == FeatureThreadMoveOptions(canMoveUp: false, canMoveDown: true))
+        #expect(options["env-a:a-2"] == FeatureThreadMoveOptions(canMoveUp: true, canMoveDown: false))
     }
 
     // MARK: - pinned section ordering

@@ -1722,6 +1722,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw NativeFeatureClientError.threadNotFound
         }
         let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
+        // Only currently-connected environments are writable; a disconnected
+        // server's rows keep their stale keys as anchors but never receive
+        // writes, so a spread rewrite cannot half-land on a dead client.
+        let connectedEnvironmentIDs = Set(
+            environmentConnectionStates
+                .filter { $0.value == .connected }
+                .map(\.key)
+        )
         let planner = ThreadOrderPlanner.movePlanner(
             ordered: DailyUXSidebarIndex.orderedSection(
                 snapshot.threads,
@@ -1729,7 +1737,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 now: .now
             ),
             all: snapshot.threads,
-            section: section
+            section: section,
+            connectedEnvironmentIDs: connectedEnvironmentIDs
         )
         guard let assignments = planner(thread, direction), !assignments.isEmpty else {
             return []

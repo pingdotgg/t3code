@@ -120,18 +120,29 @@ enum ThreadOrderPlanner {
 
     /// Keeps every visible row as an anchor but only offers plans whose key
     /// writes are supported — the same rule React Native applies to Move up /
-    /// Move down, so menu availability and execution share one plan.
+    /// Move down, so menu availability and execution share one plan. Rows in
+    /// environments outside `connectedEnvironmentIDs` stay anchors but are
+    /// never written: their last-known keys are stale, and a write would go
+    /// to a dead client.
     static func movePlanner(
         ordered: [FeatureThread],
         all: [FeatureThread],
-        section: FeatureThreadOrderSection
+        section: FeatureThreadOrderSection,
+        connectedEnvironmentIDs: Set<String>
     ) -> (FeatureThread, FeatureThreadMoveDirection) -> [FeatureThreadOrderAssignment]? {
         let orderedIDs = ordered.map(\.id)
         var keysByID: [String: String?] = [:]
         for thread in all {
             keysByID[thread.id] = section == .pinned ? thread.pinOrderKey : thread.activeOrderKey
         }
-        let writableIDs = Set(ordered.filter { isWritable($0, section: section) }.map(\.id))
+        let writableIDs = Set(
+            ordered
+                .filter {
+                    isWritable($0, section: section)
+                        && connectedEnvironmentIDs.contains($0.environmentID ?? "")
+                }
+                .map(\.id)
+        )
         return { thread, direction in
             guard writableIDs.contains(thread.id),
                   let assignments = planMove(
