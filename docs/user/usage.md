@@ -9,6 +9,9 @@ cost. These estimates are not your subscription bill.
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
+When your app and server support different providers, usage totals may cover only the providers
+your app understands. Update the app to include newly supported providers.
+
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
 results appear as each one responds.
