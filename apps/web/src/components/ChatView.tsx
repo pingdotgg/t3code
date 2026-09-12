@@ -1537,6 +1537,7 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
   const settings = useEnvironmentSettings(environmentId);
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -6314,6 +6315,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.markUnread") {
+        if (!isServerThread || !activeThreadKey) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) markThreadUnread(activeThreadKey, activeLatestTurn?.completedAt);
+        return;
+      }
+
       if (command === "thread.settle") {
         event.preventDefault();
         event.stopPropagation();
@@ -6482,6 +6491,8 @@ export default function ChatView(props: ChatViewProps) {
     activeRightPanelSurface,
     activeProjectScripts,
     addTerminalSurface,
+    activeLatestTurn?.completedAt,
+    activeThreadKey,
     activeThreadRef,
     activeThreadPinned,
     activeThreadSettled,
@@ -6499,6 +6510,7 @@ export default function ChatView(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     handleUnsettleActiveThread,
+    markThreadUnread,
     isServerThread,
     onInterrupt,
     onToggleDiff,
