@@ -8,6 +8,8 @@
  * @module ProviderAdapter
  */
 import type {
+  OrchestrationGetAgentHistoryInput,
+  OrchestrationGetAgentHistoryResult,
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
@@ -126,9 +128,15 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly hasSession: (threadId: ThreadId) => Effect.Effect<boolean>;
 
-  /**
-   * Read a provider thread snapshot.
-   */
+  /** Omitted when this provider cannot retrieve saved child history. Never resumes a session. */
+  readonly getAgentHistory?: (
+    input: OrchestrationGetAgentHistoryInput & {
+      readonly resumeCursor: unknown;
+      readonly cwd?: string | undefined;
+    },
+  ) => Effect.Effect<OrchestrationGetAgentHistoryResult, TError>;
+
+  /** Read a provider thread snapshot. */
   readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**

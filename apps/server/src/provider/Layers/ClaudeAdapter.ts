@@ -6,6 +6,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import * as NodeOS from "node:os";
+import { readClaudeAgentHistory } from "./claudeAgentHistory.ts";
 import {
   type CanUseTool,
   query,
@@ -5090,6 +5092,39 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  /** Read the configured instance’s saved child transcript without creating a live SDK query. */
+  const getAgentHistory: ClaudeAdapterShape["getAgentHistory"] = Effect.fn("getAgentHistory")(
+    function* (input) {
+      const sessionId = readClaudeResumeState(input.resumeCursor)?.resume;
+      if (!sessionId)
+        return {
+          status: "unavailable",
+          entries: [],
+          nextOffset: null,
+          message: "No saved Claude session is available for this thread.",
+        };
+      return yield* Effect.tryPromise({
+        try: () =>
+          readClaudeAgentHistory({
+            sessionId,
+            agentId: input.agentId,
+            offset: input.offset,
+            view: input.view,
+            configDir: claudeEnvironment.CLAUDE_CONFIG_DIR
+              ? path.resolve(input.cwd ?? process.cwd(), claudeEnvironment.CLAUDE_CONFIG_DIR)
+              : path.join(NodeOS.homedir(), ".claude"),
+          }),
+        catch: (cause) =>
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "getAgentHistory",
+            detail: "Could not read saved Claude agent history.",
+            cause,
+          }),
+      });
+    },
+  );
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -5377,6 +5412,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     sendTurn,
     interruptTurn,
     readThread,
+    getAgentHistory,
     rollbackThread,
     respondToRequest,
     respondToUserInput,
