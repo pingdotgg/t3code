@@ -192,7 +192,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:codex-goal",
     tag: WS_METHODS.subscribeCodexGoal,
-    idleTtlMs: 0,
+    idleTtlMs: 5 * 60_000,
     transform: (events) => events.pipe(Stream.map(applyCodexGoalStreamEvent)),
   });
   return {
