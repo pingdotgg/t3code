@@ -519,6 +519,30 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
 }
 
+/**
+ * Where even spending would have left the bar: the share of quota still open
+ * when the window is drawn down in step with its clock, 0..100. Null when the
+ * window has no known length or reset: there is no timeframe to compare
+ * against, so there is nothing to mark.
+ */
+export function evenPacePercent(window: ServerProviderUsageWindow, now: number): number | null {
+  const elapsed = elapsedShare(window, now);
+  return elapsed === null ? null : Math.round((1 - elapsed) * 100);
+}
+
+/**
+ * Quota left against what even spending would have left, in points:
+ * `9 pts of headroom`, `4 pts ahead of pace`. Null when the window has no
+ * timeframe.
+ */
+export function paceGapLabel(window: ServerProviderUsageWindow, now: number): string | null {
+  const evenPace = evenPacePercent(window, now);
+  if (evenPace === null) return null;
+  const gap = remainingPercent(window) - evenPace;
+  if (gap === 0) return "exactly on pace";
+  return gap > 0 ? `${gap} pts of headroom` : `${-gap} pts ahead of pace`;
+}
+
 export type LimitPace = "ahead" | "on" | "under";
 
 /**

@@ -2,12 +2,14 @@ import {
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
+  evenPacePercent,
   formatDuration,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
   type LimitPoolWindow,
+  paceGapLabel,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { TicketIcon } from "lucide-react";
@@ -147,6 +149,7 @@ function SegmentPopover({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
+  const evenPace = evenPacePercent(window, now);
   const resetsIn = formatResetsIn(window, now);
   const where =
     account.environments.length > 0
@@ -181,6 +184,11 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
+        {evenPace !== null ? (
+          <Row label="Even pace">
+            {evenPace}% <span className="text-muted-foreground">· {paceGapLabel(window, now)}</span>
+          </Row>
+        ) : null}
         {window.resetsAt ? (
           <Row label="Resets">
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
@@ -212,6 +220,26 @@ function SegmentPopover({
 }
 
 /**
+ * Where even spending would have left the fill, as a tick above and below the
+ * segment rather than a line across it: the segment's own label runs the full
+ * width, and a mark outside the bar reads at a glance without competing with it.
+ * The provider colour ties it to the fill it is measured against.
+ *
+ * The tick is shorter than the room its wrapper reserves, and the difference is
+ * the gap that keeps it reading as a tick. Flush against the bar, the two run
+ * together into one line.
+ */
+function EvenPaceTicks({ at, color }: { readonly at: number; readonly color: string }) {
+  const tick = "absolute w-px -translate-x-1/2 h-1.5 @2xl/pool:h-2";
+  return (
+    <span aria-hidden className="pointer-events-none">
+      <span className={cn(tick, "top-0")} style={{ left: `${at}%`, backgroundColor: color }} />
+      <span className={cn(tick, "bottom-0")} style={{ left: `${at}%`, backgroundColor: color }} />
+    </span>
+  );
+}
+
+/**
  * One account's share of one pooled window: the segment, its popover, and the
  * reset confirm. The confirm is a sibling of the popover, not a child: dialogs
  * stack under popovers, and the popover closes as the confirm opens.
@@ -234,66 +262,81 @@ function PoolSegment({
 }) {
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
+  const evenPace = evenPacePercent(window, now);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        openOnHover
-        render={
-          <button
-            type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
-            className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
-          />
-        }
+      {/* The wrapper reserves the ticks' room and their gap; the segment clips its fill, so they
+          cannot live inside it. Centring the segment keeps both gaps equal whatever height the
+          grid row takes, and makes the button a flex item, which drops the baseline space an
+          inline-level button would otherwise add under it. */}
+      <div
+        className="relative flex min-w-0 flex-col justify-center py-2.5 @2xl/pool:py-3"
+        style={{ gridColumn: index, gridRow: 1 }}
       >
-        {/* Translucent so the label reads over the fill for any provider colour and theme. */}
-        <div
-          aria-hidden
-          className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
-        />
-        {/* The spent share is hatched, not blank: it is what the countdown restores. */}
-        {remaining < 100 && reset ? (
+        <PopoverTrigger
+          openOnHover
+          render={
+            <button
+              type="button"
+              aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${evenPace === null ? "" : `, ${evenPace}% at even pace`}${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+              className="relative h-5 w-full min-w-0 shrink-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
+            />
+          }
+        >
+          {/* Translucent so the label reads over the fill for any provider colour and theme. */}
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 opacity-20"
-            style={{
-              width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-            }}
+            className="absolute inset-y-0 left-0 rounded-md opacity-35"
+            style={{ width: `${remaining}%`, backgroundColor: color }}
           />
-        ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-[10px] leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
-          <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
-          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-[11px] text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
+          {/* The spent share is hatched, not blank: it is what the countdown restores. */}
+          {remaining < 100 && reset ? (
+            <div
+              aria-hidden
+              className="absolute inset-y-0 right-0 opacity-20"
+              style={{
+                width: `${100 - remaining}%`,
+                backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+              }}
+            />
+          ) : null}
+          <span
+            aria-hidden
+            className="absolute inset-0 flex items-center justify-center text-[10px] leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          >
+            {index}
           </span>
-        </div>
-      </PopoverTrigger>
+          <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+            <AccountName
+              account={account}
+              className="min-w-0 truncate font-medium text-foreground"
+            />
+            <span className="shrink-0 font-semibold text-foreground tabular-nums">
+              {remaining}%
+            </span>
+            {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
+            <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-[11px] text-foreground tabular-nums">
+              {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+              {credits ? (
+                <>
+                  {resetsIn ? (
+                    <span aria-hidden className="text-muted-foreground">
+                      ·
+                    </span>
+                  ) : null}
+                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                    <TicketIcon className="size-3" aria-hidden />
+                    {credits}
+                  </span>
+                </>
+              ) : null}
+            </span>
+          </div>
+        </PopoverTrigger>
+        {evenPace !== null ? <EvenPaceTicks at={evenPace} color={color} /> : null}
+      </div>
       <LegendRow account={account} window={window} color={color} now={now} index={index} />
       {account.redeem ? (
         <RedeemableSegmentPopup

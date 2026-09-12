@@ -1,12 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
+  evenPacePercent,
   formatDuration,
   formatResetsIn,
+  paceGapLabel,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -66,6 +68,38 @@ function AccountSegment({
   );
 }
 
+/**
+ * Where even spending would have left the fill, as a tick above and below the
+ * segment rather than a line across it: the segment clips its own fill, and a
+ * mark outside the bar reads without competing with the position number. The
+ * provider colour ties it to the fill it is measured against. Drawn only when
+ * the window reports a length and a reset; without both there is no timeframe
+ * to compare against.
+ *
+ * The tick is shorter than the room its wrapper reserves, and the difference is
+ * the gap that keeps it reading as a tick. Flush against the bar, the two run
+ * together into one line.
+ */
+function EvenPaceTicks({
+  window,
+  now,
+  color,
+}: {
+  readonly window: ServerProviderUsageWindow;
+  readonly now: number;
+  readonly color: string;
+}) {
+  const evenPace = evenPacePercent(window, now);
+  if (evenPace === null) return null;
+  const tick = { left: `${evenPace}%`, width: 1, height: 6, backgroundColor: color } as const;
+  return (
+    <View pointerEvents="none" className="absolute inset-0">
+      <View className="absolute top-0" style={tick} />
+      <View className="absolute bottom-0" style={tick} />
+    </View>
+  );
+}
+
 function PoolWindowCard({
   pool,
   color,
@@ -118,26 +152,31 @@ function PoolWindowCard({
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          const paceGap = paceGapLabel(window, now);
           return (
-            <Pressable
-              key={account.key}
-              accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
-              accessibilityHint="Show account details"
-              onPress={() => openAccount(account)}
-              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
-            >
-              <AccountSegment
-                remaining={remainingPercent(window)}
-                color={color}
-                pending={Boolean(window.resetsAt)}
-              />
-              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                  {index + 1}
-                </Text>
-              </View>
-            </Pressable>
+            // The wrapper reserves the ticks' room; the segment clips its fill, so they sit
+            // outside it. Centring keeps both gaps equal when the row stretches the wrapper.
+            <View key={account.key} className="relative min-w-0 flex-1 justify-center py-2.5">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${paceGap ? `, ${paceGap}` : ""}`}
+                accessibilityHint="Show account details"
+                onPress={() => openAccount(account)}
+                className="h-7 overflow-hidden rounded-md bg-subtle"
+              >
+                <AccountSegment
+                  remaining={remainingPercent(window)}
+                  color={color}
+                  pending={Boolean(window.resetsAt)}
+                />
+                <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+                  <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+                    {index + 1}
+                  </Text>
+                </View>
+              </Pressable>
+              <EvenPaceTicks window={window} now={now} color={color} />
+            </View>
           );
         })}
       </View>
@@ -336,6 +375,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                     dateStyle: "medium",
                     timeStyle: "short",
                   })}
+                </Text>
+              ) : null}
+              {evenPacePercent(window, now) !== null ? (
+                <Text className="text-sm text-foreground-muted">
+                  {evenPacePercent(window, now)}% at even pace · {paceGapLabel(window, now)}
                 </Text>
               ) : null}
               {reset && reset.restoresPercent > 0 ? (
