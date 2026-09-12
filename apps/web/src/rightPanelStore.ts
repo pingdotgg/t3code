@@ -19,6 +19,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { transitionThreadWorkspaceLayout } from "./threadWorkspaceLayoutStore";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -119,6 +120,22 @@ export interface ThreadRightPanelState {
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
+}
+
+interface SurfaceReplacement {
+  readonly previousSurfaceId: string;
+  readonly nextSurfaceId: string;
+}
+
+function replaceThreadWorkspaceSurface(
+  ref: ScopedThreadRef,
+  replacement: SurfaceReplacement | null,
+): void {
+  if (!replacement) return;
+  transitionThreadWorkspaceLayout(ref, {
+    _tag: "ReplaceSurfaceTabs",
+    ...replacement,
+  });
 }
 
 interface RightPanelStoreState {
@@ -556,7 +573,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             upsertSurface(current, repeatableSurface(current, kind)),
           ),
         ),
-      openDevice: (ref, target, automatic = false) =>
+      openDevice: (ref, target, automatic = false) => {
+        let replacement: SurfaceReplacement | null = null;
         set((state) =>
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
             const id =
@@ -564,6 +582,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (automatic && current.dismissedDeviceSurfaceIds?.includes(id)) return current;
             const surface: RightPanelSurface = { id, kind: "device", target };
             const existing = current.surfaces.find((entry) => entry.id === id);
+            if (current.surfaces.some((entry) => entry.id === "device")) {
+              replacement = { previousSurfaceId: "device", nextSurfaceId: id };
+            }
             const surfaces = existing
               ? current.surfaces.filter((entry) => entry.id !== "device")
               : current.surfaces.map((entry) => (entry.id === "device" ? surface : entry));
@@ -578,7 +599,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               existing ?? surface,
             );
           }),
-        ),
+        );
+        replaceThreadWorkspaceSurface(ref, replacement);
+      },
       renameDevice: (ref, surfaceId, title) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
@@ -590,16 +613,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           })),
         ),
-      openBrowser: (ref, tabId) =>
+      openBrowser: (ref, tabId) => {
+        let replacement: SurfaceReplacement | null = null;
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = browserSurface(tabId);
+            if (tabId && current.surfaces.some((entry) => entry.id === "browser:new")) {
+              replacement = { previousSurfaceId: "browser:new", nextSurfaceId: surface.id };
+            }
             const withoutPlaceholder = tabId
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
-        ),
+        );
+        replaceThreadWorkspaceSurface(ref, replacement);
+      },
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -615,7 +644,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line) => {
+        let replacement: SurfaceReplacement | null = null;
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const activeExplorer = current.surfaces.find(
@@ -625,6 +655,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((surface) => surface.id !== activeExplorer.id)
               : current.surfaces;
             const surfaceId = `file:${relativePath}` as const;
+            if (activeExplorer) {
+              replacement = {
+                previousSurfaceId: activeExplorer.id,
+                nextSurfaceId: surfaceId,
+              };
+            }
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -644,8 +680,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [...withoutStandaloneExplorer, surface],
             };
           }),
-        ),
-      openAttachment: (ref, attachment) =>
+        );
+        replaceThreadWorkspaceSurface(ref, replacement);
+      },
+      openAttachment: (ref, attachment) => {
+        let replacement: SurfaceReplacement | null = null;
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const activeExplorer = current.surfaces.find(
@@ -654,12 +693,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const withoutStandaloneExplorer = activeExplorer
               ? current.surfaces.filter((surface) => surface.id !== activeExplorer.id)
               : current.surfaces;
-            return upsertSurface(
-              { ...current, surfaces: withoutStandaloneExplorer },
-              attachmentSurface(attachment),
-            );
+            const surface = attachmentSurface(attachment);
+            if (activeExplorer) {
+              replacement = {
+                previousSurfaceId: activeExplorer.id,
+                nextSurfaceId: surface.id,
+              };
+            }
+            return upsertSurface({ ...current, surfaces: withoutStandaloneExplorer }, surface);
           }),
-        ),
+        );
+        replaceThreadWorkspaceSurface(ref, replacement);
+      },
       openTerminal: (ref, terminalId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
