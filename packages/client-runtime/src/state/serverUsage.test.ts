@@ -7,6 +7,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerSettings,
+  type UsageThreadBreakdown,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -57,7 +58,21 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
   const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
   let settings = DEFAULT_SERVER_SETTINGS;
   let requests = 0;
+  let threadRequests = 0;
   const client = {
+    [WS_METHODS.serverGetUsageThreadBreakdown]: () =>
+      Effect.sync(() => {
+        threadRequests += 1;
+        return {
+          ...INPUT,
+          contractVersion: USAGE_CONTRACT_VERSION,
+          readAt: "2026-09-04T12:00:00Z",
+          rows: [],
+          truncatedRows: 0,
+          scanDurationMs:
+            settings.usagePriceOverrides["custom-model"]?.inputCostPerMillionTokens ?? 0,
+        } satisfies UsageThreadBreakdown;
+      }),
     [WS_METHODS.subscribeServerConfig]: () =>
       Stream.concat(
         Stream.make({ version: 1 as const, type: "snapshot" as const, config: CONFIG }),
@@ -168,6 +183,8 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
   return {
     registry,
     requests: () => requests,
+    threadRequests: () => threadRequests,
+    threads: atoms.usageThreadBreakdown({ environmentId: TARGET.environmentId, input: INPUT }),
     updateSettings,
     summary: (input = INPUT) => atoms.usageSummary({ environmentId: TARGET.environmentId, input }),
   };
@@ -257,6 +274,39 @@ it.effect("restarts a pending usage read after a price change", () =>
       yield* waitForCost(harness.registry, summary, 5);
       yield* Deferred.await(interrupted);
       expect(harness.requests()).toBe(2);
+      unmount();
+    }),
+  ),
+);
+
+it.effect("refreshes mounted thread breakdowns when override prices change", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const unmount = harness.registry.mount(harness.threads);
+      const waitForPrice = (price: number) =>
+        AtomRegistry.toStream(harness.registry, harness.threads).pipe(
+          Stream.filter(
+            (result) =>
+              AsyncResult.isSuccess(result) &&
+              !result.waiting &&
+              result.value.scanDurationMs === price,
+          ),
+          Stream.runHead,
+        );
+      yield* waitForPrice(0);
+      expect(harness.threadRequests()).toBe(1);
+      yield* harness.updateSettings({
+        ...DEFAULT_SERVER_SETTINGS,
+        usagePriceOverrides: {
+          "custom-model": { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 9 },
+        },
+      });
+      yield* waitForPrice(3);
+      expect(harness.threadRequests()).toBe(2);
+      yield* harness.updateSettings(DEFAULT_SERVER_SETTINGS);
+      yield* waitForPrice(0);
+      expect(harness.threadRequests()).toBe(3);
       unmount();
     }),
   ),
