@@ -416,6 +416,40 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each([TARGET_ENTRY, RELAY_ENTRY])(
+    "keeps slow setup and reconnects on one attempt ($target._tag)",
+    (entry) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          prepare: () => Effect.succeed(PREPARED_CONNECTION).pipe(Effect.delay("8 seconds")),
+          ready: () => Effect.sleep("18 seconds"),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connecting");
+        yield* TestClock.adjust("26 seconds");
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connected",
+          attempt: 1,
+          generation: 1,
+        });
+        expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+        yield* harness.closeLatestSession();
+        yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        yield* TestClock.adjust("29 seconds");
+        expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+          phase: "connected",
+          generation: 2,
+        });
+        expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("retries when a session never becomes ready", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -429,7 +463,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "synchronizing",
       );
-      yield* TestClock.adjust("14 seconds");
+      yield* TestClock.adjust("44 seconds");
       expect((yield* SubscriptionRef.get(supervisor.state)).stage).toBe("synchronizing");
 
       yield* TestClock.adjust("1 second");
@@ -461,7 +495,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connecting" && state.stage === "preparing",
       );
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("45 seconds");
       const retrying = yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
@@ -490,7 +524,7 @@ describe("EnvironmentSupervisor", () => {
         }).pipe(Effect.provide(harness.dependencies));
 
         yield* awaitState(supervisor.state, (state) => state.phase === "connecting");
-        yield* TestClock.adjust("15 seconds");
+        yield* TestClock.adjust("45 seconds");
         const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         expect(failed.lastFailure?.message).toBe(
           `Test environment did not respond during connection setup. ${NETWORK_BLOCKING_HINT}`,
@@ -711,7 +745,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
 
-      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("45 seconds");
       const retrying = yield* eventuallyState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,

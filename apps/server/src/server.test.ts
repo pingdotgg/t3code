@@ -6200,48 +6200,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("refreshes providers for each subscribeServerConfig connection", () =>
+  it.effect("serves config on reconnect without starting provider probes", () =>
     Effect.gen(function* () {
-      const refreshCalls = yield* Ref.make(0);
-      const firstRefreshDone = yield* Deferred.make<void>();
-      const secondRefreshDone = yield* Deferred.make<void>();
-
+      const refresh = vi.fn(() => Effect.never);
       yield* buildAppUnderTest({
-        layers: {
-          providerRegistry: {
-            refresh: () =>
-              Ref.updateAndGet(refreshCalls, (count) => count + 1).pipe(
-                Effect.tap((count) =>
-                  Deferred.succeed(
-                    count === 1 ? firstRefreshDone : secondRefreshDone,
-                    undefined,
-                  ).pipe(Effect.ignore),
-                ),
-                Effect.as([]),
-              ),
-          },
-        },
+        layers: { providerRegistry: { refresh } },
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
-            yield* Deferred.await(firstRefreshDone);
-          }),
-        ),
-      );
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
-            yield* Deferred.await(secondRefreshDone);
-          }),
-        ),
-      );
-
-      assert.equal(yield* Ref.get(refreshCalls), 2);
+      for (let connection = 0; connection < 2; connection += 1) {
+        const event = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ),
+        );
+        assert.equal(event.type, "snapshot");
+      }
+      assert.equal(refresh.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

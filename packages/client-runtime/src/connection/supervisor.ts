@@ -30,7 +30,7 @@ import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
-const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+const CONNECTION_ESTABLISHMENT_TIMEOUT = "45 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;

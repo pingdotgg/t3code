@@ -2929,10 +2929,6 @@ const makeWsRpcLayer = (
                 })),
               );
 
-              yield* providerRegistry
-                .refresh()
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
-
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
                 Stream.merge(
