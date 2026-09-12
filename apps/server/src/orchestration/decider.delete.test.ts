@@ -137,6 +137,34 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
 }
 
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
+  it.effect("emits a deletion tombstone for a missing thread", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("ghost-thread");
+      const commandId = asCommandId("cmd-delete-ghost-thread");
+      const readModel = yield* seedReadModel;
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId,
+          threadId,
+        },
+        readModel,
+      });
+
+      expect(normalizeDeleteEvent(result)).toEqual([
+        {
+          type: "thread.deleted",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          commandId,
+          correlationId: commandId,
+          payload: { threadId },
+        },
+      ]);
+    }),
+  );
+
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
