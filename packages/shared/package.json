@@ -11,6 +11,10 @@
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"
     },
+    "./nativeAppIcon": {
+      "types": "./src/nativeAppIcon.ts",
+      "import": "./src/nativeAppIcon.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

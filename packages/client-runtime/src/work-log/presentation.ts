@@ -605,7 +605,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   );
   if (sources.size > 0) {
     const sourceValues = [...sources.values()];
-    const sourceNames = sourceValues.map((source) => source.name);
+    const sourceNames = [...new Set(sourceValues.map((source) => source.name))];
     const formattedNames =
       sourceNames.length < 2
         ? sourceNames[0]!
@@ -614,7 +614,7 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
           : `${sourceNames.slice(0, -1).join(", ")}, and ${sourceNames.at(-1)}`;
     const allIntegrations = sourceValues.every((source) => source.kind === "integration");
     labels.unshift(
-      `Used ${formattedNames}${allIntegrations ? ` ${sources.size === 1 ? "integration" : "integrations"}` : ""}`,
+      `Used ${formattedNames}${allIntegrations ? ` ${sourceNames.length === 1 ? "integration" : "integrations"}` : ""}`,
     );
   }
   const sentenceLabels = labels.map((label, index) =>

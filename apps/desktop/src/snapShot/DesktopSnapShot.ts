@@ -20,6 +20,8 @@ import {
   type DesktopSnapShotEvent,
   type DesktopSnapShotId,
 } from "@t3tools/contracts";
+import { makeNativeAppIconResolver } from "@t3tools/shared/nativeAppIcon";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -726,6 +728,10 @@ export const make = Effect.gen(function* () {
   >();
   const runPromise = Effect.runPromiseWith(context);
   const captureDirectory = path.join(environment.stateDir, "snap-shots");
+  const nativeIcons = yield* makeNativeAppIconResolver(
+    path.join(environment.stateDir, "native-app-icons"),
+    128,
+  ).pipe(Effect.provideService(HostProcess.HostProcessPlatform, environment.platform));
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
   let shortcutVerified = false;
   const gnomeSetupPaths = {
@@ -921,9 +927,18 @@ export const make = Effect.gen(function* () {
 
     yield* Effect.gen(function* () {
       const accessibilityContext = yield* Effect.promise(() => contextPromise);
-      const appIconDataUrl = yield* Effect.promise(() =>
-        iconDataUrl(source, active, environment.platform),
-      );
+      const nativeIcon = active?.owner.path
+        ? yield* nativeIcons.resolve({ _tag: "path", path: active.owner.path })
+        : null;
+      const nativeIconDataUrl = nativeIcon
+        ? yield* fileSystem.readFile(nativeIcon).pipe(
+            Effect.map((bytes) => `data:image/png;base64,${Encoding.encodeBase64(bytes)}`),
+            Effect.orElseSucceed(() => undefined),
+          )
+        : undefined;
+      const appIconDataUrl =
+        nativeIconDataUrl ??
+        (yield* Effect.promise(() => iconDataUrl(source, active, environment.platform)));
       // Native labels are unbounded; keep a valid screenshot when its metadata is too long.
       const appIdentifier = boundedSnapShotString(
         active?.platform === "macos" ? active.owner.bundleId : linuxWindow?.appIdentifier,
