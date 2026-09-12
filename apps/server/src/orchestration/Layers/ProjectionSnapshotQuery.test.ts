@@ -47,6 +47,58 @@ const encodeMessageContext = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationMessageContext),
 );
 
+it.effect("reads project shells without loading threads or resolving excluded projects", () => {
+  const resolved: string[] = [];
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (root) =>
+          Effect.sync(() => {
+            resolved.push(root);
+            return null;
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES
+      ('p1', 'First', '/first', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL),
+      ('p2', 'Second', '/second', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL),
+      ('p3', 'Deleted', '/deleted', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z', '2026-09-04T00:00:00Z')`;
+    const expected = (yield* query.getShellSnapshot()).projects;
+    resolved.length = 0;
+    yield* sql`INSERT INTO projection_threads
+      (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+      VALUES ('t1', 'p1', 'Thread', 'invalid-json', 'full-access', 'default', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+
+    const counter = makeSqlStatementCounter();
+    const projects = yield* query.getProjectShells().pipe(Effect.withTracer(counter.tracer));
+    assert.deepStrictEqual(projects, expected);
+    assert.strictEqual(counter.count(), 1);
+    assert.deepStrictEqual(resolved.toSorted(), ["/first", "/second"]);
+    resolved.length = 0;
+    yield* sql`UPDATE projection_projects SET scripts_json = 'invalid-json' WHERE project_id IN ('p1', 'p3')`;
+    assert.deepStrictEqual(yield* query.getProjectShells([asProjectId("p2")]), [expected[1]!]);
+    assert.deepStrictEqual(resolved, ["/second"]);
+    resolved.length = 0;
+    const beforeEmpty = counter.count();
+    assert.deepStrictEqual(
+      yield* query.getProjectShells([]).pipe(Effect.withTracer(counter.tracer)),
+      [],
+    );
+    assert.strictEqual(counter.count(), beforeEmpty);
+    assert.deepStrictEqual(yield* query.getProjectShells([asProjectId("p3")]), []);
+    assert.deepStrictEqual(resolved, []);
+  }).pipe(Effect.provide(layer));
+});
+
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),

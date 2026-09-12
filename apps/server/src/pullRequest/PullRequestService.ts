@@ -603,7 +603,10 @@ export const make = Effect.gen(function* () {
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
-    projections.getShellSnapshot().pipe(
+    (filter.projectId === undefined
+      ? projections.getProjectShells(filter.projectIds)
+      : projections.getProjectShellById(filter.projectId).pipe(Effect.map(Option.toArray))
+    ).pipe(
       Effect.mapError(
         (error) =>
           new PullRequestOperationError({
@@ -612,12 +615,12 @@ export const make = Effect.gen(function* () {
             cause: error,
           }),
       ),
-      Effect.flatMap((snapshot) =>
-        refineUnknownProjectKinds(snapshot.projects, filter).pipe(
-          Effect.map((refinedKinds) => ({ refinedKinds, snapshot })),
+      Effect.flatMap((projects) =>
+        refineUnknownProjectKinds(projects, filter).pipe(
+          Effect.map((refinedKinds) => ({ refinedKinds, projects })),
         ),
       ),
-      Effect.map(({ refinedKinds, snapshot }) => {
+      Effect.map(({ refinedKinds, projects }) => {
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
@@ -625,7 +628,7 @@ export const make = Effect.gen(function* () {
         >();
         const viewerRoots = new Map<string, string[]>();
         const seen = new Set<string>();
-        for (const project of snapshot.projects) {
+        for (const project of projects) {
           if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
           if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
