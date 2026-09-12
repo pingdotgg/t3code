@@ -71,6 +71,7 @@ const makeHandlerLayer = (
               : Effect.sync(() => {
                   recorded.files.push({ path, content });
                 }),
+          remove: () => Effect.void,
         }),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -124,7 +125,39 @@ describe("DesktopLinuxUrlHandler", () => {
     );
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
+    assert.include(entry, "Icon=t3code");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
+  });
+
+  it("installs packaged t3code icons under the Icon name and Wayland app id", () => {
+    const operations = DesktopLinuxUrlHandler.linuxDesktopIconInstallOperations({
+      packagedHicolorRoot: "/tmp/.mount_app/usr/share/icons/hicolor",
+      dataHome: "/home/alice/.local/share",
+      desktopEntryName: "com.t3tools.T3Code.desktop",
+    });
+
+    assert.deepEqual(operations, [
+      {
+        sourcePath: "/tmp/.mount_app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+        targetPath: "/home/alice/.local/share/icons/hicolor/256x256/apps/t3code.png",
+      },
+      {
+        sourcePath: "/tmp/.mount_app/usr/share/icons/hicolor/256x256/apps/t3code.png",
+        targetPath: "/home/alice/.local/share/icons/hicolor/256x256/apps/com.t3tools.t3code.png",
+      },
+    ]);
+  });
+
+  it("uses lowercase icon names only, even when the desktop id is mixed-case", () => {
+    assert.deepEqual(DesktopLinuxUrlHandler.linuxDesktopIconNames("t3code.desktop"), ["t3code"]);
+    assert.deepEqual(DesktopLinuxUrlHandler.linuxDesktopIconNames("com.t3tools.T3Code.desktop"), [
+      "t3code",
+      "com.t3tools.t3code",
+    ]);
+    assert.deepEqual(
+      DesktopLinuxUrlHandler.linuxDesktopIconNames("com.t3tools.T3Code.Development.desktop"),
+      ["t3code", "com.t3tools.t3code.development"],
+    );
   });
 
   it("carries structured context on registration errors", () => {

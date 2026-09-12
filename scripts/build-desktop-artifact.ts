@@ -2772,7 +2772,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          // GNOME matches this before the hidden portal desktop entry on Wayland.
+          StartupWMClass: "com.t3tools.T3Code",
         },
       },
     };
