@@ -7,6 +7,7 @@ import { assert, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ChatAttachmentId,
+  ComposerContextId,
   type ChatAttachment,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
@@ -1470,7 +1471,22 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       ...launchInput({ command: "intake-launch", thread: "intake-thread" }),
       initialMessage: {
         messageId: MessageId.make("intake-first"),
-        text: "First",
+        text: "First [file](t3-context://v1/file/intake-file)",
+        context: {
+          version: 1 as const,
+          records: [
+            {
+              version: 1 as const,
+              contextId: ComposerContextId.make("intake-file"),
+              kind: "file" as const,
+              label: attachment.name,
+              attachmentId: attachment.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+            },
+          ],
+        },
         attachments: [attachment],
       },
     };
@@ -1498,6 +1514,15 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     );
     assert.isDefined(stored);
     assert.notEqual(stored.attachments[0]?.id, attachment.id);
+    assert.equal(
+      (stored.context?.records[0] as { attachmentId: string }).attachmentId,
+      stored.attachments[0]?.id,
+    );
+    const userItem = accepted.turnItems.find(
+      (item) => item.type === "user_message" && item.messageId === stored.id,
+    );
+    assert.ok(userItem?.type === "user_message");
+    assert.deepEqual(userItem.context, stored.context);
     const storedPath = resolveAttachmentPath({
       attachmentsDir: config.attachmentsDir,
       attachment: stored.attachments[0]!,

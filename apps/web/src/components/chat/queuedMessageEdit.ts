@@ -42,6 +42,7 @@ export async function prepareQueuedEditAttachments(input: {
   const images = await Promise.all(
     input.images.map(async (image) => ({
       type: "image" as const,
+      id: image.id,
       name: image.name,
       mimeType: image.mimeType,
       sizeBytes: image.sizeBytes,
