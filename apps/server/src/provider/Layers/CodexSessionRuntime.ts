@@ -701,8 +701,8 @@ const decodeCodexThreadResumeMetadata = Schema.decodeUnknownEffect(CodexThreadRe
 interface CodexThreadOpenClient {
   readonly raw: {
     readonly request: (
-      method: "thread/resume",
-      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"] & {
+      method: "thread/resume" | "thread/unarchive",
+      payload: CodexRpc.ClientRequestParamsByMethod["thread/resume" | "thread/unarchive"] & {
         readonly excludeTurns?: boolean;
       },
     ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
@@ -740,7 +740,7 @@ export const openCodexThread = (input: {
   // Older providers may still return history despite excludeTurns. Only the
   // session metadata is needed here, so unrelated historical items cannot
   // prevent resuming a valid provider thread.
-  return input.client.raw
+  const resume = input.client.raw
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
@@ -758,16 +758,27 @@ export const openCodexThread = (input: {
           ),
         ),
       ),
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+    );
+
+  return resume.pipe(
+    Effect.catch((error) => {
+      if (/is archived|codex unarchive/i.test(error.message)) {
+        return input.client.raw
+          .request("thread/unarchive", { threadId: resumeThreadId })
+          .pipe(Effect.andThen(resume));
+      }
+      if (isRecoverableThreadResumeError(error)) {
+        return Effect.logWarning("codex app-server thread resume fell back to fresh start", {
           threadId: input.threadId,
           requestedRuntimeMode: input.runtimeMode,
           resumeThreadId,
           recoverable: true,
           cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
-      ),
-    );
+        }).pipe(Effect.andThen(input.client.request("thread/start", startParams)));
+      }
+      return Effect.fail(error);
+    }),
+  );
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
