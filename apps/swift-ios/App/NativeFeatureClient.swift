@@ -1779,7 +1779,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 try? await refresh(client: client)
             }
         }
-        if let firstError { throw firstError }
+        if let firstError {
+            guard confirmed.isEmpty else {
+                throw FeatureThreadMovePartialError(
+                    confirmed: confirmed,
+                    underlying: firstError
+                )
+            }
+            throw firstError
+        }
         return confirmed
     }
 
