@@ -12,6 +12,8 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
+import { isWindowsDriveListPath } from "@t3tools/shared/path";
+
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -19,6 +21,7 @@ import {
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
+  isWindowsPlatform,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -276,6 +279,11 @@ export function resolveAddProjectPath(input: {
   }
   if (isUnsupportedWindowsProjectPath(rawPath, input.platform)) {
     return { ok: false, error: "Windows-style paths are only supported on Windows environments." };
+  }
+  // The drive list is a browse level, not a directory: resolving it would
+  // quietly add a project at whichever drive root the server happens to be on.
+  if (isWindowsPlatform(input.platform) && isWindowsDriveListPath(rawPath)) {
+    return { ok: false, error: "Choose a drive to add a project from." };
   }
   if (isExplicitRelativeProjectPath(rawPath) && !input.currentProjectCwd) {
     return { ok: false, error: "Relative paths require an active project in this environment." };

@@ -19,7 +19,12 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import {
+  isExplicitRelativePath,
+  isWindowsAbsolutePath,
+  isWindowsDriveListPath,
+  WINDOWS_DRIVE_LIST_PATH,
+} from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePathWith } from "../pathExpansion.ts";
@@ -103,6 +108,32 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
+const WINDOWS_DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+/**
+ * Windows has no API for "list the drives", so each letter is probed directly.
+ * A disconnected network drive can leave `access` hanging, so probes are
+ * bounded and run together: a dead letter costs the timeout, not the listing.
+ */
+const WINDOWS_DRIVE_PROBE_TIMEOUT = "2 seconds";
+
+const listWindowsDriveRoots = Effect.fn("WorkspaceEntries.listWindowsDriveRoots")(function* () {
+  const probedDrives = yield* Effect.forEach(
+    WINDOWS_DRIVE_LETTERS,
+    (letter) =>
+      Effect.tryPromise({
+        try: () => NodeFSP.access(`${letter}:\\`),
+        catch: () => null,
+      }).pipe(
+        Effect.timeout(WINDOWS_DRIVE_PROBE_TIMEOUT),
+        Effect.as<string | null>(`${letter}:`),
+        Effect.orElseSucceed(() => null),
+      ),
+    { concurrency: "unbounded" },
+  );
+  return probedDrives.filter((drive) => drive !== null);
+});
+
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -181,6 +212,14 @@ export const make = Effect.gen(function* () {
 
   const browse: WorkspaceEntries["Service"]["browse"] = Effect.fn("WorkspaceEntries.browse")(
     function* (input) {
+      if ((yield* HostProcessPlatform) === "win32" && isWindowsDriveListPath(input.partialPath)) {
+        const driveRoots = yield* listWindowsDriveRoots();
+        return {
+          parentPath: WINDOWS_DRIVE_LIST_PATH,
+          entries: driveRoots.map((drive) => ({ name: drive, fullPath: `${drive}\\` })),
+        };
+      }
+
       const resolvedInputPath = yield* resolveBrowseTarget(input, path);
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);

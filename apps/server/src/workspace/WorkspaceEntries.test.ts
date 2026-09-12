@@ -18,7 +18,7 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, readdir: vi.fn(actual.readdir) };
+  return { ...actual, readdir: vi.fn(actual.readdir), access: vi.fn(actual.access) };
 });
 
 const TestLayer = Layer.empty.pipe(
@@ -734,6 +734,38 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         });
         expect(result).toEqual({ parentPath: cwd, entries: [] });
       }),
+    );
+
+    it.effect("lists the attached drives at the Windows drive list", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        vi.mocked(NodeFSP.access).mockImplementation(((target: string) =>
+          target === "C:\\" || target === "F:\\"
+            ? Promise.resolve()
+            : Promise.reject(new Error("ENOENT"))) as typeof NodeFSP.access);
+
+        const result = yield* workspaceEntries.browse({ partialPath: "\\" });
+
+        expect(result).toEqual({
+          parentPath: "\\",
+          entries: [
+            { name: "C:", fullPath: "C:\\" },
+            { name: "F:", fullPath: "F:\\" },
+          ],
+        });
+      }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+    );
+
+    it.effect("keeps a bare backslash a normal path off Windows", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const accessSpy = vi.mocked(NodeFSP.access);
+        accessSpy.mockClear();
+
+        yield* workspaceEntries.browse({ partialPath: "\\" });
+
+        expect(accessSpy).not.toHaveBeenCalled();
+      }).pipe(Effect.provideService(HostProcessPlatform, "darwin")),
     );
   });
 });
