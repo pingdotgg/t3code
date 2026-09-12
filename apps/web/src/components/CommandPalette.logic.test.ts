@@ -583,6 +583,40 @@ describe("buildThreadActionItems", () => {
     expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
+  it("surfaces threads when the query is their ID, without outranking title matches", () => {
+    const idThread = makeThread({
+      id: ThreadId.make("thread-alpha-1234"),
+      title: "Unrelated work",
+      updatedAt: "2026-03-05T00:00:00.000Z",
+    });
+    const titleThread = makeThread({
+      id: ThreadId.make("thread-other-9999"),
+      title: "Fix thread-alpha-1234 flakes",
+      updatedAt: "2026-03-04T00:00:00.000Z",
+    });
+    const items = buildThreadActionItems({
+      threads: [idThread, titleThread],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "  THREAD-ALPHA-1234  ",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups.flatMap((group) => group.items)).toEqual([
+      expect.objectContaining({ value: `thread:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${idThread.id}` }),
+    ]);
+  });
+
   it("prefers renderDescription when provided", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search", worktreePath: "/tmp/wt" })],
