@@ -104,6 +104,22 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
+  it("never claims Standard when the Codex service tier is unknown", () => {
+    // The server strips the current value and default marker when it cannot
+    // read Codex's effective tier. Nothing is shown instead of a guessed tier.
+    const unknownTier: ProviderOptionDescriptor = {
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        { id: "default", label: "Standard" },
+        { id: "priority", label: "Fast" },
+      ],
+    };
+    expect(display([EFFORT, unknownTier])).toEqual({ label: "High", showFastModeIcon: false });
+    expect(display([unknownTier])).toEqual({ label: "", showFastModeIcon: false });
+  });
+
   it("keeps non-fastMode booleans as text labels", () => {
     const thinking: Extract<ProviderOptionDescriptor, { type: "boolean" }> = {
       id: "thinking",
