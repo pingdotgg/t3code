@@ -1589,6 +1589,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const acknowledgeComposerModelSelection = useComposerDraftStore(
+    (store) => store.acknowledgeModelSelection,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -6686,6 +6689,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     const context = composerRef.current?.getSendContext();
     if (!context?.providerAvailable) return;
+    const submittedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
 
     // Compaction is a standalone command; the draft and its attachments stay local.
     const threadId = activeThread.id;
@@ -6745,6 +6749,7 @@ export default function ChatView(props: ChatViewProps) {
           );
         }
       } else {
+        acknowledgeComposerModelSelection(composerDraftTarget, submittedDraft);
         clearUsageLimitsFor(routeThreadKey);
       }
     } finally {
@@ -6854,6 +6859,7 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    const submittedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
       sendContextImages.some((image) => image.id === directAnnotation.image?.id);
@@ -7473,6 +7479,10 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        acknowledgeComposerModelSelection(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          submittedDraft,
+        );
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -7880,6 +7890,7 @@ export default function ChatView(props: ChatViewProps) {
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
+      const submittedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -7970,6 +7981,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        acknowledgeComposerModelSelection(composerDraftTarget, submittedDraft);
         clearUsageLimitsFor(routeThreadKey);
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
@@ -7994,7 +8006,9 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeProposedPlan,
       acknowledgeActiveThreadWoke,
+      acknowledgeComposerModelSelection,
       beginLocalDispatch,
+      composerDraftTarget,
       isConnecting,
       isSendBusy,
       isServerThread,
