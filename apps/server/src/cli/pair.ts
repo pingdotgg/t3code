@@ -104,6 +104,15 @@ export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMis
   }
 }
 
+export class TailscaleServeNotEnabledError extends Schema.TaggedError<TailscaleServeNotEnabledError>()(
+  "TailscaleServeNotEnabledError",
+  {},
+) {
+  override get message(): string {
+    return "Tailscale Serve is not enabled on your tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns, then run this command again.";
+  }
+}
+
 export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherEnvironmentError>()(
   "ServesOtherEnvironmentError",
   { servePort: Schema.Number },
@@ -364,6 +373,12 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     );
     if (status.magicDnsName === null) {
       return yield* new MagicDnsNameMissingError();
+    }
+    // Without the HTTPS capability `tailscale serve` prints an enablement URL
+    // and blocks on it forever, so letting it run only buys a timeout that
+    // names neither the setting nor where to change it.
+    if (status.httpsServeEnabled === false) {
+      return yield* new TailscaleServeNotEnabledError();
     }
     const baseUrl = buildTailscaleHttpsBaseUrl({
       magicDnsName: status.magicDnsName,
