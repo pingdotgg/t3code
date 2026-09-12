@@ -1521,6 +1521,7 @@ function ChatMarkdownVideo(props: {
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
+  readonly fallbackSrc?: string | null | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
@@ -1534,6 +1535,7 @@ function ChatMarkdownVideo(props: {
       sourceFailed={props.sourceFailed}
       label={props.alt}
       originalUrl={props.originalUrl}
+      fallbackSrc={props.fallbackSrc}
       style={props.style}
       copyMarkdown={props.copyMarkdown}
       className={cn(
@@ -1643,6 +1645,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         src={src}
         sourceFailed={sourceFailed}
         originalUrl={props.originalUrl}
+        fallbackSrc={authoredUrl}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         style={props.style}

@@ -16,7 +16,11 @@ vi.mock("../assets/assetUrls", async () => {
       state.refresh = refresh;
       return state.failed ? { _tag: "Failure" } : { _tag: "Success", url: state.url };
     },
-    useAssetUrlRefresh: () => async () => {},
+    useAssetUrlRefresh: () => async () => {
+      state.failed = false;
+      state.url = "https://t3.test/api/assets/refreshed/image";
+      state.refresh();
+    },
   };
 });
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -166,7 +170,12 @@ describe("source-control image loading", () => {
         </PullRequestMarkdownContext>,
       );
     });
-    expect(renderer!.root.findByType("video").props.src).toBe(state.url);
+    const firstUrl = state.url;
+    expect(renderer!.root.findByType("video").props.src).toBe(firstUrl);
+    await act(async () => renderer!.root.findByType("video").props.onError());
+    expect(renderer!.root.findByType("video").props.src).toBe(
+      "http://gitlab.local/acme/project/uploads/e347d7ff85358d19b72222f1174b9a4b/clip.mp4",
+    );
     await act(async () => renderer!.root.findByType("video").props.onError());
     expect(renderer!.root.findAllByType("video")).toHaveLength(0);
     const retry = renderer!.root
@@ -178,6 +187,32 @@ describe("source-control image loading", () => {
       );
     expect(retry).toBeDefined();
     await act(async () => retry!.props.onClick());
+    expect(state.url).not.toBe(firstUrl);
+    expect(renderer!.root.findByType("video").props.src).toBe(state.url);
+  });
+
+  it("keeps a playing signed video through refresh and uses the new URL if playback fails", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const url =
+      "https://git.example/acme/project/uploads/e347d7ff85358d19b72222f1174b9a4b/clip.mp4";
+    await act(async () => {
+      renderer = create(
+        <ChatMarkdown cwd="/worktree" environmentId={environmentId} text={`![clip](${url})`} />,
+      );
+    });
+    const firstUrl = state.url;
+    await act(async () => renderer!.root.findByType("video").props.onPlay());
+    state.url = "https://t3.test/api/assets/background-refresh/video";
+    await act(async () => state.refresh());
+    expect(renderer!.root.findByType("video").props.src).toBe(firstUrl);
+    await act(async () => renderer!.root.findByType("video").props.onError());
+    expect(renderer!.root.findByType("video").props.src).toBe(state.url);
+    await act(async () => renderer!.root.findByType("video").props.onError());
+    expect(renderer!.root.findByType("video").props.src).toBe(url);
+    await act(async () => renderer!.root.findByType("video").props.onError());
+    expect(renderer!.root.findAllByType("video")).toHaveLength(0);
+    state.url = "https://t3.test/api/assets/recovered/video";
+    await act(async () => state.refresh());
     expect(renderer!.root.findByType("video").props.src).toBe(state.url);
   });
 

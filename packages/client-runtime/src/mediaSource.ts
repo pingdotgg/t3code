@@ -71,7 +71,10 @@ export function resolveMediaSource(
     return {
       kind: mimeType.startsWith("video/") ? "video" : "image",
       mimeType,
-      name: fileBasename(classified.uri),
+      name:
+        classified.reference._tag === "gitlab"
+          ? classified.reference.fileName
+          : fileBasename(classified.uri),
       ...(reference ? { reference } : {}),
       srcFragment: "",
       access: "environment",

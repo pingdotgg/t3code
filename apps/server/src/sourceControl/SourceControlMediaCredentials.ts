@@ -16,7 +16,7 @@ const GitLabConnection = Schema.Struct({
   apiBaseUrl: Schema.URLFromString.check(
     Schema.makeFilter(
       (url) =>
-        (url.protocol === "https:" || url.protocol === "http:") &&
+        url.protocol === "https:" &&
         !url.username &&
         !url.password &&
         !url.search &&
@@ -29,6 +29,7 @@ const GitLabConnection = Schema.Struct({
 
 const decodeGitLabConnection = Schema.decodeUnknownOption(GitLabConnection);
 
+/** Reads CLI-managed credentials; unavailable logins are never cached or exposed to clients. */
 export class SourceControlMediaCredentials extends Context.Service<
   SourceControlMediaCredentials,
   {
@@ -64,11 +65,20 @@ export const make = Effect.gen(function* () {
   const gitlabCache = yield* Cache.makeWith(
     Effect.fn("SourceControlMediaCredentials.readGitLab")(
       function* (origin: string) {
+        const host = new URL(origin).host;
+        // auth status validates the token over the network. Reject plaintext configuration
+        // before invoking it; config get reads the same effective setting without a request.
+        const protocol = yield* gitlab.execute({
+          cwd: config.stateDir,
+          args: ["config", "get", "api_protocol", "--host", host],
+          timeoutMs: 10_000,
+        });
+        if (protocol.stdout.trim() !== "https") return null;
         // Ask for the login host, not its possibly separate API hostname/port.
         // auth status obtains the effective token from config, keyring or environment.
         const output = yield* gitlab.execute({
           cwd: config.stateDir,
-          args: ["auth", "status", "--hostname", new URL(origin).host, "--show-token"],
+          args: ["auth", "status", "--hostname", host, "--show-token"],
           timeoutMs: 10_000,
           maxOutputBytes: 16 * 1024,
         });

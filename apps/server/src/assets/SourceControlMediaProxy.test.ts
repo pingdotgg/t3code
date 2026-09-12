@@ -40,6 +40,8 @@ const signedUrl = "https://storage.example/image?X-Amz-Date=20260912T120000Z&X-A
 
 function fixture(input: {
   token?: () => string;
+  protocol?: string;
+  apiBaseUrl?: string;
   fetch: (...args: Parameters<typeof globalThis.fetch>) => ReturnType<typeof globalThis.fetch>;
   commands?: Array<{ command: string; args: ReadonlyArray<string> }>;
 }) {
@@ -52,10 +54,11 @@ function fixture(input: {
             const token = input.token?.() ?? "dummy-token";
             return {
               exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: command === "gh" ? token : "",
+              stdout:
+                command === "gh" ? token : args[0] === "config" ? (input.protocol ?? "https") : "",
               stderr:
                 command === "glab" && token
-                  ? `git.example\n  ✓ REST API Endpoint: https://api.git.example:3443/api/v4/\n  ✓ Token found in keyring: ${token}\n`
+                  ? `git.example\n  ✓ REST API Endpoint: ${input.apiBaseUrl ?? "https://api.git.example:3443/api/v4/"}\n  ✓ Token found in keyring: ${token}\n`
                   : "",
               stdoutTruncated: false,
               stderrTruncated: false,
@@ -221,6 +224,83 @@ describe("source-control image delivery", () => {
     ),
   );
 
+  for (const protocol of ["http", "", "ftp"]) {
+    it.effect(`rejects ${protocol || "missing"} API protocol before auth status`, () => {
+      const commands: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      let requested = false;
+      return Effect.gen(function* () {
+        const proxy = yield* SourceControlMediaProxy.SourceControlMediaProxy;
+        expect(yield* proxy.resolve(gitlab)).toBeNull();
+        expect(commands).toEqual([
+          { command: "glab", args: ["config", "get", "api_protocol", "--host", "git.example"] },
+        ]);
+        expect(requested).toBe(false);
+      }).pipe(
+        Effect.provide(
+          fixture({
+            protocol,
+            commands,
+            fetch: async () => {
+              requested = true;
+              return new Response("unexpected");
+            },
+          }),
+        ),
+      );
+    });
+  }
+
+  it.effect("rejects an HTTP endpoint returned despite HTTPS configuration", () => {
+    let requested = false;
+    return Effect.gen(function* () {
+      const proxy = yield* SourceControlMediaProxy.SourceControlMediaProxy;
+      expect(yield* proxy.resolve(gitlab)).toBeNull();
+      expect(requested).toBe(false);
+    }).pipe(
+      Effect.provide(
+        fixture({
+          apiBaseUrl: "http://api.git.example/api/v4/",
+          fetch: async () => {
+            requested = true;
+            return new Response("unexpected");
+          },
+        }),
+      ),
+    );
+  });
+
+  for (const length of [
+    "0",
+    "8",
+    "9007199254740991",
+    "9007199254740993",
+    "9".repeat(400),
+    "-1",
+    "1.5",
+    "nope",
+  ]) {
+    it.effect(`validates upstream content length ${length.slice(0, 20)}`, () =>
+      Effect.gen(function* () {
+        const proxy = yield* SourceControlMediaProxy.SourceControlMediaProxy;
+        const delivery = yield* proxy.resolve(gitlab);
+        expect(delivery?.kind).toBe("stream");
+        if (delivery?.kind !== "stream") return;
+        expect(delivery.headers["content-length"]).toBe(
+          ["0", "8", "9007199254740991"].includes(length) ? length : undefined,
+        );
+      }).pipe(
+        Effect.provide(
+          fixture({
+            fetch: async () =>
+              new Response(null, {
+                headers: { "content-type": "image/png", "content-length": length },
+              }),
+          }),
+        ),
+      ),
+    );
+  }
+
   it.effect("does not attach compressed lengths to a decoded media stream", () =>
     Effect.gen(function* () {
       const proxy = yield* SourceControlMediaProxy.SourceControlMediaProxy;
@@ -319,6 +399,7 @@ describe("source-control image delivery", () => {
           { url: "https://storage.example/image", token: null, redirect: "manual" },
         ]);
         expect(commands).toEqual([
+          { command: "glab", args: ["config", "get", "api_protocol", "--host", "git.example"] },
           {
             command: "glab",
             args: ["auth", "status", "--hostname", "git.example", "--show-token"],
@@ -364,7 +445,7 @@ describe("source-control image delivery", () => {
         expect(headers).toEqual([null, "token logged-in", "token logged-in"]);
         yield* proxy.resolve(gitlab);
         yield* proxy.resolve(gitlab);
-        expect(commands.filter((command) => command.command === "glab")).toHaveLength(1);
+        expect(commands.filter((command) => command.command === "glab")).toHaveLength(2);
       }).pipe(
         Effect.provide(
           fixture({

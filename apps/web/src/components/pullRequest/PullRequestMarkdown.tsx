@@ -134,6 +134,7 @@ function PullRequestAttachmentVideo({
     <MediaVideoPlayer
       src={assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? url : null}
       originalUrl={url}
+      fallbackSrc={url}
       label="Pull request video"
       className="w-full"
       videoClassName="rounded-lg border border-border/60"

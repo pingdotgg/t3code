@@ -63,6 +63,7 @@ function redirectLocation(value: string | undefined, base: string): URL | null {
   }
 }
 
+/** Stream deliveries belong to the caller's scope, which must stay open until transfer ends. */
 export class SourceControlMediaProxy extends Context.Service<
   SourceControlMediaProxy,
   {
@@ -115,7 +116,7 @@ export const make = Effect.gen(function* () {
             };
       }
       const connection = yield* credentials.gitLabConnection(reference.origin);
-      if (connection === null) return null;
+      if (connection === null || connection.apiBaseUrl.protocol !== "https:") return null;
       // A subfolder belongs to the installation, not the repository's API identifier.
       const subfolder = connection.apiBaseUrl.pathname
         .replace(/\/api\/v4\/$/u, "")
@@ -186,7 +187,10 @@ export const make = Effect.gen(function* () {
           headers: {
             ...(response.headers["accept-ranges"] === "bytes" ? { "accept-ranges": "bytes" } : {}),
             ...(response.status === 206 && contentRange ? { "content-range": contentRange } : {}),
-            ...(!encoded && contentLength && /^\d+$/u.test(contentLength)
+            ...(!encoded &&
+            contentLength &&
+            /^\d+$/u.test(contentLength) &&
+            Number.isSafeInteger(Number(contentLength))
               ? { "content-length": contentLength }
               : {}),
           },
