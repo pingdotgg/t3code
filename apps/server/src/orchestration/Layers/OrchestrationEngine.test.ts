@@ -130,6 +130,102 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each(["dot", "symlink", "project-root", "project-symlink", "distinct", "missing"])(
+    "checks effective checkout identity for a %s sibling before adopting branch drift",
+    async (representation) => {
+      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-drift-"));
+      const checkout = NodePath.join(directory, "checkout");
+      const alias = NodePath.join(directory, "alias");
+      const distinct = NodePath.join(directory, "distinct");
+      await NodeFSP.mkdir(checkout);
+      await NodeFSP.mkdir(distinct);
+      await NodeFSP.symlink(checkout, alias, "junction");
+      const siblingCwd =
+        representation === "dot"
+          ? `${checkout}/.`
+          : representation === "distinct"
+            ? distinct
+            : representation === "missing"
+              ? NodePath.join(directory, "missing")
+              : representation === "project-root"
+                ? checkout
+                : alias;
+      const system = await createOrchestrationSystem();
+      const threadId = ThreadId.make("drift-thread");
+      const siblingId = ThreadId.make("drift-sibling");
+      try {
+        for (const id of [threadId, siblingId]) {
+          const projectId = ProjectId.make(id);
+          await system.run(
+            system.engine.dispatch({
+              type: "project.create",
+              commandId: CommandId.make(`project-${id}`),
+              projectId,
+              title: id,
+              workspaceRoot: id === threadId ? directory : siblingCwd,
+              createdAt: now(),
+            }),
+          );
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`create-${id}`),
+              threadId: id,
+              projectId,
+              title: id,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "original",
+              worktreePath:
+                id === threadId
+                  ? checkout
+                  : representation.startsWith("project-")
+                    ? null
+                    : siblingCwd,
+              createdAt: now(),
+            }),
+          );
+        }
+        for (const status of ["running", "stopped"] as const) {
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`session-${status}`),
+              threadId: siblingId,
+              createdAt: now(),
+              session: {
+                threadId: siblingId,
+                status,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: status === "running" ? TurnId.make("active") : null,
+                lastError: null,
+                updatedAt: now(),
+              },
+            }),
+          );
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make(`adopt-${status}`),
+              threadId,
+              branch: "drifted",
+              requireIdleWorktreePath: checkout,
+            }),
+          );
+          const snapshot = await system.readModel();
+          expect(snapshot.threads.find((thread) => thread.id === threadId)?.branch).toBe(
+            status === "stopped" || representation === "distinct" ? "drifted" : "original",
+          );
+        }
+      } finally {
+        await system.dispose();
+        await NodeFSP.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

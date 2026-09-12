@@ -11,6 +11,7 @@ import {
   type OrchestrationReadModel,
   type OrchestrationThread,
   type ThreadPullRequestKey,
+  type ThreadId,
   type ThreadPullRequestLink,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
@@ -210,10 +211,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  checkoutDirectories,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly checkoutDirectories?: {
+    readonly target: string | null;
+    readonly byThread: ReadonlyMap<ThreadId, string | null>;
+  };
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -965,13 +971,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ],
         });
       }
+      const occurredAt = yield* nowIso;
+      const worktreeGuardFailed =
+        command.requireIdleWorktreePath !== undefined &&
+        (thread.worktreePath !== command.requireIdleWorktreePath ||
+          checkoutDirectories?.target == null ||
+          checkoutDirectories.byThread.get(thread.id) !== checkoutDirectories.target ||
+          readModel.threads.some(
+            (other) =>
+              other.id !== thread.id &&
+              // An unresolved active cwd cannot safely be ruled out as a sibling.
+              (checkoutDirectories.byThread.get(other.id) == null ||
+                checkoutDirectories.byThread.get(other.id) === checkoutDirectories.target) &&
+              (other.session?.activeTurnId != null ||
+                other.session?.status === "starting" ||
+                other.session?.status === "running" ||
+                hasQueuedTurnStartForThread(other, occurredAt)),
+          ));
       const branch =
         command.branch !== undefined &&
-        command.expectedBranch !== undefined &&
-        thread.branch !== command.expectedBranch
+        ((command.expectedBranch !== undefined && thread.branch !== command.expectedBranch) ||
+          worktreeGuardFailed)
           ? thread.branch
           : command.branch;
-      const occurredAt = yield* nowIso;
+      const guardedNoop =
+        worktreeGuardFailed &&
+        command.title === undefined &&
+        command.regenerateTitle !== true &&
+        command.modelSelection === undefined &&
+        command.worktreePath === undefined &&
+        command.linkedPullRequest === undefined;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1004,7 +1033,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
-          updatedAt: occurredAt,
+          updatedAt: guardedNoop ? thread.updatedAt : occurredAt,
         },
       };
     }

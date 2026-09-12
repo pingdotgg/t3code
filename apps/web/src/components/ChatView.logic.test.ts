@@ -1105,9 +1105,21 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
       resolveThreadMetadataUpdateForNextTurn({
         currentModelSelection: modelSelection,
         currentBranch: "feature/thread",
+        currentWorktreePath: null,
         nextBranch: "feature/checkout",
       }),
     ).toEqual({ branch: "feature/checkout", worktreePath: null });
+  });
+
+  it("adopts the active branch without detaching an established worktree", () => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: modelSelection,
+        currentBranch: "feature/thread",
+        currentWorktreePath: "/repo/.t3/worktrees/thread",
+        nextBranch: "feature/checkout",
+      }),
+    ).toEqual({ branch: "feature/checkout" });
   });
 
   it("does not write metadata when the model and branch are unchanged", () => {
@@ -1116,6 +1128,7 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         currentModelSelection: modelSelection,
         nextModelSelection: modelSelection,
         currentBranch: "feature/current",
+        currentWorktreePath: null,
         nextBranch: "feature/current",
       }),
     ).toBeNull();
