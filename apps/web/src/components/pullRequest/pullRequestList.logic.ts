@@ -5,6 +5,7 @@ import {
   PullRequestListEntry,
   PullRequestListProjectError,
   PullRequestListResult,
+  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
@@ -16,7 +17,10 @@ import type {
   PullRequestListCursors,
   PullRequestListFilters,
   PullRequestListState,
+  RepositoryIdentity,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { toSortableTimestamp } from "../../lib/threadSort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
@@ -909,6 +913,53 @@ export function findScopedProject<
     return matches.length === 1 ? matches[0] : undefined;
   }
   return matches.find((project) => project.environmentId === environmentId);
+}
+
+/**
+ * The project a repository-only link belongs to. The repository is the provider-native selector
+ * the server checks a request against, and more than one project can answer it: two checkouts of
+ * one repository, and on Azure DevOps two repositories that merely share a name across that
+ * host's projects, since the selector there is the bare name `az repos pr` accepts.
+ *
+ * Where the page is already scoped to one of the candidates that one is chosen, because the scope
+ * is the reader's own word about which project the link came from. A scope naming a project the
+ * repository does not belong to is not believed over the repository: the first candidate stands,
+ * as it would with no scope at all.
+ */
+export function findProjectForRepository<
+  Project extends {
+    readonly id: string;
+    readonly environmentId: string;
+    readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  },
+>(
+  projects: ReadonlyArray<Project>,
+  input: {
+    readonly repository: string;
+    readonly host?: string | undefined;
+    readonly scopedProjectId?: string | undefined;
+    readonly scopedEnvironmentId?: string | null | undefined;
+  },
+): Project | undefined {
+  const repository = input.repository.toLowerCase();
+  const host = input.host?.toLowerCase();
+  const candidates = projects.filter((project) => {
+    const identity = project.repositoryIdentity;
+    if (!identity || sourceControlRepositorySelector(identity)?.toLowerCase() !== repository) {
+      return false;
+    }
+    // The same `owner/name` can exist on two hosts. Without this the first match wins, and a link
+    // that named its host opens the pull request from the other one.
+    return (
+      host === undefined ||
+      pullRequestHostOf(identity, identity.provider as SourceControlProviderKind) === host
+    );
+  });
+  const scoped =
+    input.scopedProjectId === undefined
+      ? undefined
+      : findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
+  return scoped ?? candidates[0];
 }
 
 /**

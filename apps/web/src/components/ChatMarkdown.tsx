@@ -76,6 +76,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
@@ -2783,8 +2784,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
               environmentId,
               input: {
                 projectId: pullRequestProject.id,
+                // The provider-native name, not the link's path: the preview read is hostless,
+                // so the server checks this against the project's own selector.
                 repository:
-                  pullRequestProject.repositoryIdentity?.displayName ??
+                  sourceControlRepositorySelector(pullRequestProject.repositoryIdentity) ??
                   pullRequestCandidate.repository,
                 number: pullRequestCandidate.number,
               },

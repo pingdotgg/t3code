@@ -44,6 +44,7 @@ import {
 
 import {
   filterPullRequestsByInvolvement,
+  findProjectForRepository,
   findScopedProject,
   collectPullRequestListFacets,
   groupPullRequestsByInvolvement,
@@ -374,27 +375,22 @@ function PullRequestsRouteView() {
   );
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
-  // resolved here; an explicit `projectId` in the URL still wins.
+  // resolved here; an explicit `projectId` in the URL still wins. The repository is spelled the
+  // way the server names it, and where several projects answer that name the page's own scope
+  // picks among them, so a repository-only link never wanders off the project being read.
   const selectedHost = search.selectedHost ?? search.host;
-  const projectIdForRepository = useMemo(() => {
-    const repository = search.repository?.toLowerCase();
-    if (repository === undefined) return undefined;
-    const identity = projects.find(
-      (project) =>
-        project.repositoryIdentity?.owner &&
-        project.repositoryIdentity.name &&
-        `${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`.toLowerCase() ===
-          repository &&
-        // The same `owner/name` can exist on two hosts. Without this the first match wins, and
-        // a link that named its host opens the pull request from the other one.
-        (selectedHost === undefined ||
-          pullRequestHostOf(
-            project.repositoryIdentity,
-            project.repositoryIdentity.provider as SourceControlProviderKind,
-          ) === selectedHost.toLowerCase()),
-    );
-    return identity?.id;
-  }, [projects, selectedHost, search.repository]);
+  const projectIdForRepository = useMemo(
+    () =>
+      search.repository === undefined
+        ? undefined
+        : findProjectForRepository(projects, {
+            repository: search.repository,
+            host: selectedHost,
+            scopedProjectId,
+            scopedEnvironmentId,
+          })?.id,
+    [projects, scopedEnvironmentId, scopedProjectId, selectedHost, search.repository],
+  );
 
   // The selection is resolved the same way the scope is: an id no connected environment has can
   // never be read here, and one that arrived before the projects did is not yet wrong.

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   filterPullRequestsByInvolvement,
+  findProjectForRepository,
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
@@ -1494,5 +1495,95 @@ describe("the priority groups against a paginated feed", () => {
     expect(
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
+  });
+});
+
+describe("findProjectForRepository", () => {
+  const azure = (id: string, environmentId: string, path: string) => ({
+    id,
+    environmentId,
+    repositoryIdentity: {
+      canonicalKey: `dev.azure.com/${path}`,
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+      provider: "azure-devops",
+      displayName: path,
+      owner: path.split("/")[0]!,
+      name: path.split("/").at(-1)!,
+    },
+  });
+  // Two Azure DevOps repositories that merely share a name, in two Azure projects on one host.
+  // Both answer the selector `api`, which is all the server accepts for that provider.
+  const payments = azure("p1", "env-1", "contoso/payments/_git/api");
+  const billing = azure("p2", "env-1", "contoso/billing/_git/api");
+
+  it("prefers the project the page is scoped to among several answering one repository", () => {
+    expect(
+      findProjectForRepository([payments, billing], {
+        repository: "api",
+        scopedProjectId: "p2",
+        scopedEnvironmentId: "env-1",
+      }),
+    ).toBe(billing);
+  });
+
+  it("does not let a scope naming another repository's project override the match", () => {
+    const other = azure("p3", "env-1", "contoso/payments/_git/web");
+    expect(
+      findProjectForRepository([payments, other], {
+        repository: "api",
+        scopedProjectId: "p3",
+      }),
+    ).toBe(payments);
+  });
+
+  it("keeps a scope on another server from claiming a same-id project here", () => {
+    const elsewhere = azure("p1", "env-2", "contoso/billing/_git/api");
+    expect(
+      findProjectForRepository([payments, elsewhere], {
+        repository: "api",
+        scopedProjectId: "p1",
+        scopedEnvironmentId: "env-2",
+      }),
+    ).toBe(elsewhere);
+  });
+
+  it("reads a nested GitLab group as the whole path below the host", () => {
+    const gitlab = {
+      id: "gl1",
+      environmentId: "env-1",
+      repositoryIdentity: {
+        canonicalKey: "gitlab.com/t3tools/platform/t3code",
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: "gitlab",
+        displayName: "T3Tools/Platform/T3Code",
+        owner: "t3tools",
+        name: "t3code",
+      },
+    };
+    expect(findProjectForRepository([gitlab], { repository: "t3tools/platform/t3code" })).toBe(
+      gitlab,
+    );
+    expect(findProjectForRepository([gitlab], { repository: "t3tools/t3code" })).toBeUndefined();
+  });
+
+  it("matches case-insensitively and keeps two hosts apart", () => {
+    const github = {
+      id: "g1",
+      environmentId: "env-1",
+      repositoryIdentity: {
+        canonicalKey: "github.com/t3tools/t3code",
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: "github",
+        owner: "t3tools",
+        name: "t3code",
+      },
+    };
+    expect(findProjectForRepository([github], { repository: "T3Tools/T3Code" })).toBe(github);
+    expect(
+      findProjectForRepository([github], {
+        repository: "t3tools/t3code",
+        host: "github.acme.test",
+      }),
+    ).toBeUndefined();
   });
 });
