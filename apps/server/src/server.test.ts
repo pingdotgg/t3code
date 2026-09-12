@@ -801,7 +801,7 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.antigravityInstallation,
           }),
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
-            upsert: () => Effect.void,
+            upsert: () => Effect.succeed(true),
             getBinding: () => Effect.succeed(Option.none()),
             listThreadIds: () => Effect.succeed([]),
             listBindings: () => Effect.succeed([]),

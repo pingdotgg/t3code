@@ -21,6 +21,7 @@ import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -133,6 +134,26 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     completedSources.map((entry) => entry.source),
   );
   const importedThreadIds = new Set<ThreadId>();
+  const nativeSessions = new Set<string>();
+  const bindings = yield* directory
+    .listBindings()
+    .pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+    );
+  for (const binding of bindings) {
+    if (binding.threadId.startsWith("import:") || !Predicate.isObject(binding.resumeCursor)) {
+      continue;
+    }
+    const sessionId =
+      binding.provider === "claudeAgent"
+        ? binding.resumeCursor.resume
+        : binding.provider === "codex"
+          ? binding.resumeCursor.threadId
+          : undefined;
+    if (typeof sessionId === "string" && binding.providerInstanceId !== undefined) {
+      nativeSessions.add(`${binding.providerInstanceId}\0${sessionId}`);
+    }
+  }
   let importedCount = 0;
   let skippedCount = 0;
 
@@ -164,6 +185,10 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         return;
       }
       const thread = outcome.thread;
+      if (nativeSessions.has(`${thread.providerInstanceId}\0${thread.providerSessionId}`)) {
+        skippedCount += 1;
+        return;
+      }
       const threadId = ThreadId.make(
         `import:${thread.providerInstanceId}:${thread.providerSessionId}`,
       );
@@ -219,26 +244,24 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           return yield* new AgentSessionThreadModifiedError({ threadId });
         }
 
-        // Install the cursor before the thread becomes visible. A concurrent
-        // real session can replace it, while insert-ignore keeps this import
-        // from replacing that newer binding.
-        if (Option.isNone(existingBinding)) {
-          yield* directory.upsert(
-            {
-              threadId,
-              provider,
-              providerInstanceId: thread.providerInstanceId,
-              status: "stopped",
-              runtimeMode: DEFAULT_RUNTIME_MODE,
-              resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
-              runtimePayload: { cwd: workspaceRoot },
-            },
-            { onConflict: "ignore" },
-          );
-        }
+        // Check native ownership even when retrying an old reservation, without
+        // replacing a binding that a real session may have updated.
+        const reserved = yield* directory.upsert(
+          {
+            threadId,
+            provider,
+            providerInstanceId: thread.providerInstanceId,
+            status: "stopped",
+            runtimeMode: DEFAULT_RUNTIME_MODE,
+            resumeCursor:
+              thread.source === "codex"
+                ? { threadId: thread.providerSessionId }
+                : { threadId, resume: thread.providerSessionId },
+            runtimePayload: { cwd: workspaceRoot },
+          },
+          { onConflict: "ignore", unlessNativeSessionId: thread.providerSessionId },
+        );
+        if (!reserved) return false;
 
         if (Option.isNone(existingThread)) {
           yield* engine.dispatch({
