@@ -555,9 +555,19 @@ public final class FeatureRootModel {
 
     /// Move up / Move down availability for a thread row, planned on demand
     /// against the canonical section (every connected environment). Nil when
-    /// the row's environment predates reordering.
+    /// the row's environment predates reordering or is not connected.
     public func moveOptions(for thread: FeatureThread) -> FeatureThreadMoveOptions? {
-        DailyUXSidebarIndex.moveOptions(for: thread, in: snapshot.threads, now: .now)
+        let connectedEnvironmentIDs = Set(
+            snapshot.environments
+                .filter { $0.connectionState == .connected }
+                .map(\.id)
+        )
+        return DailyUXSidebarIndex.moveOptions(
+            for: thread,
+            in: snapshot.threads,
+            now: .now,
+            connectedEnvironmentIDs: connectedEnvironmentIDs
+        )
     }
 
     public func moveThread(_ id: String, direction: FeatureThreadMoveDirection) async {
