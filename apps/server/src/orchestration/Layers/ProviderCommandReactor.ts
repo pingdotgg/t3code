@@ -1769,72 +1769,6 @@ const make = Effect.gen(function* () {
       thread.id,
       "The session was stopped during context compaction. Send this message again to continue.",
     ).pipe(
-      // Turn starts that outlived their queue (for example the in-flight /compact
-      // itself, or a start the provider accepted but never began) can never run on
-      // a stopped session. Report each by its own message id so the projection
-      // deletes exactly those rows.
-      Effect.andThen(
-        Effect.all(
-          {
-            pending: projectionSnapshotQuery.getSnapshotSequence().pipe(
-              Effect.flatMap(
-                ({ snapshotSequence }) =>
-                  projectionSnapshotQuery.listPendingTurnStarts?.(snapshotSequence) ??
-                  Effect.succeed([]),
-              ),
-              Effect.map((rows) => rows.filter((row) => row.threadId === thread.id)),
-            ),
-            submitted: projectionSnapshotQuery
-              .getCommandReadModel()
-              .pipe(
-                Effect.map(
-                  (readModel) =>
-                    readModel.threads.find((entry) => entry.id === thread.id)
-                      ?.submittedTurnStarts ?? [],
-                ),
-              ),
-            reportedAt: DateTime.now,
-          },
-          { concurrency: 1 },
-        ).pipe(
-          Effect.flatMap(({ pending, submitted, reportedAt }) =>
-            Effect.forEach(
-              [
-                ...pending.map((row) => ({
-                  messageId: row.messageId as string,
-                  turnId: null as TurnId | null,
-                  summary: "Queued message was not sent",
-                  detail:
-                    "The session was stopped before this message could be sent. Send it again to continue.",
-                })),
-                ...submitted.map((row) => ({
-                  messageId: row.messageId as string,
-                  turnId: row.turnId as TurnId | null,
-                  summary: "Provider turn start failed",
-                  detail:
-                    "The session was stopped after the provider accepted this turn but before it started.",
-                })),
-              ],
-              ({ messageId, turnId, summary, detail }) =>
-                appendProviderFailureActivity({
-                  threadId: thread.id,
-                  kind: "provider.turn.start.failed",
-                  summary,
-                  detail,
-                  turnId,
-                  createdAt: DateTime.formatIso(reportedAt),
-                  requestId: messageId,
-                }).pipe(
-                  Effect.ignore({
-                    log: true,
-                    message: "failed to report unsent queued message on session stop",
-                  }),
-                ),
-              { discard: true },
-            ),
-          ),
-        ),
-      ),
       Effect.andThen(
         thread.session && thread.session.status !== "stopped"
           ? providerService.stopSession({ threadId: thread.id })
@@ -1866,22 +1800,91 @@ const make = Effect.gen(function* () {
           );
         },
         onSuccess: () =>
-          setThreadSession({
-            threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "stopped",
-              providerName: thread.session?.providerName ?? null,
-              ...(thread.session?.providerInstanceId !== undefined
-                ? { providerInstanceId: thread.session.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-              activeTurnId: null,
-              lastError: thread.session?.lastError ?? null,
-              updatedAt: now,
+          // The stop succeeded, so turn starts requested at or before this
+          // event can never run. Bounding by this event's sequence keeps a turn
+          // requested after the stop was decided on its own send/fail path.
+          Effect.all(
+            {
+              pending:
+                projectionSnapshotQuery.listPendingTurnStarts?.(event.sequence) ??
+                Effect.succeed([]),
+              submitted:
+                projectionSnapshotQuery.listSubmittedTurnStarts?.(event.sequence) ??
+                Effect.succeed([]),
             },
-            createdAt: now,
-          }),
+            { concurrency: 1 },
+          ).pipe(
+            Effect.flatMap(({ pending, submitted }) => {
+              // A start can be acknowledged between the two reads; report it once.
+              const pendingMessageIds = new Set(
+                pending.filter((row) => row.threadId === thread.id).map((row) => row.messageId),
+              );
+              return Effect.forEach(
+                [
+                  ...pending
+                    .filter((row) => row.threadId === thread.id)
+                    .map((row) => ({
+                      messageId: row.messageId as string,
+                      turnId: null as TurnId | null,
+                      summary: "Queued message was not sent",
+                      detail:
+                        "The session was stopped before this message could be sent. Send it again to continue.",
+                    })),
+                  ...submitted
+                    .filter(
+                      (row) => row.threadId === thread.id && !pendingMessageIds.has(row.messageId),
+                    )
+                    .map((row) => ({
+                      messageId: row.messageId as string,
+                      turnId: row.turnId as TurnId | null,
+                      summary: "Provider turn start failed",
+                      detail:
+                        "The session was stopped after the provider accepted this turn but before it started.",
+                    })),
+                ],
+                ({ messageId, turnId, summary, detail }) =>
+                  appendProviderFailureActivity({
+                    threadId: thread.id,
+                    kind: "provider.turn.start.failed",
+                    summary,
+                    detail,
+                    turnId,
+                    createdAt: now,
+                    requestId: messageId,
+                  }).pipe(
+                    Effect.ignore({
+                      log: true,
+                      message: "failed to report canceled turn start on session stop",
+                    }),
+                  ),
+                { discard: true },
+              );
+            }),
+            // Reporting is best-effort: the session is already stopped, so a
+            // cleanup failure must not suppress the stopped transition.
+            Effect.ignore({
+              log: true,
+              message: "failed to report canceled turn starts on session stop",
+            }),
+            Effect.andThen(
+              setThreadSession({
+                threadId: thread.id,
+                session: {
+                  threadId: thread.id,
+                  status: "stopped",
+                  providerName: thread.session?.providerName ?? null,
+                  ...(thread.session?.providerInstanceId !== undefined
+                    ? { providerInstanceId: thread.session.providerInstanceId }
+                    : {}),
+                  runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+                  activeTurnId: null,
+                  lastError: thread.session?.lastError ?? null,
+                  updatedAt: now,
+                },
+                createdAt: now,
+              }),
+            ),
+          ),
       }),
       Effect.ensuring(clearStopping),
     );

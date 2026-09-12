@@ -26,6 +26,7 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -248,6 +249,17 @@ export interface ProjectionSnapshotQueryShape {
     ReadonlyArray<{
       readonly threadId: ThreadId;
       readonly messageId: MessageId;
+      readonly requestedAt: string;
+    }>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read provider-acknowledged starts whose request event is at or before the sequence. */
+  readonly listSubmittedTurnStarts?: (throughSequence: number) => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly turnId: TurnId;
       readonly requestedAt: string;
     }>,
     ProjectionRepositoryError
