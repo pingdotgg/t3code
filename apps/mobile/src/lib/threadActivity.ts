@@ -1264,7 +1264,12 @@ function findShellWrapperSpec(shell: string) {
   );
 }
 
-function unwrapCommandRemainder(value: string, wrapperFlagPattern: RegExp): string | null {
+// Decode POSIX quote concatenation without interpreting expansions or discarding extra arguments.
+function unwrapCommandRemainder(
+  value: string,
+  wrapperFlagPattern: RegExp,
+  posix: boolean,
+): string | null {
   const match = wrapperFlagPattern.exec(value);
   if (!match) {
     return null;
@@ -1278,6 +1283,16 @@ function unwrapCommandRemainder(value: string, wrapperFlagPattern: RegExp): stri
   const openingQuote = command[0];
   if ((openingQuote === "'" || openingQuote === '"') && !command.endsWith(openingQuote)) {
     return null;
+  }
+
+  if (posix && openingQuote === "'") {
+    const parts = command.match(/'[^']*'|"[^"\\$`]*"|\\['!]/g);
+    if (!parts || parts.join("") !== command) {
+      return null;
+    }
+    return parts
+      .map((part) => (part.startsWith("\\") ? part.slice(1) : part.slice(1, -1)))
+      .join("");
   }
 
   const unwrapped = trimMatchingOuterQuotes(command);
@@ -1300,7 +1315,13 @@ function unwrapKnownShellCommandWrapper(value: string): string {
     return value;
   }
 
-  return unwrapCommandRemainder(split.rest, spec.wrapperFlagPattern) ?? value;
+  return (
+    unwrapCommandRemainder(
+      split.rest,
+      spec.wrapperFlagPattern,
+      shell === "bash" || shell === "sh" || shell === "zsh",
+    ) ?? value
+  );
 }
 
 function formatCommandArrayPart(value: string): string {
@@ -1341,6 +1362,7 @@ function toRawToolCommand(value: unknown, normalizedCommand: string | null): str
   return formatted === normalizedCommand ? null : formatted;
 }
 
+// Codex's single unknown action retains the full script; parsed read/search actions can omit steps.
 function extractToolCommand(payload: Record<string, unknown> | null): {
   command: string | null;
   rawCommand: string | null;
@@ -1349,6 +1371,15 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
+  const actions = item?.commandActions;
+  const action = Array.isArray(actions) && actions.length === 1 ? asRecord(actions[0]) : null;
+  const originalCommand = action?.type === "unknown" ? asTrimmedString(action.command) : null;
+  if (originalCommand) {
+    return {
+      command: originalCommand,
+      rawCommand: toRawToolCommand(item?.command, originalCommand),
+    };
+  }
   const itemType = asTrimmedString(payload?.itemType);
   const detail = asTrimmedString(payload?.detail);
   const candidates: unknown[] = [

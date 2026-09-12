@@ -21,6 +21,54 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * assertions are the tripwire.
  */
 describe("projectActivityPayload", () => {
+  it("keeps only the complete unknown Codex command action through slimming", () => {
+    const command =
+      "\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\" -NoProfile -Command \"pwd && rg --files -g 'AGENTS.md' -g '\"'!node_modules'\"'\"";
+    const original = "pwd && rg --files -g 'AGENTS.md' -g '!node_modules'";
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          item: {
+            command,
+            commandActions: [
+              {
+                type: "unknown",
+                command: original,
+                unused: "discard me",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(projected.payload).toMatchObject({
+      data: { item: { command, commandActions: [{ type: "unknown", command: original }] } },
+    });
+    expect(JSON.stringify(projected)).not.toContain("discard me");
+  });
+
+  it.each([
+    [{ type: "read", command: "cat file" }],
+    [
+      { type: "unknown", command: "a" },
+      { type: "unknown", command: "b" },
+    ],
+    [{ type: "unknown", command: " " }],
+    [null],
+  ])("drops incomplete command actions: %j", (...commandActions) => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: { item: { command: "cd folder && cat file", commandActions } },
+      }),
+    );
+    expect(projected.payload).toMatchObject({
+      data: { item: { command: "cd folder && cat file" } },
+    });
+    expect(JSON.stringify(projected)).not.toContain("commandActions");
+  });
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({

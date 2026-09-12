@@ -1072,6 +1072,104 @@ describe("deriveWorkLogEntries", () => {
     expect(deriveWorkLogEntries(activities)).toHaveLength(2);
   });
 
+  it.each(["zsh", "bash", "sh"])(
+    "decodes %s wrapper quoting without losing compound commands",
+    (shell) => {
+      const inner = "pwd && rg --files -g 'AGENTS.md' -g '!node_modules'";
+      const command = `/${shell} -lc '${inner.replaceAll("'", `'"'"'`)}'`;
+      const [entry] = deriveWorkLogEntries([
+        makeActivity({
+          kind: "tool.completed",
+          summary: "Ran command",
+          payload: {
+            itemType: "command_execution",
+            data: {
+              item: { command, commandActions: [{ type: "search", command: "rg --files" }] },
+            },
+          },
+        }),
+      ]);
+      expect(entry?.command).toBe(inner);
+      expect(entry?.rawCommand).toBe(command);
+    },
+  );
+
+  it.each([
+    ["single quote escapes", "/bin/zsh -c 'echo '\\''hello'\\'''", "echo 'hello'"],
+    [
+      "literal shell syntax",
+      "/bin/bash -lc 'printf \"$HOME`whoami`\\n\"'",
+      'printf "$HOME`whoami`\\n"',
+    ],
+    [
+      "extra shell arguments",
+      "/bin/sh -c 'echo hello' 'argument'",
+      "/bin/sh -c 'echo hello' 'argument'",
+    ],
+    ["malformed quoting", "/bin/zsh -lc 'echo 'broken'", "/bin/zsh -lc 'echo 'broken'"],
+    ["PowerShell quoting", `pwsh -Command 'echo '"'"'hello'"'"''`, `echo '"'"'hello'"'"'`],
+    ["unwrapped command", `echo 'hello'`, `echo 'hello'`],
+  ])("preserves command semantics for %s", (_label, command, expected) => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: { itemType: "command_execution", data: { item: { command } } },
+      }),
+    ]);
+    expect(entry?.command).toBe(expected);
+  });
+
+  it("uses the complete Codex command from a Windows activity without decoding it again", () => {
+    const command =
+      "\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\" -NoProfile -Command \"pwd && rg --files -g 'AGENTS.md' -g '\"'!node_modules'\"'\"";
+    const original = "pwd && rg --files -g 'AGENTS.md' -g '!node_modules'";
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command,
+              commandActions: [{ type: "unknown", command: original }],
+            },
+          },
+        },
+      }),
+    ]);
+    expect(entry?.command).toBe(original);
+    expect(entry?.rawCommand).toBe(command);
+  });
+
+  it.each([
+    [{ type: "read", command: "cat file" }],
+    [
+      { type: "unknown", command: "cat file" },
+      { type: "unknown", command: "echo done" },
+    ],
+    [{ type: "unknown", command: " " }],
+    [null],
+  ])("does not substitute incomplete command actions: %j", (...commandActions) => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "cd folder && cat file",
+              commandActions,
+            },
+          },
+        },
+      }),
+    ]);
+    expect(entry?.command).toBe("cd folder && cat file");
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
