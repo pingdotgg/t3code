@@ -77,6 +77,11 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Read only the latest turn's final answer for completion notifications. */
+  readonly getThreadCompletionResponse: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<string>, ProjectionRepositoryError>;
+
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;

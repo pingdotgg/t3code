@@ -141,8 +141,8 @@ object AgentNotifications {
       // so a delivery retry cannot surface them after the app backgrounds.
       if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
         val title = data["alert_title"].orEmpty().take(120)
-        // Grouped alerts list up to five 120-character thread titles.
-        val body = data["alert_body"].orEmpty().take(608)
+        // The relay fits the full response to FCM's 4 KB payload budget.
+        val body = data["alert_body"].orEmpty().take(4096)
         val id = alertId.hashCode()
         val notification = base(context, ALERT_CHANNEL)
           .setContentTitle(title).setContentText(body)
