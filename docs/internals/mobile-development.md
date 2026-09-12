@@ -30,3 +30,8 @@ register and remove delegates concurrently during reloads or scene startup. Deli
 delegates under the lock and invokes them after releasing it. Pending-response replay removes
 only the responses in its snapshot, preserving responses received during callbacks. Changes to
 this native patch require reinstalling dependencies and rebuilding the iOS app.
+The native modules under `apps/mobile/modules/` are `file:` dependencies, and pnpm
+copies those into its virtual store instead of linking them. Metro bundles the copy,
+so an edit to a module's TypeScript is invisible to a running dev client until
+`vp i` re-syncs it, while Gradle and CocoaPods compile the worktree directory
+directly. A JavaScript change that "has no effect" on device is usually this.

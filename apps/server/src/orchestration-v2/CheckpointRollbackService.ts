@@ -56,6 +56,7 @@ export interface CheckpointRollbackServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly checkpointId: CheckpointId;
     readonly scopeId: CheckpointScopeId;
+    readonly restoreFiles?: boolean;
   }) => Effect.Effect<void, CheckpointRollbackExecutionError>;
 }
 
@@ -88,6 +89,7 @@ export const layer: Layer.Layer<
       readonly providerThreadId: ProviderThreadId;
       readonly checkpointId: CheckpointId;
       readonly scopeId: CheckpointScopeId;
+      readonly restoreFiles?: boolean;
     }) {
       const projection = yield* projections.getThreadProjection(input.threadId);
       const providerThread = projection.providerThreads.find(
@@ -188,7 +190,6 @@ export const layer: Layer.Layer<
               };
             });
 
-      yield* checkpoints.restore({ scope, checkpoint });
       const snapshot =
         runsToRollback.length === 0
           ? { providerThread }
@@ -197,6 +198,7 @@ export const layer: Layer.Layer<
               target: rollbackTarget,
               providerThreadTurns,
             });
+      if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       const staleCheckpoints = projection.checkpoints.filter(
         (candidate) =>
           candidate.scopeId === scope.id &&
