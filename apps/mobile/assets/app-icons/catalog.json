@@ -1,0 +1,44 @@
+{
+  "t3-code": {
+    "label": "T3 Code",
+    "top": "#141416",
+    "bottom": "#000000",
+    "mark": "#ffffff",
+    "shadow": null
+  },
+  "t3-chat": {
+    "label": "T3 Chat",
+    "top": "#5c1f4c",
+    "bottom": "#22081b",
+    "mark": "#ffd6ea",
+    "shadow": "#14040f"
+  },
+  "grove": {
+    "label": "Grove",
+    "top": "#255a30",
+    "bottom": "#0a2213",
+    "mark": "#dcf7dc",
+    "shadow": "#06170c"
+  },
+  "ocean": {
+    "label": "Ocean",
+    "top": "#1c4c8c",
+    "bottom": "#071a3b",
+    "mark": "#dcefff",
+    "shadow": "#04112a"
+  },
+  "ember": {
+    "label": "Ember",
+    "top": "#8c3e17",
+    "bottom": "#3a1407",
+    "mark": "#ffe6c8",
+    "shadow": "#260e04"
+  },
+  "iris": {
+    "label": "Iris",
+    "top": "#5334a8",
+    "bottom": "#1d0f4c",
+    "mark": "#ebe2ff",
+    "shadow": "#130a36"
+  }
+}

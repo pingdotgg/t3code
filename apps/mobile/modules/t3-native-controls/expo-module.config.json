@@ -1,12 +1,13 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule"]
+    "modules": ["T3NativeControlsModule", "T3KeyboardCommandsModule", "T3AppIconModule"]
   },
   "android": {
     "modules": [
       "expo.modules.t3nativecontrols.T3NativeControlsModule",
-      "expo.modules.t3nativecontrols.T3KeyboardCommandsModule"
+      "expo.modules.t3nativecontrols.T3KeyboardCommandsModule",
+      "expo.modules.t3nativecontrols.T3AppIconModule"
     ]
   }
 }

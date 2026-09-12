@@ -40,7 +40,8 @@
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node modules/t3-markdown-text/scripts/sync-pierre-file-icons.mjs",
-    "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
+    "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts && node scripts/generate-app-icons.cjs",
+    "export:ios-icons": "node scripts/export-ios-app-icons.cjs",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
   },
@@ -132,6 +133,7 @@
     "@types/react": "~19.2.0",
     "@types/react-dom": "~19.2.3",
     "babel-preset-expo": "~57.0.9",
+    "sharp": "0.34.5",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
   },
