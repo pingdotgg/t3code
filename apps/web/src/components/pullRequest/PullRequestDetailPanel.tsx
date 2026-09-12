@@ -1717,7 +1717,7 @@ export function PullRequestDetailPanel({
                   </Tooltip>
                   <MenuPopup align="end" side="bottom" className="min-w-72">
                     <MenuItem onClick={() => startCheckout("worktree")}>
-                      <GitBranchIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                      <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
                       <span className="flex min-w-0 flex-col">
                         <span>In a separate worktree</span>
                         <span className="text-xs text-muted-foreground">
@@ -1726,7 +1726,7 @@ export function PullRequestDetailPanel({
                       </span>
                     </MenuItem>
                     <MenuItem onClick={() => startCheckout("local")}>
-                      <FolderGit2Icon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                      <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
                       <span className="flex min-w-0 flex-col">
                         <span>In this repository</span>
                         <span className="text-xs text-muted-foreground">
@@ -1942,7 +1942,7 @@ export function PullRequestDetailPanel({
                     Refresh
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
-                    <MessageCircleQuestionIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start" />
                     <span className="flex min-w-0 flex-col">
                       <span>{handoff === "ask" ? "Opening..." : "Ask a question"}</span>
                       <span className="text-xs text-muted-foreground">
@@ -1953,7 +1953,7 @@ export function PullRequestDetailPanel({
                     </span>
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
-                    <BookOpenIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
                     <span className="flex min-w-0 flex-col">
                       <span>{handoff === "explain" ? "Opening..." : "Explain this PR"}</span>
                       <span className="text-xs text-muted-foreground">
