@@ -1113,6 +1113,49 @@ const makeWsRpcLayer = (
                 );
             });
 
+          // Start from origin is a persisted default, so any origin Git failure degrades to the
+          // explicitly selected local base instead of aborting the whole thread bootstrap.
+          const resolveOriginWorktreeBaseRef = Effect.fn("resolveOriginWorktreeBaseRef")(
+            function* (input: { readonly projectCwd: string; readonly baseBranch: string }) {
+              const originAvailable = yield* gitWorkflow.remoteExists({
+                cwd: input.projectCwd,
+                remoteName: "origin",
+              });
+              if (!originAvailable) {
+                return input.baseBranch;
+              }
+              yield* gitWorkflow.fetchRemote({ cwd: input.projectCwd, remoteName: "origin" });
+              const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
+                cwd: input.projectCwd,
+                refName: input.baseBranch,
+                remoteName: "origin",
+              });
+              if (!remoteBaseExists) {
+                return input.baseBranch;
+              }
+              const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                cwd: input.projectCwd,
+                refName: input.baseBranch,
+                fallbackRemoteName: "origin",
+              });
+              return resolvedRemoteBase.commitSha;
+            },
+            (effect, input) =>
+              effect.pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("could not prepare worktree base from origin", {
+                    threadId: command.threadId,
+                    baseBranch: input.baseBranch,
+                    remoteName: "origin",
+                    operation: error.operation,
+                    exitCode: error.exitCode ?? null,
+                    stdoutLength: error.stdoutLength ?? null,
+                    stderrLength: error.stderrLength ?? null,
+                  }).pipe(Effect.as(input.baseBranch)),
+                ),
+              ),
+          );
+
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
               const created = yield* dispatchFromClient({
@@ -1137,39 +1180,16 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without the
-              // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  remoteName: "origin",
-                });
-                if (remoteBaseExists) {
-                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                    cwd: bootstrap.prepareWorktree.projectCwd,
-                    refName: bootstrap.prepareWorktree.baseBranch,
-                    fallbackRemoteName: "origin",
-                  });
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                }
-              }
+              const prepareWorktree = bootstrap.prepareWorktree;
+              const worktreeBaseRef =
+                prepareWorktree.startFromOrigin === true
+                  ? yield* resolveOriginWorktreeBaseRef(prepareWorktree)
+                  : prepareWorktree.baseBranch;
               const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
+                cwd: prepareWorktree.projectCwd,
                 refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
+                newRefName: prepareWorktree.branch,
+                baseRefName: prepareWorktree.baseBranch,
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
