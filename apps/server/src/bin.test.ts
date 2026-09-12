@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EnvironmentOrchestrationHttpApi,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -46,6 +47,7 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
@@ -137,6 +139,62 @@ const readPersistedSnapshot = (baseDir: string) =>
       return yield* projectionSnapshotQuery.getSnapshot();
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
+
+it.effect.each(["bare", "bare-index", "separate", "converted"] as const)(
+  "project add and normalization respect current Git bare status: %s",
+  (layout) =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-bare-state-"));
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-bare-root-"));
+      const gitDir = NodePath.join(root, "store");
+      const git = (...args: string[]) =>
+        NodeChildProcess.execFileSync("git", args, { cwd: root, stdio: "ignore" });
+      if (layout === "separate") {
+        git("init", "--separate-git-dir", gitDir);
+      } else {
+        git("init", "--bare", gitDir);
+        NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: ./store\n");
+      }
+      git("worktree", "add", "--orphan", "-b", "feature", "feature");
+      if (layout === "bare-index") git("--git-dir", gitDir, "read-tree", "--empty");
+      if (layout === "converted") git("init");
+
+      const cliResult = yield* runCliWithRuntime([
+        "project",
+        "add",
+        root,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.result);
+      const config = yield* makeCliTestServerConfig(baseDir);
+      const normalized = yield* normalizeDispatchCommand({
+        type: "project.create",
+        commandId: CommandId.make("bare-create-command"),
+        projectId: ProjectId.make("bare-create-project"),
+        title: "Bare layout fixture",
+        workspaceRoot: root,
+        createdAt: "2026-09-05T04:00:00.000Z",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(WorkspacePaths.layer, ServerConfig.layer(config)).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+        Effect.result,
+      );
+      const snapshot = yield* readPersistedSnapshot(baseDir);
+      const projects = snapshot.projects.filter((project) => project.workspaceRoot === root);
+      if (layout === "bare" || layout === "bare-index") {
+        assert.strictEqual(cliResult._tag, "Failure");
+        assert.strictEqual(normalized._tag, "Failure");
+        assert.lengthOf(projects, 0);
+      } else {
+        assert.strictEqual(cliResult._tag, "Success");
+        assert.strictEqual(normalized._tag, "Success");
+        assert.lengthOf(projects, 1);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function* (
   withThread: boolean,
