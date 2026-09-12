@@ -44,10 +44,10 @@ export function ZoomableImage({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
-  const maxHeight = Math.max(1, Math.min(windowSize.height * 0.86, windowSize.height - 80));
+  const maxHeight = Math.max(1, Math.min(windowSize.height * 0.86, windowSize.height - 160));
   const fit = Math.min(
     1,
-    (windowSize.width * 0.92) / (naturalSize.width || 1),
+    (windowSize.width * 0.92 - (windowSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
   );
   const width = naturalSize.width * fit * zoom;
@@ -59,6 +59,12 @@ export function ZoomableImage({
       pan(key) {
         const viewport = viewportRef.current;
         if (!viewport || zoomRef.current <= 1) return false;
+        // A vertical scrollbar alone must not swallow gallery navigation.
+        if (
+          (key === "ArrowLeft" || key === "ArrowRight") &&
+          viewport.scrollWidth <= viewport.offsetWidth
+        )
+          return false;
         switch (key) {
           case "ArrowLeft":
             viewport.scrollLeft -= 40;
@@ -144,7 +150,7 @@ export function ZoomableImage({
         aria-label={`${name}, zoomable image`}
         aria-description="Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
         tabIndex={0}
-        className="max-w-[92vw] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         style={{
           width: width || undefined,
           height: height || undefined,
@@ -221,7 +227,9 @@ export function ZoomableImage({
           alt={name}
           draggable={false}
           className="block max-w-none select-none"
-          style={naturalSize.width ? { width, height } : { maxWidth: "92vw", maxHeight }}
+          style={
+            naturalSize.width ? { width, height } : { maxWidth: "var(--media-width)", maxHeight }
+          }
           onLoad={(event) => {
             setNaturalSize({
               width: event.currentTarget.naturalWidth,
