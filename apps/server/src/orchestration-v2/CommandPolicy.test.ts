@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "./Adapters/CursorAdapterV2.ts";
 import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
+import { MuseProviderCapabilitiesV2 } from "./Adapters/MuseAdapterV2.ts";
 import {
   CommandPolicyCapabilityUnsupportedError,
   CommandPolicyV2,
@@ -293,6 +294,43 @@ layer("CommandPolicyV2", (it) => {
       });
 
       assert.equal(result, "portable_context");
+    }),
+  );
+
+  it.effect("uses portable context for Muse forks at either source boundary", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+
+      for (const fromSpecificTurn of [false, true]) {
+        const result = yield* policy.decideForkExecution({
+          commandId,
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("muse"),
+          capabilities: MuseProviderCapabilitiesV2,
+          sameProvider: true,
+          hasStrongNativeSource: true,
+          fromSpecificTurn,
+        });
+
+        assert.equal(result, "portable_context");
+      }
+    }),
+  );
+
+  it.effect("rejects Muse rollback before invoking its guarded native primitive", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+      const error = yield* policy
+        .ensureRollback({
+          commandId,
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("muse"),
+          capabilities: MuseProviderCapabilitiesV2,
+        })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.equal(error.capability, "rollback");
     }),
   );
 

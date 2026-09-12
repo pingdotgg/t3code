@@ -241,7 +241,7 @@ const make = Effect.gen(function* () {
         const imported = yield* Effect.gen(function* () {
           const thread = outcome.thread;
           if (
-            thread.source === "claudeAgent" &&
+            (thread.source === "claudeAgent" || thread.source === "muse") &&
             !CLAUDE_SESSION_ID_PATTERN.test(thread.providerSessionId)
           ) {
             return yield* new AgentSessionUnresumableSessionError({
@@ -344,7 +344,9 @@ const make = Effect.gen(function* () {
               resumeCursor:
                 thread.source === "codex"
                   ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                  : thread.source === "muse"
+                    ? { sessionId: thread.providerSessionId }
+                    : { threadId, resume: thread.providerSessionId },
               runtimePayload: { cwd: project.workspaceRoot },
             },
             { onConflict: "ignore" },

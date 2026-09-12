@@ -67,15 +67,16 @@ and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.
 
-| Provider    | Install and authenticate                                                                     |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| Codex       | Install [Codex CLI](https://developers.openai.com/codex/cli), then run `codex login`.        |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`. |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                        |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
-| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.       |
+| Provider    | Install and authenticate                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| Codex       | Install [Codex CLI](https://developers.openai.com/codex/cli), then run `codex login`.          |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.   |
+| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                          |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                             |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                       |
+| Muse Code   | Install [Muse Code](https://developer.meta.com/ai/products/muse-code/), then run `muse login`. |
+| Antigravity | Install and sign in with Google from T3 Code's provider settings.                              |
+| Pi          | Install [Pi](https://pi.dev), then run `pi` once to finish its login or API-key setup.         |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
@@ -95,7 +96,7 @@ base URL. Mark secret values as sensitive; after saving, T3 Code does not displa
 their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
+[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), [Muse Code](./providers-muse.md),
 [Antigravity](./providers-antigravity.md), and [Pi](./providers-pi.md).
 
 ## Next steps

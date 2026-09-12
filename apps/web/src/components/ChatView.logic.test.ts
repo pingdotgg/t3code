@@ -30,6 +30,7 @@ import {
   agentControlledBrowserCloseConfirmation,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
+  getProviderSendBlockReason,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
@@ -1711,6 +1712,54 @@ describe("resolveComposerProviderSelection", () => {
 
     expect(selection.selectedProviderEntry).toBeUndefined();
     expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+  });
+
+  it("does not continue a Muse thread in another instance after deletion", () => {
+    const missingInstanceId = ProviderInstanceId.make("muse_work");
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("muse")],
+      candidateInstanceIds: [missingInstanceId],
+      lockedProvider: ProviderDriverKind.make("muse"),
+      lockedInstanceId: missingInstanceId,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+  });
+
+  it("blocks removed Muse models but permits retry after a failed status probe", () => {
+    const provider = entry("muse", "muse_work", {
+      status: "ready",
+      auth: { status: "unknown" },
+      models: [
+        {
+          slug: "muse-spark-1.3-contributor",
+          name: "Muse Spark",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    }).snapshot;
+
+    expect(getProviderSendBlockReason(provider, "muse-retired")).toBe(
+      "That Muse Code model is no longer available. Choose another model.",
+    );
+    expect(getProviderSendBlockReason(provider, "muse-spark-1.3-contributor")).toBeNull();
+    expect(
+      getProviderSendBlockReason(
+        { ...provider, status: "error", models: [] },
+        "muse-spark-1.3-contributor",
+      ),
+    ).toBeNull();
+    expect(
+      getProviderSendBlockReason({ ...provider, installed: false }, "muse-spark-1.3-contributor"),
+    ).toBe("Install Muse Code on this T3 server host before sending.");
+    expect(
+      getProviderSendBlockReason(
+        { ...provider, auth: { status: "unauthenticated" } },
+        "muse-spark-1.3-contributor",
+      ),
+    ).toBe("Run muse login on this T3 server host before sending.");
   });
 
   it("does not treat the empty draft placeholder as a provider setup target", () => {

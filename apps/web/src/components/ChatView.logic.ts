@@ -559,9 +559,9 @@ export function resolveComposerProviderSelection(input: {
     ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
         ?.continuationGroupKey ?? null)
     : null;
-  // Missing metadata must not move Antigravity history into another Google profile.
+  // Missing metadata must not move account-bound history into another instance.
   const requiresExactInstance =
-    input.lockedProvider === "antigravity" &&
+    (input.lockedProvider === "antigravity" || input.lockedProvider === "muse") &&
     input.lockedInstanceId != null &&
     lockedContinuationGroupKey === null;
   const compatibleEntries = input.entries.filter(
@@ -644,6 +644,28 @@ export function getAntigravitySendBlockReason(
     !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
   ) {
     return "That Antigravity model is no longer available. Choose another model.";
+  }
+  return null;
+}
+
+/** Keep an unavailable Muse model visible without admitting another turn. */
+export function getProviderSendBlockReason(
+  provider: Parameters<typeof getAntigravitySendBlockReason>[0],
+  model: string,
+): string | null {
+  if (provider?.driver !== "muse") return getAntigravitySendBlockReason(provider, model);
+  if (!provider.installed) return "Install Muse Code on this T3 server host before sending.";
+  if (provider.auth.status === "unauthenticated") {
+    return "Run muse login on this T3 server host before sending.";
+  }
+  const slug = model.trim();
+  if (!slug) return "Choose a Muse Code model before sending.";
+  // An errored probe permits retry with the saved model; a ready catalog is authoritative.
+  if (
+    provider.status === "ready" &&
+    !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
+  ) {
+    return "That Muse Code model is no longer available. Choose another model.";
   }
   return null;
 }

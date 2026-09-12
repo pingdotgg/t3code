@@ -116,12 +116,18 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  const isMuse = provider.driver === ProviderDriverKind.make("muse");
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    !isMuse &&
+    provider.driver !== ProviderDriverKind.make("opencode")
+  ) {
     return true;
   }
 
   if (
-    (isAntigravity || isCodex) &&
+    (isAntigravity || isCodex || isMuse) &&
     (!provider.enabled || provider.auth.status === "unauthenticated")
   ) {
     return false;
