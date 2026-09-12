@@ -19,7 +19,7 @@ const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "
 
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
-  subcommand: Schema.Literals(["status", "serve"]),
+  subcommand: Schema.Literals(["status", "serve", "debug"]),
   argumentCount: Schema.Number,
 };
 
@@ -134,6 +134,7 @@ const TailscaleStatusSelf = Schema.Struct({
 });
 
 const TailscaleStatusJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
@@ -142,6 +143,8 @@ export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 export interface TailscaleStatus {
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
+  /** The daemon is up and connected; `tailscale down` keeps the name but reports Stopped. */
+  readonly running: boolean;
 }
 
 const collectStdout = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
@@ -212,67 +215,95 @@ export const parseTailscaleStatus = (
       return {
         magicDnsName: normalizeMagicDnsName(parsed),
         tailnetIpv4Addresses,
+        running: parsed.BackendState === "Running",
       };
     }),
   );
 
-export const readTailscaleStatus = Effect.gen(function* () {
-  const args = ["status", "--json"];
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const hostPlatform = yield* HostProcessPlatform;
-  const executable = tailscaleCommandForPlatform(hostPlatform);
-  const commandContext = {
-    executable,
-    subcommand: "status" as const,
-    argumentCount: args.length,
-  };
-  return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
-      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      // Spawning can also fail as a defect rather than a typed error - a
-      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
-      // `mapError` never sees that, so it would escape as an uncaught error.
-      Effect.catchDefect((cause) =>
-        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      ),
-    );
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStdout(child.stdout),
-        collectStderr(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
-    );
-    if (exitCode !== 0) {
-      return yield* new TailscaleCommandExitError({
-        ...commandContext,
-        exitCode,
-        stdoutLength: stdout.length,
-        stderrLength: stderr.length,
-        ...(stderrDiagnosticOf(stderr) !== undefined
-          ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-          : {}),
-      });
-    }
-    return yield* parseTailscaleStatus(stdout);
-  }).pipe(
-    Effect.scoped,
-    Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
-    Effect.catchTags({
-      TimeoutError: (cause) =>
-        Effect.fail(
-          new TailscaleCommandTimeoutError({
-            ...commandContext,
-            timeoutMs: Duration.toMillis(TAILSCALE_STATUS_TIMEOUT),
-            cause,
-          }),
+const readTailscaleCommandOutput = (subcommand: "status" | "debug", args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPlatform = yield* HostProcessPlatform;
+    const executable = tailscaleCommandForPlatform(hostPlatform);
+    const commandContext = {
+      executable,
+      subcommand,
+      argumentCount: args.length,
+    };
+    return yield* Effect.gen(function* () {
+      const child = yield* spawner.spawn(ChildProcess.make(executable, [...args])).pipe(
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        // Spawning can also fail as a defect rather than a typed error - a
+        // non-directory entry on PATH makes node throw ENOTDIR synchronously.
+        // `mapError` never sees that, so it would escape as an uncaught error.
+        Effect.catchDefect((cause) =>
+          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
         ),
-    }),
-  );
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectStdout(child.stdout),
+          collectStderr(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
+      );
+      if (exitCode !== 0) {
+        return yield* new TailscaleCommandExitError({
+          ...commandContext,
+          exitCode,
+          stdoutLength: stdout.length,
+          stderrLength: stderr.length,
+          ...(stderrDiagnosticOf(stderr) !== undefined
+            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
+            : {}),
+        });
+      }
+      return stdout;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(
+            new TailscaleCommandTimeoutError({
+              ...commandContext,
+              timeoutMs: Duration.toMillis(TAILSCALE_STATUS_TIMEOUT),
+              cause,
+            }),
+          ),
+      }),
+    );
+  });
+
+export const readTailscaleStatus = readTailscaleCommandOutput("status", ["status", "--json"]).pipe(
+  Effect.flatMap(parseTailscaleStatus),
+);
+
+const TailscalePrefsJson = Schema.Struct({
+  RunSSH: Schema.optional(Schema.Unknown),
 });
+
+const decodeTailscalePrefsJson = Schema.decodeEffect(Schema.fromJsonString(TailscalePrefsJson));
+
+/** Whether the local node serves Tailscale SSH (`tailscale up --ssh`), from its prefs. */
+export const parseTailscaleSshEnabled = (
+  rawPrefsJson: string,
+): Effect.Effect<boolean, TailscaleStatusParseError> =>
+  decodeTailscalePrefsJson(rawPrefsJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) => parsed.RunSSH === true),
+  );
+
+/**
+ * `tailscale status --json` does not report the local node's own SSH host
+ * keys, so SSH enablement comes from the local prefs instead.
+ */
+export const readTailscaleSshEnabled = readTailscaleCommandOutput("debug", ["debug", "prefs"]).pipe(
+  Effect.flatMap(parseTailscaleSshEnabled),
+);
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;

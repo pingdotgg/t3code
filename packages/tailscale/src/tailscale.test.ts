@@ -16,7 +16,9 @@ import {
   ensureTailscaleServe,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
+  parseTailscaleSshEnabled,
   parseTailscaleStatus,
+  readTailscaleSshEnabled,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
@@ -64,8 +66,30 @@ function assertCarriesNoSecret(error: object, secret: string): void {
 
   walk(error, "error");
 }
-const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
-const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+const tailscaleStatusJson = `{"BackendState":"Running","Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
+// Real `tailscale debug prefs` output (trimmed), as printed by tailscale 1.94 on a node
+// brought up with `tailscale up --ssh`.
+const tailscalePrefsWithSshJson = `{
+	"ControlURL": "https://controlplane.tailscale.com",
+	"RouteAll": true,
+	"ExitNodeID": "",
+	"CorpDNS": true,
+	"RunSSH": true,
+	"RunWebClient": false,
+	"WantRunning": true,
+	"LoggedOut": false,
+	"ShieldsUp": false,
+	"Hostname": "",
+	"NoSNAT": false,
+	"NetfilterMode": 0,
+	"AutoUpdate": {
+		"Check": true,
+		"Apply": true
+	}
+}
+`;
+
+const tailscaleStatusWithSingleIpJson = `{"BackendState":"Running","Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -149,7 +173,13 @@ describe("tailscale", () => {
       assert.deepEqual(status, {
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
+        running: true,
       });
+      const stopped = yield* parseTailscaleStatus(
+        '{"BackendState":"Stopped","Self":{"DNSName":"desktop.tail.ts.net."}}',
+      );
+      assert.equal(stopped.running, false);
+      assert.equal(stopped.magicDnsName, "desktop.tail.ts.net");
     }),
   );
 
@@ -191,7 +221,24 @@ describe("tailscale", () => {
       assert.deepEqual(status, {
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.90.1.2"],
+        running: true,
       });
+    });
+  });
+
+  it.effect("reads SSH enablement from the local prefs", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["debug", "prefs"]);
+      return { stdout: tailscalePrefsWithSshJson };
+    });
+
+    return Effect.gen(function* () {
+      assert.equal(yield* readTailscaleSshEnabled.pipe(Effect.provide(layer)), true);
+      assert.equal(yield* parseTailscaleSshEnabled('{"RunSSH":false,"WantRunning":true}'), false);
+      assert.equal(yield* parseTailscaleSshEnabled("{}"), false);
+      const error = yield* parseTailscaleSshEnabled("{not-json").pipe(Effect.flip);
+      assert.instanceOf(error, TailscaleStatusParseError);
     });
   });
 
