@@ -38,17 +38,41 @@ describe("connectAuth", () => {
     ).toBeNull();
   });
 
+  it.each(["state", "challenge"] as const)("rejects corrupted %s before authorization", (key) => {
+    const request = {
+      hostedAppUrl: "https://app.t3.codes",
+      state: "q7mK9xV2pL4nR8sT6wYzAQ",
+      challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    };
+    const value = request[key];
+    for (const corrupted of [
+      value.slice(1),
+      `${value}A`,
+      ` ${value}`,
+      `${value} `,
+      `${value}\n`,
+      `│${value.slice(1)}`,
+      `+${value.slice(1)}`,
+      `/${value.slice(1)}`,
+      `${value}=`,
+      `${value.slice(0, -1)}B`,
+    ]) {
+      const url = new URL(buildConnectAuthorizeRequestUrl({ ...request, [key]: corrupted }));
+      expect(readConnectAuthorizeRequest(url), corrupted).toBeNull();
+    }
+  });
+
   it("round-trips the loopback port through the authorize URL fragment", () => {
     const url = buildConnectAuthorizeRequestUrl({
       hostedAppUrl: "https://app.t3.codes",
-      state: "state-1",
-      challenge: "challenge-1",
+      state: "q7mK9xV2pL4nR8sT6wYzAQ",
+      challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       loopbackPort: 34338,
     });
 
     expect(readConnectAuthorizeRequest(new URL(url))).toEqual({
-      state: "state-1",
-      challenge: "challenge-1",
+      state: "q7mK9xV2pL4nR8sT6wYzAQ",
+      challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       loopbackPort: 34338,
     });
     expect(connectLoopbackRedirectUri(34338)).toBe("http://127.0.0.1:34338/callback");
@@ -57,7 +81,7 @@ describe("connectAuth", () => {
   it("rejects authorize requests whose loopback port is corrupted", () => {
     for (const port of ["", "abc", "-1", "0", "65536", "34338x", "34 38"]) {
       const url = new URL(
-        `https://app.t3.codes/connect#state=state-1&challenge=challenge-1&port=${encodeURIComponent(port)}`,
+        `https://app.t3.codes/connect#state=q7mK9xV2pL4nR8sT6wYzAQ&challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&port=${encodeURIComponent(port)}`,
       );
       expect(readConnectAuthorizeRequest(url), port).toBeNull();
     }

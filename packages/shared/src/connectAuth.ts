@@ -64,9 +64,14 @@ export function buildConnectAuthorizeRequestUrl(input: {
 
 export function readConnectAuthorizeRequest(url: URL): ConnectAuthorizeRequest | null {
   const params = readHashParams(url);
-  const state = params.get(CONNECT_AUTH_STATE_PARAM)?.trim() ?? "";
-  const challenge = params.get(CONNECT_AUTH_CHALLENGE_PARAM)?.trim() ?? "";
-  if (!state || !challenge) {
+  const state = params.get(CONNECT_AUTH_STATE_PARAM) ?? "";
+  const challenge = params.get(CONNECT_AUTH_CHALLENGE_PARAM) ?? "";
+  // The CLI encodes 16 random bytes and a SHA-256 digest without padding.
+  // The final characters must also have zero unused bits in base64url.
+  if (
+    !/^[A-Za-z0-9_-]{21}[AQgw]$/.test(state) ||
+    !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(challenge)
+  ) {
     return null;
   }
   const port = params.get(CONNECT_AUTH_PORT_PARAM);
