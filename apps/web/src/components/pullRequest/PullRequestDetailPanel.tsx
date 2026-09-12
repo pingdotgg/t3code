@@ -73,7 +73,7 @@ import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { useLiveRefresh } from "~/hooks/useLiveRefresh";
+import { usePullRequestRefresh } from "./usePullRequestRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -144,7 +144,6 @@ import {
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
-  shouldRefreshPullRequestActivity,
   stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
@@ -775,52 +774,17 @@ export function PullRequestDetailPanel({
     activityQuery.refresh();
     nativeStackQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
-  const [refreshToken, setRefreshToken] = useState(0);
+  const { refreshToken, isInvalidating, refreshFromHost } = usePullRequestRefresh({
+    environmentId,
+    reference,
+    scopeKey: tabScopeKey,
+    detail: coreDetail,
+    refreshMetadata: detailQuery.refresh,
+    refreshActivity: activityQuery.refresh,
+    refreshDetail,
+    forcedRefreshToken,
+  });
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
-  const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (!coreDetail) return;
-    const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
-    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
-      activityQuery.refresh();
-      setRefreshToken((token) => token + 1);
-    }
-    activityRevision.current = next;
-  }, [activityQuery.refresh, coreDetail, tabScopeKey]);
-  // Reuse activity and diff until core detail reports a changed revision. Keyed by
-  // the pull request rather than by the panel, because this one panel shows a different pull
-  // request every time it is opened.
-  useLiveRefresh(
-    () => {
-      detailQuery.refresh();
-    },
-    { key: `pull-request:${environmentId}:${pullRequestKey}` },
-  );
-  // The button, on the other hand, goes around the server's cache rather than through it: it is
-  // the answer for a reader who can see that what they are looking at is behind. The
-  // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
-  // and at worst answer from it.
-  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
-  const [isInvalidating, setIsInvalidating] = useState(false);
-  const refreshFromHost = useCallback(async () => {
-    setIsInvalidating(true);
-    try {
-      await invalidate({ environmentId, input: { reference } });
-      refreshDetail();
-      setRefreshToken((token) => token + 1);
-    } finally {
-      setIsInvalidating(false);
-    }
-  }, [environmentId, invalidate, reference, refreshDetail]);
-  // A refresh asked for by the page: the detail, and through the token below, the diff with it.
-  const appliedForcedToken = useRef(forcedRefreshToken);
-  useEffect(() => {
-    if (appliedForcedToken.current === forcedRefreshToken) return;
-    appliedForcedToken.current = forcedRefreshToken;
-    void refreshFromHost();
-  }, [forcedRefreshToken, refreshFromHost]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
   // Which action is in flight, not merely that one is: every control here is disabled while any
