@@ -1848,7 +1848,74 @@ describe("buildThreadFeed", () => {
     expect(collapsed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 17s" });
   });
 
-  it("folds assistant messages between the first and terminal messages", () => {
+  it("keeps spawned agents visible after their parent turn settles", () => {
+    const turnId = TurnId.make("turn-spawned-agent");
+    const thread = makeThread({
+      id: ThreadId.make("thread-spawned-agent"),
+      projectId: ProjectId.make("project-1"),
+      title: "Spawned agent",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:04.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "The parent task is complete.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:03.000Z",
+          updatedAt: "2026-04-01T00:00:04.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: {
+            title: "Read files",
+            itemType: "file_read",
+            status: "completed",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("spawned-agent"),
+          kind: "task.progress",
+          tone: "tool",
+          summary: "Research agent is still running",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: {
+            agentKind: "agent",
+            taskId: "research-agent",
+          },
+        }),
+      ],
+    });
+
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+
+    expect(rows.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-spawned-agent",
+      "agent-spawn:turn-spawned-agent",
+      "assistant-final",
+    ]);
+  });
+
+  it("keeps a substantive answer visible before trailing provider commentary", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({
       id: ThreadId.make("thread-middle-message"),
@@ -1866,7 +1933,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-first"),
           role: "assistant",
-          text: "The main result is ready.",
+          text: "The requested migration is complete, and all targeted checks now pass.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:01.000Z",
@@ -1875,7 +1942,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-middle"),
           role: "assistant",
-          text: "I am checking one more detail.",
+          text: "One final check is still running.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:03.000Z",
@@ -1884,7 +1951,7 @@ describe("buildThreadFeed", () => {
         {
           id: MessageId.make("assistant-final"),
           role: "assistant",
-          text: "Verification finished.",
+          text: "Done.",
           turnId,
           streaming: false,
           createdAt: "2026-04-01T00:00:05.000Z",
@@ -1898,7 +1965,7 @@ describe("buildThreadFeed", () => {
 
     expect(rows.map((entry) => entry.id)).toEqual([
       "assistant-first",
-      "turn-fold:turn-1",
+      "assistant-middle",
       "assistant-final",
     ]);
   });
@@ -2865,7 +2932,7 @@ describe("quiet timeline: nested agents", () => {
     expect(allDone).toHaveLength(2);
   });
 
-  it("folds the tool call that launched an agent into its spawn card", () => {
+  it("absorbs the tool call that launched an agent into its spawn card", () => {
     const turnId = TurnId.make("turn-agent-tool");
     const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
     const feed = buildThreadFeed(
@@ -2944,7 +3011,7 @@ describe("quiet timeline: nested agents", () => {
     expect(rows).toEqual(["agent-started"]);
     expect(
       deriveThreadFeedPresentation(feed, null, new Set([turnId])).map((row) => row.type),
-    ).toEqual(["turn-fold", "agent-spawn"]);
+    ).toEqual(["agent-spawn"]);
   });
 
   it("presents a spawn batch as one card whose status line follows the newest member activity", () => {
