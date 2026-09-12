@@ -444,6 +444,15 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+
+  it("defaults project favorites empty and accepts logical project keys", () => {
+    expect(decodeClientSettings({}).favoriteProjectKeys).toEqual([]);
+    expect(
+      decodeClientSettingsPatch({ favoriteProjectKeys: ["repository:github.com/t3tools/t3code"] })
+        .favoriteProjectKeys,
+    ).toEqual(["repository:github.com/t3tools/t3code"]);
+    expect(() => decodeClientSettingsPatch({ favoriteProjectKeys: [""] })).toThrow();
+  });
 });
 
 describe("ClientSettings context window meter", () => {
