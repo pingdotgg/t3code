@@ -43,7 +43,7 @@
       --color-subtle-strong: rgba(0, 0, 0, 0.08);
       --color-inline-skill-background: rgba(217, 70, 239, 0.12);
       --color-inline-skill-border: rgba(217, 70, 239, 0.25);
-      --color-inline-skill-foreground: #a21caf;
+      --color-inline-skill-foreground: #000000;
 
       /* Primary action */
       --color-primary: #262626;
@@ -154,7 +154,7 @@
       --color-subtle-strong: rgba(255, 255, 255, 0.08);
       --color-inline-skill-background: rgba(217, 70, 239, 0.12);
       --color-inline-skill-border: rgba(217, 70, 239, 0.25);
-      --color-inline-skill-foreground: #f0abfc;
+      --color-inline-skill-foreground: #000000;
 
       /* Primary action */
       --color-primary: #f5f5f5;

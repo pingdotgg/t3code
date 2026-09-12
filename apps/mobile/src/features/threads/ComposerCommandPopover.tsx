@@ -9,7 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";
-import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -72,6 +72,7 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
     <GlassSurface
       glassEffectStyle="clear"
       tintColorClassName="accent-glass-surface"
+      fallbackClassName={Platform.OS === "android" ? "bg-card" : undefined}
       style={baseStyle}
     >
       {props.children}
