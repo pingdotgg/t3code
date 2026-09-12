@@ -8,6 +8,8 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly children: ReactNode;
   readonly escapeLabel?: ReactNode;
   readonly footerActionLabel?: ReactNode;
+  /** Mode-specific keyboard hints shown after the primary action hint. */
+  readonly footerHints?: ReactNode;
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
@@ -25,6 +27,7 @@ export function CommandPaletteContent({
   children,
   escapeLabel = "Close",
   footerActionLabel,
+  footerHints,
   footerTrailing,
   inputAccessory,
   inputProps,
@@ -51,7 +54,7 @@ export function CommandPaletteContent({
         </div>
         <CommandPanel className={panelClassName}>{children}</CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <KbdGroup className="items-center gap-1.5">
               <Kbd>
                 <ArrowUpIcon />
@@ -67,6 +70,7 @@ export function CommandPaletteContent({
                 <span>{footerActionLabel}</span>
               </KbdGroup>
             ) : null}
+            {footerHints}
             {showBackHint ? (
               <KbdGroup className="items-center gap-1.5">
                 <Kbd>Backspace</Kbd>

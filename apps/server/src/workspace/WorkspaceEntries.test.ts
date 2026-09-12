@@ -736,4 +736,96 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
   });
+
+  describe("createDirectory", () => {
+    it.effect("lists a folder created through createDirectory", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-" });
+
+        const created = yield* workspaceEntries.createDirectory({
+          parentPath: yield* appendSeparator(cwd),
+          name: "scratch",
+        });
+        const listing = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(created).toEqual({ path: path.join(cwd, "scratch") });
+        expect(listing.entries.map((entry) => entry.name)).toEqual(["scratch"]);
+      }),
+    );
+
+    it.effect("creates missing parents and accepts an existing folder", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-nested-" });
+        const parentPath = path.join(cwd, "deep", "nested");
+
+        const created = yield* workspaceEntries.createDirectory({ parentPath, name: "scratch" });
+        const again = yield* workspaceEntries.createDirectory({ parentPath, name: "scratch" });
+
+        expect(created).toEqual({ path: path.join(parentPath, "scratch") });
+        expect(again).toEqual(created);
+      }),
+    );
+
+    it.effect("creates relative folders against the current project", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-relative-" });
+
+        const created = yield* workspaceEntries.createDirectory({
+          cwd,
+          parentPath: "./packages/",
+          name: "shared",
+        });
+        const error = yield* workspaceEntries
+          .createDirectory({ parentPath: "./packages/", name: "shared" })
+          .pipe(Effect.flip);
+
+        expect(created).toEqual({ path: path.join(cwd, "packages", "shared") });
+        expect(error._tag).toBe("WorkspaceEntriesCurrentProjectRequiredError");
+      }),
+    );
+
+    it.effect("rejects names that would leave the browsed directory", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-invalid-" });
+        const parentPath = yield* appendSeparator(cwd);
+
+        for (const name of ["..", ".", "../escape", "nested/child"]) {
+          const error = yield* workspaceEntries
+            .createDirectory({ parentPath, name })
+            .pipe(Effect.flip);
+          expect(error._tag).toBe("WorkspaceEntriesInvalidDirectoryNameError");
+        }
+
+        const listing = yield* workspaceEntries.browse({ partialPath: parentPath });
+        expect(listing.entries).toEqual([]);
+      }),
+    );
+
+    it.effect("reports a failed directory creation with its resolved path", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-create-dir-conflict-" });
+        yield* writeTextFile(cwd, "occupied", "not a directory");
+
+        const error = yield* workspaceEntries
+          .createDirectory({ parentPath: yield* appendSeparator(cwd), name: "occupied" })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceEntriesCreateDirectoryError");
+        expect(error.message).toBe(
+          `Failed to create workspace directory '${path.join(cwd, "occupied")}'.`,
+        );
+      }),
+    );
+  });
 });
