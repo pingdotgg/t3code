@@ -157,7 +157,6 @@ export function PullRequestCandidatePicker<T>({
             candidates.map((candidate, index) => (
               <ComboboxItem
                 key={keys[index]}
-                hideIndicator
                 index={index}
                 value={keys[index]}
                 disabled={disabled}

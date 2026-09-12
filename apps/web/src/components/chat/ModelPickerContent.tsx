@@ -8,7 +8,7 @@ import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, CheckIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -852,7 +852,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (legacySection?.key === modelKey) {
                       return (
                         <ComboboxItem
-                          hideIndicator
                           index={index}
                           value={modelKey}
                           aria-expanded={legacySection.isExpanded}
@@ -865,12 +864,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                               {legacySection.legacyModels.length} models
                             </div>
                           </div>
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 transition-transform",
-                              legacySection.isExpanded && "rotate-90",
+                          <span className="shrink-0">
+                            {legacySection.isExpanded ? (
+                              <CheckIcon className="size-4 text-foreground/60" />
+                            ) : (
+                              <ChevronRightIcon className="size-4 text-foreground/40" />
                             )}
-                          />
+                          </span>
                         </ComboboxItem>
                       );
                     }

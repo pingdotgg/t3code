@@ -167,7 +167,7 @@ export function FontFamilyPicker({
     const isDefault = item === DEFAULT_FONT_VALUE;
     const family = isDefault ? defaultFamily : item;
     return (
-      <ComboboxItem hideIndicator index={index} key={item} value={item}>
+      <ComboboxItem index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
           <span className="min-w-0 truncate" style={{ fontFamily: family }}>
             {family}
