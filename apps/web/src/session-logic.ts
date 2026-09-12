@@ -598,6 +598,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (toolData !== undefined) {
       entry.toolData = toolData;
     }
+  } else if (itemType === "file_change") {
+    const data = asRecord(payload?.data);
+    if (data?.toolName === "Edit" || data?.toolName === "Write") entry.toolData = data;
   }
   if (itemType) {
     entry.itemType = itemType;

@@ -216,6 +216,31 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+export function hasFileChangeInput(entry: WorkLogPresentationEntry): boolean {
+  if (entry.itemType !== "file_change") return false;
+  const data = asRecord(entry.toolData);
+  const input = asRecord(data?.input);
+  return data?.toolName === "Edit"
+    ? typeof input?.old_string === "string" || typeof input?.new_string === "string"
+    : data?.toolName === "Write" && typeof input?.content === "string";
+}
+
+export function formatFileChangeInput(entry: WorkLogPresentationEntry): string | null {
+  if (entry.itemType !== "file_change") return null;
+  const data = asRecord(entry.toolData);
+  if (data?.toolName !== "Edit" && data?.toolName !== "Write") return null;
+  const input = asRecord(data.input);
+  const truncated = asRecord(data.inputTruncated);
+  const fields = data.toolName === "Edit" ? ["old_string", "new_string"] : ["content"];
+  const blocks = fields.flatMap((key) => {
+    const value = input?.[key];
+    if (typeof value !== "string") return [];
+    const label = key === "old_string" ? "Before" : "After";
+    return [`${label}${truncated?.[key] === true ? " (truncated)" : ""}\n${value}`];
+  });
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
+}
+
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }

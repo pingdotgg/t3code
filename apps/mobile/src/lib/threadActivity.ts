@@ -19,6 +19,8 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
+  formatFileChangeInput,
+  hasFileChangeInput,
   isWorktreeSetupActivity,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
@@ -580,6 +582,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (toolData !== undefined) {
       entry.toolData = toolData;
     }
+  } else if (itemType === "file_change") {
+    const data = asRecord(payload?.data);
+    if (data?.toolName === "Edit" || data?.toolName === "Write") entry.toolData = data;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -981,6 +986,8 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
   if ((entry.changedFiles?.length ?? 0) > 0) {
     appendBlock(entry.changedFiles!.join("\n"));
   }
+  const fileChangeInput = formatFileChangeInput(entry);
+  if (fileChangeInput !== null) blocks.push(fileChangeInput);
 
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
@@ -994,6 +1001,7 @@ function workEntryCanExpand(entry: WorkLogEntry): boolean {
   if (entry.questionAnswer) return true;
   if (entry.agentSpawn) return agentSpawnMembers(entry.agentSpawn).length > 0;
   if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) return true;
+  if (hasFileChangeInput(entry)) return true;
   if (entry.changedFiles?.some((path) => path.trim().length > 0)) return true;
   return Boolean((entry.rawCommand ?? entry.command)?.trim() || entry.detail?.trim());
 }
