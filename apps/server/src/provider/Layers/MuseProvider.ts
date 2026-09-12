@@ -11,7 +11,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcess } from "effect/unstable/process";
 
-import { createMuseSdkHost, makeMuseEnvironment, type MuseSdkHost } from "../museSdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  makeMuseEnvironment,
+  type MuseSdkHost,
+} from "../museSdk.ts";
 import { parseMuseVersion } from "../museMaintenance.ts";
 import { museModelCapabilities, readMuseModelEfforts } from "../museModelCatalog.ts";
 import {
@@ -88,15 +93,15 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
   const host = yield* Effect.acquireRelease(
-    Effect.tryPromise<MuseSdkHost>((signal) =>
-      createHost({
+    createMuseSdkHostEffect(
+      {
         binaryPath: settings.binaryPath,
         environment,
         ...(cwd ? { cwd } : {}),
         readOnly: true,
-        signal,
         startupTimeoutMs: 8_000,
-      }),
+      },
+      createHost,
     ),
     (host: MuseSdkHost) => Effect.promise(() => host.close()),
     { interruptible: true },

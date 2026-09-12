@@ -15,7 +15,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { MUSE_DEFAULT_MODEL } from "../provider/Layers/MuseProvider.ts";
-import { createMuseSdkHost, type MuseSdkHost } from "../provider/museSdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  type MuseSdkHost,
+} from "../provider/museSdk.ts";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "../provider/museModelCatalog.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -243,16 +247,16 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       // Metadata requests already include their context and do not need checkout configuration.
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-muse-text-" });
       const host = yield* Effect.acquireRelease(
-        Effect.tryPromise<MuseSdkHost>((signal) =>
-          createHost({
+        createMuseSdkHostEffect(
+          {
             binaryPath: settings.binaryPath,
             cwd,
             ...(environment ? { environment } : {}),
             readOnly: true,
             // Muse derives SDK turn events from its session log, including completion.
             sessionLogging: true,
-            signal,
-          }),
+          },
+          createHost,
         ),
         (host: MuseSdkHost) => Effect.promise(() => host.close()),
         { interruptible: true },

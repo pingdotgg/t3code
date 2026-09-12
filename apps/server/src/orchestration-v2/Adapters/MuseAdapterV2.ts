@@ -57,7 +57,12 @@ import {
   museApprovalChoices,
   type MuseItem,
 } from "../../provider/museProtocol.ts";
-import { createMuseSdkHost, museApprovalMode, type MuseSdkHost } from "../../provider/museSdk.ts";
+import {
+  createMuseSdkHostEffect,
+  museApprovalMode,
+  type createMuseSdkHost,
+  type MuseSdkHost,
+} from "../../provider/museSdk.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   providerMessageTextWithAttachmentPaths,
@@ -482,6 +487,15 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         });
         yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem });
       });
+      const settleObservedChildren = Effect.fnUntraced(function* (
+        status: "failed" | "cancelled" | "interrupted",
+      ) {
+        for (const [itemId, owner] of observedChildren) {
+          const item = owner.items.get(itemId);
+          if (item) yield* publishItem(owner, item, status);
+        }
+        observedChildren.clear();
+      });
       const resolvePending = Effect.fnUntraced(function* (
         entry: PendingRequest,
         status: "resolved" | "cancelled",
@@ -610,6 +624,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
+        yield* settleObservedChildren("failed");
         yield* Queue.fail(events, protocolError(detail, cause));
       });
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
@@ -1126,9 +1141,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const created = yield* Effect.tryPromise({
-          try: (signal) =>
-            (options.createHost ?? createMuseSdkHost)({
+        const created = yield* Effect.acquireRelease(
+          createMuseSdkHostEffect(
+            {
               binaryPath: options.settings.binaryPath || "muse",
               cwd,
               environment: McpProviderSession.withAgentDeviceEnvironment(
@@ -1136,15 +1151,28 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                 mcpSession,
               ),
               runtimeMode: input.runtimePolicy.runtimeMode,
-              signal,
+            },
+            options.createHost,
+          ).pipe(
+            Effect.mapError(
+              (error) =>
+                new ProviderAdapterOpenSessionError({
+                  driver: MUSE_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause: error.cause,
+                }),
+            ),
+          ),
+          (created) =>
+            Effect.gen(function* () {
+              if (host === created) {
+                closed = true;
+                hostEpoch++;
+              }
+              yield* Effect.tryPromise(() => created.close()).pipe(Effect.ignore);
             }),
-          catch: (cause) =>
-            new ProviderAdapterOpenSessionError({
-              driver: MUSE_PROVIDER,
-              providerSessionId: input.providerSessionId,
-              cause,
-            }),
-        });
+          { interruptible: true },
+        ).pipe(Effect.provideService(Scope.Scope, scope));
         host = created;
         created.connection.onNotification((notification) => {
           Queue.offerUnsafe(inbox, {
@@ -1176,22 +1204,13 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
               epoch,
             });
         });
-        yield* Scope.addFinalizer(
-          scope,
-          Effect.gen(function* () {
-            if (host === created) {
-              closed = true;
-              hostEpoch++;
-            }
-            yield* Effect.tryPromise(() => created.close()).pipe(Effect.ignore);
-          }),
-        );
       });
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           closed = true;
           hostEpoch++;
           if (active) yield* finish(active, "cancelled", "Muse session closed", "broken");
+          yield* settleObservedChildren("cancelled");
           yield* Queue.shutdown(inbox);
           yield* Queue.shutdown(events);
         }).pipe(eventPermit.withPermits(1)),
@@ -1808,6 +1827,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                   );
                   broken = true;
                   yield* finish(turn, "interrupted", undefined, "broken");
+                  yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");
                   yield* Queue.end(events);
                 }),

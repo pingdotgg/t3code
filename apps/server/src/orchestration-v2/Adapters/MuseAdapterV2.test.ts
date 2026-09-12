@@ -666,6 +666,36 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("closes an acquired host when callback registration fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const result = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          createHost: async () => ({
+            ...fake.host,
+            connection: {
+              ...fake.host.connection,
+              onNotification: () => {
+                throw new Error("Cannot register native callbacks");
+              },
+            },
+          }),
+        },
+      ).pipe(Effect.scoped, Effect.exit);
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag !== "Failure") return;
+      assert.match(Cause.pretty(result.cause), /Cannot register native callbacks/);
+      assert.strictEqual(fake.closeCount(), 1);
+      assert.strictEqual(fake.calls.length, 0);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect(
     "closes a newly opened host when native session registration returns another identity",
     () =>
@@ -711,6 +741,60 @@ describe("MuseAdapterV2", () => {
         1,
       );
       assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("settles earlier native child activity when its host exits", () =>
+    Effect.gen(function* () {
+      for (const startNextTurn of [false, true]) {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        yield* fake.emit("item/started", {
+          item: {
+            itemId: "orphaned-child",
+            kind: "subagent",
+            turnId: nativeId,
+            objective: "Review patch",
+            revision: 1,
+            status: "inProgress",
+          },
+        });
+        const started = yield* harness.takeEvent("turn_item.updated");
+        yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        if (startNextTurn) yield* startConversation(harness, fake, 2);
+
+        yield* fake.disconnect();
+        const streamExit = yield* Deferred.await(harness.eventsEnded);
+        assert.strictEqual(streamExit._tag, "Failure");
+        const childUpdates = harness.allEvents.filter(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.id === started.turnItem.id,
+        );
+        const lastItem = childUpdates.at(-1);
+        assert.strictEqual(lastItem?.type, "turn_item.updated");
+        if (lastItem?.type !== "turn_item.updated") return;
+        assert.strictEqual(lastItem.turnItem.status, "failed");
+        assert.isNotNull(lastItem.turnItem.completedAt);
+        assert.strictEqual(lastItem.turnItem.runId, started.turnItem.runId);
+        const childNode = harness.allEvents
+          .filter(
+            (event) => event.type === "node.updated" && event.node.id === started.turnItem.nodeId,
+          )
+          .at(-1);
+        assert.strictEqual(childNode?.type, "node.updated");
+        if (childNode?.type !== "node.updated") return;
+        assert.strictEqual(childNode.node.status, "failed");
+        assert.strictEqual(
+          harness.allEvents.filter(
+            (event) =>
+              event.type === "turn.terminal" &&
+              event.providerTurnId === started.turnItem.providerTurnId,
+          ).length,
+          1,
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

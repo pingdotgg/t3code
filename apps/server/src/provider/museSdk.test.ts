@@ -1,6 +1,15 @@
 import { spawnMspConnection, type MspHandshake, type SpawnedMspConnection } from "@muse-code/sdk";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { createMuseSdkHost, makeMuseEnvironment, museApprovalMode } from "./museSdk.ts";
+import { it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  makeMuseEnvironment,
+  museApprovalMode,
+  type MuseSdkHost,
+} from "./museSdk.ts";
 
 vi.mock("@muse-code/sdk", () => ({ spawnMspConnection: vi.fn() }));
 
@@ -18,7 +27,11 @@ function mockSpawn() {
   const startup = pending<SpawnedMspConnection>();
   const shutdown = pending<{ code: number; signal: null }>();
   const closing = pending<void>();
-  const initialize = vi.fn(() => startup.promise);
+  const initializing = pending<void>();
+  const initialize = vi.fn(() => {
+    initializing.resolve();
+    return startup.promise;
+  });
   const close = vi.fn(() => {
     closing.resolve();
     return shutdown.promise;
@@ -31,7 +44,7 @@ function mockSpawn() {
     exited: shutdown.promise,
     fingerprintWarning: { warning: "additive optional" },
   } as unknown as SpawnedMspConnection;
-  return { startup, shutdown, closing, initialize, close, ready };
+  return { startup, shutdown, closing, initializing, initialize, close, ready };
 }
 
 afterEach(() => {
@@ -201,4 +214,69 @@ describe("Muse SDK host", () => {
     await host.close();
     expect(fake.close).toHaveBeenCalledOnce();
   });
+
+  it.effect(
+    "keeps Effect startup resources alive until interrupted initialization shuts down",
+    () =>
+      Effect.gen(function* () {
+        const fake = mockSpawn();
+        let released = false;
+        const fiber = yield* Effect.forkChild(
+          createMuseSdkHostEffect({ binaryPath: "muse" }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                released = true;
+              }),
+            ),
+          ),
+        );
+        yield* Effect.promise(() => fake.initializing.promise);
+        const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+        yield* Effect.promise(() => fake.closing.promise);
+        expect(released).toBe(false);
+        fake.shutdown.resolve({ code: 0, signal: null });
+        yield* Fiber.join(interrupted);
+        expect(released).toBe(true);
+        expect(fake.close).toHaveBeenCalledOnce();
+      }),
+  );
+
+  it.effect("closes a fulfilled host when interruption wins before acquisition is delivered", () =>
+    Effect.gen(function* () {
+      const started = pending<void>();
+      const startup = pending<MuseSdkHost>();
+      const closing = pending<void>();
+      const shutdown = pending<void>();
+      const host = {
+        close: vi.fn(() => {
+          closing.resolve();
+          return shutdown.promise;
+        }),
+      } as unknown as MuseSdkHost;
+      let released = false;
+      const fiber = yield* Effect.forkChild(
+        createMuseSdkHostEffect({ binaryPath: "muse" }, () => {
+          started.resolve();
+          return startup.promise;
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              released = true;
+            }),
+          ),
+        ),
+      );
+      yield* Effect.promise(() => started.promise);
+      startup.resolve(host);
+      const interrupted = yield* Fiber.interrupt(fiber).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.promise(() => closing.promise);
+      expect(released).toBe(false);
+      shutdown.resolve();
+      yield* Fiber.join(interrupted);
+      expect(released).toBe(true);
+      expect(host.close).toHaveBeenCalledOnce();
+    }),
+  );
 });

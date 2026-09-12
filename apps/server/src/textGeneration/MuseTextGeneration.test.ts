@@ -5,6 +5,7 @@ import { MuseSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 
@@ -486,20 +487,35 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
     }),
   );
 
-  it.effect("forwards interruption while the SDK host is still starting", () =>
+  it.effect("retains its temporary workspace until interrupted SDK startup has shut down", () =>
     Effect.gen(function* () {
-      const starting = Promise.withResolvers<AbortSignal>();
+      const fs = yield* FileSystem.FileSystem;
+      const starting = Promise.withResolvers<{ signal: AbortSignal; cwd: string }>();
+      const closing = Promise.withResolvers<void>();
+      const shutdown = Promise.withResolvers<void>();
       const service = yield* makeMuseTextGeneration(settings, undefined, (options) => {
         const signal = options.signal!;
-        starting.resolve(signal);
-        return new Promise((_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        starting.resolve({ signal, cwd: options.cwd! });
+        return new Promise<MuseSdkHost>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              closing.resolve();
+              void shutdown.promise.then(() => reject(signal.reason));
+            },
+            { once: true },
+          );
         });
       });
       const fiber = yield* service.generateThreadTitle(titleInput).pipe(Effect.forkChild);
-      const signal = yield* Effect.promise(() => starting.promise);
-      yield* Fiber.interrupt(fiber);
+      const { signal, cwd } = yield* Effect.promise(() => starting.promise);
+      const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+      yield* Effect.promise(() => closing.promise);
       expect(signal.aborted).toBe(true);
+      expect(yield* fs.exists(cwd)).toBe(true);
+      shutdown.resolve();
+      yield* Fiber.join(interrupted);
+      expect(yield* fs.exists(cwd)).toBe(false);
     }),
   );
 

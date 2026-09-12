@@ -7,6 +7,7 @@ import {
   type SpawnedMspConnection,
 } from "@muse-code/sdk";
 import type { RuntimeMode } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
 export interface MuseSdkHost {
   readonly connection: Pick<
@@ -119,3 +120,24 @@ export async function createMuseSdkHost(
     clearTimeout(timer);
   }
 }
+
+/** Cancellation waits for native shutdown before callers release startup resources. */
+export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(function* (
+  options: Omit<MuseSdkHostOptions, "signal">,
+  createHost: typeof createMuseSdkHost = createMuseSdkHost,
+) {
+  let startup: Promise<MuseSdkHost> | undefined;
+  return yield* Effect.tryPromise((signal) => {
+    startup = createHost({ ...options, signal });
+    return startup;
+  }).pipe(
+    Effect.onInterrupt(() =>
+      Effect.promise(async () => {
+        await startup?.then(
+          (host) => host.close(),
+          () => {},
+        );
+      }),
+    ),
+  );
+});

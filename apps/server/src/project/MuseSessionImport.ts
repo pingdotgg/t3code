@@ -14,7 +14,11 @@ import * as Scope from "effect/Scope";
 
 import { expandHomePath } from "../pathExpansion.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
-import { createMuseSdkHost, type MuseSdkHost } from "../provider/museSdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  type MuseSdkHost,
+} from "../provider/museSdk.ts";
 
 const SessionId = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
@@ -125,16 +129,16 @@ export const makeMuseSessionImport = Effect.fn("makeMuseSessionImport")(function
     const existing = hosts.get(instance.instanceId);
     if (existing) return existing;
     const host = yield* Effect.acquireRelease(
-      Effect.tryPromise((signal) =>
-        createHost({
+      createMuseSdkHostEffect(
+        {
           binaryPath: instance.binaryPath,
           environment: instance.environment,
           readOnly: true,
           // Stored history is unavailable to an ephemeral host. No sessions or turns are started.
           sessionLogging: true,
           startupTimeoutMs: 8_000,
-          signal,
-        }),
+        },
+        createHost,
       ),
       (host) => Effect.promise(() => host.close()),
       { interruptible: true },
