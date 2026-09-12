@@ -59,7 +59,7 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
 });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
 
-export const SPEECH_STREAM_PATH = "/api/voice/stream";
+export const SPEECH_STREAM_PATH = "/ws/voice";
 export const SPEECH_SAMPLE_RATE = 16_000;
 export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
 export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5;

@@ -6,7 +6,7 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type { EnvironmentSpeechStatus, SpeechStreamText } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -56,6 +56,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const state: VoiceInputState =
     controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
   const [level, setLevel] = useState(0);
+  const [preview, setPreview] = useState<SpeechStreamText | null>(null);
   const controllerRef = useRef<VoiceInputController | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
@@ -106,6 +107,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       getMicrophoneId: () => microphoneIdRef.current,
       onLevel: setLevel,
       onDurationLimit: () => void controller.stop(),
+      onText: (text) => {
+        if (!disposed) setPreview(text);
+      },
+      onError: (message) => {
+        if (!disposed) void controller.interruptRecording(message);
+      },
     });
     controller = new VoiceInputController({
       recorder: platform.recorder,
@@ -117,7 +124,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       readDraft,
       commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
       onStateChange: (value) => {
-        if (!disposed) setControllerState({ prepared, value });
+        if (!disposed) {
+          setControllerState({ prepared, value });
+          if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
+        }
       },
     });
     controllerRef.current = controller;
@@ -185,10 +195,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       currentStatus?.supported === true &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia) &&
-      typeof MediaRecorder !== "undefined",
+      typeof AudioWorkletNode !== "undefined",
     status: currentStatus,
     state,
     progress: null,
+    preview: state.phase === "recording" || state.phase === "transcribing" ? preview : null,
     level,
     blocksSubmission: voiceInputBlocksSubmission(state),
     freezesEditor: voiceInputFreezesEditor(state),

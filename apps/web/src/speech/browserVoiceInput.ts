@@ -1,4 +1,7 @@
 import {
+  getEnvironmentSpeechStatus,
+  getEnvironmentSpeechStreamUrl,
+  openSpeechStream,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
@@ -6,54 +9,18 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import type { SpeechStreamText } from "@t3tools/contracts";
 
 import { runtime } from "../lib/runtime";
-
-const TARGET_SAMPLE_RATE = 16_000;
-const MAX_RECORDING_SECONDS = 5 * 60;
-
-function transcriptionError(cause: unknown) {
-  return cause instanceof VoiceTranscriptionError
-    ? cause
-    : new VoiceTranscriptionError(
-        "transcription-failed",
-        "Voice transcription on this environment failed.",
-        { cause },
-      );
-}
-
-async function decodePcm(uri: string, signal: AbortSignal): Promise<Uint8Array> {
-  const response = await fetch(uri, { signal });
-  const encoded = await response.arrayBuffer();
-  throwIfVoiceTranscriptionAborted(signal);
-  const context = new AudioContext();
-  try {
-    const decoded = await context.decodeAudioData(encoded);
-    const length = Math.min(
-      Math.ceil(decoded.duration * TARGET_SAMPLE_RATE),
-      TARGET_SAMPLE_RATE * MAX_RECORDING_SECONDS,
-    );
-    const offline = new OfflineAudioContext(1, length, TARGET_SAMPLE_RATE);
-    const source = offline.createBufferSource();
-    source.buffer = decoded;
-    source.connect(offline.destination);
-    source.start();
-    const rendered = await offline.startRendering();
-    throwIfVoiceTranscriptionAborted(signal);
-    const samples = rendered.getChannelData(0);
-    return new Uint8Array(
-      samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength),
-    );
-  } finally {
-    await context.close();
-  }
-}
+import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
+  readonly onText: (text: SpeechStreamText) => void;
+  readonly onError: (message: string) => void;
 }): {
   readonly recorder: VoiceRecorder;
   readonly transcriber: VoiceTranscriber;
@@ -61,22 +28,27 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly deleteRecording: (uri: string) => void;
 } {
   let stream: MediaStream | undefined;
-  let mediaRecorder: MediaRecorder | undefined;
   let recordingUri: string | null = null;
-  let chunks: Blob[] = [];
-  let durationTimer: ReturnType<typeof setTimeout> | undefined;
-  let levelTimer: ReturnType<typeof setInterval> | undefined;
+  let chunks: Float32Array<ArrayBuffer>[] = [];
   let audioContext: AudioContext | undefined;
+  let worklet: AudioWorkletNode | undefined;
+  let durationTimer: ReturnType<typeof setTimeout> | undefined;
+  let signal: AbortSignal | undefined;
+  let live: Awaited<ReturnType<typeof openSpeechStream>> | undefined;
+  let stopped: ReturnType<typeof Promise.withResolvers<void>> | undefined;
 
   const cleanupCapture = () => {
     if (durationTimer) clearTimeout(durationTimer);
-    if (levelTimer) clearInterval(levelTimer);
     durationTimer = undefined;
-    levelTimer = undefined;
+    worklet?.disconnect();
+    worklet?.port.close();
+    worklet = undefined;
     stream?.getTracks().forEach((track) => track.stop());
     stream = undefined;
     void audioContext?.close();
     audioContext = undefined;
+    stopped?.resolve();
+    stopped = undefined;
     input.onLevel(0);
   };
 
@@ -85,89 +57,145 @@ export function createBrowserVoiceInputPlatform(input: {
       return recordingUri;
     },
     prepareToRecordAsync: async () => {
-      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-        throw new Error("This browser cannot record microphone audio.");
-      }
+      const captureSignal = signal;
+      if (!captureSignal) throw new Error("Voice transcription is not prepared.");
+      captureSignal.throwIfAborted();
       if (recordingUri) URL.revokeObjectURL(recordingUri);
       recordingUri = null;
       chunks = [];
       const microphoneId = input.getMicrophoneId();
-      stream = await navigator.mediaDevices.getUserMedia({
+      const captured = await navigator.mediaDevices.getUserMedia({
         audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
       });
-      mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      });
-
-      audioContext = new AudioContext();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      audioContext.createMediaStreamSource(stream).connect(analyser);
-      const levels = new Uint8Array(analyser.fftSize);
-      levelTimer = setInterval(() => {
-        analyser.getByteTimeDomainData(levels);
-        let energy = 0;
-        for (const value of levels) energy += ((value - 128) / 128) ** 2;
-        input.onLevel(Math.min(1, Math.sqrt(energy / levels.length) * 4));
-      }, 100);
+      if (captureSignal.aborted) {
+        captured.getTracks().forEach((track) => track.stop());
+        captureSignal.throwIfAborted();
+      }
+      stream = captured;
+      try {
+        const context = new AudioContext();
+        audioContext = context;
+        await context.audioWorklet.addModule(workletUrl);
+        captureSignal.throwIfAborted();
+        const node = new AudioWorkletNode(context, "t3-pcm-capture", { channelCount: 1 });
+        worklet = node;
+        node.port.onmessage = ({
+          data,
+        }: MessageEvent<Float32Array<ArrayBuffer> | "stopped" | "limit">) => {
+          if (captureSignal.aborted) return;
+          if (data === "stopped") {
+            stopped?.resolve();
+            return;
+          }
+          if (data === "limit") {
+            input.onDurationLimit();
+            return;
+          }
+          let energy = 0;
+          for (const value of data) energy += value * value;
+          input.onLevel(Math.min(1, Math.sqrt(energy / data.length) * 4));
+          if (live) live.feed(data);
+          else chunks.push(data);
+        };
+        node.onprocessorerror = () => {
+          stopped?.reject(new Error("Microphone processing failed."));
+          input.onError("Microphone processing failed.");
+        };
+        for (const track of captured.getTracks())
+          track.addEventListener("ended", () => input.onError("The microphone disconnected."), {
+            once: true,
+          });
+        context.createMediaStreamSource(captured).connect(node);
+        // The processor emits silence, keeping the graph active without microphone playback.
+        node.connect(context.destination);
+        await context.resume();
+        captureSignal.throwIfAborted();
+      } catch (error) {
+        cleanupCapture();
+        throw error;
+      }
     },
     record: ({ forDuration }) => {
-      mediaRecorder?.start();
+      worklet?.port.postMessage("start");
       durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);
     },
     stop: async () => {
-      const activeRecorder = mediaRecorder;
-      if (!activeRecorder || activeRecorder.state === "inactive") return;
-      await new Promise<void>((resolve, reject) => {
-        activeRecorder.addEventListener("stop", () => resolve(), { once: true });
-        activeRecorder.addEventListener(
-          "error",
-          () => reject(new Error("Microphone recording failed.")),
-          {
-            once: true,
-          },
-        );
-        activeRecorder.stop();
-      });
-      const blob = new Blob(chunks, { type: activeRecorder.mimeType });
-      cleanupCapture();
-      mediaRecorder = undefined;
-      chunks = [];
-      if (blob.size === 0) throw new Error("No microphone audio was captured.");
-      recordingUri = URL.createObjectURL(blob);
+      if (!worklet) return;
+      if (signal?.aborted) {
+        cleanupCapture();
+        return;
+      }
+      stopped ??= Promise.withResolvers<void>();
+      const pending = stopped.promise;
+      const timeout = setTimeout(
+        () => stopped?.reject(new Error("Microphone capture did not stop.")),
+        5_000,
+      );
+      worklet.port.postMessage("stop");
+      try {
+        await pending;
+        if (!live && chunks.length) {
+          const blob = new Blob(chunks, { type: "application/octet-stream" });
+          recordingUri = URL.createObjectURL(blob);
+        }
+      } finally {
+        clearTimeout(timeout);
+        chunks = [];
+        cleanupCapture();
+      }
     },
   };
 
   return {
     recorder,
-    cancelRecording: () => {
-      if (mediaRecorder?.state !== "inactive") mediaRecorder?.stop();
-      mediaRecorder = undefined;
-      chunks = [];
-      cleanupCapture();
-    },
+    cancelRecording: cleanupCapture,
     deleteRecording: (uri) => {
       URL.revokeObjectURL(uri);
       if (recordingUri === uri) recordingUri = null;
     },
     transcriber: {
-      prepare: async ({ signal }) => {
-        throwIfVoiceTranscriptionAborted(signal);
+      prepare: async (options) => {
+        signal = options.signal;
+        live = undefined;
+        const status = await runtime.runPromise(
+          getEnvironmentSpeechStatus(input.prepared),
+          options,
+        );
+        throwIfVoiceTranscriptionAborted(options.signal);
+        if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
+        if (status.supportsStreaming) {
+          const url = await runtime.runPromise(
+            getEnvironmentSpeechStreamUrl(input.prepared),
+            options,
+          );
+          live = await openSpeechStream({
+            url,
+            signal: options.signal,
+            onText: input.onText,
+            onError: (error) => input.onError(error.message),
+          });
+          const session = live;
+          return { locale: "en", finish: () => session.finish() };
+        }
         return {
           locale: "en",
-          transcribe: async (uri, options) => {
+          transcribe: async (uri, { signal: transcriptionSignal }) => {
             try {
-              const pcm = await decodePcm(uri, options.signal);
+              const response = await fetch(uri, { signal: transcriptionSignal });
+              const pcm = new Uint8Array(await response.arrayBuffer());
               const result = await runtime.runPromise(
                 transcribeEnvironmentPcm(input.prepared, pcm),
-                { signal: options.signal },
+                { signal: transcriptionSignal },
               );
-              throwIfVoiceTranscriptionAborted(options.signal);
+              throwIfVoiceTranscriptionAborted(transcriptionSignal);
               return result.text;
-            } catch (error) {
-              throwIfVoiceTranscriptionAborted(options.signal);
-              throw transcriptionError(error);
+            } catch (cause) {
+              throwIfVoiceTranscriptionAborted(transcriptionSignal);
+              throw new VoiceTranscriptionError(
+                "transcription-failed",
+                "Voice transcription on this environment failed.",
+                { cause },
+              );
             }
           },
         };

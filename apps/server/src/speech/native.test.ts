@@ -2,13 +2,13 @@ import { expect, it } from "vite-plus/test";
 import { loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ transcribe: ${transcribe} }) };`)}`;
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, transcribe: ${transcribe} }) };`)}`;
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
     process.send?.({ type: "unrelated-control-message" });
     export const TranscribeModel = {
-      load: async () => ({ transcribe: async () => ({ text: "hello" }) }),
+      load: async () => ({ capabilities: { supportsStreaming: false }, transcribe: async () => ({ text: "hello" }) }),
     };
   `)}`;
 
@@ -58,3 +58,56 @@ it("ignores IPC messages that do not belong to the speech protocol", async () =>
     await model.dispose();
   }
 });
+
+const streamingFixture = (feed: string) =>
+  `data:text/javascript,${encodeURIComponent(`
+  export const TranscribeModel = { load: async () => ({
+    capabilities: { supportsStreaming: true },
+    createSession: () => ({
+      dispose() {},
+      stream: async () => ({
+        feed: ${feed},
+        finalize: async () => {},
+        text: { full: "hello world", committed: "hello ", tentative: "world" },
+        reset() {},
+      }),
+    }),
+  }) };
+`)}`;
+
+it("returns streaming previews and final text from an isolated process", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(
+      "async () => ({ revision: 1, committedChanged: true, tentativeChanged: true })",
+    ),
+  );
+  try {
+    expect(model.supportsStreaming).toBe(true);
+    await model.begin();
+    expect(await model.feed(new Float32Array([0.25]))).toEqual({
+      revision: 1,
+      text: { committed: "hello ", tentative: "world" },
+    });
+    expect(await model.finish()).toBe("hello world");
+    await model.begin();
+    expect(await model.finish()).toBe("hello world");
+  } finally {
+    await model.dispose();
+  }
+});
+
+it("kills a hung streaming feed without waiting for native cleanup", async () => {
+  const controller = new AbortController();
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    controller.signal,
+    streamingFixture("async () => { while (true) {} }"),
+  );
+  await model.begin();
+  const rejected = expect(model.feed(new Float32Array([0.25]))).rejects.toThrow();
+  controller.abort();
+  await model.dispose();
+  await rejected;
+}, 5000);

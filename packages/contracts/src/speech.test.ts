@@ -15,6 +15,7 @@ describe("environment speech contracts", () => {
         modelId: "handy-computer/moonshine-tiny-gguf",
         model: "Moonshine Tiny",
         size: 35_466_912,
+        supportsStreaming: false,
       }),
     ).toEqual({
       supported: true,
@@ -22,6 +23,7 @@ describe("environment speech contracts", () => {
       modelId: "handy-computer/moonshine-tiny-gguf",
       model: "Moonshine Tiny",
       size: 35_466_912,
+      supportsStreaming: false,
     });
     expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
       supported: false,

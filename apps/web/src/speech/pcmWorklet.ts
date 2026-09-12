@@ -11,6 +11,8 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   private chunk = new Float32Array(3_200);
   private length = 0;
   private recording = false;
+  private flushed = false;
+  private samples = 0;
 
   constructor() {
     super();
@@ -18,7 +20,8 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
       if (data === "start") this.recording = true;
       if (data === "stop") {
         this.recording = false;
-        this.append(this.resampler.flush());
+        if (!this.flushed) this.append(this.resampler.flush());
+        this.flushed = true;
         if (this.length) this.publish();
         this.port.postMessage("stopped");
       }
@@ -33,7 +36,13 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
 
   private append(pcm: Float32Array) {
     for (const sample of pcm) {
+      if (this.samples === 16_000 * 300) {
+        this.recording = false;
+        this.port.postMessage("limit");
+        break;
+      }
       this.chunk[this.length++] = sample;
+      this.samples++;
       if (this.length === this.chunk.length) this.publish();
     }
   }

@@ -63,6 +63,7 @@ function ModelCard(props: {
               </Badge>
             ) : null}
             {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
+            {model.supportsStreaming ? <Badge variant="outline">Streaming</Badge> : null}
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">

@@ -3516,6 +3516,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {speechInput.preview ? (
+              <div
+                aria-label="Live transcription"
+                className="mx-3 mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed sm:mx-4"
+              >
+                <span>{speechInput.preview.committed}</span>
+                <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
+              </div>
+            ) : null}
+
             {isComposerCollapsedMobile ? null : (
               <div
                 data-chat-composer-footer="true"

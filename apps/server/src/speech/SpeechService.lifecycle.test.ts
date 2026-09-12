@@ -11,6 +11,13 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const native = vi.hoisted(() => ({
+  supportsStreaming: true,
+  begin: vi.fn(async () => {}),
+  feed: vi.fn(async (_pcm: Float32Array) => ({
+    revision: 1,
+    text: { committed: "", tentative: "hello" },
+  })),
+  finish: vi.fn(async () => "hello"),
   dispose: vi.fn(),
   transcribe: vi.fn(async () => ({ text: "hello" })),
 }));
@@ -29,6 +36,7 @@ const modelDefinitions = vi.hoisted(() => [
     accuracy: 1,
     speed: 1,
     recommended: true,
+    supportsStreaming: true,
   },
   {
     id: "fallback-model",
@@ -39,6 +47,7 @@ const modelDefinitions = vi.hoisted(() => [
     accuracy: 2,
     speed: 2,
     recommended: false,
+    supportsStreaming: false,
   },
 ]);
 vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
@@ -66,6 +75,50 @@ beforeEach(() => {
   readyModels.add("fallback-model");
   downloadModel.mockImplementation(async () => "test.gguf");
 });
+
+it.effect("holds model ownership until the stream scope closes and preserves silence", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      const busy = yield* Effect.result(speech.selectModel("fallback-model"));
+      expect(Result.isFailure(busy) && busy.failure).toMatchObject({ _tag: "SpeechBusyError" });
+      yield* stream.feed(new Uint8Array(new Float32Array(160).buffer));
+      expect(native.feed.mock.calls[0]?.[0]).toHaveLength(160);
+      expect(yield* stream.finish).toBe("hello");
+    }).pipe(Effect.scoped);
+    expect(native.dispose).not.toHaveBeenCalled();
+    yield* speech.selectModel("fallback-model");
+    expect(native.dispose).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("disposes cancelled streams and allows another recording", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      yield* stream.feed(pcm());
+      yield* stream.finish;
+    }).pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("rejects invalid streaming audio and frees the model", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const result = yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      yield* stream.feed(new Uint8Array([1, 2, 3]));
+    }).pipe(Effect.scoped, Effect.result);
+    expect(Result.isFailure(result)).toBe(true);
+    expect(native.feed).not.toHaveBeenCalled();
+    expect(native.dispose).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
 it.effect("releases the loaded native model when its service scope closes", () =>
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
