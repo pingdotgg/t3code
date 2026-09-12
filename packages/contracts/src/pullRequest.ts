@@ -370,12 +370,9 @@ export const PullRequestReviewerCapabilities = Schema.Struct({
 export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabilities.Type;
 
 /**
- * Who remembers which files a reader has cleared.
- *
- * `host` is the host's own record, so the marks are the ones its web UI shows and a review can be
- * carried on from either side. `environment` is this server's record, for a host that keeps no
- * shared one: GitLab holds its viewed files in one browser's local storage, where nothing outside
- * that browser can read or write them, so marks made here are this environment's own.
+ * Who remembers which files a reader has cleared. `host` is the host's own record, so the marks
+ * are the ones its web UI shows and a review can be carried on from either side. `environment` is
+ * this server's record, for a host that keeps none anything outside one browser can read.
  */
 export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
 export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
@@ -418,8 +415,7 @@ export const PullRequestCapabilities = Schema.Struct({
   reactions: Schema.optional(Schema.Boolean),
   /**
    * Where the reader's own marks are kept, or absent where they are kept nowhere and the
-   * checkbox is not offered at all. Optional for the same reason as `reactions`. Two answers
-   * rather than a flag, because the surface has to say which one it is.
+   * checkbox is not offered at all. Optional for the same reason as `reactions`.
    */
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
@@ -940,23 +936,21 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
-// Not trimmed: a leading or trailing space is a legal part of a file's name, and both the patch
-// and the environment's own record of what a reader cleared are keyed by the name the host gave.
-// Trimming it here files the mark under a name nothing else uses, so the tick never comes back.
 /**
- * Bounded because a path arrives from a client rather than from the host: unbounded, one element
- * of a write batch could carry a megabyte into a SQL statement or a GraphQL field. Far past any
- * real path, and short of anything worth holding.
+ * Bounded because a path arrives from a client rather than from the host: one element of a write
+ * batch could otherwise carry a megabyte into a SQL statement or a GraphQL field.
  */
 const MAX_FILE_PATH_LENGTH = 4096;
+/**
+ * Not trimmed: a leading or trailing space is a legal part of a file's name, and the mark is
+ * keyed by the name the host gave, so trimming files it under a name nothing else uses.
+ */
 const FilePath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(MAX_FILE_PATH_LENGTH));
 
 /**
- * Where one file of a change request stands with the person reading it.
- *
- * `dismissed` is the file that was cleared and has since been pushed to. Not `viewed`, since the
- * reader has not seen what is there now, and not `unviewed`, which would lose the one thing worth
- * telling them: this file and not the other forty is the one that moved.
+ * Where one file of a change request stands with the person reading it. `dismissed` is the file
+ * that was cleared and has since been pushed to, which is worth telling a reader apart from
+ * `unviewed`: this file and not the other forty is the one that moved.
  */
 export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
 export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
@@ -968,11 +962,9 @@ export const PullRequestFileViewed = Schema.Struct({
 export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
 
 /**
- * Which files of a change request the reader has cleared, read apart from the diff itself.
- *
- * Its own read rather than a field on the patch: a patch changes when somebody pushes and is
- * cached by the minute, this changes on every press. Carrying it on the diff would mean either
- * forgetting a three-hundred-file patch per tick or showing a reader their own press as stale.
+ * Which files of a change request the reader has cleared. Its own read rather than a field on the
+ * patch: a patch changes when somebody pushes and is cached by the minute, this changes on every
+ * press, so one read would have to be wrong for the other to be right.
  */
 export const PullRequestFilesViewedResult = Schema.Struct({
   /** Only the files the host reported a state for. A file missing from this list is unviewed. */
@@ -983,17 +975,16 @@ export const PullRequestFilesViewedResult = Schema.Struct({
 export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
 
 /**
- * Files to clear, or to put back. Several at once because a reader working down a diff ticks
- * boxes far faster than a host answers, so a burst is gathered into one request.
- */
-/**
- * How many presses one write carries. A burst is what a reader ticked in the last few hundred
- * milliseconds, and every element of it is a statement of its own inside one transaction here, or
- * a field of its own in one GraphQL document on GitHub. Matched to what a read of the marks
- * carries, so a client cannot write more of them than it can ever read back.
+ * How many presses one write carries. Every element is a statement of its own inside one
+ * transaction here, or a field of its own in one GraphQL document on GitHub. Matched to what a
+ * read of the marks carries, so a client cannot write more of them than it can ever read back.
  */
 const MAX_FILES_VIEWED_PRESSES = 500;
 
+/**
+ * Files to clear, or to put back. Several at once because a reader working down a diff ticks
+ * boxes far faster than a host answers, so a burst is gathered into one request.
+ */
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,
   files: Schema.Array(

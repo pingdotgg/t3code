@@ -1,22 +1,16 @@
 /**
- * How a file's name travels in a unified patch, which is not as itself.
- *
- * A patch's headers are lines with the name inside them, and the reader finds the name by where
- * it stops: `diff --git a/<old> b/<new>` splits on a space, `--- a/<name>` stops at a tab. So a
- * name holding a tab or a newline reads back as the part of itself before that byte, or fabricates
- * a header line of its own. Git's answer is to write such a name quoted, with C-style escapes, and
- * every reader of the format knows the form.
- *
- * Both halves live together so that what one writes is what the other reads.
+ * How a file's name travels in a unified patch, which is not as itself. A reader finds the name in
+ * a header by where it stops: `diff --git a/<old> b/<new>` splits on a space, `--- a/<name>` stops
+ * at a tab. So a name holding a tab or a newline reads back as the part of itself before that
+ * byte, or fabricates a header line of its own, and git's answer is to write such a name quoted
+ * with C-style escapes. Both halves live here so what one writes is what the other reads.
  */
 
 /**
- * What git escapes by name, as the character written and the escape written for it.
- *
- * Not every byte git would escape: it also escapes anything outside ASCII when `core.quotePath` is
- * on, which is a setting for what a terminal can show rather than anything the format needs. A
- * patch here is read by a diff viewer, so a name in another alphabet is left as itself and arrives
- * legible.
+ * What git escapes by name, as the character written and the escape written for it. Not every byte
+ * git would escape: `core.quotePath` also escapes anything outside ASCII, which is a setting for
+ * what a terminal can show rather than anything the format needs, and a patch here is read by a
+ * diff viewer.
  */
 const ESCAPE_BY_CHARACTER = new Map([
   ['"', '\\"'],
@@ -53,13 +47,9 @@ const fromUtf8 = new TextDecoder();
 
 /**
  * A name as a patch header can carry it: itself where that is unambiguous, and git's quoted form
- * where it is not. The name a reader of the header gets back is the name that went in.
- *
- * A quote or a backslash is what the quoting is written with, and a control character either stops
- * the reader short or starts a line the patch never had, so a name holding any of them is quoted.
- *
- * A header side's `a/` or `b/` belongs inside the quoting, so pass it in along with the name: what
- * git quotes is the whole token a reader takes off the line, side letter and all.
+ * where it is not, which is any name holding a quote, a backslash or a control character. A header
+ * side's `a/` or `b/` belongs inside the quoting, so pass it in along with the name: what git
+ * quotes is the whole token a reader takes off the line, side letter and all.
  */
 export function quoteGitPatchPath(path: string): string {
   let body = "";
@@ -85,15 +75,10 @@ export function quoteGitPatchPath(path: string): string {
 }
 
 /**
- * The escapes inside a quoted form undone, whether or not the quotes are still around them.
- *
- * A name holding no backslash at all is already itself and is handed straight back, which is what
- * keeps an unquoted name out of this: git quotes any name with a backslash in it, so a name that
- * arrived unquoted has no escape to undo. An escape git would never write reads the way C reads
- * it, as the character behind the backslash.
- *
- * The escapes are per byte, so a name in any other alphabet arrives as a run of octal and only
- * reads back as itself once those bytes are rejoined and decoded together.
+ * The escapes inside a quoted form undone, whether or not the quotes are still around them. A name
+ * holding no backslash is already itself, and an escape git would never write reads the way C
+ * reads it. The escapes are per byte, so a name in another alphabet arrives as a run of octal and
+ * only reads back as itself once those bytes are rejoined and decoded together.
  */
 function unescapeBody(body: string): string {
   if (!body.includes("\\")) return body;
@@ -142,13 +127,10 @@ function unescapeBody(body: string): string {
 }
 
 /**
- * One header's name token as the name it stands for.
- *
- * The quoting comes off where it is there, and the escapes are undone either way: patch parsers
- * disagree about how much of the quoting they hand back, and the one the clients read diffs with
- * takes the quotes off the `diff --git` line's names and leaves them on a rename's. A name a
- * producer wrote unquoted never carries an escape to undo, so reading it for them costs it
- * nothing.
+ * One header's name token as the name it stands for. The escapes are undone whether the quotes are
+ * still there or not, because patch parsers disagree about how much of the quoting they hand back:
+ * the one the clients read diffs with takes the quotes off the `diff --git` line's names and
+ * leaves them on a rename's.
  */
 export function unquoteGitPatchPath(token: string): string {
   if (token.length >= 2 && token.startsWith(QUOTE) && token.endsWith(QUOTE)) {

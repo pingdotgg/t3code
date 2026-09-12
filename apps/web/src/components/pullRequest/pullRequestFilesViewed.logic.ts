@@ -14,11 +14,9 @@ export function toFileViewedStates(
 }
 
 /**
- * Whether a file counts as seen.
- *
- * `dismissed` is the host saying it has been pushed to since the reader cleared it, which reads
- * as unseen: the point of the tick is that the code behind it has been looked at, and it is not
- * the same code any more.
+ * Whether a file counts as seen. `dismissed` is the host saying it has been pushed to since the
+ * reader cleared it, which reads as unseen: the point of the tick is that the code behind it has
+ * been looked at, and it is not the same code any more.
  */
 function isViewedState(state: PullRequestFileViewedState | undefined): boolean {
   return state === "viewed";
@@ -51,19 +49,14 @@ export function countViewedFiles(
 }
 
 /**
- * The overlay with everything the host has caught up on removed.
+ * The overlay with everything the host has caught up on removed. A press is held until a read that
+ * could have seen it comes back, rather than cleared when the write succeeds: that read is a
+ * separate round trip, and dropping the press in between flashes the checkbox back.
  *
- * A press is held locally until a read that could have seen it comes back, rather than cleared
- * when the request succeeds: the read that follows a write is a separate round trip, and dropping
- * the press in between would flash the checkbox back for as long as that took.
- *
- * `pending` are the paths whose press the host cannot have heard yet, which an answer that was
- * already on its way when they were pressed must not be allowed to overrule.
- *
- * `answered` are the paths a read has landed for since their write was acknowledged. Those go on
- * that read alone, including where it contradicts the press: the host is the record of what has
- * been looked at, and a tick held over a `dismissed` would hide a file pushed to since for as
- * long as the tab stayed open, with no refresh able to recover it.
+ * `pending` are the paths whose press the host cannot have heard yet, which an answer already on
+ * its way must not overrule. `answered` are the paths a read has landed for since their write was
+ * acknowledged, and those go on that read alone, including where it contradicts the press: a tick
+ * held over a `dismissed` would hide a file pushed to since, with no refresh able to recover it.
  */
 export function settleFileViewedOverlay(
   overlay: FileViewedOverlay,
@@ -81,13 +74,10 @@ export function settleFileViewedOverlay(
 }
 
 /**
- * The overlay with a failed request's presses taken back.
- *
- * `owned` are the paths that request still answers for, which is what keeps a failure from
- * reaching past its own presses: a path pressed again since belongs to a later request or to the
- * next flush, and putting that box back to the host's answer would take a press out from under
- * the reader's hand. Even among those, a press is only taken back where the checkbox still shows
- * it.
+ * The overlay with a failed request's presses taken back. `owned` are the paths that request still
+ * answers for, which keeps a failure from reaching past its own presses: a path pressed again
+ * since belongs to a later request or to the next flush, and putting that box back to the host's
+ * answer would take a press out from under the reader's hand.
  */
 export function revertFileViewedOverlay(
   overlay: FileViewedOverlay,

@@ -14,13 +14,10 @@ import {
 } from "./Errors.ts";
 
 /**
- * Which change request, on which host, for which reader.
- *
- * The host is part of it because a repository path is not unique across installs: the same
- * `group/project` exists on gitlab.com and on a self-managed instance, and a mark made against one
- * must not turn up on the other. The reader is part of it for the same reason the host's own
- * record is per-account: signing in as somebody else must not inherit their ticks. A host that
- * will not say who the reader is leaves it empty, which is one reader rather than none.
+ * Which change request, on which host, for which reader. The host is part of it because the same
+ * `group/project` exists on gitlab.com and on a self-managed instance, and the reader because
+ * signing in as somebody else must not inherit their ticks. A host that will not say who the
+ * reader is leaves it empty, which is one reader rather than none.
  */
 export const PullRequestFilesViewedScope = Schema.Struct({
   provider: SourceControlProviderKind,
@@ -35,13 +32,10 @@ export type PullRequestFilesViewedScope = typeof PullRequestFilesViewedScope.Typ
 export const PullRequestFileViewedMark = Schema.Struct({
   path: Schema.String,
   /**
-   * The host's own name for that version of the file, opaque here.
-   *
-   * Empty where the host said it had none to give, which is its own answer rather than a missing
-   * one: a file with no version at the head is one the change request deletes, and it stays
-   * deleted. Null where the host could not say at all, which is no baseline rather than an empty
-   * one: stamping such a mark with the empty revision would report the file as changed the moment
-   * anything did answer, so a mark with no baseline stays cleared until a press replaces it.
+   * The host's own name for that version of the file, opaque here. Empty where the host said it
+   * had none to give, which is an answer rather than a gap: a file with no version at the head is
+   * one the change request deletes. Null where the host could not say at all, which is no baseline
+   * rather than an empty one, and such a mark stays cleared until a press replaces it.
    *
    * This null is the only one this environment invents; the other two are in
    * `docs/internals/pull-request-file-revisions.md`.

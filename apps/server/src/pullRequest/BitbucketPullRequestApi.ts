@@ -140,11 +140,9 @@ const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 /**
- * A reader ticking files off names one new path at a time, and a path the caller has not asked
- * about before cannot be answered from what it holds, so without this every tick pays for the
- * whole patch again. Deliberately far shorter than the window the caller holds versions for:
- * a refresh drops what the caller holds precisely so the next read reaches Bitbucket, and this
- * must not be what answers it instead.
+ * Deliberately far shorter than the window the caller holds versions for: a refresh drops what the
+ * caller holds precisely so the next read reaches Bitbucket, and this must not be what answers it
+ * instead.
  */
 const REVISION_PATCH_TTL = Duration.seconds(5);
 const REVISION_PATCH_CAPACITY = 16;
@@ -195,16 +193,14 @@ export class BitbucketPullRequestApi extends Context.Service<
     }) => Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError>;
 
     /**
-     * What the pull request's head has of each of these paths, as opaque ids.
+     * What the pull request's head has of each of these paths, as opaque ids, read off the pull
+     * request's own patch, the only place Bitbucket states a file's version. A path the patch does
+     * not carry is answered as the empty revision, and left out altogether when the patch was cut
+     * short at the byte ceiling and so cannot be spoken for.
      *
-     * Read off the pull request's own patch, the only place Bitbucket states a file's version. A
-     * path the patch does not carry is answered as the empty revision, and left out altogether
-     * when the patch was cut short at the byte ceiling and so cannot be spoken for.
-     *
-     * Every file the patch carries, not only the paths asked about: reading one file's version
-     * here means parsing all of them, and the caller holding the rest is what stops the tick
-     * after this one paying for the same patch again. `complete` is false for a patch cut short,
-     * which cannot speak for what came after the cut.
+     * Answers with every file the patch carries rather than only the paths asked about, since
+     * reading one file's version here means parsing all of them. `complete` is false for a patch
+     * cut short, which cannot speak for what came after the cut.
      */
     readonly getFileRevisions: (input: {
       readonly repository: string;
@@ -587,12 +583,10 @@ export const make = Effect.gen(function* () {
         );
 
   /**
-   * What the version reads that come one tick at a time actually want out of the pull request's
-   * whole patch, shared between them. The patch itself is not what is held: at this capacity that
-   * would be sixteen bodies of up to the byte ceiling each resident, and V8 stores a body with a
-   * single non-Latin-1 character anywhere in it two bytes to the character. This is the same
-   * answer some thousands of times smaller, and it saves walking a patch of a hundred thousand
-   * lines again on every tick.
+   * What the version reads that come one tick at a time want out of the pull request's whole
+   * patch, shared between them. The parsed answer rather than the patch, which at this capacity
+   * would hold sixteen bodies of up to the byte ceiling each resident, and saves walking a patch
+   * of a hundred thousand lines again on every tick.
    */
   const revisionPatches = yield* Cache.makeWith(
     (key: string) => {

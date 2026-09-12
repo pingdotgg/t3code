@@ -122,7 +122,6 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
   const [marker, organization, project, repository] = segments;
   if (segments.length !== 4 || marker !== "v3") return null;
   if (!organization || !project || !repository) return null;
-  // The organization leads the host on the name dev.azure.com replaced, and the path below it.
   return host === "ssh.dev.azure.com"
     ? `dev.azure.com/${organization}/${project}/_git/${repository}`
     : `${organization}.visualstudio.com/${project}/_git/${repository}`;

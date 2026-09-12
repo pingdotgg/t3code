@@ -134,11 +134,9 @@ function hunkRange(start: number, lines: number): string {
 
 /**
  * The `diff --git` preamble a viewer reads a file's identity and fate from. Azure reports no file
- * mode, so the ordinary one stands in.
- *
- * Names are quoted the way git quotes them: a header reader stops a bare name at its first tab or
- * newline, so a path holding either must be quoted or it gets truncated and the viewed mark lands
- * on the wrong path. The `a/`/`b/` prefix goes inside the quoting, as git does it.
+ * mode, so the ordinary one stands in. Names are quoted the way git quotes them, prefix inside the
+ * quoting: a header reader stops a bare name at its first tab or newline, so a path holding either
+ * would be truncated and its viewed mark would land on the wrong file.
  */
 function patchHeader(change: AzureDevOpsChangeEntry): string {
   const oldSide = quoteGitPatchPath(`a/${change.oldPath}`);

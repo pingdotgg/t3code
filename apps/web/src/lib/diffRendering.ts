@@ -145,13 +145,10 @@ export function getRenderablePatch(
 }
 
 /**
- * What the patch called the file, as the file's own name.
- *
- * Git writes a name holding a tab, a newline, a quote or a backslash quoted and escaped, and the
- * parser hands one of those back still escaped. The name is what the rest of the app keys a file
- * by and what it says to the server about one: a viewed mark, a review comment and a file's
- * contents are all asked for by this path, and the host knows the file only under the name it
- * really has.
+ * What the patch called the file, as the file's own name. Git writes a name holding a tab, a
+ * newline, a quote or a backslash quoted and escaped, and the parser hands one of those back still
+ * escaped. A viewed mark, a review comment and a file's contents are all asked for by this path,
+ * and the host knows the file only under the name it really has.
  */
 function fileDiffPath(raw: string): string {
   const named = unquoteGitPatchPath(raw);

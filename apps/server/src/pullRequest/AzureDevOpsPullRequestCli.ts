@@ -133,13 +133,10 @@ const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
  */
 const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 /**
- * What a review's own history is given. Neither of these routes pages, so each answers with the
- * whole of it at once and grows with how long the review ran rather than with how large the change
- * is. Threads are the nearer ceiling of the two: Azure opens one per vote and per ref update
- * alongside the ones people wrote, and every comment carries a full identity beside its text, so
- * the answer is far larger than the handful of fields read back out of it. Cut at the default,
- * both arrive as JSON that stops mid-string, and a long review would report its host as answering
- * with nonsense.
+ * What a review's own history is given. Neither route pages, so each answers with the whole of it
+ * at once and grows with how long the review ran rather than with how large the change is. Cut at
+ * the default, both arrive as JSON that stops mid-string, and a long review would report its host
+ * as answering with nonsense.
  */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -148,13 +145,10 @@ const CHANGE_ENTRIES_PER_PAGE = 2000;
 
 /**
  * Where following the pages stops, counted in the entries Azure was asked to skip rather than in
- * the files that survived decoding. Every page is an `az` process of its own, and a change this
- * long is past what any reader will get through, so the read gives up rather than spending a
- * minute of spawns on it. Saying so is the point: the diff reports itself as incomplete instead
- * of presenting five pages as the whole change.
- *
- * Azure's own count is what bounds this, because a page can be entirely folders and other entries
- * a review has nothing to show for. Bounding on what was kept would follow such a change forever.
+ * the files that survived decoding: a page can be entirely folders and other entries a review has
+ * nothing to show for, and bounding on what was kept would follow such a change forever. Every
+ * page is an `az` process of its own, so the read gives up and reports itself incomplete rather
+ * than presenting five pages as the whole change.
  */
 const MAX_CHANGE_ENTRIES = 10_000;
 
@@ -367,10 +361,10 @@ export const make = Effect.gen(function* () {
 
   /**
    * A REST route reached through `az devops invoke`, which addresses it by area, resource and
-   * route parameters rather than by URL. It is used in place of `az rest` because it signs in the
-   * way the azure-devops extension does, and `az rest` mints its own token against the tenant `az`
-   * defaults to. For an organisation in any other tenant that token is rejected and Azure answers
-   * with a sign-in page, which arrives here as unreadable output rather than as a failure.
+   * route parameters rather than by URL. Used in place of `az rest` because it signs in the way
+   * the azure-devops extension does: `az rest` mints its own token against the tenant `az`
+   * defaults to, and an organisation in any other tenant answers that with a sign-in page, which
+   * arrives here as unreadable output rather than as a failure.
    */
   const invoke = <A>(input: {
     readonly cwd: string;

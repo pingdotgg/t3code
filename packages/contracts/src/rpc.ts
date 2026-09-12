@@ -718,11 +718,6 @@ const WsPullRequestsDiffFileContentsRpc = Rpc.make(WS_METHODS.pullRequestsDiffFi
   error: PullRequestRpcError,
 });
 
-/**
- * Which files the reader has already cleared. Its own call rather than a field on the diff: the
- * patch is cached by the minute and this moves on every press of a checkbox, so sharing a read
- * would make one of the two wrong.
- */
 const WsPullRequestsFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsFilesViewed, {
   payload: PullRequestRef,
   success: PullRequestFilesViewedResult,

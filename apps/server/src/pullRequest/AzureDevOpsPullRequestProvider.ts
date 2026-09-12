@@ -182,11 +182,8 @@ export const make = Effect.gen(function* () {
    * Where a pull request's repository lives, which is the route every other read of it needs and
    * the one thing only the pull request itself states. A pull request cannot move between
    * repositories, so it is remembered rather than re-read: the marks alone would otherwise pay for
-   * a whole pull request read every time they checked whether a file had been pushed to.
-   *
-   * Bounded and least recently used, since a long-lived server sees far more pull requests than a
-   * reader ever has open: first in would let a listing walking cold pull requests evict the one
-   * being read, and every mark on it would then pay a whole pull request read again.
+   * a whole pull request read every time they checked whether a file had been pushed to. Least
+   * recently used, so a listing walking cold pull requests cannot evict the one being read.
    */
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
@@ -503,14 +500,12 @@ export const make = Effect.gen(function* () {
             truncated = truncated || file.truncated;
             index += 1;
             // A file whose diff was given up on spent the whole of what one file is allowed and
-            // has only a header to show for it, so the byte budget alone would let a change full
-            // of them spend that over and over in one request. A file the diff never ran on at
-            // all, because it is binary or oversize or only renamed, weighs almost nothing in
-            // either budget and still costs its two reads, which is what the file count bounds.
-            // Checked after the file is added
-            // rather than before it, so every slice carries at least one: a section heavier than
-            // the whole budget would otherwise never be added, and the read would answer the same
-            // slice forever without moving the cursor.
+            // has only a header to show for it, and a file the diff never ran on at all weighs
+            // almost nothing in either budget and still costs its two reads. So the file count
+            // bounds the request alongside the bytes.
+            // Checked after the file is added rather than before it, so every slice carries at
+            // least one: a section heavier than the whole budget would otherwise never be added,
+            // and the read would answer the same slice forever without moving the cursor.
             if (
               bytes >= MAX_DIFF_SLICE_BYTES ||
               edits + MAX_FILE_DIFF_EDITS > MAX_DIFF_SLICE_EDITS ||
@@ -535,12 +530,9 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(fail("getDiff"))),
 
     // The patch is built from whole files, so opening the lines around a hunk is the same two
-    // reads over again rather than a wider request.
-    //
-    // Read against the latest iteration, which is the one the patch was taken against unless a
-    // push landed in between. Nothing in the request says which push the reader is looking at, so
-    // there is no older iteration to go back to: expansion is stale after a mid-review push on
-    // every host here, and the diff it belongs to is stale with it.
+    // reads over again rather than a wider request. Read against the latest iteration: nothing in
+    // the request says which push the reader is looking at, and expansion is stale after a
+    // mid-review push on every host here anyway.
     getDiffFileContents: (input) =>
       Effect.gen(function* () {
         const scope = yield* diffScope(input);
@@ -560,13 +552,11 @@ export const make = Effect.gen(function* () {
 
     /**
      * What the head has of each marked file, which is the blob Azure already names on the change
-     * it reports. One read covers every path: the latest iteration lists the whole change, so
-     * asking per file would be the same answer fetched over and over.
+     * it reports. One read covers every path, since the latest iteration lists the whole change.
      *
-     * A path the change does not carry is at the empty revision, which is what a file the pull
-     * request deletes is at and leaves it cleared once and cleared for good. When the change was
-     * too long to follow to its end, those paths are left out instead: they were not looked at,
-     * and reporting them as deleted would clear a file nobody has read.
+     * A path the change does not carry is at the empty revision, which is where a file the pull
+     * request deletes sits. When the change was too long to follow to its end, those paths are
+     * left out instead: reporting them as deleted would clear a file nobody has read.
      */
     getFileRevisions: (input) =>
       Effect.gen(function* () {

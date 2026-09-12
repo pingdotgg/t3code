@@ -1611,10 +1611,9 @@ export const make = Effect.gen(function* () {
    * Who the host says the reader is, for the paths whose rows are keyed by it. A lookup that
    * failed is refused rather than answered as the unnamed reader: a momentarily signed-out CLI
    * would otherwise hide every tick this reader has made and file the next press under rows that
-   * are orphaned once it recovers. The reader is waiting on every one of these paths, a press or
-   * the boxes on a diff they just opened, so the lookup is let through a host's backoff rather
-   * than failing with it and turning a pause into a refusal. Scoped to here: the bypass is
-   * bounded by what the reader does, while a background read would repeat it on every refresh.
+   * are orphaned once it recovers. The reader is waiting on every one of these paths, so the
+   * lookup is let through a host's backoff rather than turning a pause into a refusal, and only
+   * here, where the bypass is bounded by what the reader does.
    */
   const requiredViewerOf = (
     project: SupportedProject,

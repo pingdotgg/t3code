@@ -266,16 +266,10 @@ export interface ProviderFilesViewed {
 }
 
 /**
- * What version each of the asked-for files is at, on the change request's head.
- *
- * Opaque strings, compared only against one another. The empty string is an answer rather than a
- * gap, the one a file the change request deletes is at, so a mark taken against it stays cleared.
- *
- * A path is absent only when the read could not say: a host that answered for part of the change
- * must leave the rest out rather than report it as deleted, or a file past the cut would be
- * cleared once and cleared for good. So a provider converts its host's own absences on the way
- * here: a path the read reached and found no version for arrives as the empty string rather
- * than as a gap.
+ * What version each of the asked-for files is at, on the change request's head. Opaque strings,
+ * compared only against one another, where the empty string is the answer for a file the change
+ * request deletes rather than a gap. A path is absent only where the read could not say, so a
+ * provider converts its host's own absences on the way here.
  *
  * The whole path a version travels, and the three senses of null along it, are in
  * `docs/internals/pull-request-file-revisions.md`.
@@ -285,11 +279,8 @@ export interface ProviderFileRevisions {
   /**
    * Whether these are every file the change request carries rather than only the paths asked
    * about. A host with no per-file version reads the whole change to answer for one file, and
-   * saying so is what keeps the next tick from making it read the whole change again: the caller
-   * holds what it is told, and a tick names a path nothing has asked about before.
-   *
-   * Only for an answer that can speak for the whole change. A read cut short part way through
-   * says nothing about what came after it, so it reports the paths it was asked about and no more.
+   * saying so is what keeps the next tick, naming a path nothing asked about before, from making
+   * it read the whole change again. False for a read cut short, which cannot speak past the cut.
    */
   readonly complete?: boolean;
 }
@@ -474,9 +465,8 @@ export interface PullRequestProviderApi {
 
   /**
    * Clears files, or puts them back. Only called when `capabilities.viewedFiles` is `"host"`.
-   *
-   * A provider whose host has no bulk form still owes one round trip for the batch rather than
-   * one per file, since the point of gathering them here is that the host is asked once.
+   * A host with no bulk form is still owed one round trip for the batch rather than one per file,
+   * since the point of gathering presses is that the host is asked once.
    */
   readonly setFilesViewed?: (
     input: ProviderRepositoryRef & {
@@ -487,11 +477,10 @@ export interface PullRequestProviderApi {
 
   /**
    * What version the head has of each of these files. Required of a host whose
-   * `capabilities.viewedFiles` is `"environment"`, and unused by one that keeps the marks itself.
-   *
-   * The marks live here, but what counts as the same file does not: only the host can say whether
-   * what a reader cleared last week is still what is in front of them. Asked for the marked paths
-   * alone, so the cost follows how much of the change request has been read, not how large it is.
+   * `capabilities.viewedFiles` is `"environment"`, and unused by one that keeps the marks itself:
+   * the marks live here, but only the host can say whether what a reader cleared last week is
+   * still what is in front of them. Asked for the marked paths alone, so the cost follows how
+   * much of the change request has been read rather than how large it is.
    */
   readonly getFileRevisions?: (
     input: ProviderRepositoryRef & {

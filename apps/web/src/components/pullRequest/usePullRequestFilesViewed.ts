@@ -50,12 +50,10 @@ export interface PullRequestFilesViewedView {
 }
 
 /**
- * Which files this reader has already cleared.
- *
- * The marks live on the server rather than in this tab, so a review carried on from another
- * machine picks up where it was left. Presses show immediately and are held over the server's
- * answer until a read that could have seen them comes back, so the checkbox never waits on a
- * round trip and never outlasts the record it stands in for.
+ * Which files this reader has already cleared. The marks live on the server rather than in this
+ * tab, so a review carried on from another machine picks up where it was left. Presses show
+ * immediately and are held over the server's answer until a read that could have seen them comes
+ * back, so the checkbox never waits on a round trip and never outlasts the record behind it.
  */
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
