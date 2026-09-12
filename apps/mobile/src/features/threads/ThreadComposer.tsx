@@ -269,6 +269,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
+  const focusEditor = useCallback(() => inputRef.current?.focus(), [inputRef]);
   const [isFocused, setIsFocused] = useState(false);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: inputRef,
@@ -359,6 +360,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onRequestEditorFocus: focusEditor,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerOwnerKey,

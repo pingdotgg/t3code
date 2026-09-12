@@ -155,6 +155,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       onMouseMove={() => {
         if (!props.isActive) props.onHighlight(props.item.id);
       }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}

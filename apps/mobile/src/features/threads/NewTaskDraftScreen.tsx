@@ -198,6 +198,7 @@ export function NewTaskDraftScreen(props: {
     });
   const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
+  const focusPromptEditor = useCallback(() => promptInputRef.current?.focus(), []);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
@@ -341,6 +342,7 @@ export function NewTaskDraftScreen(props: {
     enabled: isComposerFocused && !isComposerInteractionLocked,
     onChangeDraftMessage: flow.setPrompt,
     onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
+    onRequestEditorFocus: focusPromptEditor,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: flow.draftKey,
