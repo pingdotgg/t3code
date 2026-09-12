@@ -127,7 +127,11 @@ interface RightPanelTabsProps {
   agentsAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
-  /** Running + waiting subagents; badges the Agents card in the empty state. */
+  /**
+   * Running + waiting subagents; badges the Agents tab, the Agents item in the
+   * add-surface menu, and the Agents card in the empty state so the count on
+   * the panel toggle is traceable to the surface it belongs to.
+   */
   liveAgentCount: number;
   children: ReactNode;
 }
@@ -272,6 +276,24 @@ export function surfaceShortcutTargetsTypingContext(
   );
 }
 
+function agentsWorkingLabel(count: number): string {
+  return `${count} ${count === 1 ? "agent" : "agents"} working`;
+}
+
+function AgentCountPill({ count, className }: { count: number; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white",
+        className,
+      )}
+    >
+      {count}
+    </span>
+  );
+}
+
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
     <Tooltip>
@@ -286,6 +308,7 @@ function SurfaceMenuItem(props: {
   disabledReason?: string;
   shortcut: string;
   onClick: () => void;
+  "aria-label"?: string | undefined;
   children: ReactNode;
 }) {
   const item = (
@@ -294,6 +317,7 @@ function SurfaceMenuItem(props: {
       onClick={props.onClick}
       disabled={!props.available}
       aria-keyshortcuts={props.shortcut}
+      aria-label={props["aria-label"]}
     >
       {props.children}
       <MenuShortcut>{props.shortcut}</MenuShortcut>
@@ -481,12 +505,7 @@ function RightPanelEmptyState(props: {
       <span className="relative inline-flex shrink-0">
         <Icon className={iconClassName} />
         {action.badgeCount > 0 ? (
-          <span
-            aria-hidden
-            className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
-          >
-            {action.badgeCount}
-          </span>
+          <AgentCountPill count={action.badgeCount} className="absolute -top-1.5 -right-2" />
         ) : null}
       </span>
     );
@@ -528,6 +547,11 @@ function RightPanelEmptyState(props: {
                 <button
                   type="button"
                   onClick={action.onClick}
+                  aria-label={
+                    action.badgeCount > 0
+                      ? `${action.label}, ${agentsWorkingLabel(action.badgeCount)}`
+                      : undefined
+                  }
                   className={cn(
                     "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-[var(--control-radius)] px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
@@ -850,6 +874,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
+  const agentsSurfaceActive = props.surfaces.some(
+    (surface) => surface.kind === "agents" && surface.id === props.activeSurfaceId,
+  );
+
   const scrollTabs = useCallback((direction: -1 | 1) => {
     const viewport = tabScrollViewport(tabListRef.current);
     if (!viewport) return;
@@ -868,6 +896,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.browserAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
+      badgeCount: 0,
     },
     {
       label: "Terminal",
@@ -876,6 +905,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.terminalAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.terminal,
       onClick: props.onAddTerminal,
+      badgeCount: 0,
     },
     {
       label: "Files",
@@ -884,6 +914,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
       onClick: props.onAddFiles,
+      badgeCount: 0,
     },
     {
       label: "Diff",
@@ -892,6 +923,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
+      badgeCount: 0,
     },
     {
       label: "Pull request",
@@ -900,6 +932,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
       onClick: props.onAddPullRequest,
+      badgeCount: 0,
     },
     {
       label: "Linked pull requests",
@@ -908,6 +941,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
       onClick: props.onAddPullRequests,
+      badgeCount: 0,
     },
     {
       label: "Agents",
@@ -916,6 +950,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.agentsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
+      // Same suppression as the toggle and tab badges: while the Agents
+      // roster is on screen the count would be pointing at nothing.
+      badgeCount: agentsSurfaceActive ? 0 : props.liveAgentCount,
     },
     {
       label: "Device",
@@ -924,6 +961,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.deviceAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
+      badgeCount: 0,
     },
   ] as const;
 
@@ -1127,6 +1165,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
+              // Mirrors the toggle badge suppression: while the Agents roster
+              // itself is on screen the count would be pointing at nothing.
+              const agentBadgeCount =
+                surface.kind === "agents" && !active ? props.liveAgentCount : 0;
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
               const audio = tabAudioState(
@@ -1230,9 +1272,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                 setRenamingDevice(surface.id);
                             }}
                             className="cursor-pointer flex min-w-0 items-center"
+                            aria-label={
+                              agentBadgeCount > 0
+                                ? `${title}, ${agentsWorkingLabel(agentBadgeCount)}`
+                                : undefined
+                            }
                             onClick={() => props.onActivate(surface)}
                           >
                             <span className="truncate">{title}</span>
+                            {agentBadgeCount > 0 ? (
+                              <AgentCountPill count={agentBadgeCount} className="ml-1 shrink-0" />
+                            ) : null}
                           </button>
                         }
                       />
@@ -1320,10 +1370,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         available={action.available}
                         disabledReason={action.disabledReason}
                         shortcut={action.shortcut}
+                        aria-label={
+                          action.badgeCount > 0
+                            ? `${action.label}, ${agentsWorkingLabel(action.badgeCount)}`
+                            : undefined
+                        }
                         onClick={action.onClick}
                       >
                         <Icon />
                         {action.label}
+                        {action.badgeCount > 0 ? (
+                          <AgentCountPill count={action.badgeCount} />
+                        ) : null}
                       </SurfaceMenuItem>
                     );
                   })}
