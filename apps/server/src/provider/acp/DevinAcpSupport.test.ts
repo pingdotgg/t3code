@@ -251,6 +251,17 @@ it.layer(NodeServices.layer)("DevinAcpSupport", (it) => {
     }),
   );
 
+  it.effect("treats a headless DEVIN_API_KEY as ambient credentials", () =>
+    Effect.gen(function* () {
+      const environment = {
+        HOME: NodePath.join(NodeOS.tmpdir(), "t3code-devin-no-such-home"),
+        DEVIN_API_KEY: "cog_test-key",
+      };
+      assert.isTrue(yield* devinHasAmbientCredentials(environment));
+      assert.isUndefined(yield* resolveDevinAuthMethodId({ environment, browserAuth: true }));
+    }),
+  );
+
   it.effect("returns devin-browser only when logged out and browser auth is allowed", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

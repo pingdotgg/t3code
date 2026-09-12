@@ -255,7 +255,7 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
           });
           return yield* checkDevinProviderStatus(
             decodeDevinSettings({ enabled: true, binaryPath: devinPath }),
-            { ...process.env, WINDSURF_API_KEY: "" },
+            { ...process.env, WINDSURF_API_KEY: "", DEVIN_API_KEY: "" },
           );
         }),
       );
@@ -288,7 +288,7 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
           const devinPath = yield* writeFakeDevinCli({ authOutput: LOGGED_OUT_AUTH_OUTPUT });
           return yield* checkDevinProviderStatus(
             decodeDevinSettings({ enabled: true, binaryPath: devinPath }),
-            { ...process.env, WINDSURF_API_KEY: "" },
+            { ...process.env, WINDSURF_API_KEY: "", DEVIN_API_KEY: "" },
           );
         }),
       );
@@ -304,7 +304,7 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
     Effect.gen(function* () {
       const probe = yield* checkDevinProviderStatus(
         decodeDevinSettings({ enabled: true, binaryPath: "/nonexistent/devin-binary" }),
-        { ...process.env, WINDSURF_API_KEY: "" },
+        { ...process.env, WINDSURF_API_KEY: "", DEVIN_API_KEY: "" },
       );
 
       expect(probe.installed).toBe(false);
@@ -346,7 +346,7 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
           });
           return yield* checkDevinProviderStatus(
             decodeDevinSettings({ enabled: true, binaryPath: devinPath }),
-            { ...process.env, WINDSURF_API_KEY: "" },
+            { ...process.env, WINDSURF_API_KEY: "", DEVIN_API_KEY: "" },
           );
         }),
       );
