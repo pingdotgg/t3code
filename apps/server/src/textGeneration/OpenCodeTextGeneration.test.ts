@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -23,6 +24,12 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
+    promptAsyncCalls: 0,
+    messagesCalls: 0,
+    statusCalls: 0,
+    emptyMessageResponses: 0,
+    alwaysEmptyMessages: false,
+    assistantCompleted: true,
     connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
@@ -38,6 +45,12 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
+    this.state.promptAsyncCalls = 0;
+    this.state.messagesCalls = 0;
+    this.state.statusCalls = 0;
+    this.state.emptyMessageResponses = 0;
+    this.state.alwaysEmptyMessages = false;
+    this.state.assistantCompleted = true;
     this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
@@ -101,7 +114,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
+        promptAsync: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
+          runtimeMock.state.promptAsyncCalls += 1;
           runtimeMock.state.promptUrls.push(baseUrl);
           runtimeMock.state.promptParts.push(input.parts);
           runtimeMock.state.authHeaders.push(
@@ -110,7 +124,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           if (runtimeMock.state.promptRequestError !== undefined) {
             throw runtimeMock.state.promptRequestError;
           }
-          return (
+        },
+        messages: async () => {
+          runtimeMock.state.messagesCalls += 1;
+          if (runtimeMock.state.alwaysEmptyMessages) {
+            return { data: [] };
+          }
+          if (runtimeMock.state.emptyMessageResponses > 0) {
+            runtimeMock.state.emptyMessageResponses -= 1;
+            return { data: [] };
+          }
+          const result =
             runtimeMock.state.promptResult ?? {
               data: {
                 parts: [
@@ -123,8 +147,25 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
                   },
                 ],
               },
-            }
-          );
+            };
+          return {
+            data: [
+              {
+                info: {
+                  role: "assistant",
+                  ...(runtimeMock.state.assistantCompleted ? { time: { completed: 1 } } : {}),
+                  ...(result.data?.info?.error !== undefined
+                    ? { error: result.data.info.error }
+                    : {}),
+                },
+                parts: result.data?.parts ?? [],
+              },
+            ],
+          };
+        },
+        status: async () => {
+          runtimeMock.state.statusCalls += 1;
+          return { data: { [`${baseUrl}/session`]: { type: "idle" } } };
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -287,6 +328,73 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect("submits asynchronously and waits for the completed assistant message", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.emptyMessageResponses = 1;
+
+        const fiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.fork);
+        yield* Effect.yieldNow;
+
+        expect(runtimeMock.state.promptAsyncCalls).toBe(1);
+        expect(runtimeMock.state.messagesCalls).toBe(1);
+
+        yield* TestClock.adjust("50 millis");
+        const generated = yield* Fiber.join(fiber);
+
+        expect(runtimeMock.state.messagesCalls).toBe(2);
+        expect(generated).toEqual({
+          subject: "Improve OpenCode reuse",
+          body: "Reuse one server for the full action.",
+        });
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("accepts an unfinished assistant after two idle status polls", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.assistantCompleted = false;
+
+        const generated = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+        expect(runtimeMock.state.messagesCalls).toBe(2);
+        expect(runtimeMock.state.statusCalls).toBe(2);
+        expect(generated).toEqual({
+          subject: "Improve OpenCode reuse",
+          body: "Reuse one server for the full action.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("returns an empty-output error when no assistant message arrives", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.alwaysEmptyMessages = true;
+
+        const fiber = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.flip, Effect.fork);
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("30 seconds");
+        const error = yield* Fiber.join(fiber);
+
+        expect(error.message).toContain("OpenCode returned empty output.");
+        expect(error.cause).toMatchObject({
+          _tag: "OpenCodeTextGenerationEmptyOutputError",
+          operation: "generateCommitMessage",
+          responsePartCount: 0,
+          textPartCount: 0,
+        });
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("uses an environment-only password for a locally spawned server", () =>
     withOpenCodeTextGeneration(
       DEFAULT_OPENCODE_SETTINGS,
@@ -426,14 +534,18 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
   it.effect("preserves the SDK cause and request context when prompting fails", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
-        const sdkCause = new Error("prompt endpoint unavailable");
+        const sdkCause = {
+          response: { status: 503 },
+          error: { message: "upstream provider unavailable" },
+        };
         runtimeMock.state.promptRequestError = sdkCause;
 
         const error = yield* textGeneration
           .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("OpenCode session.prompt request failed.");
+        expect(error.message).toContain("status=503");
+        expect(error.message).toContain("upstream provider unavailable");
         expect(error.cause).toMatchObject({
           _tag: "OpenCodeTextGenerationPromptRequestError",
           operation: "generateCommitMessage",
