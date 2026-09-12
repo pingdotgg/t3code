@@ -1,9 +1,9 @@
-import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind = "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -14,6 +14,19 @@ export function SourceControlIcon(props: {
   const size = props.size ?? 18;
 
   switch (props.kind) {
+    case "forgejo":
+      // Official two-color mark from https://forgejo.org/favicon.svg.
+      return (
+        <Svg width={size} height={size} viewBox="0 0 212 212">
+          <G transform="translate(6 6)" fill="none">
+            <Path d="M58 168 v-98 a50 50 0 0 1 50-50 h20" stroke="#ff6600" strokeWidth={25} />
+            <Path d="M58 168 v-30 a50 50 0 0 1 50-50 h20" stroke="#d40000" strokeWidth={25} />
+            <Circle cx={142} cy={20} r={18} stroke="#ff6600" strokeWidth={15} />
+            <Circle cx={142} cy={88} r={18} stroke="#d40000" strokeWidth={15} />
+            <Circle cx={58} cy={180} r={18} stroke="#d40000" strokeWidth={15} />
+          </G>
+        </Svg>
+      );
     case "github":
       return (
         <ThemedSvg

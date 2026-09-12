@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -16,6 +16,15 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 ```bash
 gh auth login
 ```
+
+### Forgejo and Gitea
+
+Install the official [Gitea CLI (`tea`)](https://gitea.com/gitea/tea) 0.16 or later on your
+T3 Code server, then run `tea login add` to sign in to your server. Repeat for each server you
+use, including Codeberg. T3 Code matches repository remotes to those logins. When cloning or
+publishing, use a full repository URL to select a specific server, or `owner/repo` for your
+default login. If you have multiple accounts on one server, select one with
+`tea login default <login-name>`. Git push and clone also need Git credentials or an SSH key for that server.
 
 ### GitLab
 

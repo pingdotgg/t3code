@@ -1659,6 +1659,118 @@ it.effect("reads a host-native stack through the provider and null where it has 
   }),
 );
 
+it.effect("routes explicit Forgejo HTTP authorities through SSH checkouts after refinement", () =>
+  Effect.gen(function* () {
+    for (const provider of ["forgejo", "unknown"] as const) {
+      const seen: string[] = [];
+      const viewers: Array<string | undefined> = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "ssh",
+            title: "ssh",
+            workspaceRoot: "/ssh",
+            repository: "team/repo",
+            provider,
+            host: "ssh.code.example",
+            remoteUrl: "git@ssh.code.example:team/repo.git",
+          }),
+        ],
+        providers: [
+          fakeProvider("forgejo", {
+            getViewer: (input) => {
+              viewers.push(input.host);
+              assert.strictEqual(input.host, "code.example:3000");
+              return Effect.succeed("bilal");
+            },
+            listChangeRequests: (input) => {
+              assert.strictEqual(input.host, "code.example:3000");
+              return Effect.succeed({ items: [], truncated: false, continues: true });
+            },
+            getChangeRequest: (input) => {
+              assert.strictEqual(input.host, "code.example:3000");
+              return Effect.succeed({ ...hostedChangeRequest("Forgejo detail"), number: 42 });
+            },
+            getChangeRequestSummary: (input) =>
+              Effect.sync(() => {
+                seen.push(input.host);
+                return changeRequest(42, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+        resolveHandle: ({ context }) => {
+          if (context?.requestedHost === undefined) {
+            return Effect.succeed({ context: context!, provider: undefined as never });
+          }
+          assert.strictEqual(context.requestedHost, "code.example:3000");
+          return Effect.succeed({
+            context: {
+              ...context,
+              provider: { kind: "forgejo", name: "Forgejo", baseUrl: "http://code.example:3000" },
+            },
+            provider: undefined as never,
+          });
+        },
+      });
+      yield* service.summary(
+        {
+          projectId: "ssh" as ProjectId,
+          host: "code.example:3000",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.deepStrictEqual(seen, ["code.example:3000"]);
+      const listed = yield* service.list({
+        projectId: "ssh" as ProjectId,
+        host: "code.example:3000",
+        state: "open",
+      });
+      assert.strictEqual(listed.viewers["code.example:3000"], "bilal");
+      const detail = yield* service.detail({
+        projectId: "ssh" as ProjectId,
+        host: "code.example:3000",
+        repository: "team/repo",
+        number: 42,
+      });
+      assert.strictEqual(detail.body, "Forgejo detail");
+      assert.deepStrictEqual(viewers, ["code.example:3000"]);
+    }
+  }),
+);
+
+it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "http",
+          title: "http",
+          workspaceRoot: "/http",
+          repository: "team/repo",
+          provider: "forgejo",
+          host: "code.example",
+          remoteUrl: "http://code.example:4000/team/repo.git",
+        }),
+      ],
+      providers: [fakeProvider("forgejo")],
+    });
+    const failure = yield* service
+      .summary(
+        {
+          projectId: "http" as ProjectId,
+          host: "code.example:3000",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      )
+      .pipe(Effect.flip);
+    assert.strictEqual(failure._tag, "PullRequestUnavailableError");
+  }),
+);
+
 it.effect("routes a hosted reference to another repository through a project on that host", () =>
   Effect.gen(function* () {
     const seen: Array<{ cwd: string; repository: string; host: string }> = [];

@@ -1,3 +1,4 @@
+import * as NodeUtil from "node:util";
 import type {
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
@@ -33,6 +34,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
+  readonly remoteRefinementArgs?: ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   readonly refineUnknownRemote?: (
@@ -72,7 +74,7 @@ interface DiscoveryProbeResult {
 }
 
 export function firstNonEmptyLine(text: string): Option.Option<string> {
-  const line = text
+  const line = NodeUtil.stripVTControlCharacters(text)
     .split(/\r?\n/)
     .map((entry) => entry.trim())
     .find((entry) => entry.length > 0);
@@ -293,7 +295,7 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
         .run({
           operation: "source-control.discovery.refine-unknown-remote",
           command: spec.executable,
-          args: spec.authArgs,
+          args: spec.remoteRefinementArgs ?? spec.authArgs,
           cwd: input.cwd,
           allowNonZeroExit: true,
           timeoutMs: probeTimeoutMs(spec),
