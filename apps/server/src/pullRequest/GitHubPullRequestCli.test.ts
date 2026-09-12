@@ -1426,9 +1426,219 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       const finalArgs = callAt(mockedExecute.mock.calls.length - 1).args;
-      expect(finalArgs[finalArgs.indexOf("--limit") + 1]).toBe("1000");
+      expect(finalArgs[finalArgs.indexOf("--limit") + 1]).toBe("12");
+      // One search probe plus three fallback probes (3 → 6 → 12, 21 rows read in total); the
+      // unread tail is reported rather than walked to a thousand rows, and a larger page scans
+      // further.
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
       assert.strictEqual(batch.items.length, 0);
       assert.isTrue(batch.truncated);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("caps a page-sized search-free fallback at four times the page", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((_input) => {
+        if (mockedExecute.mock.calls.length === 1) return Effect.succeed(output("[]"));
+        const args = callAt(mockedExecute.mock.calls.length - 1).args;
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        return Effect.succeed(
+          output(
+            pullRequests(limit, 1, () => ({
+              reviewRequests: [{ login: "somebody-else" }],
+            })),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal",
+        limit: 30,
+      });
+
+      // 31 → 62 → 124, then stop (217 rows read in total): a sparse repository costs three
+      // small probes per involvement instead of doubling to a thousand rows, and the tail stays
+      // honestly reported.
+      const limits = [1, 2, 3].map((index) => {
+        const args = callAt(index).args;
+        return args[args.indexOf("--limit") + 1];
+      });
+      expect(limits).toEqual(["31", "62", "124"]);
+      expect(searchOfCall(1)).toBeUndefined();
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      assert.strictEqual(batch.items.length, 0);
+      assert.isTrue(batch.truncated);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("caps the default page at four times itself on the search-free fallback", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((_input) => {
+        if (mockedExecute.mock.calls.length === 1) return Effect.succeed(output("[]"));
+        const args = callAt(mockedExecute.mock.calls.length - 1).args;
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        return Effect.succeed(
+          output(
+            pullRequests(limit, 1, () => ({
+              reviewRequests: [{ login: "somebody-else" }],
+            })),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal",
+        limit: 99,
+      });
+
+      // 100 → 200 → 400, then stop (700 rows read in total): the default page costs the same
+      // three probes as every other sparse fallback, not a walk to a thousand rows.
+      const limits = [1, 2, 3].map((index) => {
+        const args = callAt(index).args;
+        return args[args.indexOf("--limit") + 1];
+      });
+      expect(limits).toEqual(["100", "200", "400"]);
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      assert.strictEqual(batch.items.length, 0);
+      assert.isTrue(batch.truncated);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("keeps the thousand-row ceiling for large pages on the search-free fallback", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((_input) => {
+        if (mockedExecute.mock.calls.length === 1) return Effect.succeed(output("[]"));
+        const args = callAt(mockedExecute.mock.calls.length - 1).args;
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        return Effect.succeed(
+          output(
+            pullRequests(limit, 1, () => ({
+              reviewRequests: [{ login: "somebody-else" }],
+            })),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal",
+        limit: 249,
+      });
+
+      // 250 → 500 → 1000, then stop: past limit:249 the 4x cap meets the thousand-row ceiling,
+      // so large pages keep the old bound.
+      const limits = [1, 2, 3].map((index) => {
+        const args = callAt(index).args;
+        return args[args.indexOf("--limit") + 1];
+      });
+      expect(limits).toEqual(["250", "500", "1000"]);
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      assert.strictEqual(batch.items.length, 0);
+      assert.isTrue(batch.truncated);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("stops the search-free fallback where the repository runs out, not at the cap", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            pullRequests(3, 1, (number) => ({
+              reviewRequests: [{ login: number === 3 ? "bilal" : "somebody-else" }],
+            })),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      // One matching row out of the three the repository holds: the page is short but the
+      // repository is exhausted (3 rows back for 11 asked), so there is nothing more to scan
+      // for and no second probe goes out.
+      assert.deepStrictEqual(
+        batch.items.map((item) => item.number),
+        [3],
+      );
+      assert.isFalse(batch.truncated);
+      assert.isFalse(batch.continues);
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("scans further when a later listing asks for a larger page", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((_input) => {
+        if (mockedExecute.mock.calls.length === 1 || mockedExecute.mock.calls.length === 5) {
+          return Effect.succeed(output("[]"));
+        }
+        const args = callAt(mockedExecute.mock.calls.length - 1).args;
+        const limit = Number(args[args.indexOf("--limit") + 1]);
+        return Effect.succeed(
+          output(
+            pullRequests(limit, 1, () => ({
+              reviewRequests: [{ login: "somebody-else" }],
+            })),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const read = (limit: number) =>
+        cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: "reviewing",
+          viewer: "bilal",
+          limit,
+        });
+
+      const first = yield* read(2);
+      const second = yield* read(10);
+
+      // The first listing caps at 12 rows, the second at 44 (11 → 22 → 44): load-more is a
+      // larger limit, which is also a larger scan, since the fallback cap grows with the page.
+      const secondLimits = [5, 6, 7].map((index) => {
+        const args = callAt(index).args;
+        return args[args.indexOf("--limit") + 1];
+      });
+      expect(secondLimits).toEqual(["11", "22", "44"]);
+      assert.strictEqual(mockedExecute.mock.calls.length, 8);
+      assert.isTrue(first.truncated);
+      assert.isFalse(first.continues);
+      assert.isTrue(second.truncated);
+      assert.isFalse(second.continues);
     }),
   );
 

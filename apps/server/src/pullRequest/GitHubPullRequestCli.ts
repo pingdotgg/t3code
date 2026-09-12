@@ -362,6 +362,23 @@ const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 /** A search-free fallback may scan older rows for local filters, but never the whole repository. */
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
+/**
+ * How many pages' worth of rows one fallback scan may read. Doubling 1x → 2x → 4x bounds a
+ * sparse fallback to three `gh pr list` probes per listing (one search probe plus three
+ * fallback probes at most). Worst-case cost is the sum, not the cap: limit:2 scans 3+6+12
+ * = 21 rows, limit:30 scans 31+62+124 = 217 rows, the default limit:99 scans 100+200+400
+ * = 700 rows. Kept at 4x rather than 8x — which would roughly double those sums (45 / 465
+ * / 1500 rows) — with no measured hit-rate gain to justify the extra bytes and latency on
+ * unindexed repositories; revisit with hit-rate data if the fallback routinely reports a
+ * tail it should have filled. Past limit:249 the 4x cap meets the 1000-row ceiling, so
+ * large pages keep the old bound.
+ *
+ * The unread tail stays reported through `truncated`, and a larger `limit` scans further:
+ * a `truncated:true, continues:false` batch carries no cursor (see ProviderChangeRequestPage),
+ * so the only way to the rest is asking again with a larger page, as every listing did
+ * before cursors — accepted behavior, not a silent drop.
+ */
+const PULL_REQUEST_FALLBACK_PAGE_MULTIPLE = 4;
 
 /** What the files API serves at most in one response, which is what one slice is made of. */
 const DIFF_FILES_PAGE_SIZE = 100;
@@ -375,6 +392,11 @@ const REVIEW_THREAD_PAGES = 10;
 
 export interface GitHubPullRequestListBatch {
   readonly items: ReadonlyArray<GitHubPullRequestListItem>;
+  /**
+   * True when rows beyond the page were (or may have been) left unread. With
+   * `continues:false` there is no cursor to carry on from; the caller re-asks with a larger
+   * `limit` to scan further, which is also how the fallback's own cap grows.
+   */
   readonly truncated: boolean;
   /** False for a page GitHub would not search, which came back in `gh`'s own order instead. */
   readonly continues: boolean;
@@ -1479,7 +1501,10 @@ export const make = Effect.gen(function* () {
       ),
 
     listPullRequests: (input) => {
-      const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);
+      const fallbackMaxRows = Math.min(
+        Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS),
+        (input.limit + 1) * PULL_REQUEST_FALLBACK_PAGE_MULTIPLE,
+      );
       const read = (
         continues: boolean,
         requestedRows = input.limit + 1,
