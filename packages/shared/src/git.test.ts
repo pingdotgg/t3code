@@ -53,6 +53,32 @@ describe("normalizeGitRemoteUrl", () => {
 });
 
 describe("parseOriginUrlFromGitConfig", () => {
+  it.each([
+    { value: String.raw`C:\\remote\\`, expected: "C:\\remote\\" },
+    { value: String.raw`/repos/tab\tname.git`, expected: "/repos/tab\tname.git" },
+    { value: String.raw`/repos/line\nname.git`, expected: "/repos/line\nname.git" },
+    { value: String.raw`/repos/back\bspace.git`, expected: "/repos/back\bspace.git" },
+    { value: '" local remote.git "', expected: " local remote.git " },
+    { value: String.raw`"a\"b\\c;d#e" # comment`, expected: 'a"b\\c;d#e' },
+    { value: 'repo  ""', expected: "repo  " },
+  ])("decodes the Git-written value $value without changing its path", ({ value, expected }) => {
+    const config = `[remote "origin"]\n\turl = ${value}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`;
+    expect(parseOriginUrlFromGitConfig(config)).toBe(expected);
+  });
+
+  it("does not continue a comment ending in a backslash", () => {
+    expect(
+      parseOriginUrlFromGitConfig('# comment\\\n[remote "origin"]\nurl = /repos/Repo.git\n'),
+    ).toBe("/repos/Repo.git");
+  });
+
+  it.each([String.raw`/repos/invalid\q`, '"unterminated'])(
+    "does not invent a remote URL from malformed value %s",
+    (value) => {
+      expect(parseOriginUrlFromGitConfig(`[remote "origin"]\nurl = ${value}\n`)).toBeNull();
+    },
+  );
+
   it("reads the origin url and ignores other remotes", () => {
     const config = [
       "[core]",
@@ -99,7 +125,7 @@ describe("parseOriginUrlFromGitConfig", () => {
       parseOriginUrlFromGitConfig(
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
-    ).toBe("https://github.com/acme/repo.git");
+    ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
   it("falls back to the first remote when there is no origin", () => {
