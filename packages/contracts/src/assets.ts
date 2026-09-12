@@ -10,6 +10,14 @@ import {
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
+const GITHUB_USER_ATTACHMENT_URL_PATTERN =
+  /^https:\/\/github\.com\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const GitHubUserAttachmentUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(256),
+  Schema.isPattern(GITHUB_USER_ATTACHMENT_URL_PATTERN),
+);
+export const isGitHubUserAttachmentUrl = Schema.is(GitHubUserAttachmentUrl);
 
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
@@ -43,6 +51,9 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
+  }),
+  Schema.TaggedStruct("github-user-attachment", {
+    url: GitHubUserAttachmentUrl,
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
