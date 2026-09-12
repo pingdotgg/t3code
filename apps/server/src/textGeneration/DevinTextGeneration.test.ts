@@ -82,8 +82,16 @@ it.layer(DevinTextGenerationTestLayer)("DevinTextGeneration", (it) => {
         T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ branch: "fix/login-redirect" }),
       },
-      // Signed-out environment: no API key and no credentials file.
-      { ...process.env, HOME: fakeHome, WINDSURF_API_KEY: "" },
+      // Signed-out environment: no API key and no credentials file. The XDG
+      // and Windows data dirs are redirected too so host credential paths can
+      // never leak in.
+      {
+        ...process.env,
+        HOME: fakeHome,
+        WINDSURF_API_KEY: "",
+        XDG_DATA_HOME: NodePath.join(fakeHome, "xdg"),
+        LOCALAPPDATA: NodePath.join(fakeHome, "localappdata"),
+      },
       (textGeneration) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateBranchName({

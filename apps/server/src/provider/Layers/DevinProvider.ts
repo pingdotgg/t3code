@@ -154,6 +154,14 @@ export interface DevinProbeData {
   readonly auth: ServerProviderAuth;
   readonly status: ServerProviderState;
   readonly message: string | undefined;
+  /**
+   * Whether `models` is an authoritative probe result. When false (the
+   * version probe failed, auth is unknown, or `devin models list` errored),
+   * the snapshot keeps its previous catalog; when true, an empty list means
+   * the account genuinely has no catalog (sign-out, empty discovery) and the
+   * snapshot drops its built-in models.
+   */
+  readonly modelsFetched: boolean;
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
@@ -183,6 +191,7 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       message: isCommandMissingCause(error)
         ? "Devin CLI (`devin`) is not installed or not on PATH."
         : "Failed to execute Devin CLI health check.",
+      modelsFetched: false,
       models: [],
     };
   }
@@ -193,6 +202,7 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       auth: { status: "unknown" },
       status: "error",
       message: "Devin CLI is installed but timed out while running `devin version`.",
+      modelsFetched: false,
       models: [],
     };
   }
@@ -211,6 +221,7 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       auth: { status: "unknown" },
       status: "error",
       message: "Devin CLI is installed but failed to run.",
+      modelsFetched: false,
       models: [],
     };
   }
@@ -262,11 +273,13 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       auth,
       status: "error",
       message: "Devin CLI is installed but not logged in. Run `devin auth login`.",
+      // Sign-out is an authoritative empty catalog.
+      modelsFetched: true,
       models: [],
     };
   }
 
-  const models =
+  const modelsResult =
     auth.status === "authenticated"
       ? yield* runDevinCliCommand(
           devinSettings,
@@ -280,15 +293,16 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
           ),
           Effect.timeoutOption(MODELS_PROBE_TIMEOUT_MS),
           Effect.result,
-          Effect.map((result) =>
-            Result.isSuccess(result) &&
-            Option.isSome(result.success) &&
-            result.success.value.code === 0
-              ? parseDevinModelsListJson(result.success.value.stdout)
-              : [],
-          ),
         )
-      : [];
+      : undefined;
+  // A failed or skipped listing keeps the previous catalog; a successful
+  // listing (even an empty one) replaces it.
+  const modelsFetched =
+    modelsResult !== undefined &&
+    Result.isSuccess(modelsResult) &&
+    Option.isSome(modelsResult.success) &&
+    modelsResult.success.value.code === 0;
+  const models = modelsFetched ? parseDevinModelsListJson(modelsResult.success.value.stdout) : [];
 
   return {
     installed: true,
@@ -301,6 +315,7 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
       auth.status === "unknown"
         ? "Could not determine Devin sign-in state. Sessions may prompt for login."
         : undefined,
+    modelsFetched,
     models,
   };
 });
@@ -435,10 +450,9 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (draft) => {
       const { message: _previousMessage, ...rest } = draft;
-      const models =
-        probe.models.length > 0
-          ? devinModelsFromSettings(settings.customModels, probe.models)
-          : draft.models;
+      const models = probe.modelsFetched
+        ? devinModelsFromSettings(settings.customModels, probe.models)
+        : draft.models;
       return {
         ...rest,
         installed: probe.installed,
@@ -481,10 +495,13 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
         Array.isArray(started.sessionSetupResult.configOptions)
           ? started.sessionSetupResult.configOptions
           : [];
-      const sessionModels = devinModelsFromSettings(
-        settings.customModels,
-        buildDevinModelsFromSession(configOptions),
-      );
+      // A session without a model config option is not an empty catalog —
+      // keep the probed models instead of collapsing to custom-only.
+      const sessionBuiltInModels = buildDevinModelsFromSession(configOptions);
+      const sessionModels =
+        sessionBuiltInModels.length > 0
+          ? devinModelsFromSettings(settings.customModels, sessionBuiltInModels)
+          : [];
       return {
         ...rest,
         installed: true,
@@ -504,11 +521,9 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
   const onConfigOptionsUpdated = Effect.fn("DevinProvider.onConfigOptionsUpdated")(function* (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) {
-    const models = devinModelsFromSettings(
-      settings.customModels,
-      buildDevinModelsFromSession(configOptions),
-    );
-    if (models.length === 0) return;
+    const sessionBuiltInModels = buildDevinModelsFromSession(configOptions);
+    if (sessionBuiltInModels.length === 0) return;
+    const models = devinModelsFromSettings(settings.customModels, sessionBuiltInModels);
     yield* SubscriptionRef.update(metadata, (draft) => {
       const heal = adapterFlaggedAuth ? healAdapterFlaggedAuth(draft) : {};
       if (heal.auth) adapterFlaggedAuth = false;
@@ -543,6 +558,7 @@ export const makeDevinProvider = Effect.fn("makeDevinProvider")(function* (
           ...draft,
           auth: { status: "unauthenticated" },
           status: settings.enabled ? "warning" : "disabled",
+          supportsTextGeneration: false,
           message: "Devin is not signed in. Run `devin auth login`, then start the thread again.",
           checkedAt,
         }) satisfies ServerProviderDraft,

@@ -399,6 +399,7 @@ it.layer(
               status:
                 probeAuth.status === "authenticated" ? ("ready" as const) : ("error" as const),
               message: undefined,
+              modelsFetched: false,
               models: [],
             }),
           ),
