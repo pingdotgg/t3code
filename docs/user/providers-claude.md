@@ -41,6 +41,13 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Signed out
+
+If **Settings > Providers** shows a Claude instance as not authenticated, its
+config directory has no login. Run `claude auth login` on the environment's
+machine with the same `CLAUDE_CONFIG_DIR` the instance uses, then start a new
+thread. Existing threads keep their signed-out Claude process until they end.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between
