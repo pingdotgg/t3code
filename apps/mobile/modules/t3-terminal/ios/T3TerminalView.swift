@@ -4,6 +4,19 @@ import GhosttyKit
 import QuartzCore
 import UIKit
 
+/// One incremental terminal write from JS: `seq` orders and deduplicates the
+/// writes, `reset` clears the grid before `data` is fed.
+///
+/// JS 侧的一次增量终端写入：`seq` 负责排序与去重，`reset` 表示喂入 `data`
+/// 之前要先清屏。
+public struct TerminalBufferWriteRecord: Record {
+  public init() {}
+
+  @Field public var seq: Int = 0
+  @Field public var reset: Bool = false
+  @Field public var data: String = ""
+}
+
 private enum GhosttyRuntime {
   private static let lock = NSLock()
   private static var initialized = false
@@ -196,6 +209,22 @@ private extension UIColor {
 public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
+  /// Matches `DEFAULT_MAX_TERMINAL_BUFFER_BYTES` on the client runtime, so a
+  /// replay never holds more history than JS would have sent.
+  ///
+  /// 与 client runtime 的 `DEFAULT_MAX_TERMINAL_BUFFER_BYTES` 一致，
+  /// 重放持有的历史不会超过 JS 会发送的量。
+  private static let maxReplayBufferBytes = 512 * 1024
+  /// Trim only once the buffer runs this far past the cap, so a rolling window
+  /// costs one copy per slack window instead of one per write.
+  ///
+  /// 只有超出上限这么多才裁剪，滚动窗口的代价变成每个余量窗口一次拷贝，
+  /// 而不是每次写入一次。
+  private static let replayBufferTrimSlackBytes = 64 * 1024
+  /// Erase scrollback, home the cursor, erase the screen.
+  ///
+  /// 清除滚动历史、光标归位、清屏。
+  private static let clearScreenSequence = "\u{1B}[3J\u{1B}[H\u{1B}[2J"
 
   private let terminalViewport = UIView()
   private let inputField = TerminalInputField()
@@ -204,11 +233,20 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
-  private var lastAppliedBuffer = ""
+  /// Everything fed to the current terminal, replayed whenever the surface is
+  /// rebuilt (font size change, key change, first layout). Bounded to the same
+  /// retention window the JS side keeps.
+  ///
+  /// 当前终端已喂入的全部内容，surface 重建时（字号变化、key 变化、首次布局）
+  /// 用它重放。上限与 JS 侧的保留窗口一致。
+  private var replayBuffer = ""
+  private var replayBufferBytes = 0
+  private var appliedWriteSeq = 0
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
   private var isCreatingSurface = false
+  private var isReplayingBuffer = false
   private var surfaceCreationFailed = false
   private var appearance = TerminalAppearanceScheme.dark
   private var backgroundColorValue = UIColor(hexString: "#24292e")
@@ -220,14 +258,22 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     didSet {
       accessibilityIdentifier = "t3-terminal-\(terminalKey)"
       if oldValue != terminalKey {
+        // A different terminal shares none of this one's history or write
+        // sequence. JS remounts on identity, so this only backstops reuse.
+        //
+        // 换了终端就不共享历史和写入序号。JS 侧会按身份重挂载，
+        // 这里只是复用场景的兜底。
+        replayBuffer = ""
+        replayBufferBytes = 0
+        appliedWriteSeq = 0
         resetSurface()
       }
     }
   }
 
-  var initialBuffer: String = "" {
+  var bufferWrite = TerminalBufferWriteRecord() {
     didSet {
-      applyRemoteBuffer(initialBuffer)
+      applyBufferWrite(bufferWrite)
     }
   }
 
@@ -499,12 +545,24 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
     setupWriteCallback()
     resizeSurface()
-    feedBuffer(initialBuffer)
+    replayBufferIntoSurface()
+  }
+
+  /// Rebuild the visible grid from retained output. Device queries inside the
+  /// replayed bytes must not reach the live shell — they would land at the
+  /// prompt as junk — so the surface's replies are dropped for the replay.
+  ///
+  /// 用保留的输出重建可见网格。重放数据里的设备查询不能发回正在运行的 shell，
+  /// 否则会在提示符处变成乱码，所以重放期间丢弃 surface 的回复。
+  private func replayBufferIntoSurface() {
+    guard !replayBuffer.isEmpty else { return }
+    isReplayingBuffer = true
+    defer { isReplayingBuffer = false }
+    feedData(Data(replayBuffer.utf8))
   }
 
   private func resetSurface() {
     destroySurface()
-    lastAppliedBuffer = ""
     lastViewportSize = .zero
     lastContentScale = 0
     lastReportedGrid = nil
@@ -529,33 +587,68 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     app = nil
   }
 
-  private func applyRemoteBuffer(_ buffer: String) {
+  /// Apply one incremental write from JS. Sequence numbers are monotonic, so a
+  /// prop update the view has already consumed (re-render with unchanged data)
+  /// is ignored rather than replayed.
+  ///
+  /// 应用 JS 侧的一次增量写入。序号单调递增，已消费过的 prop 更新
+  /// （数据未变的重渲染）直接忽略，不会重放。
+  private func applyBufferWrite(_ write: TerminalBufferWriteRecord) {
+    guard write.seq > appliedWriteSeq else { return }
+    appliedWriteSeq = write.seq
+
+    if write.reset {
+      replayBuffer = ""
+      replayBufferBytes = 0
+      // Clearing the live surface is cheaper than rebuilding it, and it keeps
+      // the keyboard, selection, and scroll position intact.
+      //
+      // 清屏比重建 surface 便宜得多，而且能保住键盘、选区和滚动位置。
+      feedData(Data(Self.clearScreenSequence.utf8))
+    }
+
+    appendToReplayBuffer(write.data)
+
     guard surface != nil else {
+      // No surface yet (still unmeasured): the replay buffer carries the write
+      // into the surface once layout creates it.
+      //
+      // surface 还没建（尚未布局完成）：写入先留在 replay buffer 里，
+      // 等 surface 创建时一并喂入。
       createSurfaceIfPossible()
       return
     }
 
-    if buffer.isEmpty {
-      feedData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
-      lastAppliedBuffer = ""
-      return
-    }
-
-    if buffer.hasPrefix(lastAppliedBuffer) {
-      let suffix = String(buffer.dropFirst(lastAppliedBuffer.count))
-      feedData(Data(suffix.utf8))
-      lastAppliedBuffer = buffer
-      return
-    }
-
-    resetSurface()
-    createSurfaceIfPossible()
+    // A reset carries retained history, not live output: its device-query
+    // replies must not reach the shell either.
+    //
+    // reset 带的是保留历史而不是实时输出，它触发的设备查询回复同样不能发回 shell。
+    isReplayingBuffer = write.reset
+    defer { isReplayingBuffer = false }
+    feedData(Data(write.data.utf8))
   }
 
-  private func feedBuffer(_ buffer: String) {
-    guard !buffer.isEmpty else { return }
-    feedData(Data(buffer.utf8))
-    lastAppliedBuffer = buffer
+  private func appendToReplayBuffer(_ data: String) {
+    guard !data.isEmpty else { return }
+    replayBuffer += data
+    replayBufferBytes += data.utf8.count
+
+    guard replayBufferBytes > Self.maxReplayBufferBytes + Self.replayBufferTrimSlackBytes else {
+      return
+    }
+
+    // Drop from the front on a UTF-8 boundary. Only replay depth is lost; the
+    // scrollback the user sees lives in the terminal itself.
+    //
+    // 从头部按 UTF-8 边界裁剪。只损失重放深度，用户看到的滚动历史
+    // 由终端自己持有。
+    let utf8 = Array(replayBuffer.utf8)
+    var start = utf8.count - Self.maxReplayBufferBytes
+    while start < utf8.count, utf8[start] & 0b1100_0000 == 0b1000_0000 {
+      start += 1
+    }
+    replayBuffer = String(decoding: utf8[start...], as: UTF8.self)
+    replayBufferBytes = utf8.count - start
   }
 
   private func feedData(_ data: Data) {
@@ -578,6 +671,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     ghostty_surface_set_write_callback(surface, { userdata, data, len in
       guard let userdata, let data, len > 0 else { return }
       let view = Unmanaged<T3TerminalView>.fromOpaque(userdata).takeUnretainedValue()
+      guard !view.isReplayingBuffer else { return }
       let bytes = Data(bytes: data, count: len)
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
 

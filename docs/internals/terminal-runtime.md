@@ -39,6 +39,17 @@ info so the ABI check can detect drift without a second pin.
 
 Restoring scrollback must not send terminal replies to the current shell. Historical
 device queries can otherwise provoke fresh replies that appear as junk at the
-prompt. The server strips query/response traffic from retained history, and the
+prompt. The server strips query/response traffic from retained history, the
 [web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
-during replay. Preserve both protections when changing retention or renderer code.
+during replay, and the mobile views drop surface replies while replaying. Preserve
+all three protections when changing retention or renderer code.
+
+Clients feed their renderer incrementally, never the whole retained buffer. Each
+holds a cursor into retained output and sends only unread bytes, or a reset when
+retention has rolled past that cursor. The mobile native views own a bounded replay
+buffer of their own so a rebuilt terminal (font size or identity change) can be
+restored without asking JS for history. Handing a renderer the full window on every
+output event makes each event cost the whole retention window, which is what froze
+the mobile UI thread before. `bufferStreamRevision` in the native terminal module
+marks this prop contract: a binary without it cannot render a bundle that speaks it,
+so the app needs a rebuild rather than a bundle reload.
