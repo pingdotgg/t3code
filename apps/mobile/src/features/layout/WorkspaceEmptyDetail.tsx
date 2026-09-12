@@ -4,7 +4,10 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 
-export function WorkspaceEmptyDetail(props: { readonly onStartNewTask?: () => void }) {
+export function WorkspaceEmptyDetail(props: {
+  readonly onShowSidebar?: () => void;
+  readonly onStartNewTask?: () => void;
+}) {
   const { materialYouStyleLayoutActive } = useAppearancePreferences();
   return (
     <View
@@ -32,6 +35,15 @@ export function WorkspaceEmptyDetail(props: { readonly onStartNewTask?: () => vo
             onPress={props.onStartNewTask}
           >
             <Text className="text-base font-t3-bold text-primary-foreground">New Task</Text>
+          </Pressable>
+        ) : null}
+        {props.onShowSidebar ? (
+          <Pressable
+            accessibilityRole="button"
+            className="rounded-full bg-subtle px-5 py-3 active:opacity-70"
+            onPress={props.onShowSidebar}
+          >
+            <Text className="text-base font-t3-bold text-foreground">Show threads</Text>
           </Pressable>
         ) : null}
       </View>

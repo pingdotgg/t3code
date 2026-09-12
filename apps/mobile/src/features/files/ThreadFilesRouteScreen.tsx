@@ -498,6 +498,17 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             onBack={handleReturnToThread}
             hideBottomBorder={materialYouStyleLayoutActive}
             actions={[
+              ...(layout.usesSplitView
+                ? [
+                    {
+                      accessibilityLabel: panes.primarySidebarVisible
+                        ? "Maximize files"
+                        : "Show threads",
+                      icon: "sidebar.left" as const,
+                      onPress: togglePrimarySidebar,
+                    },
+                  ]
+                : []),
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",
@@ -582,7 +593,8 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
-  const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { fileInspector, layout, panes, toggleAuxiliaryPane, togglePrimarySidebar } =
+    useAdaptiveWorkspaceLayout();
   const iconColor = useUniwindTheme()["--color-icon"];
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
@@ -914,6 +926,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           onBack={handleBack}
           trailing={
             <>
+              {layout.usesSplitView ? (
+                <AndroidHeaderIconButton
+                  accessibilityLabel={
+                    panes.primarySidebarVisible ? "Maximize file" : "Show threads"
+                  }
+                  icon="sidebar.left"
+                  onPress={togglePrimarySidebar}
+                />
+              ) : null}
               {fileInspector.supported ? (
                 <AndroidHeaderIconButton
                   accessibilityLabel={
