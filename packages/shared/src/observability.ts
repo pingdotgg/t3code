@@ -1,3 +1,4 @@
+import * as NodeNet from "node:net";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
@@ -683,3 +684,34 @@ function parseBigInt(input: string): bigint {
     return 0n;
   }
 }
+
+const isLoopbackHost = (hostname: string) => {
+  if (hostname === "localhost" || hostname === "[::1]") {
+    return true;
+  }
+
+  // match only 127.0.0.0/8, not any host that starts with 127.
+  return NodeNet.isIPv4(hostname) && hostname.startsWith("127.");
+};
+
+export const otlpHeadersTransportIssue = (
+  headers: Readonly<Record<string, string>> | undefined,
+  urls: ReadonlyArray<string | undefined>,
+): string | undefined => {
+  if (!headers) {
+    return undefined;
+  }
+
+  for (const rawUrl of urls) {
+    if (!rawUrl) {
+      continue;
+    }
+
+    const url = new URL(rawUrl);
+    if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+      return `T3CODE_OTLP_HEADERS would be sent in plaintext to ${url.origin}. Use an https:// or a loopback http:// endpoint.`;
+    }
+  }
+
+  return undefined;
+};

@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { otlpHeadersTransportIssue } from "@t3tools/shared/observability";
 
 const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -98,6 +99,10 @@ const EnvServerConfig = Config.all({
     Config.withDefault(10_000),
   ),
   otlpServiceName: Config.string("T3CODE_OTLP_SERVICE_NAME").pipe(Config.withDefault("t3-server")),
+  otlpHeaders: Config.schema(
+    Config.Record(Schema.String, Schema.StringFromUriComponent),
+    "T3CODE_OTLP_HEADERS",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
   mode: Config.schema(ServerConfig.RuntimeMode, "T3CODE_MODE").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -364,6 +369,7 @@ export const resolveServerConfig = (
         persistedObservabilitySettings.otlpMetricsUrl,
       otlpExportIntervalMs: env.otlpExportIntervalMs,
       otlpServiceName: env.otlpServiceName,
+      otlpHeaders: env.otlpHeaders,
       mode,
       port,
       cwd,
@@ -385,6 +391,14 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
     };
+
+    const transportIssue = otlpHeadersTransportIssue(config.otlpHeaders, [
+      config.otlpTracesUrl,
+      config.otlpMetricsUrl,
+    ]);
+    if (transportIssue) {
+      return yield* Effect.die(new Error(transportIssue));
+    }
 
     return config;
   });
