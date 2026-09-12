@@ -33,6 +33,8 @@ export interface WorkLogPresentationEntry {
   readonly toolLifecycleStatus?: string;
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
+  /** Set on task rows the server classified as background work rather than an agent. */
+  readonly isBackgroundTask?: boolean;
   readonly toolSource?: ToolActivitySource;
 }
 
@@ -681,7 +683,15 @@ export function toolGroupSummaryKind(
     entries.map((entry): ToolGroupSummaryKind => {
       if (entry.itemType === "mcp_tool_call") return "other";
       if (entry.itemType === "dynamic_tool_call") return "dynamic-tool";
-      if (entry.itemType === "collab_agent_tool_call" || entry.taskId) return "agent-tool";
+      // A background task (a foreground Bash call Claude promoted to
+      // local_bash, a monitor loop) shares the row shape of a subagent but
+      // is not one; the Agents panel already leaves it out.
+      if (
+        entry.itemType === "collab_agent_tool_call" ||
+        (entry.taskId && !entry.isBackgroundTask)
+      ) {
+        return "agent-tool";
+      }
       if (entry.tone === "thinking") return "agent-tool";
       if (entry.tone === "tool") return "tone-tool";
       return "other";

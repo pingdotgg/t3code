@@ -93,6 +93,11 @@ export interface WorkLogEntry {
     workflowId: string | null;
     agentTaskIds: ReadonlyArray<string>;
   };
+  /**
+   * Shell/monitor/plan tasks: ordinary work-log rows that carry a taskId but
+   * are not agents, so they get neither spawn CTAs nor agent chrome.
+   */
+  isBackgroundTask?: boolean;
 }
 
 const workLogCollapseKey = Symbol();
@@ -102,8 +107,6 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   [workLogCollapseKey]?: string;
   toolCallId?: string;
   isWorkflowCoordinator?: boolean;
-  /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn CTAs. */
-  isBackgroundTask?: boolean;
 }
 
 const derivedWorkLogEntryByActivity = new WeakMap<

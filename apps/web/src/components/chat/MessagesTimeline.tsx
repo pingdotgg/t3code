@@ -3636,7 +3636,9 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   }
 
   // Subagent lifecycle rows (grouped by taskId) get agent identity chrome.
-  if (workEntry.taskId) {
+  // Background tasks carry a taskId too but are not agents: the Agents panel
+  // leaves them out, so the timeline must not dress them up as one.
+  if (workEntry.taskId && !workEntry.isBackgroundTask) {
     return "bot";
   }
 
