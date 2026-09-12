@@ -11,6 +11,7 @@ struct RemoteCheckoutPathTests {
         (#"\\SERVER\Share\"#, "//server/share"),
         ("/repo/./", "/repo"),
         ("/work/other/../repo", "/work/repo"),
+        ("/repo", " /repo "),
     ])
     func equivalentRootsUseCurrentCheckout(_ checkout: String, _ project: String) {
         let branch = FeatureWorkspaceBranch(name: "main", worktreePath: checkout)

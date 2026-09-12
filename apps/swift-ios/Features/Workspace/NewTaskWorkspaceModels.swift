@@ -93,7 +93,7 @@ enum NewTaskWorkspaceDefaults {
         if windowsCheckout, ProjectCreationPath.isWindowsAbsolutePath(path) {
             return ProjectCreationPath.normalizedForComparison(path)
         }
-        return URL(fileURLWithPath: value).standardizedFileURL.path
+        return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     static func normalizedWorktreePath(
