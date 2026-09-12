@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
+import {
+  makePreviewAutomationKeySequence,
+  makePreviewAutomationNativeKeySequence,
+} from "./PreviewKeyboard.ts";
 
 describe("preview keyboard packets", () => {
   it("includes the Chromium virtual key code and Enter text", () => {
@@ -93,5 +96,89 @@ describe("preview keyboard packets", () => {
       isKeypad: false,
     });
     expect(sequence.signal).toEqual({ kind: "key", key: "!", code: "Digit1" });
+  });
+
+  it.each([
+    ["Enter", "\r"],
+    ["z", "z"],
+  ])("converts %s into native down, char, and up packets", (key, text) => {
+    const sequence = makePreviewAutomationNativeKeySequence({ key });
+    const shared = { keyCode: key, modifiers: [], skipIfUnhandled: true };
+    expect(sequence.keyDown).toEqual({ type: "keyDown", ...shared });
+    expect(sequence.char).toEqual({ type: "char", ...shared, keyCode: text });
+    expect(sequence.keyUp).toEqual({ type: "keyUp", ...shared });
+  });
+
+  it("suppresses text for shortcuts and retains macOS editing commands", () => {
+    const sequence = makePreviewAutomationNativeKeySequence(
+      { key: "a", modifiers: ["Meta"] },
+      { isMac: true },
+    );
+    expect(sequence.keyDown).toEqual({
+      type: "keyDown",
+      keyCode: "a",
+      modifiers: ["meta"],
+      skipIfUnhandled: true,
+    });
+    expect(sequence.char).toBeUndefined();
+    expect(sequence.commands).toEqual(["selectAll"]);
+  });
+
+  it.each([
+    ["ArrowLeft", "Left"],
+    ["ArrowRight", "Right"],
+    ["ArrowUp", "Up"],
+    ["ArrowDown", "Down"],
+  ])("maps %s to Electron's %s accelerator", (key, keyCode) => {
+    const sequence = makePreviewAutomationNativeKeySequence({ key });
+    expect(sequence.keyDown.keyCode).toBe(keyCode);
+    expect(sequence.keyUp.keyCode).toBe(keyCode);
+    expect(sequence.signal.key).toBe(key);
+    expect(sequence.char).toBeUndefined();
+  });
+
+  it("matches native uppercase key signals without inventing shortcut modifiers", () => {
+    const plain = makePreviewAutomationNativeKeySequence({ key: "X" });
+    expect(plain.signal).toEqual({ kind: "key", key: "x", code: "KeyX" });
+    expect(plain.char?.keyCode).toBe("X");
+    const shortcut = makePreviewAutomationNativeKeySequence({ key: "A", modifiers: ["Control"] });
+    expect(shortcut.signal).toEqual({ kind: "key", key: "a", code: "KeyA" });
+    expect(shortcut.keyDown.modifiers).toEqual(["control"]);
+    expect(shortcut.char).toBeUndefined();
+    expect(
+      makePreviewAutomationNativeKeySequence({ key: "X", modifiers: ["Shift"] }).signal,
+    ).toEqual({
+      kind: "key",
+      key: "X",
+      code: "KeyX",
+    });
+  });
+
+  it("matches native signals for Unicode text and literal spaces", () => {
+    const unicode = makePreviewAutomationNativeKeySequence({ key: "é" });
+    expect(unicode.signal).toEqual({ kind: "key", key: "", code: "" });
+    expect(unicode.char?.keyCode).toBe("é");
+    expect(makePreviewAutomationNativeKeySequence({ key: " " }).signal).toEqual({
+      kind: "key",
+      key: " ",
+      code: "Space",
+    });
+  });
+
+  it("preserves text and editing commands for isolated child renderer targets", () => {
+    const text = makePreviewAutomationKeySequence({ key: "é" });
+    expect(text.keyDown).toMatchObject({ type: "keyDown", text: "é", key: "é" });
+    expect(text.keyUp).toMatchObject({ type: "keyUp", key: "é" });
+    const shortcut = makePreviewAutomationKeySequence(
+      { key: "a", modifiers: ["Meta"] },
+      { isMac: true },
+    );
+    expect(shortcut.keyDown).toMatchObject({
+      type: "rawKeyDown",
+      modifiers: 4,
+      commands: ["selectAll"],
+    });
+    expect(shortcut.keyDown).not.toHaveProperty("text");
+    expect(shortcut.keyDown).not.toHaveProperty("nativeVirtualKeyCode");
   });
 });

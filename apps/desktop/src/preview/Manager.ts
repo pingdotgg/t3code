@@ -5,6 +5,7 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import * as NodeCrypto from "node:crypto";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -74,7 +75,11 @@ import {
 } from "./GuestProtocol.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
-import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
+import {
+  makePreviewAutomationKeySequence,
+  makePreviewAutomationNativeKeySequence,
+  previewAutomationEditingCommandExpression,
+} from "./PreviewKeyboard.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 
 export type PreviewNavStatus =
@@ -1391,6 +1396,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   type SendCommand = (
     method: string,
     commandParams?: Record<string, unknown>,
+    sessionId?: string,
   ) => Effect.Effect<unknown, PreviewManagerError>;
 
   const prepareAutomationInput = Effect.fn("PreviewManager.prepareAutomationInput")(function* (
@@ -1410,7 +1416,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
     action: string,
-    use: (send: SendCommand, sendCleanup: SendCommand) => Effect.Effect<A, PreviewManagerError>,
+    use: (
+      send: SendCommand,
+      sendCleanup: SendCommand,
+      checkControl: Effect.Effect<void, PreviewManagerError>,
+    ) => Effect.Effect<A, PreviewManagerError>,
   ) {
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
@@ -1426,28 +1436,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const control = yield* ensureControlSession(wc);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
       yield* update(tabId, { controller: "agent" });
+      const checkControl = Effect.gen(function* () {
+        const currentEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
+        if (currentEpoch !== epoch) {
+          return yield* new PreviewAutomationControlInterruptedError({
+            operation: action,
+            tabId,
+            webContentsId: wc.id,
+          });
+        }
+      });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
-        function* (method, commandParams) {
-          const before = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-          if (before !== epoch) {
-            return yield* new PreviewAutomationControlInterruptedError({
-              operation: action,
-              tabId,
-              webContentsId: wc.id,
-            });
-          }
+        function* (method, commandParams, sessionId) {
+          yield* checkControl;
           const result = yield* attemptPromise(
             { operation: `${action}.${method}`, tabId, webContentsId: wc.id },
-            () => control.debugger.sendCommand(method, commandParams),
+            () =>
+              sessionId === undefined
+                ? control.debugger.sendCommand(method, commandParams)
+                : control.debugger.sendCommand(method, commandParams, sessionId),
           );
-          const after = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-          if (after !== epoch) {
-            return yield* new PreviewAutomationControlInterruptedError({
-              operation: action,
-              tabId,
-              webContentsId: wc.id,
-            });
-          }
+          yield* checkControl;
           return result;
         },
       );
@@ -1455,18 +1464,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // control epoch. Otherwise a partially dispatched input can leave Chromium
       // with a held key or focus emulation enabled for subsequent actions.
       const sendCleanup: SendCommand = Effect.fn("PreviewManager.sendCleanupCommand")(
-        function* (method, commandParams) {
+        function* (method, commandParams, sessionId) {
           return yield* attemptPromise(
             {
               operation: `${action}.cleanup.${method}`,
               tabId,
               webContentsId: wc.id,
             },
-            () => control.debugger.sendCommand(method, commandParams),
+            () =>
+              sessionId === undefined
+                ? control.debugger.sendCommand(method, commandParams)
+                : control.debugger.sendCommand(method, commandParams, sessionId),
           );
         },
       );
-      return yield* use(send, sendCleanup);
+      return yield* use(send, sendCleanup, checkControl);
     });
     const finalize = Effect.fn("PreviewManager.finalizeControlAction")(function* (
       exit: Exit.Exit<A, PreviewManagerError>,
@@ -3912,56 +3924,326 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const withNativeKeyReceipt = Effect.fn("PreviewManager.withNativeKeyReceipt")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    dispatch: Effect.Effect<void, PreviewManagerError>,
+    checkControl: Effect.Effect<void, PreviewManagerError>,
+  ) {
+    const context = { operation: "automationPress.awaitNativeKey", tabId, webContentsId: wc.id };
+    const evaluate = (frame: Electron.WebFrameMain, expression: string) =>
+      attemptPromise(context, () => frame.executeJavaScript(expression));
+    const { frames, receiptKey } = yield* Effect.acquireRelease(
+      attempt(context, () => ({
+        frames: wc.mainFrame.framesInSubtree,
+        receiptKey: JSON.stringify(`__t3NativeKey_${NodeCrypto.randomUUID()}`),
+      })),
+      ({ frames, receiptKey }) =>
+        Effect.all(
+          frames.map((frame) =>
+            evaluate(frame, `globalThis[${receiptKey}]?.dispose()`).pipe(
+              Effect.timeoutOption(1_000),
+              Effect.ignore,
+            ),
+          ),
+          { concurrency: "unbounded", discard: true },
+        ),
+    );
+    yield* Effect.gen(function* () {
+      for (const frame of frames) {
+        yield* checkControl;
+        yield* evaluate(
+          frame,
+          `(() => {
+              const receiptKey = ${receiptKey};
+              const counts = performance.eventCounts;
+              if (!counts) throw new Error("Native key delivery counters are unavailable.");
+              const keyUpsBefore = counts.get("keyup") ?? 0;
+              const keyDownsBefore = counts.get("keydown") ?? 0;
+              let settle;
+              let animationFrame = 0;
+              const promise = new Promise(resolve => { settle = resolve; });
+              const finish = delivered => {
+                cancelAnimationFrame(animationFrame);
+                window.removeEventListener("pagehide", onPageHide, true);
+                settle(delivered);
+              };
+              // Chromium counts trusted keys before dispatching page listeners,
+              // so stopImmediatePropagation cannot hide completed input.
+              const observe = () => {
+                if ((counts.get("keyup") ?? 0) > keyUpsBefore) finish(true);
+                else animationFrame = requestAnimationFrame(observe);
+              };
+              const onPageHide = () => finish(
+                (counts.get("keyup") ?? 0) > keyUpsBefore ||
+                (counts.get("keydown") ?? 0) > keyDownsBefore,
+              );
+              globalThis[receiptKey] = { promise, dispose: () => {
+                finish(false);
+                delete globalThis[receiptKey];
+              }};
+              window.addEventListener("pagehide", onPageHide, true);
+              animationFrame = requestAnimationFrame(observe);
+            })()`,
+        );
+      }
+      yield* checkControl;
+      yield* dispatch;
+      yield* attemptPromise(context, () =>
+        Promise.any(
+          frames.map(async (frame) => {
+            const delivered: unknown = await frame.executeJavaScript(
+              `globalThis[${receiptKey}]?.promise`,
+            );
+            if (delivered !== true)
+              throw new Error(
+                "The preview document changed before native key delivery was confirmed.",
+              );
+          }),
+        ),
+      );
+      yield* checkControl;
+    }).pipe(
+      Effect.timeout(5_000),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(new PreviewAutomationTimeoutError({ tabId, timeoutMs: 5_000 })),
+      }),
+    );
+  }, Effect.scoped);
+
+  const resolveKeyboardTarget = Effect.fn("PreviewManager.resolveKeyboardTarget")(function* (
+    tabId: string,
+    send: SendCommand,
+    sendCleanup: SendCommand,
+    checkControl: Effect.Effect<void, PreviewManagerError>,
+  ) {
+    const context = { operation: "automationPress.resolveFocusedFrame", tabId };
+    let sessionId: string | undefined;
+    let contextId: number | undefined;
+    while (true) {
+      const evaluated = (yield* send(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            let element = document.activeElement;
+            while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+            return element?.tagName === "IFRAME" ? element : null;
+          })()`,
+          ...(contextId === undefined ? {} : { contextId }),
+        },
+        sessionId,
+      )) as { result?: { objectId?: string; subtype?: string } };
+      if (evaluated.result?.subtype === "null") break;
+      const objectId = evaluated.result?.objectId;
+      if (!objectId)
+        return yield* new PreviewOperationError({
+          ...context,
+          cause: new Error("The focused preview frame could not be resolved."),
+        });
+      const described = (yield* send("DOM.describeNode", { objectId }, sessionId).pipe(
+        Effect.ensuring(
+          sendCleanup("Runtime.releaseObject", { objectId }, sessionId).pipe(Effect.ignore),
+        ),
+      )) as { node?: { frameId?: string } };
+      const frameId = described.node?.frameId;
+      if (!frameId)
+        return yield* new PreviewOperationError({
+          ...context,
+          cause: new Error("The focused preview iframe is unavailable."),
+        });
+      const targets = (yield* send("Target.getTargets")) as {
+        targetInfos?: ReadonlyArray<{ targetId: string; type: string }>;
+      };
+      if (
+        targets.targetInfos?.some(
+          (target) => target.type === "iframe" && target.targetId === frameId,
+        )
+      ) {
+        yield* checkControl;
+        // Register cleanup before checking the epoch again: a successful
+        // attach must be released even when human input interrupts its reply.
+        sessionId = yield* Effect.acquireRelease(
+          sendCleanup("Target.attachToTarget", { targetId: frameId, flatten: true }).pipe(
+            Effect.flatMap((response) =>
+              attempt(context, () => {
+                const attached = response as { sessionId?: string };
+                if (!attached.sessionId)
+                  throw new Error("The focused preview iframe could not be attached.");
+                return attached.sessionId;
+              }),
+            ),
+          ),
+          (attachedSessionId) =>
+            sendCleanup("Target.detachFromTarget", { sessionId: attachedSessionId }).pipe(
+              Effect.ignore,
+            ),
+        );
+        yield* checkControl;
+        contextId = undefined;
+      } else {
+        const world = (yield* send(
+          "Page.createIsolatedWorld",
+          {
+            frameId,
+            worldName: "t3-preview-key-target",
+          },
+          sessionId,
+        )) as { executionContextId?: number };
+        if (typeof world.executionContextId !== "number")
+          return yield* new PreviewOperationError({
+            ...context,
+            cause: new Error("The focused preview iframe context is unavailable."),
+          });
+        contextId = world.executionContextId;
+      }
+    }
+    return { sessionId, contextId };
+  });
+
   const performAutomationPress = Effect.fn("PreviewManager.performAutomationPress")(function* (
     tabId: string,
     wc: Electron.WebContents,
     input: PreviewAutomationPressInput,
     send: SendCommand,
     sendCleanup: SendCommand,
+    checkControl: Effect.Effect<void, PreviewManagerError>,
   ) {
     yield* prepareAutomationInput(send, false);
-    const keySequence = makePreviewAutomationKeySequence(input, {
+    const keySequence = makePreviewAutomationNativeKeySequence(input, {
       isMac: hostPlatform === "darwin",
     });
-    const previouslyFocused = yield* attempt(
-      { operation: "automationPress.getFocusedWebContents", tabId, webContentsId: wc.id },
-      () => webContents.getFocusedWebContents(),
-    );
-    let keyDownAttempted = false;
-    const releaseInput = Effect.gen(function* () {
-      if (keyDownAttempted) {
-        yield* sendCleanup("Input.dispatchKeyEvent", keySequence.keyUp).pipe(Effect.ignore);
-      }
-      yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
-        Effect.ignore,
-      );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
-        yield* attempt(
-          {
-            operation: "automationPress.restoreFocusedWebContents",
-            tabId,
-            webContentsId: previouslyFocused.id,
-          },
-          () => previouslyFocused.focus(),
-        ).pipe(Effect.ignore);
-      }
-    });
-
-    // Focus the guest WebContents itself, not its containing BrowserWindow. This
-    // activates native keyboard behavior for hidden/background previews without
-    // changing which thread is mounted in the UI. Restore the previous renderer
-    // after dispatch so automation never leaves the app's input focus behind.
+    // CDP keyboard dispatch follows the embedder's focused renderer, and
+    // WebContents.focus() is a no-op for webview guests. Native input targets
+    // this guest's widget directly, so Enter cannot submit the host composer.
     yield* Effect.gen(function* () {
-      yield* attempt(
-        { operation: "automationPress.focusWebContents", tabId, webContentsId: wc.id },
-        () => wc.focus(),
+      const { sessionId, contextId } = yield* resolveKeyboardTarget(
+        tabId,
+        send,
+        sendCleanup,
+        checkControl,
       );
-      yield* send("Page.bringToFront");
+      // Only descendant renderer sessions bypass Chromium's desktop focus lookup.
+      if (sessionId) {
+        const keys = makePreviewAutomationKeySequence(input, { isMac: hostPlatform === "darwin" });
+        yield* Effect.acquireRelease(Effect.void, () =>
+          sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }, sessionId).pipe(
+            Effect.ignore,
+          ),
+        );
+        yield* send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
+        yield* Effect.acquireRelease(Effect.void, () =>
+          sendCleanup("Input.dispatchKeyEvent", keys.keyUp, sessionId).pipe(Effect.ignore),
+        );
+        yield* send("Input.dispatchKeyEvent", keys.keyDown, sessionId);
+        return;
+      }
+      if (keySequence.commands?.length) {
+        const context = {
+          operation: "automationPress.editFocusedFrame",
+          tabId,
+          webContentsId: wc.id,
+        };
+        const evaluate = (expression: string, cleanup = false) =>
+          evaluateWithDebugger(
+            tabId,
+            (method, params) =>
+              (cleanup ? sendCleanup : send)(method, {
+                ...params,
+                ...(contextId === undefined ? {} : { contextId }),
+              }),
+            expression,
+            true,
+          );
+        const clipboardData = keySequence.commands.includes("paste")
+          ? yield* attemptPromise(context, async () => {
+              const formats: Array<{ type: string; data: string }> = [];
+              for (const item of await clipboard.read()) {
+                for (const type of item.types) {
+                  if (type.startsWith("electron ")) continue;
+                  const blob = await item.getType(type);
+                  if (!("arrayBuffer" in blob)) continue;
+                  formats.push({
+                    type,
+                    data: type.startsWith("text/")
+                      ? await blob.text()
+                      : Buffer.from(await blob.arrayBuffer()).toString("base64"),
+                  });
+                }
+              }
+              return formats;
+            })
+          : [];
+        yield* checkControl;
+        const expression = previewAutomationEditingCommandExpression(
+          input,
+          keySequence,
+          clipboardData,
+        );
+        const selectionKey = yield* encodeJson(
+          context,
+          `__t3EditingSelection_${NodeCrypto.randomUUID()}`,
+        );
+        // Editing requires an active document. Preserve the target
+        // and selection across focus handlers without focusing the desktop.
+        yield* Effect.acquireUseRelease(
+          evaluate(`(() => {
+            let element = document.activeElement;
+            while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+            const selection = document.getSelection();
+            const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+            const backward = selection?.direction === "backward";
+            const start = element?.selectionStart;
+            const end = element?.selectionEnd;
+            const direction = element?.selectionDirection;
+            globalThis[${selectionKey}] = () => {
+              element?.focus({ preventScroll: true });
+              if (typeof start === "number") element.setSelectionRange(start, end, direction);
+              else {
+                selection?.removeAllRanges();
+                if (range && backward) selection.setBaseAndExtent(
+                  range.endContainer, range.endOffset, range.startContainer, range.startOffset,
+                );
+                else if (range) selection.addRange(range);
+              }
+            };
+          })()`),
+          () =>
+            Effect.gen(function* () {
+              yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
+              yield* evaluate(`globalThis[${selectionKey}]();${expression}`);
+            }),
+          () => evaluate(`delete globalThis[${selectionKey}]`, true).pipe(Effect.ignore),
+        );
+        yield* checkControl;
+        return;
+      }
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
-      yield* expectAgentInput(tabId, keySequence.signal);
-      keyDownAttempted = true;
-      yield* send("Input.dispatchKeyEvent", keySequence.keyDown);
-    }).pipe(Effect.ensuring(releaseInput));
+      yield* withNativeKeyReceipt(
+        tabId,
+        wc,
+        Effect.gen(function* () {
+          yield* expectAgentInput(tabId, keySequence.signal);
+          yield* attempt(
+            { operation: "automationPress.sendInputEvent", tabId, webContentsId: wc.id },
+            () => {
+              try {
+                wc.sendInputEvent(keySequence.keyDown);
+                if (keySequence.char) wc.sendInputEvent(keySequence.char);
+              } finally {
+                wc.sendInputEvent(keySequence.keyUp);
+              }
+            },
+          );
+        }),
+        checkControl,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.ensuring(
+        sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(Effect.ignore),
+      ),
+    );
   });
 
   const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
@@ -3969,8 +4251,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationPressInput,
   ) {
     const wc = yield* requireWebContents(tabId);
-    yield* withControlSession(tabId, wc, "press", (send, sendCleanup) =>
-      performAutomationPress(tabId, wc, input, send, sendCleanup),
+    yield* withControlSession(tabId, wc, "press", (send, sendCleanup, checkControl) =>
+      performAutomationPress(tabId, wc, input, send, sendCleanup, checkControl),
     );
   });
 

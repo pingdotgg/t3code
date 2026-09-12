@@ -131,7 +131,7 @@ const modifierMask = (modifiers: PreviewAutomationPressInput["modifiers"]): numb
   }, 0);
 
 function resolveKeyDefinition(input: PreviewAutomationPressInput): KeyDefinition {
-  const named = NAMED_KEYS[input.key];
+  const named = NAMED_KEYS[input.key === " " ? "Space" : input.key];
   if (named) return named;
 
   const functionKey = /^F([1-9]|1[0-2])$/.exec(input.key);
@@ -200,4 +200,164 @@ export function makePreviewAutomationKeySequence(
     keyUp: { type: "keyUp", ...shared },
     signal: { kind: "key", key: definition.key, code: definition.code },
   };
+}
+
+/** Root CDP input can retarget the embedder; native packets address the guest widget. */
+export function makePreviewAutomationNativeKeySequence(
+  input: PreviewAutomationPressInput,
+  options?: { readonly isMac?: boolean },
+) {
+  const { keyDown, signal } = makePreviewAutomationKeySequence(input, options);
+  const modifiers = (
+    [
+      [1, "alt"],
+      [2, "control"],
+      [4, "meta"],
+      [8, "shift"],
+    ] as const
+  )
+    .filter(([mask]) => keyDown.modifiers & mask)
+    .map(([, modifier]) => modifier);
+  const shared = {
+    keyCode: keyDown.key.startsWith("Arrow") ? keyDown.key.slice(5) : keyDown.key,
+    modifiers,
+    skipIfUnhandled: true as const,
+  };
+  // Electron lowercases unshifted letters and reports no key for Unicode accelerators.
+  const key =
+    keyDown.windowsVirtualKeyCode === 0 && keyDown.key.length === 1
+      ? ""
+      : /^[A-Z]$/.test(keyDown.key) && !modifiers.includes("shift")
+        ? keyDown.key.toLowerCase()
+        : keyDown.key;
+  return {
+    keyDown: { type: "keyDown" as const, ...shared },
+    ...(keyDown.text ? { char: { type: "char" as const, ...shared, keyCode: keyDown.text } } : {}),
+    keyUp: { type: "keyUp" as const, ...shared },
+    ...(keyDown.commands ? { commands: keyDown.commands } : {}),
+    signal: { ...signal, key },
+  };
+}
+
+/** Keep macOS editing shortcuts inside the target page without native focus. */
+export function previewAutomationEditingCommandExpression(
+  input: PreviewAutomationPressInput,
+  sequence: ReturnType<typeof makePreviewAutomationNativeKeySequence>,
+  clipboardData: ReadonlyArray<{ readonly type: string; readonly data: string }> = [],
+): string {
+  const definition = resolveKeyDefinition(input);
+  const event = {
+    key: definition.key,
+    code: definition.code,
+    keyCode: definition.keyCode,
+    which: definition.keyCode,
+    location: definition.location ?? 0,
+    altKey: input.modifiers?.includes("Alt") ?? false,
+    ctrlKey: input.modifiers?.includes("Control") ?? false,
+    metaKey: input.modifiers?.includes("Meta") ?? false,
+    shiftKey: input.modifiers?.includes("Shift") ?? false,
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  };
+  return `(() => {
+    let element = document.activeElement;
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    if (!element) return;
+    const event = ${JSON.stringify(event)};
+    try {
+      if (!element.dispatchEvent(new KeyboardEvent("keydown", event))) return;
+      for (const command of ${JSON.stringify(sequence.commands ?? [])}) {
+        // Main-process clipboard reads also work on insecure HTTP previews.
+        // Let the page's paste handler consume the clipboard MIME formats.
+        if (command === "paste") {
+          const transfer = new DataTransfer();
+          for (const { type, data } of ${JSON.stringify(clipboardData)}) {
+            if (type === "text/html") {
+              // Match native paste sanitization before page handlers or insertion.
+              const container = document.createElement("div");
+              container.setHTML(data);
+              transfer.setData(type, container.innerHTML);
+            } else if (type.startsWith("text/")) transfer.setData(type, data);
+            else {
+              const bytes = Uint8Array.from(atob(data), character => character.charCodeAt(0));
+              transfer.items.add(new File([bytes], "clipboard", { type }));
+            }
+          }
+          if (!element.dispatchEvent(new ClipboardEvent("paste", {
+            clipboardData: transfer, bubbles: true, cancelable: true, composed: true,
+          }))) continue;
+          const text = transfer.getData("text/plain");
+          if (!element.dispatchEvent(new InputEvent("beforeinput", {
+            inputType: "insertFromPaste", data: text, dataTransfer: transfer,
+            bubbles: true, cancelable: true, composed: true,
+          }))) continue;
+          const html = element.isContentEditable ? transfer.getData("text/html") : "";
+          document.execCommand(html ? "insertHTML" : "insertText", false, html || text);
+          continue;
+        }
+        const inputType = command === "deleteToBeginningOfLine" ? "deleteSoftLineBackward"
+          : command === "undo" ? "historyUndo"
+          : command === "redo" ? "historyRedo" : null;
+        // execCommand emits input without beforeinput. Let controlled editors
+        // perform the edit before applying the browser's default operation.
+        if (inputType && !element.dispatchEvent(new InputEvent("beforeinput", {
+          inputType, bubbles: true, cancelable: true, composed: true,
+        }))) continue;
+        const selection = document.getSelection();
+        if (command === "deleteToBeginningOfLine") {
+          const collapsed = typeof element.selectionStart === "number"
+            ? element.selectionStart === element.selectionEnd
+            : selection?.isCollapsed;
+          if (collapsed) selection?.modify("extend", "backward", "lineboundary");
+          document.execCommand("delete");
+        } else if (command.startsWith("moveTo")) {
+          const selectionElement = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+            ? selection.anchorNode : selection?.anchorNode?.parentElement;
+          const editable = element.isContentEditable || selectionElement?.isContentEditable ||
+            (((element instanceof HTMLInputElement && element.selectionStart !== null) ||
+              element instanceof HTMLTextAreaElement) &&
+              !element.readOnly && !element.disabled);
+          if (!editable && (command === "moveToBeginningOfDocument" || command === "moveToEndOfDocument")) {
+            let scrollable = element === document.body ? selectionElement ?? element : element;
+            while (scrollable && !(scrollable.scrollHeight > scrollable.clientHeight &&
+              /^(auto|scroll|overlay)$/.test(getComputedStyle(scrollable).overflowY))) {
+              scrollable = scrollable.parentElement ?? scrollable.getRootNode().host;
+            }
+            scrollable ??= document.scrollingElement;
+            if (scrollable) scrollable.scrollTop = command === "moveToBeginningOfDocument"
+              ? 0 : scrollable.scrollHeight;
+            continue;
+          }
+          const direction = command.includes("Beginning") ? "backward"
+            : command.includes("Left") ? "left"
+            : command.includes("Right") ? "right" : "forward";
+          selection?.modify(
+            command.endsWith("AndModifySelection") ? "extend" : "move",
+            direction,
+            command.includes("Document") ? "documentboundary" : "lineboundary",
+          );
+          if (element instanceof HTMLInputElement && element.selectionStart !== null) {
+            if (command.includes("Left") || command.includes("Beginning")) element.scrollLeft = 0;
+            else element.scrollLeft = element.scrollWidth;
+          }
+          // Programmatic selection changes do not reveal the caret like native editing commands.
+          if (editable && command.includes("Document")) {
+            const beginning = command.includes("Beginning");
+            if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+              element.scrollTop = beginning ? 0 : element.scrollHeight;
+            } else {
+              const caretElement = selection?.focusNode?.nodeType === Node.ELEMENT_NODE
+                ? selection.focusNode : selection?.focusNode?.parentElement;
+              caretElement?.scrollIntoView({ block: beginning ? "start" : "end", inline: "nearest" });
+            }
+          }
+        } else {
+          document.execCommand(command);
+        }
+      }
+    } finally {
+      element.dispatchEvent(new KeyboardEvent("keyup", event));
+    }
+  })()`;
 }
