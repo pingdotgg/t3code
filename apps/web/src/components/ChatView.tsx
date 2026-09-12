@@ -198,6 +198,7 @@ import {
 import { workspacePaneShortcutAction } from "../workspacePaneShortcuts";
 import {
   findSurfaceTabs,
+  threadWorkspaceTabBarDropTransition,
   threadWorkspaceTabDropTransition,
   transitionThreadWorkspaceTabs,
   type ThreadWorkspaceLayoutTransition,
@@ -229,7 +230,7 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import type { WorkspaceTabContextTarget } from "./RightPanelTabs.logic";
-import { SplitPaneGrid, type PaneFocusPulse } from "./SplitPaneGrid";
+import { SplitPaneGrid, type PaneFocusPulse, type PaneTabBarDropPreview } from "./SplitPaneGrid";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -1657,7 +1658,6 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
-  const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<PaneTabDragData | null>(null);
   const workspacePaneFocusSequenceRef = useRef(0);
   const [workspacePaneFocusPulse, setWorkspacePaneFocusPulse] = useState<PaneFocusPulse | null>(
     null,
@@ -8920,7 +8920,7 @@ export default function ChatView(props: ChatViewProps) {
   const topLeftWorkspacePaneId = topWorkspacePanes[0]?.id ?? null;
   const topRightWorkspacePaneId = findTopRightPane(visibleWorkspaceRoot).id;
   const topWorkspacePaneIds = new Set(topWorkspacePanes.map((pane) => pane.id));
-  const renderWorkspacePane = (pane: PaneNode) => {
+  const renderWorkspacePane = (pane: PaneNode, tabDropPreview: PaneTabBarDropPreview | null) => {
     if (!activeThreadRef) return null;
     const adjacentPanes = findAdjacentPanes(threadWorkspaceLayout.paneTree, pane.id);
     const tabs = pane.tabIds.flatMap((tabId) => {
@@ -8987,46 +8987,6 @@ export default function ChatView(props: ChatViewProps) {
       transitionThreadWorkspaceLayout(activeThreadRef, { _tag: "FocusPane", paneId: pane.id });
       action();
     };
-    const startTabDrag = (target: WorkspaceTabContextTarget) => {
-      const tabId = tabIdForTarget(target);
-      if (tabId) setDraggedWorkspaceTab({ sourcePaneId: pane.id, sourceTabId: tabId });
-    };
-    const dropTabAtIndex = (targetIndex: number) => {
-      if (!draggedWorkspaceTab) return;
-      const sourcePane = findPane(
-        threadWorkspaceLayout.paneTree.root,
-        draggedWorkspaceTab.sourcePaneId,
-      );
-      if (!sourcePane?.tabIds.includes(draggedWorkspaceTab.sourceTabId)) return;
-      if (draggedWorkspaceTab.sourcePaneId === pane.id) {
-        const sourceIndex = sourcePane.tabIds.indexOf(draggedWorkspaceTab.sourceTabId);
-        const adjustedTargetIndex =
-          sourceIndex < targetIndex ? Math.max(0, targetIndex - 1) : targetIndex;
-        mutateWorkspaceLayout({
-          _tag: "ReorderTab",
-          paneId: pane.id,
-          tabId: draggedWorkspaceTab.sourceTabId,
-          targetIndex: Math.min(adjustedTargetIndex, pane.tabIds.length - 1),
-        });
-      } else {
-        mutateWorkspaceLayout({
-          _tag: "MoveTabToPane",
-          sourcePaneId: draggedWorkspaceTab.sourcePaneId,
-          targetPaneId: pane.id,
-          tabId: draggedWorkspaceTab.sourceTabId,
-          targetIndex,
-        });
-      }
-      setDraggedWorkspaceTab(null);
-    };
-    const dropTab = (target: WorkspaceTabContextTarget, position: "before" | "after") => {
-      const targetTabId = tabIdForTarget(target);
-      const targetTabIndex = targetTabId ? pane.tabIds.indexOf(targetTabId) : -1;
-      if (targetTabIndex >= 0) {
-        dropTabAtIndex(targetTabIndex + (position === "after" ? 1 : 0));
-      }
-    };
-
     return (
       <RightPanelTabs
         mode="embedded"
@@ -9093,10 +9053,12 @@ export default function ChatView(props: ChatViewProps) {
         onSplitTab={(target, direction) => splitTab(target, direction, "copy")}
         onMoveTabToSplit={(target, direction) => splitTab(target, direction, "move")}
         onMoveTabToPane={moveTabToPane}
-        onTabDragStart={startTabDrag}
-        onTabDragEnd={() => setDraggedWorkspaceTab(null)}
-        onTabDrop={dropTab}
-        onTabDropAtEnd={() => dropTabAtIndex(pane.tabIds.length)}
+        paneId={pane.id}
+        tabDragDataForTarget={(target) => {
+          const tabId = tabIdForTarget(target);
+          return tabId ? { sourcePaneId: pane.id, sourceTabId: tabId } : null;
+        }}
+        tabDropPreview={tabDropPreview}
         adjacentGroups={adjacentPanes}
         canCopyTabToSplit={(target) => target._tag === "Surface"}
         canMoveTabToSplit={() => pane.tabIds.length > 1}
@@ -9164,12 +9126,8 @@ export default function ChatView(props: ChatViewProps) {
         {workspaceMode && activeThreadRef ? (
           <SplitPaneGrid
             tree={threadWorkspaceLayout.paneTree}
-            draggedTab={draggedWorkspaceTab}
-            canCopyDraggedTabFromSolePane={
-              draggedWorkspaceTab
-                ? threadWorkspaceLayout.tabsById[draggedWorkspaceTab.sourceTabId]?._tag ===
-                  "Surface"
-                : false
+            canCopyDraggedTabFromSolePane={(draggedTab) =>
+              threadWorkspaceLayout.tabsById[draggedTab.sourceTabId]?._tag === "Surface"
             }
             focusPulse={workspacePaneFocusPulse}
             renderPane={renderWorkspacePane}
@@ -9187,7 +9145,10 @@ export default function ChatView(props: ChatViewProps) {
               readonly zone: PaneDropZone;
             }) => {
               mutateWorkspaceLayout(threadWorkspaceTabDropTransition(threadWorkspaceLayout, input));
-              setDraggedWorkspaceTab(null);
+            }}
+            onDropTabAtIndex={(input) => {
+              const transition = threadWorkspaceTabBarDropTransition(threadWorkspaceLayout, input);
+              if (transition) mutateWorkspaceLayout(transition);
             }}
           />
         ) : (

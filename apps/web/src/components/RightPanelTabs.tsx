@@ -1,3 +1,4 @@
+import { useDraggable } from "@dnd-kit/core";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -34,7 +35,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -44,12 +44,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
 
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import type { AdjacentPanes, PaneSplitDirection } from "~/splitPaneTree";
+import type { AdjacentPanes, PaneId, PaneSplitDirection, PaneTabDragData } from "~/splitPaneTree";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
@@ -80,6 +79,7 @@ import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import type { PaneTabBarDropPreview } from "./SplitPaneGrid";
 import {
   buildWorkspaceTabContextMenuItems,
   resolveWorkspaceTabLayoutAction,
@@ -133,10 +133,9 @@ export interface RightPanelTabsProps {
   onSplitTab?: (target: WorkspaceTabContextTarget, direction: PaneSplitDirection) => void;
   onMoveTabToSplit?: (target: WorkspaceTabContextTarget, direction: PaneSplitDirection) => void;
   onMoveTabToPane?: (target: WorkspaceTabContextTarget, direction: PaneSplitDirection) => void;
-  onTabDragStart?: (target: WorkspaceTabContextTarget) => void;
-  onTabDragEnd?: () => void;
-  onTabDrop?: (target: WorkspaceTabContextTarget, position: "before" | "after") => void;
-  onTabDropAtEnd?: () => void;
+  paneId?: PaneId;
+  tabDragDataForTarget?: (target: WorkspaceTabContextTarget) => PaneTabDragData | null;
+  tabDropPreview?: PaneTabBarDropPreview | null;
   adjacentGroups?: AdjacentPanes;
   canCopyTabToSplit?: (target: WorkspaceTabContextTarget) => boolean;
   canMoveTabToSplit?: (target: WorkspaceTabContextTarget) => boolean;
@@ -230,6 +229,30 @@ const NO_ADJACENT_PANES: AdjacentPanes = {
 };
 
 const TAB_SCROLL_EDGE_TOLERANCE = 1;
+
+type DraggableWorkspaceTabBag = Pick<
+  ReturnType<typeof useDraggable>,
+  "isDragging" | "listeners" | "setNodeRef"
+> & { readonly dragData: PaneTabDragData | null };
+
+function DraggableWorkspaceTab(props: {
+  readonly fallbackId: string;
+  readonly dragData: PaneTabDragData | null;
+  readonly disabled?: boolean;
+  readonly children: (bag: DraggableWorkspaceTabBag) => ReactNode;
+}) {
+  const draggable = useDraggable({
+    id: props.dragData?.sourceTabId ?? props.fallbackId,
+    disabled: props.disabled === true || props.dragData === null,
+    ...(props.dragData ? { data: props.dragData } : {}),
+  });
+  return props.children({
+    dragData: props.dragData,
+    isDragging: draggable.isDragging,
+    listeners: draggable.listeners,
+    setNodeRef: draggable.setNodeRef,
+  });
+}
 
 function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
@@ -870,10 +893,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
-  const [tabDropPreview, setTabDropPreview] = useState<{
-    readonly key: string;
-    readonly position: "before" | "after" | "end";
-  } | null>(null);
 
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -980,69 +999,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.stopPropagation();
     setAddSurfaceMenuOpen(false);
     action.onClick();
-  };
-
-  const tabTargetKey = (target: WorkspaceTabContextTarget) =>
-    target._tag === "Thread" ? "thread" : target.surface.id;
-  const handleTabDragStart = (
-    event: ReactDragEvent<HTMLElement>,
-    target: WorkspaceTabContextTarget,
-    label: string,
-  ) => {
-    if (!props.onTabDragStart) return;
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", label);
-    flushSync(() => props.onTabDragStart?.(target));
-  };
-  const handleTabDragEnd = () => {
-    setTabDropPreview(null);
-    props.onTabDragEnd?.();
-  };
-  const handleTabDragOver = (
-    event: ReactDragEvent<HTMLElement>,
-    target: WorkspaceTabContextTarget,
-  ) => {
-    if (!props.onTabDrop) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "move";
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const position = event.clientX < bounds.left + bounds.width / 2 ? "before" : "after";
-    const key = tabTargetKey(target);
-    setTabDropPreview((current) =>
-      current?.key === key && current.position === position ? current : { key, position },
-    );
-  };
-  const handleTabDrop = (event: ReactDragEvent<HTMLElement>, target: WorkspaceTabContextTarget) => {
-    if (!props.onTabDrop) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const key = tabTargetKey(target);
-    const position =
-      tabDropPreview?.key === key && tabDropPreview.position !== "end"
-        ? tabDropPreview.position
-        : "after";
-    setTabDropPreview(null);
-    props.onTabDrop(target, position);
-  };
-  const handleTabDragLeave = (event: ReactDragEvent<HTMLElement>) => {
-    const relatedTarget = event.relatedTarget;
-    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return;
-    setTabDropPreview(null);
-  };
-  const handleTabBarDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!props.onTabDropAtEnd) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    setTabDropPreview((current) =>
-      current?.position === "end" ? current : { key: "end", position: "end" },
-    );
-  };
-  const handleTabBarDrop = (event: ReactDragEvent<HTMLDivElement>) => {
-    if (!props.onTabDropAtEnd) return;
-    event.preventDefault();
-    setTabDropPreview(null);
-    props.onTabDropAtEnd();
   };
 
   const handleTabContextMenu = useCallback(
@@ -1258,50 +1214,62 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         >
           <div
             className="flex h-full w-max min-w-full items-center gap-1"
-            onDragLeave={handleTabDragLeave}
-            onDragOver={handleTabBarDragOver}
-            onDrop={handleTabBarDrop}
+            data-editor-pane-tab-list={props.paneId}
           >
             {props.threadTab ? (
-              <button
-                type="button"
-                draggable={props.onTabDragStart !== undefined}
-                data-active-tab={props.threadTab.active}
-                data-editor-tab="thread"
-                aria-current={props.threadTab.active ? "page" : undefined}
-                onClick={props.threadTab.onActivate}
-                onContextMenu={(event) => void handleTabContextMenu(event, { _tag: "Thread" })}
-                onDragEnd={handleTabDragEnd}
-                onDragLeave={handleTabDragLeave}
-                onDragOver={(event) => handleTabDragOver(event, { _tag: "Thread" })}
-                onDragStart={(event) =>
-                  handleTabDragStart(event, { _tag: "Thread" }, props.threadTab?.title ?? "Thread")
-                }
-                onDrop={(event) => handleTabDrop(event, { _tag: "Thread" })}
-                className={cn(
-                  "relative flex h-6 max-w-40 shrink-0 select-none items-center gap-1.5 rounded-md px-2 text-xs",
-                  props.onTabDragStart ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
-                  ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-                  props.threadTab.active
-                    ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                )}
+              <DraggableWorkspaceTab
+                fallbackId="workspace-tab:thread"
+                dragData={props.tabDragDataForTarget?.({ _tag: "Thread" }) ?? null}
               >
-                {tabDropPreview?.key === "thread" && tabDropPreview.position === "before" ? (
-                  <span
-                    aria-hidden
-                    className="absolute inset-y-0 -left-1 w-0.5 rounded-full bg-primary"
-                  />
-                ) : null}
-                <MessageSquareText className="size-3 shrink-0" />
-                <span className="truncate">{props.threadTab.title}</span>
-                {tabDropPreview?.key === "thread" && tabDropPreview.position === "after" ? (
-                  <span
-                    aria-hidden
-                    className="absolute inset-y-0 -right-1 w-0.5 rounded-full bg-primary"
-                  />
-                ) : null}
-              </button>
+                {({ dragData, isDragging, listeners, setNodeRef }) => {
+                  const preview =
+                    dragData && props.tabDropPreview?.targetTabId === dragData.sourceTabId
+                      ? props.tabDropPreview
+                      : null;
+                  return (
+                    <button
+                      ref={setNodeRef}
+                      type="button"
+                      data-active-tab={props.threadTab?.active}
+                      data-editor-tab="thread"
+                      data-editor-pane-id={dragData?.sourcePaneId}
+                      data-editor-pane-tab-id={dragData?.sourceTabId}
+                      aria-current={props.threadTab?.active ? "page" : undefined}
+                      onClick={props.threadTab?.onActivate}
+                      onContextMenu={(event) =>
+                        void handleTabContextMenu(event, { _tag: "Thread" })
+                      }
+                      {...listeners}
+                      className={cn(
+                        "relative flex h-6 max-w-40 shrink-0 select-none items-center gap-1.5 rounded-md px-2 text-xs",
+                        dragData
+                          ? "touch-none cursor-grab active:cursor-grabbing"
+                          : "cursor-pointer",
+                        ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+                        isDragging && "opacity-40",
+                        props.threadTab?.active
+                          ? "bg-accent text-foreground"
+                          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      )}
+                    >
+                      {preview?.position === "before" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 -left-1 w-0.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                      <MessageSquareText className="size-3 shrink-0" />
+                      <span className="truncate">{props.threadTab?.title}</span>
+                      {preview?.position === "after" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 -right-1 w-0.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </button>
+                  );
+                }}
+              </DraggableWorkspaceTab>
             ) : null}
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
@@ -1316,138 +1284,151 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const audioRuntimeTabId = previewTabId
                 ? (props.previewRuntimeTabId?.(previewTabId) ?? null)
                 : null;
+              const tabTarget = { _tag: "Surface", surface } as const;
+              const dragData = props.tabDragDataForTarget?.(tabTarget) ?? null;
+              const dropPreview =
+                dragData && props.tabDropPreview?.targetTabId === dragData.sourceTabId
+                  ? props.tabDropPreview
+                  : null;
               return (
-                <div
+                <DraggableWorkspaceTab
                   key={surface.id}
-                  draggable={props.onTabDragStart !== undefined && renamingDevice !== surface.id}
-                  data-active-tab={active}
-                  data-editor-tab={surface.id}
-                  onMouseDown={handleTabMouseDown}
-                  onAuxClick={(event) => handleTabAuxClick(event, surface)}
-                  onContextMenu={(event) =>
-                    void handleTabContextMenu(event, { _tag: "Surface", surface })
-                  }
-                  onDragEnd={handleTabDragEnd}
-                  onDragLeave={handleTabDragLeave}
-                  onDragOver={(event) => handleTabDragOver(event, { _tag: "Surface", surface })}
-                  onDragStart={(event) =>
-                    handleTabDragStart(event, { _tag: "Surface", surface }, title)
-                  }
-                  onDrop={(event) => handleTabDrop(event, { _tag: "Surface", surface })}
-                  className={cn(
-                    "group/tab relative flex h-6 max-w-36 shrink-0 select-none items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
-                    props.onTabDragStart ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
-                    ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-                    active
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                  )}
+                  fallbackId={`workspace-tab:${surface.id}`}
+                  dragData={dragData}
+                  disabled={renamingDevice === surface.id}
                 >
-                  {tabDropPreview?.key === surface.id && tabDropPreview.position === "before" ? (
-                    <span
-                      aria-hidden
-                      className="absolute inset-y-0 -left-1 w-0.5 rounded-full bg-primary"
-                    />
-                  ) : null}
-                  <PanelTabCloseButton
-                    label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
-                  >
-                    <SurfaceIcon
-                      surface={surface}
-                      sessions={props.previewSessions}
-                      desktopByTabId={props.desktopByTabId}
-                      theme={resolvedTheme}
-                      environmentId={props.environmentId}
-                      pullRequestStatusSeeds={props.pullRequestStatusSeeds}
-                    />
-                    {pending ? (
-                      <span
-                        className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-                        aria-hidden
-                      />
-                    ) : null}
-                  </PanelTabCloseButton>
-                  {audio === "none" || !audioRuntimeTabId ? null : (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
-                            onClick={(event) => {
-                              // Sibling of the close button, inside a tab that
-                              // activates on click: keep this to the toggle.
-                              event.stopPropagation();
-                              void previewBridge
-                                ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                                .catch(() => undefined);
-                            }}
-                          >
-                            {audio === "muted" ? (
-                              <VolumeOff className="size-3" />
-                            ) : (
-                              <Volume2 className="size-3" />
-                            )}
-                          </button>
-                        }
-                      />
-                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
-                    </Tooltip>
+                  {({ isDragging, listeners, setNodeRef }) => (
+                    <div
+                      ref={setNodeRef}
+                      data-active-tab={active}
+                      data-editor-tab={surface.id}
+                      data-editor-pane-id={dragData?.sourcePaneId}
+                      data-editor-pane-tab-id={dragData?.sourceTabId}
+                      onMouseDown={handleTabMouseDown}
+                      onAuxClick={(event) => handleTabAuxClick(event, surface)}
+                      onContextMenu={(event) => void handleTabContextMenu(event, tabTarget)}
+                      {...listeners}
+                      className={cn(
+                        "group/tab relative flex h-6 max-w-36 shrink-0 select-none items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                        dragData
+                          ? "touch-none cursor-grab active:cursor-grabbing"
+                          : "cursor-pointer",
+                        ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+                        isDragging && "opacity-40",
+                        active
+                          ? "bg-accent text-foreground"
+                          : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                      )}
+                    >
+                      {dropPreview?.position === "before" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 -left-1 w-0.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                      <PanelTabCloseButton
+                        label={`Close ${title}`}
+                        onClick={() => props.onCloseSurface(surface)}
+                      >
+                        <SurfaceIcon
+                          surface={surface}
+                          sessions={props.previewSessions}
+                          desktopByTabId={props.desktopByTabId}
+                          theme={resolvedTheme}
+                          environmentId={props.environmentId}
+                          pullRequestStatusSeeds={props.pullRequestStatusSeeds}
+                        />
+                        {pending ? (
+                          <span
+                            className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                            aria-hidden
+                          />
+                        ) : null}
+                      </PanelTabCloseButton>
+                      {audio === "none" || !audioRuntimeTabId ? null : (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                                onClick={(event) => {
+                                  // Sibling of the close button, inside a tab that
+                                  // activates on click: keep this to the toggle.
+                                  event.stopPropagation();
+                                  void previewBridge
+                                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                                    .catch(() => undefined);
+                                }}
+                              >
+                                {audio === "muted" ? (
+                                  <VolumeOff className="size-3" />
+                                ) : (
+                                  <Volume2 className="size-3" />
+                                )}
+                              </button>
+                            }
+                          />
+                          <TooltipPopup>
+                            {audio === "muted" ? "Unmute tab" : "Mute tab"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      )}
+                      {renamingDevice === surface.id ? (
+                        <input
+                          aria-label="Device tab name"
+                          className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-ring"
+                          defaultValue={title}
+                          ref={(element) => {
+                            element?.focus();
+                            element?.select();
+                          }}
+                          onBlur={(event) => {
+                            props.onRenameDevice?.(surface.id, event.currentTarget.value);
+                            setRenamingDevice(null);
+                          }}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") event.currentTarget.blur();
+                            if (event.key === "Escape") {
+                              event.currentTarget.value = title;
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                onDoubleClick={() => {
+                                  if (surface.kind === "device" && props.onRenameDevice)
+                                    setRenamingDevice(surface.id);
+                                }}
+                                className="flex min-w-0 cursor-inherit items-center"
+                                onClick={() => props.onActivate(surface)}
+                              >
+                                <span className="truncate">{title}</span>
+                              </button>
+                            }
+                          />
+                          <TooltipPopup>{title}</TooltipPopup>
+                        </Tooltip>
+                      )}
+                      {dropPreview?.position === "after" ? (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 -right-1 w-0.5 rounded-full bg-primary"
+                        />
+                      ) : null}
+                    </div>
                   )}
-                  {renamingDevice === surface.id ? (
-                    <input
-                      aria-label="Device tab name"
-                      className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-ring"
-                      defaultValue={title}
-                      ref={(element) => {
-                        element?.focus();
-                        element?.select();
-                      }}
-                      onBlur={(event) => {
-                        props.onRenameDevice?.(surface.id, event.currentTarget.value);
-                        setRenamingDevice(null);
-                      }}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                        if (event.key === "Enter") event.currentTarget.blur();
-                        if (event.key === "Escape") {
-                          event.currentTarget.value = title;
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            onDoubleClick={() => {
-                              if (surface.kind === "device" && props.onRenameDevice)
-                                setRenamingDevice(surface.id);
-                            }}
-                            className="flex min-w-0 cursor-inherit items-center"
-                            onClick={() => props.onActivate(surface)}
-                          >
-                            <span className="truncate">{title}</span>
-                          </button>
-                        }
-                      />
-                      <TooltipPopup>{title}</TooltipPopup>
-                    </Tooltip>
-                  )}
-                  {tabDropPreview?.key === surface.id && tabDropPreview.position === "after" ? (
-                    <span
-                      aria-hidden
-                      className="absolute inset-y-0 -right-1 w-0.5 rounded-full bg-primary"
-                    />
-                  ) : null}
-                </div>
+                </DraggableWorkspaceTab>
               );
             })}
-            {tabDropPreview?.position === "end" ? (
+            {props.tabDropPreview?.position === "end" ? (
               <span className="h-5 w-0.5 shrink-0 rounded-full bg-primary" aria-hidden />
             ) : null}
             {props.surfaces.length > 0 || props.threadTab ? (

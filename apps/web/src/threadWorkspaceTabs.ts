@@ -161,6 +161,46 @@ export function threadWorkspaceTabDropTransition(
   };
 }
 
+/** Resolves a pointer drop in a pane's tab strip into one layout transition. */
+export function threadWorkspaceTabBarDropTransition(
+  current: ThreadWorkspaceTabFields,
+  input: {
+    readonly draggedTab: PaneTabDragData;
+    readonly targetPaneId: PaneId;
+    readonly targetIndex: number;
+  },
+): ThreadWorkspaceLayoutTransition | null {
+  const sourcePane = findPane(current.paneTree.root, input.draggedTab.sourcePaneId);
+  const targetPane = findPane(current.paneTree.root, input.targetPaneId);
+  if (
+    !sourcePane?.tabIds.includes(input.draggedTab.sourceTabId) ||
+    !targetPane ||
+    !Number.isSafeInteger(input.targetIndex) ||
+    input.targetIndex < 0 ||
+    input.targetIndex > targetPane.tabIds.length
+  ) {
+    return null;
+  }
+  if (sourcePane.id !== targetPane.id) {
+    return {
+      _tag: "MoveTabToPane",
+      sourcePaneId: sourcePane.id,
+      targetPaneId: targetPane.id,
+      tabId: input.draggedTab.sourceTabId,
+      targetIndex: input.targetIndex,
+    };
+  }
+  const sourceIndex = sourcePane.tabIds.indexOf(input.draggedTab.sourceTabId);
+  const adjustedTargetIndex =
+    sourceIndex < input.targetIndex ? Math.max(0, input.targetIndex - 1) : input.targetIndex;
+  return {
+    _tag: "ReorderTab",
+    paneId: sourcePane.id,
+    tabId: input.draggedTab.sourceTabId,
+    targetIndex: Math.min(adjustedTargetIndex, sourcePane.tabIds.length - 1),
+  };
+}
+
 const ROOT_GROUP_ID: PaneId = "pane:root";
 const THREAD_TAB_ID: PaneTabId = "pane-tab:thread";
 

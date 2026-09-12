@@ -6,6 +6,7 @@ import {
   findThreadWorkspaceTabGroup,
   findSurfaceTabs,
   parsePersistedThreadWorkspaceTabs,
+  threadWorkspaceTabBarDropTransition,
   transitionThreadWorkspaceTabs,
   threadWorkspaceTabDropTransition,
 } from "./threadWorkspaceTabs";
@@ -184,6 +185,63 @@ describe("thread workspace tabs", () => {
         return tab?._tag === "Thread" ? "thread" : tab?.surfaceId;
       }),
     ).toEqual(["thread", "diff", "files"]);
+  });
+
+  test("resolves tab-strip drops after removing the dragged tab from its old index", () => {
+    const initial = createThreadWorkspaceTabFields(["files", "diff"]);
+    const filesTab = findSurfaceTabs(initial, "files")[0];
+    const pane = initial.paneTree.root;
+    expect(filesTab).toBeDefined();
+    expect(pane._tag).toBe("Group");
+    if (!filesTab || pane._tag !== "Group") return;
+
+    expect(
+      threadWorkspaceTabBarDropTransition(initial, {
+        draggedTab: { sourcePaneId: pane.id, sourceTabId: filesTab.id },
+        targetPaneId: pane.id,
+        targetIndex: pane.tabIds.length,
+      }),
+    ).toEqual({
+      _tag: "ReorderTab",
+      paneId: pane.id,
+      tabId: filesTab.id,
+      targetIndex: pane.tabIds.length - 1,
+    });
+  });
+
+  test("resolves a tab-strip drop into another pane at the requested index", () => {
+    const initial = createThreadWorkspaceTabFields(["files", "diff"]);
+    const filesTab = findSurfaceTabs(initial, "files")[0];
+    const diffTab = findSurfaceTabs(initial, "diff")[0];
+    const sourcePaneId = filesTab ? findThreadWorkspaceTabGroup(initial, filesTab.id) : null;
+    expect(filesTab).toBeDefined();
+    expect(diffTab).toBeDefined();
+    expect(sourcePaneId).not.toBeNull();
+    if (!filesTab || !diffTab || !sourcePaneId) return;
+    const split = transitionThreadWorkspaceTabs(initial, {
+      _tag: "SplitTab",
+      paneId: sourcePaneId,
+      tabId: filesTab.id,
+      direction: "right",
+      mode: "move",
+    });
+    const targetPaneId = findThreadWorkspaceTabGroup(split, filesTab.id);
+    expect(targetPaneId).not.toBeNull();
+    if (!targetPaneId) return;
+
+    expect(
+      threadWorkspaceTabBarDropTransition(split, {
+        draggedTab: { sourcePaneId, sourceTabId: diffTab.id },
+        targetPaneId,
+        targetIndex: 0,
+      }),
+    ).toEqual({
+      _tag: "MoveTabToPane",
+      sourcePaneId,
+      targetPaneId,
+      tabId: diffTab.id,
+      targetIndex: 0,
+    });
   });
 
   test("keeps the thread tab pinned before reordered surface tabs", () => {
