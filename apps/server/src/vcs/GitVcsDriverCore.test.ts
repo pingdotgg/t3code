@@ -20,7 +20,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  makeGitVcsDriverCore,
+  parseGitCheckoutProgressLine,
+  splitNullSeparatedGitStdoutPaths,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1553,6 +1557,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it("parses checkout progress lines from git's stderr", () => {
+      assert.deepStrictEqual(parseGitCheckoutProgressLine("Updating files:  78% (2104/2700)"), {
+        percent: 78,
+        completed: 2104,
+        total: 2700,
+      });
+      // Progress lines arrive carriage-return separated and end with a done marker.
+      assert.deepStrictEqual(
+        parseGitCheckoutProgressLine("Updating files: 100% (2700/2700), done."),
+        { percent: 100, completed: 2700, total: 2700 },
+      );
+      assert.strictEqual(parseGitCheckoutProgressLine("Preparing worktree (new branch 'x')"), null);
+    });
+
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
@@ -1665,6 +1683,48 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.equal(created.worktree.path, worktreePath);
         assert.equal(yield* fileSystem.exists(worktreePath), true);
+      }),
+    );
+
+    it.effect("reports checkout progress while creating a worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        for (let index = 0; index < 5; index += 1) {
+          yield* writeTextFile(cwd, `file-${index}.txt`, `${index}\n`);
+        }
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "progress-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const seen = yield* Ref.make<Array<{ percent: number; completed: number; total: number }>>(
+          [],
+        );
+
+        yield* driver.createWorktree(
+          { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/progress" },
+          {
+            progress: {
+              onCheckoutProgress: (update) => Ref.update(seen, (all) => [...all, update]),
+            },
+          },
+        );
+
+        // Git separates live progress updates with `\r`, so the driver must
+        // surface every intermediate percentage, not just the final line.
+        const updates = yield* Ref.get(seen);
+        assert.isAbove(updates.length, 1);
+        assert.equal(updates.at(-1)?.percent, 100);
+        assert.equal(updates.at(-1)?.total, 6);
+        const completed = updates.map((update) => update.completed);
+        assert.deepEqual(
+          completed,
+          completed.toSorted((a, b) => a - b),
+        );
       }),
     );
 

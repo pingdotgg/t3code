@@ -1,5 +1,5 @@
 import { ProjectId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
@@ -130,24 +130,54 @@ function stripTerminalControl(text: string): string {
   );
 }
 
+type CompletionShell = "posix" | "fish" | "powershell";
+
 /**
- * Builds the shell line for the setup script. On POSIX shells the user's
- * command runs in a subshell so `&&` chains and `cd` cannot leak, then the
- * exit status is echoed. PowerShell reports `$LASTEXITCODE` or falls back to
- * the success flag.
+ * Predicts the shell TerminalManager will spawn for the setup terminal. The
+ * manager takes `$SHELL` on POSIX and PowerShell on Windows, falling back to
+ * other shells only when that one fails to spawn.
  */
-function wrapCommandForCompletion(command: string, platform: NodeJS.Platform): string {
-  if (platform === "win32") {
-    return `& { ${command} }; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${COMPLETION_SENTINEL_PREFIX}$__t3c"`;
-  }
-  return `( ${command} ); printf '\\n${COMPLETION_SENTINEL_PREFIX}%s\\n' "$?"`;
+function resolveCompletionShell(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): CompletionShell {
+  if (platform === "win32") return "powershell";
+  const shell = env.SHELL ?? "";
+  const name = shell.split("/").at(-1) ?? shell;
+  if (name === "fish") return "fish";
+  if (name === "pwsh" || name === "powershell") return "powershell";
+  return "posix";
 }
 
+/**
+ * Builds the shell input for the setup script. The command runs inside a
+ * block and the block closes on its own line, so a trailing `# comment` or a
+ * heredoc terminator in the command cannot swallow the sentinel. The shell
+ * reads the whole block before running any of it, so a script that reads
+ * stdin cannot consume the sentinel line either. Lines are separated by `\r`
+ * because that is the Enter key for every shell's line editor.
+ */
+function wrapCommandForCompletion(command: string, shell: CompletionShell): string {
+  const body = command.replace(/\r?\n/g, "\r");
+  switch (shell) {
+    case "powershell":
+      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${COMPLETION_SENTINEL_PREFIX}$__t3c"`;
+    case "fish":
+      return `begin\r${body}\rend; printf '\\n${COMPLETION_SENTINEL_PREFIX}%s\\n' $status`;
+    case "posix":
+      return `( ${body}\r); printf '\\n${COMPLETION_SENTINEL_PREFIX}%s\\n' "$?"`;
+  }
+}
+
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const platform = yield* HostProcessPlatform;
+  const completionShell = resolveCompletionShell(
+    yield* HostProcessPlatform,
+    yield* HostProcessEnvironment,
+  );
 
   /**
    * Watches the setup terminal for the completion sentinel. Terminal output is
@@ -157,6 +187,8 @@ export const make = Effect.gen(function* () {
   const observeTerminalCompletion = (input: {
     readonly threadId: string;
     readonly terminalId: string;
+    /** The shell echoes typed input; lines ending with these are the wrapper, not output. */
+    readonly echoedWrapperLines: ReadonlyArray<string>;
     readonly onOutputLine: ((line: string) => Effect.Effect<void>) | undefined;
   }) =>
     Effect.gen(function* () {
@@ -185,10 +217,10 @@ export const make = Effect.gen(function* () {
             return settle(Number.isFinite(parsed) ? parsed : null);
           }
           const cleaned = stripTerminalControl(rawLine).trimEnd();
-          // The echoed command line itself contains the sentinel prefix; hide it.
           if (
             cleaned.length === 0 ||
             cleaned.includes(COMPLETION_SENTINEL_PREFIX) ||
+            input.echoedWrapperLines.some((echoed) => cleaned.endsWith(echoed)) ||
             input.onOutputLine === undefined
           ) {
             return Effect.void;
@@ -215,7 +247,7 @@ export const make = Effect.gen(function* () {
       const completion = Deferred.await(done).pipe(
         Effect.ensuring(Effect.sync(() => unsubscribe())),
       );
-      return completion;
+      return { completion, unsubscribe };
     });
 
   const runForThread: ProjectSetupScriptRunner["Service"]["runForThread"] = Effect.fn(
@@ -285,7 +317,7 @@ export const make = Effect.gen(function* () {
     });
     const observe = input.observeCompletion;
     const commandLine = observe
-      ? wrapCommandForCompletion(script.command, platform)
+      ? wrapCommandForCompletion(script.command, completionShell)
       : script.command;
 
     yield* terminalManager
@@ -307,10 +339,11 @@ export const make = Effect.gen(function* () {
         ),
       );
     // Subscribe before writing so the sentinel cannot race past the listener.
-    const completion = observe
+    const observed = observe
       ? yield* observeTerminalCompletion({
           threadId: input.threadId,
           terminalId,
+          echoedWrapperLines: commandLine.split("\r"),
           onOutputLine: observe.onOutputLine,
         })
       : undefined;
@@ -330,6 +363,8 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
+        // Nothing will ever settle the completion if the command never ran.
+        Effect.tapError(() => Effect.sync(() => observed?.unsubscribe())),
       );
 
     return {
@@ -339,7 +374,7 @@ export const make = Effect.gen(function* () {
       scriptCommand: script.command,
       terminalId,
       cwd,
-      ...(completion ? { completion } : {}),
+      ...(observed ? { completion: observed.completion } : {}),
     } as const;
   });
 
