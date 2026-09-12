@@ -200,12 +200,20 @@ export class BitbucketPullRequestApi extends Context.Service<
      * Read off the pull request's own patch, the only place Bitbucket states a file's version. A
      * path the patch does not carry is answered as the empty revision, and left out altogether
      * when the patch was cut short at the byte ceiling and so cannot be spoken for.
+     *
+     * Every file the patch carries, not only the paths asked about: reading one file's version
+     * here means parsing all of them, and the caller holding the rest is what stops the tick
+     * after this one paying for the same patch again. `complete` is false for a patch cut short,
+     * which cannot speak for what came after the cut.
      */
     readonly getFileRevisions: (input: {
       readonly repository: string;
       readonly number: number;
       readonly paths: ReadonlyArray<string>;
-    }) => Effect.Effect<ReadonlyMap<string, string>, BitbucketPullRequestApiError>;
+    }) => Effect.Effect<
+      { readonly revisions: ReadonlyMap<string, string>; readonly complete: boolean },
+      BitbucketPullRequestApiError
+    >;
 
     readonly getMergeability: (input: {
       readonly repository: string;
@@ -679,18 +687,18 @@ export const make = Effect.gen(function* () {
 
     getFileRevisions: (input) =>
       input.paths.length === 0
-        ? Effect.succeed(new Map())
+        ? Effect.succeed({ revisions: new Map(), complete: false })
         : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
             Effect.map((diff) => {
+              const revisions = new Map(diff.revisions);
               // A patch cut short at the byte ceiling says nothing about the files past the cut,
               // so those paths are left out rather than reported as removed.
-              const asked = new Map<string, string>();
-              for (const path of input.paths) {
-                const revision = diff.revisions.get(path);
-                if (revision !== undefined) asked.set(path, revision);
-                else if (!diff.truncated) asked.set(path, "");
+              if (!diff.truncated) {
+                for (const path of input.paths) {
+                  if (!revisions.has(path)) revisions.set(path, "");
+                }
               }
-              return asked;
+              return { revisions, complete: !diff.truncated };
             }),
           ),
 

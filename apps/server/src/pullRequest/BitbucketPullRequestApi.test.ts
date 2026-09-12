@@ -364,7 +364,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads file versions out of the patch, for the paths it was asked about", () =>
+  it.effect("reads every file version the patch states, not only the paths asked about", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
@@ -397,16 +397,19 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         paths: ["a.ts", "missing.ts"],
       });
 
-      // `b.ts` is in the patch and was not asked about, so it does not belong in the answer.
+      // `b.ts` was not asked about and is reported anyway: parsing the patch for `a.ts` read it
+      // too, and the caller holding it is what stops the next tick paying for the patch again.
       // `missing.ts` was asked about and the whole patch was read without finding it, which is
       // what a file this pull request deletes looks like, so it is answered as the empty version.
       assert.deepStrictEqual(
-        [...revisions],
+        [...revisions.revisions],
         [
           ["a.ts", "2222222"],
+          ["b.ts", "4444444"],
           ["missing.ts", ""],
         ],
       );
+      assert.strictEqual(revisions.complete, true);
       expect(callAt(0)).toMatchObject({ url: "/repositories/acme/web/pullrequests/71/diff" });
     }),
   );
@@ -429,7 +432,9 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         paths: ["a.ts", "past-the-cut.ts"],
       });
 
-      assert.deepStrictEqual([...revisions], [["a.ts", "2222222"]]);
+      assert.deepStrictEqual([...revisions.revisions], [["a.ts", "2222222"]]);
+      // `past-the-cut.ts` gets no empty version, and nothing here may be held as the whole story.
+      assert.strictEqual(revisions.complete, false);
     }),
   );
 
@@ -464,8 +469,12 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         paths: ["b.ts"],
       });
 
-      assert.deepStrictEqual([...first], [["a.ts", "2222222"]]);
-      assert.deepStrictEqual([...second], [["b.ts", "4444444"]]);
+      const both = [
+        ["a.ts", "2222222"],
+        ["b.ts", "4444444"],
+      ];
+      assert.deepStrictEqual([...first.revisions], both);
+      assert.deepStrictEqual([...second.revisions], both);
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
     }),
   );
@@ -503,7 +512,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         paths: [],
       });
 
-      assert.strictEqual(revisions.size, 0);
+      assert.strictEqual(revisions.revisions.size, 0);
       assert.strictEqual(mockedRequest.mock.calls.length, 0);
     }),
   );

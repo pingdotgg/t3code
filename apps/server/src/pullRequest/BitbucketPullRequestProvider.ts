@@ -246,10 +246,7 @@ export const make = Effect.gen(function* () {
           number: input.number,
           paths: input.paths,
         })
-        .pipe(
-          Effect.mapError(fail("getFileRevisions")),
-          Effect.map((revisions) => ({ revisions })),
-        ),
+        .pipe(Effect.mapError(fail("getFileRevisions"))),
 
     // Users only: Bitbucket requests a review of an account, and has no group that stands in for
     // one on a pull request.

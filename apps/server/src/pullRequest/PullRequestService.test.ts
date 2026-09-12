@@ -4684,6 +4684,68 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
+it.effect("holds what a whole-change answer carried, so the next tick reads nothing", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const head = new Map([
+      ["src/a.ts", "blob-a"],
+      ["src/b.ts", "blob-b"],
+    ]);
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(head, []),
+          // A host with no per-file version reads the whole change to answer for one file, which
+          // is what Bitbucket's patch is, and says as much.
+          getFileRevisions: (input) => {
+            asked.push(input.paths);
+            return Effect.succeed({ revisions: head, complete: true });
+          },
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // A path nothing has asked about before, which is what every tick after the first names. Its
+    // version came back with the first answer, so there is nothing left to read it for.
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual(asked, [["src/a.ts"]]);
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+
+    // Still only as fresh as the read it came from: past that window the press reads again rather
+    // than stamping a mark with a version the head may have moved off.
+    yield* TestClock.adjust("2 minutes");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+    assert.deepStrictEqual(asked, [["src/a.ts"], ["src/b.ts"]]);
+  }),
+);
+
 it.effect("reads the marks without asking the host what the head has every time", () =>
   Effect.gen(function* () {
     const asked: Array<ReadonlyArray<string>> = [];

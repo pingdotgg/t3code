@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import type * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
-import type { PullRequestProviderError } from "./PullRequestProvider.ts";
+import type { ProviderFileRevisions, PullRequestProviderError } from "./PullRequestProvider.ts";
 import type { PullRequestError, SupportedProject } from "./PullRequestService.ts";
 
 /**
@@ -73,10 +73,17 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
       ref.number,
     ].join(" ");
 
+  /**
+   * `paths` are what was asked about, and are held as answered for whether the host had a version
+   * for them or not: that is what stops the same question being asked again. A `complete` answer
+   * adds every other path it carries, since a host that read the whole change to answer for one
+   * file has already paid for all of them, and the tick after this one names a file nothing has
+   * asked about yet.
+   */
   const recordFileRevisions = (
     key: string,
     paths: ReadonlyArray<string>,
-    answer: ReadonlyMap<string, string>,
+    answer: ProviderFileRevisions,
   ) =>
     Effect.map(Clock.currentTimeMillis, (at) => {
       const held = heldFileRevisions.get(key);
@@ -88,12 +95,13 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
           : null;
       const revisions = new Map(carried?.revisions ?? []);
       const asked = new Set(carried?.asked ?? []);
-      for (const path of paths) {
+      const learned = answer.complete === true ? [...paths, ...answer.revisions.keys()] : paths;
+      for (const path of learned) {
         // Reinserted rather than added, so what a full entry drops below is the path nobody has
         // asked about in the longest rather than one just asked for.
         asked.delete(path);
         asked.add(path);
-        const revision = answer.get(path);
+        const revision = answer.revisions.get(path);
         // A path left out of the answer keeps its last known version rather than being cleared.
         if (revision !== undefined) {
           revisions.delete(path);
@@ -112,7 +120,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
       }
       // The entry is only as fresh as its oldest revision: stamping it with `now` on a partial
       // answer would let an old revision ride past the point it should have been re-read.
-      const stamped = [...revisions.keys()].every((path) => answer.has(path))
+      const stamped = [...revisions.keys()].every((path) => answer.revisions.has(path))
         ? at
         : (carried?.at ?? at);
       heldFileRevisions.set(key, { at: stamped, asked, revisions });
@@ -159,7 +167,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
         paths,
       }).pipe(
         Effect.mapError(toPullRequestError(operation)),
-        Effect.flatMap((answer) => recordFileRevisions(key, paths, answer.revisions)),
+        Effect.flatMap((answer) => recordFileRevisions(key, paths, answer)),
       );
     });
     return Effect.flatMap(Clock.currentTimeMillis, (now) => {

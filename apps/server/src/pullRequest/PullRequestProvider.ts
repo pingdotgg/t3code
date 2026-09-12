@@ -282,6 +282,16 @@ export interface ProviderFilesViewed {
  */
 export interface ProviderFileRevisions {
   readonly revisions: ReadonlyMap<string, string>;
+  /**
+   * Whether these are every file the change request carries rather than only the paths asked
+   * about. A host with no per-file version reads the whole change to answer for one file, and
+   * saying so is what keeps the next tick from making it read the whole change again: the caller
+   * holds what it is told, and a tick names a path nothing has asked about before.
+   *
+   * Only for an answer that can speak for the whole change. A read cut short part way through
+   * says nothing about what came after it, so it reports the paths it was asked about and no more.
+   */
+  readonly complete?: boolean;
 }
 
 export interface ProviderRepositoryRef {
