@@ -198,7 +198,8 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
   });
 
-  describe("Antigravity selections", () => {
+  describe.each(["antigravity", "devin"])("%s selections", (driver) => {
+    const providerName = driver === "devin" ? "Devin" : "Antigravity";
     const selection = {
       instanceId: ProviderInstanceId.make("google_work"),
       model: "gemini-3.1-pro-high",
@@ -227,7 +228,7 @@ describe("mobile model options", () => {
       providers: [
         {
           instanceId: selection.instanceId,
-          driver: "antigravity",
+          driver,
           displayName: "Google Work",
           enabled: true,
           installed: true,
@@ -259,7 +260,7 @@ describe("mobile model options", () => {
         subtitle: "Google",
         providerKey: "google_work",
         providerLabel: "Google Work",
-        providerDriver: "antigravity",
+        providerDriver: driver,
         isDefault: false,
         isLegacy: true,
         isUnavailable: true,
@@ -284,7 +285,7 @@ describe("mobile model options", () => {
       expect(missing).toMatchObject({
         label: selection.model,
         providerLabel: "Google Work",
-        providerDriver: "antigravity",
+        providerDriver: driver,
         isUnavailable: true,
         capabilities: null,
       });
@@ -311,7 +312,7 @@ describe("mobile model options", () => {
         providers: [],
         settings: {
           providerInstances: {
-            [selection.instanceId]: { driver: "antigravity", displayName: "Google Work" },
+            [selection.instanceId]: { driver, displayName: "Google Work" },
           },
         },
       } as unknown as ServerConfig;
@@ -319,11 +320,11 @@ describe("mobile model options", () => {
       expect(resolveDefaultableModelSelection(missingStatusConfig, selection)).toBe(selection);
       expect(isModelSelectionUnavailable(missingStatusConfig, selection)).toBe(true);
       expect(getModelSelectionUnavailableReason(missingStatusConfig, selection)).toBe(
-        "Antigravity model unavailable. Set up Antigravity on web or desktop, or choose another model.",
+        `${providerName} model unavailable. Set up ${providerName} on web or desktop, or choose another model.`,
       );
       expect(buildModelOptions(missingStatusConfig, selection)).toMatchObject([
         {
-          providerDriver: "antigravity",
+          providerDriver: driver,
           providerLabel: "Google Work",
           isUnavailable: true,
           selection,
@@ -331,7 +332,7 @@ describe("mobile model options", () => {
       ]);
     });
 
-    it("keeps offline selections without assuming that an unknown instance is Antigravity", () => {
+    it("keeps offline selections without assuming an unknown instance belongs to this provider", () => {
       const unknownConfig = { ...config, providers: [] };
 
       expect(resolveDefaultableModelSelection(null, selection)).toBe(selection);
@@ -412,35 +413,5 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
-  });
-});
-
-describe("Devin account model selection", () => {
-  it("preserves SWE-2 and marks it unavailable after an account catalog change", () => {
-    const selection = { instanceId: ProviderInstanceId.make("devin_work"), model: "swe-2-high" };
-    const config = {
-      providers: [
-        {
-          instanceId: selection.instanceId,
-          driver: "devin",
-          displayName: "Devin Work",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          models: [{ slug: "swe-1.6", name: "SWE-1.6", capabilities: {} }],
-        },
-      ],
-    } as unknown as ServerConfig;
-    expect(resolveSelectableModelSelection(config, selection)).toBe(selection);
-    expect(resolveDefaultableModelSelection(config, selection)).toBe(selection);
-    expect(isModelSelectionUnavailable(config, selection)).toBe(true);
-    expect(getModelSelectionUnavailableReason(config, selection)).toBe(
-      "Devin model unavailable. Set up Devin on web or desktop, or choose another model.",
-    );
-    expect(
-      buildModelOptions(config, selection).find(
-        (option) => option.selection.model === selection.model,
-      ),
-    ).toMatchObject({ selection, isUnavailable: true, providerDriver: "devin" });
   });
 });

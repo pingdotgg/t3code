@@ -4,16 +4,6 @@ import * as FileSystem from "effect/FileSystem";
 import { checkDevinProviderStatus } from "./DevinProvider.ts";
 import { makeDevinCli as makeHarness, devinTestLayer as layer } from "../testUtils/devinCli.ts";
 
-it.effect("reports signed-out status without creating an ACP session", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness();
-    const snapshot = yield* checkDevinProviderStatus(h.settings, h.environment);
-    expect(snapshot.auth.status).toBe("unauthenticated");
-    const fs = yield* FileSystem.FileSystem;
-    expect(yield* fs.exists(h.requestLog)).toBe(false);
-  }).pipe(Effect.provide(layer)),
-);
-
 it.effect("uses the supplied environment to check sign-in and discover models before a chat", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness();

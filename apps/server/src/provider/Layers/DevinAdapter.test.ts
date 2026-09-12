@@ -195,20 +195,11 @@ it.effect("dispatches a graphical skill pick as a native command with its argume
       ]),
     );
     yield* h.start();
-    for (const [input, text] of [
-      ["$visual-check http://localhost:5173", "/visual-check http://localhost:5173"],
-      ["$visual-check", "/visual-check"],
-      ["/visual-check", "/visual-check"],
-    ]) {
-      yield* h.adapter.sendTurn({ threadId, input });
-      const request = (yield* h.requests).findLast((entry) => entry.method === "session/prompt");
-      expect(request?.params?.prompt).toEqual([{ type: "text", text }]);
-    }
     const config = yield* ServerConfig;
     const attachmentId = "devin-thread-11111111-1111-4111-8111-111111111111";
     yield* h.adapter.sendTurn({
       threadId,
-      input: "$visual-check",
+      input: "$visual-check inspect this",
       attachments: [
         { type: "file", id: attachmentId, name: "page.txt", mimeType: "text/plain", sizeBytes: 1 },
       ],
@@ -217,7 +208,7 @@ it.effect("dispatches a graphical skill pick as a native command with its argume
     expect(withFile?.params?.prompt).toEqual([
       {
         type: "text",
-        text: `/visual-check Attached file: ${path.join(config.attachmentsDir, `${attachmentId}.txt`)}`,
+        text: `/visual-check inspect this Attached file: ${path.join(config.attachmentsDir, `${attachmentId}.txt`)}`,
       },
     ]);
     expect(

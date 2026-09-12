@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DevinSettings, ServerProviders } from "@t3tools/contracts";
+import { DevinSettings } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +12,6 @@ import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 export const decodeDevinSettings = Schema.decodeSync(DevinSettings);
-export const encodeDevinProviders = Schema.encodeSync(Schema.toCodecJson(ServerProviders));
 export const encodeDevinSkills = Schema.encodeSync(DevinSkillCatalog);
 const Request = Schema.Struct({
   result: Schema.optional(

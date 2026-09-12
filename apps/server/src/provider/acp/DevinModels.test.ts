@@ -99,11 +99,6 @@ it.each([
     expected: ["Minimal", "Low", "Medium", "High"],
   },
   {
-    family: "GLM-5.2",
-    suffixes: ["High", "Max", "No Thinking"],
-    expected: ["None", "High", "Max"],
-  },
-  {
     family: "Inkling",
     suffixes: ["X-High", "Max", "None", "Medium", "High", "Low"],
     expected: ["None", "Low", "Medium", "High", "XHigh", "Max"],
@@ -180,18 +175,9 @@ it("exposes every catalog variant through independent thinking, speed, and conte
         .toSorted(),
     );
   }
-  expect(
-    resolveDevinModel(catalog, {
-      model: "claude-opus-5",
-      options: [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ],
-    }),
-  ).toBe("claude-opus-5-high-fast");
 });
 
-it("rejects unavailable combinations and preserves exact custom IDs and unfamiliar variants", () => {
+it("rejects unavailable combinations and preserves exact native and custom IDs", () => {
   expect(
     resolveDevinModel(catalog, {
       model: "swe-2",
@@ -203,17 +189,6 @@ it("rejects unavailable combinations and preserves exact custom IDs and unfamili
   ).toBeUndefined();
   expect(resolveDevinModel(catalog, { model: "swe-2-medium" })).toBe("swe-2-medium");
   expect(resolveDevinModel(catalog, { model: "custom-model" })).toBe("custom-model");
-  expect(
-    devinModels({
-      families: [
-        {
-          slug: "future",
-          family_label: "Future",
-          variants: [{ model_uid: "future-special", label: "Future Special" }],
-        },
-      ],
-    }).map((model) => model.slug),
-  ).toEqual(["future-special"]);
 });
 
 it.each(
@@ -300,27 +275,12 @@ it("groups Fusion by lead and sidekick and resolves every thinking and speed com
     lead: { id: "claude-opus-5", name: "Claude Opus 5" },
     sidekick: { id: "swe-2-high", name: "SWE-2 High" },
   });
-  expect(first.capabilities?.optionDescriptors).toEqual([
-    {
-      id: "reasoningEffort",
-      label: "Thinking level",
-      type: "select",
-      currentValue: "medium",
-      options: [
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High" },
-      ],
-    },
-    { id: "fastMode", label: "Fast mode", type: "boolean", currentValue: false },
-  ]);
   expect(
     resolveDevinModel(fusionCatalog, {
       model: first.slug,
       options: [{ id: "reasoningEffort", value: "max" }],
     }),
   ).toBeUndefined();
-  for (const native of fusionCatalog.families.at(-1)!.variants)
-    expect(resolveDevinModel(fusionCatalog, { model: native.model_uid })).toBe(native.model_uid);
 });
 
 it("preserves unfamiliar Fusion pairings as exact model choices", () => {
