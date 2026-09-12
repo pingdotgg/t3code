@@ -186,4 +186,38 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
+
+  // The keypad sends its own key codes, so without these the number-row
+  // shortcuts are the only way to zoom. They stay hidden so the View menu
+  // lists each command once.
+  it.effect("zooms from numeric keypad accelerators without listing them twice", () =>
+    Effect.gen(function* () {
+      for (const [accelerator, expected] of [
+        ["CmdOrCtrl+numadd", "zoom-in"],
+        ["CmdOrCtrl+numsub", "zoom-out"],
+        ["CmdOrCtrl+num0", "zoom-reset"],
+      ] as const) {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+        yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+        const template = yield* Deferred.await(applicationMenuTemplate);
+        const viewMenu = template.find((item) => item.label === "View");
+        if (!viewMenu || !Array.isArray(viewMenu.submenu)) {
+          throw new Error("Expected View menu submenu to be an array.");
+        }
+        const item = viewMenu.submenu.find((entry) => entry.accelerator === accelerator);
+        assert.isDefined(item);
+        assert.equal(item.visible, false);
+        if (typeof item.click !== "function") {
+          throw new Error(`Expected ${accelerator} menu item to have a click handler.`);
+        }
+
+        item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+        assert.equal(yield* Deferred.await(selectedAction), expected);
+      }
+    }),
+  );
 });

@@ -342,6 +342,21 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
+  // Same step size as the Electron zoomIn/zoomOut menu roles. Chromium pushes
+  // the new level down to embedded guests, which would zoom the previewed page
+  // along with the app UI. The preview browser keeps its own zoom, so put each
+  // guest back where the preview left it.
+  const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
+    window: Electron.BrowserWindow,
+    direction: MainWindowZoomDirection,
+  ) {
+    const webContents = window.webContents;
+    webContents.setZoomLevel(
+      direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+    );
+    yield* previewManager.reapplyZoom();
+  });
+
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
     DesktopWindowError
@@ -641,6 +656,14 @@ export const make = Effect.gen(function* () {
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
         event.preventDefault();
       }
+    });
+    // Ctrl+wheel asks for zoom through this event rather than an accelerator,
+    // and Chromium leaves applying it to the app. Only the main window's own
+    // webContents emits it; a preview guest under the pointer gets its own
+    // event and keeps its own zoom.
+    window.webContents.on("zoom-changed", (_event, direction) => {
+      if (window.isDestroyed()) return;
+      runFork(zoomWindow(window, direction));
     });
 
     window.on("page-title-updated", (event) => {
@@ -979,15 +1002,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
-      const webContents = window.value.webContents;
-      // Same step size as the Electron zoomIn/zoomOut menu roles.
-      webContents.setZoomLevel(
-        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
-      );
-      // Chromium pushes the new level down to embedded guests, which would zoom
-      // the previewed page along with the app UI. The preview browser keeps its
-      // own zoom, so put each guest back where the preview left it.
-      yield* previewManager.reapplyZoom();
+      yield* zoomWindow(window.value, direction);
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

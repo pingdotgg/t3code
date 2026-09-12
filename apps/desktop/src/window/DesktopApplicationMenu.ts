@@ -207,6 +207,26 @@ export const make = Effect.gen(function* () {
             click: zoomClick("in"),
           },
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          // The numeric keypad sends its own key codes, so it needs its own
+          // accelerators; hidden so the menu lists each command once.
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+numadd",
+            visible: false,
+            click: zoomClick("in"),
+          },
+          {
+            label: "Zoom Out",
+            accelerator: "CmdOrCtrl+numsub",
+            visible: false,
+            click: zoomClick("out"),
+          },
+          {
+            label: "Actual Size",
+            accelerator: "CmdOrCtrl+num0",
+            visible: false,
+            click: zoomClick("reset"),
+          },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],
