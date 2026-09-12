@@ -386,6 +386,51 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
+  it.effect("prompts for a password or verification code after SSH authentication fails", () => {
+    const prompts: string[] = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.succeed(
+        commandArgs(command).includes("-G")
+          ? makeSuccessfulProcess("")
+          : {
+              ...makeSuccessfulProcess(""),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+              stderr: Stream.make(
+                new TextEncoder().encode("Permission denied (publickey,keyboard-interactive).\n"),
+              ),
+            },
+      ),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      Layer.succeed(SshPasswordPrompt, {
+        isAvailable: true,
+        request: (request) =>
+          Effect.sync(() => {
+            prompts.push(request.prompt);
+            return null;
+          }),
+      }),
+      SshEnvironmentManager.layer(),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* Effect.result(
+        manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
+        }),
+      );
+      assert.deepEqual(prompts, ["Enter the SSH password or verification code for julius@devbox."]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect.each(["successful stop", "failed stop"] as const)(
     "closes the tunnel scope and starts fresh after a %s",
     (mode) => {
