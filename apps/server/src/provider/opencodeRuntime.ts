@@ -568,12 +568,21 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
-  const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
-    resolveSpawnCommand(command, args, env ? { env } : {});
+  const resolveCommand = (
+    command: string,
+    args: ReadonlyArray<string>,
+    env?: NodeJS.ProcessEnv,
+    cwd?: string,
+  ) => resolveSpawnCommand(command, args, { cwd, ...(env ? { env } : {}) });
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
-      const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
+      const spawnCommand = yield* resolveCommand(
+        input.binaryPath,
+        input.args,
+        input.environment,
+        input.cwd,
+      );
       const child = yield* spawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           detached: hostPlatform !== "win32",

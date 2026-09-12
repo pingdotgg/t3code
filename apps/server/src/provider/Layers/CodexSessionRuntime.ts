@@ -1317,6 +1317,7 @@ export const makeCodexSessionRuntime = (
     const extendEnv = options.environment === undefined;
     const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
+      cwd: options.cwd,
       env,
       extendEnv,
     });

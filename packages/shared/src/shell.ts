@@ -90,12 +90,14 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd?: string | undefined,
 ) => string | undefined;
 
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  cwd: string = process.cwd(),
 ): string | undefined {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
@@ -118,14 +120,14 @@ function resolveSpawnExecutableWithNode(
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    return candidates.map((candidate) => path.resolve(cwd, candidate)).find(isExecutable);
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
-      const candidatePath = path.join(normalizedPathEntry, candidate);
+      const candidatePath = path.resolve(cwd, normalizedPathEntry, candidate);
       if (isExecutable(candidatePath)) return candidatePath;
     }
   }
@@ -629,7 +631,7 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
 export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(function* (
   command: string,
   args: ReadonlyArray<string>,
-  options: CommandAvailabilityOptions = {},
+  options: CommandAvailabilityOptions & { readonly cwd?: string | undefined } = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcessPlatform;
   if (platform !== "win32") {
@@ -644,7 +646,7 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  const resolvedCommand = resolveExecutable(command, platform, env, options.cwd) ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };

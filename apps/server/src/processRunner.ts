@@ -291,11 +291,10 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.command,
-    input.args,
-    input.env === undefined ? {} : { env: input.env, extendEnv },
-  );
+  const spawnCommand = yield* resolveSpawnCommand(input.command, input.args, {
+    cwd: input.spawnCwd ?? input.cwd,
+    ...(input.env === undefined ? {} : { env: input.env, extendEnv }),
+  });
 
   const child = yield* spawner
     .spawn(
