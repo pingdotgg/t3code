@@ -72,9 +72,10 @@ into a normal draft.
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind
-the conversation and workspace files to before that message. The selected prompt
-and its attachments return to the composer for editing and resending. Any unsent
-draft stays above the restored prompt.
+the conversation to before that message. Choose **Revert and keep changes** to
+leave workspace files as they are, or **Revert files too** to restore them as well.
+The selected prompt and its attachments return to the composer for editing and
+resending. Any unsent draft stays above the restored prompt.
 
 This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
