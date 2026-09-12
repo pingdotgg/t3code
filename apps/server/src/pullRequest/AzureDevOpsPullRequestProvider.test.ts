@@ -134,6 +134,66 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
   );
 }
 
+describe("getChangeRequestSummary", () => {
+  it.effect("costs the one pull request read, not the iterations changedFiles needs", () =>
+    Effect.gen(function* () {
+      let pullRequestReads = 0;
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          // listIterations and listIterationChanges are left unimplemented here, so a summary
+          // that reached for either would die with UnimplementedError instead of this passing.
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => {
+              pullRequestReads += 1;
+              return Effect.succeed(PULL_REQUEST);
+            },
+          }),
+        ),
+      );
+
+      const readSummary = provider.getChangeRequestSummary;
+      if (readSummary === undefined) return yield* Effect.die("summary read was not implemented");
+      const summary = yield* readSummary({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(pullRequestReads).toBe(1);
+      expect(summary.title).toBe(PULL_REQUEST.title);
+      expect(summary.changedFiles).toBeUndefined();
+    }),
+  );
+});
+
+describe("getChangeRequest", () => {
+  it.effect("still reports the file count the detail panel needs", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({ changes: [change("a.ts"), change("b.ts")], truncated: false }),
+          }),
+        ),
+      );
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(detail.changedFiles).toBe(2);
+    }),
+  );
+});
+
 describe("getDiff reads", () => {
   it.effect("holds every reader together to one request's worth of processes", () =>
     Effect.gen(function* () {

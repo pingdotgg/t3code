@@ -21,6 +21,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
@@ -326,6 +327,27 @@ export const make = Effect.gen(function* () {
             continues: true,
           })),
         ),
+
+    // The polled path a linked thread's row stays live on: one `az` read, no iterations or
+    // changes behind it, since the file count that would cost is not shown here.
+    getChangeRequestSummary: (input) =>
+      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestSummary")),
+        Effect.map((pullRequest): ProviderChangeRequestSummary => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          headBranch: pullRequest.headBranch,
+          baseBranch: pullRequest.baseBranch,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          mergeability: pullRequest.mergeability,
+          closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+          mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+          updatedAt: pullRequest.updatedAt,
+        })),
+      ),
 
     getChangeRequest: (input) =>
       Effect.gen(function* () {
