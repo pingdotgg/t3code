@@ -10,7 +10,10 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  filterGitHubRepositorySuggestions,
+  isCompleteAddProjectRepositoryInput,
   normalizePastedCloneUrl,
+  parseGitHubRepositorySuggestionInput,
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -50,6 +53,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  RefreshCwIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -743,6 +747,24 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const githubSuggestionInput =
+    addProjectCloneFlow?.step === "repository" && addProjectCloneFlow.source === "github"
+      ? parseGitHubRepositorySuggestionInput(deferredQuery)
+      : null;
+  const githubSuggestionOwner = githubSuggestionInput?.owner ?? null;
+  const githubSuggestionEnvironmentId =
+    addProjectCloneFlow?.step === "repository" ? addProjectCloneFlow.environmentId : null;
+  const repositorySuggestionsQuery = useEnvironmentQuery(
+    githubSuggestionOwner !== null && githubSuggestionEnvironmentId !== null
+      ? sourceControlEnvironment.repositories({
+          environmentId: githubSuggestionEnvironmentId,
+          input: { provider: "github", owner: githubSuggestionOwner.toLowerCase() },
+        })
+      : null,
+  );
+  const repositorySuggestions = repositorySuggestionsQuery.data?.repositories ?? [];
+  const areRepositorySuggestionsTruncated = repositorySuggestionsQuery.data?.isTruncated ?? false;
+  const isRepositorySuggestionsLoading = repositorySuggestionsQuery.isPending;
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -2069,7 +2091,10 @@ function OpenCommandPaletteDialog(props: {
     return getAddProjectInitialQueryForEnvironment(environmentId);
   }
 
-  async function submitAddProjectCloneFlow(destinationPathInput?: string): Promise<void> {
+  async function submitAddProjectCloneFlow(
+    destinationPathInput?: string,
+    repositoryInput?: string,
+  ): Promise<void> {
     if (!addProjectCloneFlow) {
       return;
     }
@@ -2085,8 +2110,12 @@ function OpenCommandPaletteDialog(props: {
     }
 
     if (addProjectCloneFlow.step === "repository") {
-      const rawRepository = query.trim();
-      if (rawRepository.length === 0 || isRemoteProjectLookingUp) {
+      const rawRepository = (repositoryInput ?? query).trim();
+      if (
+        rawRepository.length === 0 ||
+        isRemoteProjectLookingUp ||
+        !isCompleteAddProjectRepositoryInput(addProjectCloneFlow.source, rawRepository)
+      ) {
         return;
       }
 
@@ -2296,9 +2325,58 @@ function OpenCommandPaletteDialog(props: {
     };
   }, [addProjectCloneFlow]);
 
+  const matchingRepositorySuggestions = filterGitHubRepositorySuggestions(
+    repositorySuggestions,
+    query,
+  );
+  const repositorySuggestionGroups: CommandPaletteView["groups"] = [
+    ...(repositorySuggestionsQuery.error === null
+      ? []
+      : [
+          {
+            value: "github-repository-suggestions-error",
+            label: "GitHub repositories",
+            items: [
+              {
+                kind: "action" as const,
+                value: "retry-github-repository-suggestions",
+                searchTerms: [],
+                title: "Retry loading repositories",
+                description: repositorySuggestionsQuery.error,
+                icon: <RefreshCwIcon className={ITEM_ICON_CLASS} />,
+                keepOpen: true,
+                run: async () => {
+                  repositorySuggestionsQuery.refresh();
+                },
+              },
+            ],
+          },
+        ]),
+    ...(matchingRepositorySuggestions.length === 0
+      ? []
+      : [
+          {
+            value: "github-repository-suggestions",
+            label: `Repositories owned by ${githubSuggestionOwner}${areRepositorySuggestionsTruncated ? " (first 100)" : ""}`,
+            items: matchingRepositorySuggestions.map((repository) => ({
+              kind: "action" as const,
+              value: `repository-suggestion:${repository.nameWithOwner}`,
+              searchTerms: [repository.nameWithOwner],
+              title: repository.nameWithOwner.split("/").at(-1) ?? repository.nameWithOwner,
+              description: repository.nameWithOwner,
+              icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+              keepOpen: true,
+              run: async () => {
+                await submitAddProjectCloneFlow(undefined, repository.nameWithOwner);
+              },
+            })),
+          },
+        ]),
+  ];
+
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
-    displayedGroups = [];
+    displayedGroups = repositorySuggestionGroups;
   } else if (addProjectCloneFlow?.step === "confirm") {
     displayedGroups = relativePathNeedsActiveProject ? [] : cloneDestinationBrowseGroups;
   } else if (isBrowsing) {
@@ -2339,7 +2417,7 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectPending = isRemoteProjectLookingUp || isRemoteProjectCloning;
   const canSubmitRemoteProjectFlow =
     addProjectCloneFlow?.step === "repository" &&
-    query.trim().length > 0 &&
+    isCompleteAddProjectRepositoryInput(addProjectCloneFlow.source, query) &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
     !isRemoteProjectPending;
   const fileManagerName = getLocalFileManagerName(navigator.platform);
@@ -2410,6 +2488,13 @@ function OpenCommandPaletteDialog(props: {
 
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
       event.preventDefault();
+      const highlightedRepository = displayedGroups
+        .flatMap((group) => group.items)
+        .find((item) => item.value === highlightedItemValue);
+      if (highlightedRepository) {
+        executeItem(highlightedRepository);
+        return;
+      }
       void submitAddProjectCloneFlow();
       return;
     }
@@ -2740,7 +2825,15 @@ function OpenCommandPaletteDialog(props: {
               emptyStateMessage:
                 addProjectCloneFlow.source === "url"
                   ? "Enter a Git clone URL and press Enter to continue."
-                  : "Enter a repository path and press Enter to look it up.",
+                  : isRepositorySuggestionsLoading
+                    ? "Loading repositories…"
+                    : githubSuggestionInput && repositorySuggestions.length > 0
+                      ? areRepositorySuggestionsTruncated
+                        ? "No match in the first 100 repositories. Enter the full owner/repository name and press Enter."
+                        : "No matching repositories."
+                      : githubSuggestionInput
+                        ? "No repositories found for this owner."
+                        : "Enter a repository path and press Enter to look it up.",
             }
           : addProjectCloneFlow?.step === "confirm"
             ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }

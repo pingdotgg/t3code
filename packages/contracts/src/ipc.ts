@@ -107,6 +107,8 @@ import type {
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
+  SourceControlRepositoryListInput,
+  SourceControlRepositoryListResult,
 } from "./sourceControl.ts";
 import type {
   DesktopAppActivationRequest,
@@ -1511,6 +1513,9 @@ export interface EnvironmentApi {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;
   };
   sourceControl: {
+    listRepositories: (
+      input: SourceControlRepositoryListInput,
+    ) => Promise<SourceControlRepositoryListResult>;
     lookupRepository: (
       input: SourceControlRepositoryLookupInput,
     ) => Promise<SourceControlRepositoryInfo>;

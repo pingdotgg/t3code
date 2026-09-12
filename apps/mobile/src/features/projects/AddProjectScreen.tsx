@@ -6,12 +6,15 @@ import {
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
   findExistingAddProject,
+  filterGitHubRepositorySuggestions,
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  isCompleteAddProjectRepositoryInput,
   normalizePastedCloneUrl,
+  parseGitHubRepositorySuggestionInput,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
@@ -664,50 +667,78 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const lookupRepository = useCallback(async () => {
-    if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
-    setError(null);
-    setIsSubmitting(true);
-    const provider = addProjectRemoteSourceProvider(source);
-    if (!provider) {
-      const remoteUrl = normalizePastedCloneUrl(repositoryInput);
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
+  const suggestionInput =
+    source === "github" ? parseGitHubRepositorySuggestionInput(repositoryInput) : null;
+  const suggestionOwner = suggestionInput?.owner ?? null;
+  const repositorySuggestionsQuery = useEnvironmentQuery(
+    environment && suggestionOwner !== null
+      ? sourceControlEnvironment.repositories({
           environmentId: environment.environmentId,
-          source,
-          remoteUrl,
-          repositoryTitle: remoteUrl,
-          repositoryName: getCloneDirectoryName(remoteUrl),
-        }),
-      );
+          input: { provider: "github", owner: suggestionOwner.toLowerCase() },
+        })
+      : null,
+  );
+  const repositorySuggestions = repositorySuggestionsQuery.data?.repositories ?? [];
+  const areRepositorySuggestionsTruncated = repositorySuggestionsQuery.data?.isTruncated ?? false;
+
+  const matchingRepositorySuggestions = filterGitHubRepositorySuggestions(
+    repositorySuggestions,
+    repositoryInput,
+  );
+
+  const lookupRepository = useCallback(
+    async (repositoryOverride?: string) => {
+      const rawRepository = (repositoryOverride ?? repositoryInput).trim();
+      if (
+        !environment ||
+        isSubmitting ||
+        !isCompleteAddProjectRepositoryInput(source, rawRepository)
+      ) {
+        return;
+      }
+      setError(null);
+      setIsSubmitting(true);
+      const provider = addProjectRemoteSourceProvider(source);
+      if (!provider) {
+        const remoteUrl = normalizePastedCloneUrl(rawRepository);
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl,
+            repositoryTitle: remoteUrl,
+            repositoryName: getCloneDirectoryName(remoteUrl),
+          }),
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      const result = await lookupRepositoryQuery({
+        environmentId: environment.environmentId,
+        input: {
+          provider,
+          repository: rawRepository,
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setError(errorMessage(Cause.squash(result.cause)));
+      } else {
+        const repository = result.value;
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl: getDefaultCloneUrl(repository),
+            repositoryTitle: repository.nameWithOwner,
+            repositoryName: getCloneDirectoryName(repository.nameWithOwner),
+          }),
+        );
+      }
       setIsSubmitting(false);
-      return;
-    }
-
-    const result = await lookupRepositoryQuery({
-      environmentId: environment.environmentId,
-      input: {
-        provider,
-        repository: repositoryInput.trim(),
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
-    } else {
-      const repository = result.value;
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
-          environmentId: environment.environmentId,
-          source,
-          remoteUrl: getDefaultCloneUrl(repository),
-          repositoryTitle: repository.nameWithOwner,
-          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
-        }),
-      );
-    }
-    setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+    },
+    [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source],
+  );
 
   return (
     <AddProjectShell>
@@ -728,9 +759,29 @@ export function AddProjectRepositoryScreen(props: {
             returnKeyType="next"
             onSubmitEditing={() => void lookupRepository()}
           />
+          {matchingRepositorySuggestions.length > 0 ? (
+            <ListSection>
+              {matchingRepositorySuggestions.map((repository, index) => (
+                <ListRow
+                  key={repository.nameWithOwner}
+                  isFirst={index === 0}
+                  title={repository.nameWithOwner.split("/").at(-1) ?? repository.nameWithOwner}
+                  subtitle={repository.nameWithOwner}
+                  icon={<SourceControlIcon kind="github" size={18} colorClassName="accent-icon" />}
+                  onPress={() => void lookupRepository(repository.nameWithOwner)}
+                />
+              ))}
+            </ListSection>
+          ) : null}
+          {areRepositorySuggestionsTruncated ? (
+            <Text className="px-1 text-xs leading-normal text-foreground-muted">
+              Showing the first 100 repositories. Enter the full owner/repository name to look up
+              another.
+            </Text>
+          ) : null}
           <PrimaryActionButton
             label={source === "url" ? "Continue" : "Lookup repository"}
-            disabled={isSubmitting || repositoryInput.trim().length === 0}
+            disabled={isSubmitting || !isCompleteAddProjectRepositoryInput(source, repositoryInput)}
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
           />

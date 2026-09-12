@@ -110,11 +110,12 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   const family = createEnvironmentQueryAtomFamily(runtime, {
     label: "test.environment-query",
     staleTimeMs: 60_000,
-    execute: () => execute,
+    execute: (_input: unknown) => execute,
   });
 
   return {
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
+    family,
     supervisorSession,
     supervisorState,
   };
@@ -274,6 +275,50 @@ describe("environmentRpcKey", () => {
 });
 
 describe("environment query lifecycle", () => {
+  it.effect("isolates late repository results when owners or environments change", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pending = yield* Deferred.make<string>();
+        const firstStarted = yield* Deferred.make<void>();
+        let calls = 0;
+        const harness = yield* makeEnvironmentQueryHarness(
+          Effect.suspend(() => {
+            calls += 1;
+            return calls === 1
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(pending)),
+                )
+              : Effect.succeed(`result-${calls}`);
+          }),
+        );
+        const first = harness.family({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { owner: "first" },
+        });
+        const secondOwner = harness.family({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { owner: "second" },
+        });
+        const secondEnvironment = harness.family({
+          environmentId: EnvironmentId.make("other-environment"),
+          input: { owner: "second" },
+        });
+        const registry = yield* mountEnvironmentQuery(first);
+        yield* Deferred.await(firstStarted);
+        const ownerResult = yield* AtomRegistry.getResult(registry, secondOwner);
+        const environmentResult = yield* AtomRegistry.getResult(registry, secondEnvironment);
+        expect(ownerResult).toBe("result-2");
+        expect(environmentResult).toBe("result-3");
+        yield* Deferred.succeed(pending, "late-first-result");
+        expect(yield* AtomRegistry.getResult(registry, first)).toBe("late-first-result");
+        expect(Option.getOrNull(AsyncResult.value(registry.get(secondOwner)))).toBe(ownerResult);
+        expect(Option.getOrNull(AsyncResult.value(registry.get(secondEnvironment)))).toBe(
+          environmentResult,
+        );
+      }),
+    ),
+  );
+
   it.effect(
     "retries an interrupted query without exposing a failure during session replacement",
     () =>

@@ -2299,6 +2299,14 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.sourceControlListRepositories]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlListRepositories,
+            sourceControlRepositories.listRepositories(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlCloneRepository,
