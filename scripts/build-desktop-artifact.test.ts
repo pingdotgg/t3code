@@ -654,7 +654,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        include: "apps/desktop/resources/installer.nsh",
+      });
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
