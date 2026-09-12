@@ -622,6 +622,9 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
+  // The diff is intentionally not warmed up here. It is a full `gh pr diff` (up to 8MB) and
+  // most opens never visit the Code tab, so it loads only when that tab mounts. The module
+  // chunk alone preloads on Code hover/focus above.
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
