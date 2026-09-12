@@ -277,6 +277,90 @@ it.layer(NodeServices.layer)("AgentSessionAutoImporter", (it) => {
       ),
     );
 
+    it.effect("counts a drained backlog once instead of once per pass", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fixture = yield* setupCodexFixture({
+            workspaces: [
+              { name: "one", sessionId: "session-one", prompt: "Prompt one", reply: "Reply one" },
+            ],
+          });
+          const root = fixture.roots[0]!;
+          // A second transcript in the same workspace, so one project has a
+          // backlog that takes more than one pass to drain.
+          yield* writeTranscript({
+            filePath: path.join(
+              fixture.codexHome,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              "rollout-session-two.jsonl",
+            ),
+            contents: codexTranscript({
+              sessionId: "session-two",
+              cwd: root,
+              prompt: "Prompt two",
+              reply: "Reply two",
+            }),
+            mtimeMs: NOW_MS - 2 * 60 * 60 * 1000,
+          });
+          const settings = settingsWithHomes(fixture, true);
+          const passes = yield* Ref.make(0);
+          // Force the first pass to stop on a budget skip after one thread, so
+          // the drain loop runs again and re-observes the first thread as
+          // already imported.
+          const scanner = Layer.effect(
+            AgentSessionScanner.AgentSessionScanner,
+            Effect.gen(function* () {
+              const real = yield* AgentSessionScanner.AgentSessionScanner;
+              return AgentSessionScanner.AgentSessionScanner.of({
+                scan: real.scan,
+                recentThreads: (workspaceRoot, completedSources, options) =>
+                  Stream.unwrap(
+                    Ref.getAndUpdate(passes, (count) => count + 1).pipe(
+                      Effect.map((pass) => {
+                        const stream = real.recentThreads(
+                          workspaceRoot,
+                          completedSources,
+                          options,
+                        );
+                        return pass === 0
+                          ? Stream.concat(
+                              Stream.take(stream, 1),
+                              Stream.make({ _tag: "Skipped", reason: "budget" } as const),
+                            )
+                          : stream;
+                      }),
+                    ),
+                  ),
+              });
+            }),
+          ).pipe(Layer.provide(Layer.fresh(AgentSessionScanner.layer)));
+          const context = yield* Layer.build(
+            makeHarnessLayer({ settings, providerStream: Stream.empty, scannerOverride: scanner }),
+          );
+          const importer = Context.get(context, AgentSessionAutoImporter.AgentSessionAutoImporter);
+          const snapshots = Context.get(context, ProjectionSnapshotQuery.ProjectionSnapshotQuery);
+
+          yield* importer.runNow;
+          yield* importer.drain;
+
+          expect(yield* Ref.get(passes)).toBeGreaterThan(1);
+          const shell = yield* snapshots.getShellSnapshot();
+          expect(shell.projects).toHaveLength(1);
+          const sources = yield* snapshots.getImportedAgentSessionSources(shell.projects[0]!.id);
+          expect(sources).toHaveLength(2);
+          // The two threads really on disk, not the sum over passes.
+          expect(yield* importer.status).toMatchObject({
+            state: "completed",
+            threadsImported: 2,
+          });
+        }),
+      ),
+    );
+
     it.effect("reuses an existing project for a discovered cwd", () =>
       Effect.scoped(
         Effect.gen(function* () {

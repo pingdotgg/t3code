@@ -150,6 +150,10 @@ export const make = Effect.gen(function* () {
       readonly projectId: ProjectId;
       readonly path: AgentSessionProjectCandidate["path"];
     }) {
+      // Each pass reports this project's running totals, not just the work it
+      // did: a thread imported by an earlier pass comes back as already
+      // imported and counts again. Keep the latest pass's figures rather than
+      // summing, or a drained backlog reports several times its real size.
       let imported = 0;
       let skipped = 0;
       let previousRemaining: number | null = null;
@@ -170,8 +174,8 @@ export const make = Effect.gen(function* () {
           ),
         );
         if (result === null) break;
-        imported += result.importedCount;
-        skipped += result.skippedCount;
+        imported = result.importedCount;
+        skipped = result.skippedCount;
         if (result.remainingCount === 0) break;
         if (
           result.importedCount === 0 &&
