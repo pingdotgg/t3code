@@ -1,5 +1,10 @@
-import type { KeybindingCommand } from "@t3tools/contracts";
+import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 
+import {
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchOptions,
+} from "./keybindings";
 import type { PaneSplitDirection } from "./splitPaneTree";
 
 export type WorkspacePaneShortcutAction =
@@ -33,4 +38,14 @@ export function workspacePaneShortcutAction(
     default:
       return null;
   }
+}
+
+export function isWorkspacePaneFocusShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  if (command === null) return false;
+  return workspacePaneShortcutAction(command)?._tag === "Focus";
 }

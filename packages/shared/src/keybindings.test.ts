@@ -4,19 +4,31 @@ import { DEFAULT_KEYBINDINGS } from "./keybindings.ts";
 
 describe("workspace pane keybindings", () => {
   it("ships Vim-direction split and focus shortcuts plus focus view", () => {
-    const keyByCommand = new Map(
-      DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
+    const bindingByCommand = new Map(
+      DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding] as const),
     );
 
-    expect(keyByCommand.get("pane.splitLeft")).toBe("mod+shift+h");
-    expect(keyByCommand.get("pane.splitDown")).toBe("mod+shift+j");
-    expect(keyByCommand.get("pane.splitUp")).toBe("mod+shift+k");
-    expect(keyByCommand.get("pane.splitRight")).toBe("mod+shift+l");
-    expect(keyByCommand.get("pane.focusLeft")).toBe("mod+alt+h");
-    expect(keyByCommand.get("pane.focusDown")).toBe("mod+alt+j");
-    expect(keyByCommand.get("pane.focusUp")).toBe("mod+alt+k");
-    expect(keyByCommand.get("pane.focusRight")).toBe("mod+alt+l");
-    expect(keyByCommand.get("pane.toggleMaximized")).toBe("mod+shift+enter");
+    expect(bindingByCommand.get("pane.splitLeft")?.key).toBe("mod+shift+h");
+    expect(bindingByCommand.get("pane.splitDown")?.key).toBe("mod+shift+j");
+    expect(bindingByCommand.get("pane.splitUp")?.key).toBe("mod+shift+k");
+    expect(bindingByCommand.get("pane.splitRight")?.key).toBe("mod+shift+l");
+    expect(bindingByCommand.get("pane.focusLeft")).toEqual({
+      key: "mod+alt+h",
+      command: "pane.focusLeft",
+    });
+    expect(bindingByCommand.get("pane.focusDown")).toEqual({
+      key: "mod+alt+j",
+      command: "pane.focusDown",
+    });
+    expect(bindingByCommand.get("pane.focusUp")).toEqual({
+      key: "mod+alt+k",
+      command: "pane.focusUp",
+    });
+    expect(bindingByCommand.get("pane.focusRight")).toEqual({
+      key: "mod+alt+l",
+      command: "pane.focusRight",
+    });
+    expect(bindingByCommand.get("pane.toggleMaximized")?.key).toBe("mod+shift+enter");
   });
 
   it("keeps every default shortcut unambiguous within the same context", () => {

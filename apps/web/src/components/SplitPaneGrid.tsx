@@ -286,6 +286,16 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     if (!preview || !container) return;
     applyPaneTreeLayout(container, resizePaneSplit(props.tree, preview.splitId, preview.ratio));
   });
+  useLayoutEffect(() => {
+    const request = props.focusPulse;
+    const container = containerRef.current;
+    if (!request || !container) return;
+    for (const element of container.querySelectorAll<HTMLElement>("[data-editor-group]")) {
+      if (element.dataset.editorGroup !== request.paneId) continue;
+      element.focus({ preventScroll: true });
+      return;
+    }
+  }, [props.focusPulse]);
   const setDropPreview = (preview: PaneDragDropPreview | null) => {
     if (sameDragDropPreview(dropPreviewRef.current, preview)) return;
     dropPreviewRef.current = preview;
@@ -458,6 +468,8 @@ function SplitPane(props: SplitPaneProps) {
       style={paneBoundsStyle(props.bounds)}
       data-editor-group={group.id}
       data-editor-group-focused={group.id === props.focusedPaneId ? "true" : "false"}
+      aria-label="Workspace pane"
+      tabIndex={-1}
       onPointerDown={(event) => {
         if (event.target instanceof Element && event.target.closest("[data-editor-tab]")) return;
         props.onFocusPane(group.id);

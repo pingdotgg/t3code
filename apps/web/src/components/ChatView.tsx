@@ -865,6 +865,7 @@ interface PersistentThreadTerminalDrawerProps {
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
+  workspacePaneFocusShortcutsEnabled: boolean;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -879,6 +880,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   newShortcutLabel,
   closeShortcutLabel,
   keybindings,
+  workspacePaneFocusShortcutsEnabled,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -1217,6 +1219,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           newShortcutLabel={visible ? newShortcutLabel : undefined}
           closeShortcutLabel={visible ? closeShortcutLabel : undefined}
           keybindings={keybindings}
+          workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
           onHeightChange={setTerminalHeight}
@@ -1236,6 +1239,7 @@ interface PersistentThreadTerminalPanelProps {
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   keybindings: ResolvedKeybindingsConfig;
+  workspacePaneFocusShortcutsEnabled: boolean;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
@@ -1255,6 +1259,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   launchContext,
   focusRequestId,
   keybindings,
+  workspacePaneFocusShortcutsEnabled,
   onAddTerminalContext,
   onSplitTerminal,
   onSplitTerminalVertical,
@@ -1397,6 +1402,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       terminalLabelsById={terminalLabelsById}
       terminalLaunchLocationsById={terminalLaunchLocationsById}
       keybindings={keybindings}
+      workspacePaneFocusShortcutsEnabled={workspacePaneFocusShortcutsEnabled}
     />
   );
 });
@@ -8340,6 +8346,7 @@ export default function ChatView(props: ChatViewProps) {
           launchContext={activeTerminalLaunchContext ?? null}
           focusRequestId={terminalFocusRequestId}
           keybindings={keybindings}
+          workspacePaneFocusShortcutsEnabled={workspaceMode}
           onAddTerminalContext={addTerminalContextToDraft}
           onSplitTerminal={() => splitPanelTerminalSurface(surface)}
           onSplitTerminalVertical={() => splitPanelTerminalSurface(surface, "vertical")}
@@ -8937,6 +8944,7 @@ export default function ChatView(props: ChatViewProps) {
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
         keybindings={keybindings}
+        workspacePaneFocusShortcutsEnabled={workspaceMode}
         onAddTerminalContext={addTerminalContextToDraft}
       />
     ),

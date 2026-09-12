@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
-import { workspacePaneShortcutAction } from "./workspacePaneShortcuts";
+import {
+  isWorkspacePaneFocusShortcut,
+  workspacePaneShortcutAction,
+} from "./workspacePaneShortcuts";
 
 describe("workspacePaneShortcutAction", () => {
   it.each([
@@ -26,5 +30,43 @@ describe("workspacePaneShortcutAction", () => {
       _tag: "ToggleMaximized",
     });
     expect(workspacePaneShortcutAction("terminal.toggle")).toBeNull();
+  });
+
+  it("recognizes directional pane focus while the terminal owns focus", () => {
+    expect(
+      isWorkspacePaneFocusShortcut(
+        {
+          key: "l",
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: true,
+        },
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: true, terminalOpen: true },
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not release pane split shortcuts from the terminal", () => {
+    expect(
+      isWorkspacePaneFocusShortcut(
+        {
+          key: "l",
+          metaKey: true,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        },
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: true, terminalOpen: true },
+        },
+      ),
+    ).toBe(false);
   });
 });
