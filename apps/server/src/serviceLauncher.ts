@@ -27,6 +27,7 @@ import {
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 import { isEntrypoint } from "./entrypoint.ts";
+import { stableNodeExecutablePath } from "./stableNodeExecutablePath.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
@@ -402,10 +403,15 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
-      stdio: ["inherit", "inherit", "inherit", "ipc"],
-    });
+    // launchd following a symlink leaves process.execPath on the keg realpath.
+    const child = NodeChildProcess.spawn(
+      stableNodeExecutablePath(process.execPath, process.argv0),
+      [paths.entryPath, "serve"],
+      {
+        env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
+        stdio: ["inherit", "inherit", "inherit", "ipc"],
+      },
+    );
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       child.once("error", onError);
