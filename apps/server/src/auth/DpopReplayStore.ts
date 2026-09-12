@@ -14,25 +14,19 @@ import * as ServerConfig from "../config.ts";
 
 const REPLAY_BUCKET_DURATION = Duration.minutes(10);
 const REPLAY_BUCKET_MILLISECONDS = Duration.toMillis(REPLAY_BUCKET_DURATION);
-const LEGACY_REPLAY_RETENTION = Duration.minutes(6);
 const REPLAY_DIRECTORY_NAME = "dpop-replay";
 const replayBucketPattern = /^(0|[1-9][0-9]*)$/;
-const legacyReplayMarkerPattern = /^dpop-proof-[A-Za-z0-9_-]{43}\.bin$/;
 
 const dpopReplayStoreSetupStage = Schema.Literals(["make-directory", "set-permissions"]);
 const dpopReplayStoreClaimStage = Schema.Literals([
+  "legacy-lookup",
   "ensure-bucket",
   "sync-directory",
   "write-marker",
 ]);
-const dpopReplayStorePruneStage = Schema.Literals([
-  "read-buckets",
-  "remove-bucket",
-  "read-legacy",
-  "remove-legacy",
-]);
+const dpopReplayStorePruneStage = Schema.Literals(["read-buckets", "remove-bucket"]);
 
-export class DpopReplayStoreSetupError extends Schema.TaggedErrorClass<DpopReplayStoreSetupError>()(
+export class DpopReplayStoreSetupError extends Schema.TaggedError<DpopReplayStoreSetupError>()(
   "DpopReplayStoreSetupError",
   {
     cause: Schema.Defect(),
@@ -45,7 +39,7 @@ export class DpopReplayStoreSetupError extends Schema.TaggedErrorClass<DpopRepla
   }
 }
 
-export class DpopReplayStoreKeyCalculationError extends Schema.TaggedErrorClass<DpopReplayStoreKeyCalculationError>()(
+export class DpopReplayStoreKeyCalculationError extends Schema.TaggedError<DpopReplayStoreKeyCalculationError>()(
   "DpopReplayStoreKeyCalculationError",
   { cause: Schema.Defect() },
 ) {
@@ -54,7 +48,7 @@ export class DpopReplayStoreKeyCalculationError extends Schema.TaggedErrorClass<
   }
 }
 
-export class DpopReplayStoreClaimError extends Schema.TaggedErrorClass<DpopReplayStoreClaimError>()(
+export class DpopReplayStoreClaimError extends Schema.TaggedError<DpopReplayStoreClaimError>()(
   "DpopReplayStoreClaimError",
   {
     cause: Schema.Defect(),
@@ -68,7 +62,7 @@ export class DpopReplayStoreClaimError extends Schema.TaggedErrorClass<DpopRepla
   }
 }
 
-export class DpopReplayAlreadyClaimedError extends Schema.TaggedErrorClass<DpopReplayAlreadyClaimedError>()(
+export class DpopReplayAlreadyClaimedError extends Schema.TaggedError<DpopReplayAlreadyClaimedError>()(
   "DpopReplayAlreadyClaimedError",
   {
     source: Schema.Literals(["bucket", "legacy"]),
@@ -82,7 +76,7 @@ export class DpopReplayAlreadyClaimedError extends Schema.TaggedErrorClass<DpopR
 }
 export const isDpopReplayAlreadyClaimedError = Schema.is(DpopReplayAlreadyClaimedError);
 
-export class DpopReplayStorePruneError extends Schema.TaggedErrorClass<DpopReplayStorePruneError>()(
+export class DpopReplayStorePruneError extends Schema.TaggedError<DpopReplayStorePruneError>()(
   "DpopReplayStorePruneError",
   {
     cause: Schema.Defect(),
@@ -131,9 +125,6 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
   const replayDirectory = path.join(config.secretsDir, REPLAY_DIRECTORY_NAME);
-  const legacyProtectionEndsAt = DateTime.add(yield* DateTime.now, {
-    milliseconds: Duration.toMillis(LEGACY_REPLAY_RETENTION),
-  });
 
   yield* fileSystem.makeDirectory(replayDirectory, { recursive: true }).pipe(
     Effect.mapError(
@@ -175,78 +166,30 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const claimLegacyMarker = (replayKey: string) => {
+  const checkLegacyMarker = (replayKey: string) => {
     const markerPath = path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`);
-    return Effect.gen(function* () {
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const marker = yield* fileSystem.open(markerPath, {
-            flag: "wx",
-            mode: 0o600,
-          });
-          yield* marker.sync;
-        }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          cause.reason._tag === "AlreadyExists"
-            ? new DpopReplayAlreadyClaimedError({
-                source: "legacy",
-                markerPath,
-              })
-            : new DpopReplayStoreClaimError({
-                cause,
-                stage: "write-marker",
-                resource: markerPath,
-              }),
-        ),
-      );
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const secretsDirectory = yield* fileSystem.open(config.secretsDir, { flag: "r" });
-          yield* secretsDirectory.sync;
-        }),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DpopReplayStoreClaimError({
-              cause,
-              stage: "sync-directory",
-              resource: config.secretsDir,
-            }),
-        ),
-      );
-    });
-  };
-
-  const pruneLegacy = Effect.fn("DpopReplayStore.pruneLegacy")(function* () {
-    const entries = yield* fileSystem.readDirectory(config.secretsDir, { recursive: false }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new DpopReplayStorePruneError({
-            cause,
-            stage: "read-legacy",
-            resource: config.secretsDir,
-          }),
-      ),
-    );
-    yield* Effect.forEach(
-      entries,
-      (entry) =>
-        legacyReplayMarkerPattern.test(entry)
-          ? fileSystem.remove(path.join(config.secretsDir, entry), { force: true }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new DpopReplayStorePruneError({
-                    cause,
-                    stage: "remove-legacy",
-                    resource: path.join(config.secretsDir, entry),
-                  }),
+    return fileSystem.stat(markerPath).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.void
+            : Effect.fail(
+                new DpopReplayStoreClaimError({
+                  cause,
+                  stage: "legacy-lookup",
+                  resource: markerPath,
+                }),
               ),
-            )
-          : Effect.void,
-      { concurrency: 1 },
+        onSuccess: () =>
+          Effect.fail(
+            new DpopReplayAlreadyClaimedError({
+              source: "legacy",
+              markerPath,
+            }),
+          ),
+      }),
     );
-  });
+  };
 
   const prune: DpopReplayStore["Service"]["prune"] = Effect.fn("DpopReplayStore.prune")(
     function* () {
@@ -288,10 +231,6 @@ export const make = Effect.gen(function* () {
         },
         { concurrency: 1 },
       );
-
-      if (!DateTime.isLessThan(now, legacyProtectionEndsAt)) {
-        yield* pruneLegacy();
-      }
     },
   );
 
@@ -308,11 +247,8 @@ export const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const currentBucket = bucketFor(now);
 
-    if (DateTime.isLessThan(now, legacyProtectionEndsAt)) {
-      // Claim the legacy marker first so a new instance cannot accept a proof
-      // that an old instance would subsequently accept during the upgrade window.
-      yield* claimLegacyMarker(replayKey);
-    }
+    // Old-version writers must be stopped before upgrade; retain their markers indefinitely.
+    yield* checkLegacyMarker(replayKey);
 
     // Claim the future bucket first so a partial failure leaves a marker that
     // cannot be pruned while the proof is still inside its acceptance window.

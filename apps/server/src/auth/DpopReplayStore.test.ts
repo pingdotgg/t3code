@@ -92,7 +92,7 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
     }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
   );
 
-  it.effect("creates a durable legacy marker during the compatibility window", () =>
+  it.effect("does not create legacy markers when claiming a new proof", () =>
     Effect.gen(function* () {
       const replayStore = yield* DpopReplayStore.DpopReplayStore;
       const crypto = yield* Crypto.Crypto;
@@ -108,8 +108,7 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
       yield* replayStore.claim({ thumbprint, jti });
 
       const legacyMarker = path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`);
-      const marker = yield* fileSystem.readFile(legacyMarker);
-      assert.equal(marker.byteLength, 0);
+      assert.isFalse(yield* fileSystem.exists(legacyMarker));
     }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
   );
 
@@ -170,7 +169,7 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
     }).pipe(Effect.provide(makeSecondMarkerOpenFailureStoreLayer())),
   );
 
-  it.effect("honors legacy markers until their replay window expires", () =>
+  it.effect("retains and rejects legacy markers indefinitely, including after restart", () =>
     Effect.gen(function* () {
       const replayStore = yield* DpopReplayStore.DpopReplayStore;
       const crypto = yield* Crypto.Crypto;
@@ -191,11 +190,112 @@ it.layer(NodeServices.layer)("DpopReplayStore.layer", (it) => {
         assert.equal(protectedReplay.source, "legacy");
       }
 
-      yield* TestClock.adjust(Duration.minutes(6));
+      yield* TestClock.adjust(Duration.hours(24));
       yield* replayStore.prune();
-      const remainingSecrets = yield* fileSystem.readDirectory(config.secretsDir);
-      assert.notInclude(remainingSecrets, path.basename(legacyMarker));
-      yield* replayStore.claim({ thumbprint, jti });
+      assert.isTrue(yield* fileSystem.exists(legacyMarker));
+      const laterReplay = yield* Effect.flip(replayStore.claim({ thumbprint, jti }));
+      assert.equal(laterReplay._tag, "DpopReplayAlreadyClaimedError");
+
+      const restartedStore = yield* Effect.scoped(DpopReplayStore.make);
+      const restartedReplay = yield* Effect.flip(restartedStore.claim({ thumbprint, jti }));
+      assert.equal(restartedReplay._tag, "DpopReplayAlreadyClaimedError");
     }).pipe(Effect.provide(makeDpopReplayStoreTestClockLayer())),
+  );
+
+  it.effect("rejects a legacy marker written just before the former startup deadline", () =>
+    Effect.gen(function* () {
+      const replayStore = yield* DpopReplayStore.DpopReplayStore;
+      const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const input = { thumbprint: "legacy-thumbprint", jti: "late-legacy-jti" };
+      const replayKey = yield* crypto
+        .digest("SHA-256", new TextEncoder().encode(`${input.thumbprint}:${input.jti}`))
+        .pipe(Effect.map(Encoding.encodeBase64Url));
+
+      yield* TestClock.adjust(Duration.seconds(359));
+      yield* fileSystem.writeFile(
+        path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`),
+        new Uint8Array(),
+      );
+      yield* TestClock.adjust(Duration.seconds(2));
+      const error = yield* Effect.flip(replayStore.claim(input));
+      assert.equal(error._tag, "DpopReplayAlreadyClaimedError");
+      if (error._tag === "DpopReplayAlreadyClaimedError") {
+        assert.equal(error.source, "legacy");
+      }
+    }).pipe(Effect.provide(makeDpopReplayStoreTestClockLayer())),
+  );
+
+  it.effect("does not prune a fresh legacy marker written long after startup", () =>
+    Effect.gen(function* () {
+      const replayStore = yield* DpopReplayStore.DpopReplayStore;
+      const crypto = yield* Crypto.Crypto;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const input = { thumbprint: "legacy-thumbprint", jti: "fresh-legacy-jti" };
+      const replayKey = yield* crypto
+        .digest("SHA-256", new TextEncoder().encode(`${input.thumbprint}:${input.jti}`))
+        .pipe(Effect.map(Encoding.encodeBase64Url));
+      const legacyMarker = path.join(config.secretsDir, `dpop-proof-${replayKey}.bin`);
+
+      yield* TestClock.adjust(Duration.hours(1));
+      yield* fileSystem.writeFile(legacyMarker, new Uint8Array([42]));
+      yield* replayStore.prune();
+      assert.deepEqual(yield* fileSystem.readFile(legacyMarker), new Uint8Array([42]));
+      const error = yield* Effect.flip(replayStore.claim(input));
+      assert.equal(error._tag, "DpopReplayAlreadyClaimedError");
+    }).pipe(Effect.provide(makeDpopReplayStoreTestClockLayer())),
+  );
+
+  it.effect("allows only one concurrent claim across independent stores sharing secrets", () =>
+    Effect.gen(function* () {
+      const firstStore = yield* DpopReplayStore.DpopReplayStore;
+      const secondStore = yield* Effect.scoped(DpopReplayStore.make);
+      const input = { thumbprint: "shared-thumbprint", jti: "concurrent-jti" };
+      const outcomes = yield* Effect.all(
+        [firstStore, secondStore].map((store) =>
+          store.claim(input).pipe(
+            Effect.match({
+              onSuccess: () => "claimed",
+              onFailure: (error) => error._tag,
+            }),
+          ),
+        ),
+        { concurrency: "unbounded" },
+      );
+      assert.sameMembers(outcomes, ["claimed", "DpopReplayAlreadyClaimedError"]);
+    }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
+  );
+
+  it.effect("fails closed when reading a legacy marker returns an unexpected stat error", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const store = yield* Effect.scoped(
+        DpopReplayStore.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stat: (path) =>
+              String(path).includes("dpop-proof-")
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "stat",
+                      pathOrDescriptor: String(path),
+                      description: "Injected legacy marker stat failure.",
+                    }),
+                  )
+                : fileSystem.stat(path),
+          }),
+        ),
+      );
+      const error = yield* Effect.flip(
+        store.claim({ thumbprint: "thumbprint", jti: "stat-failure-jti" }),
+      );
+      assert.equal(error._tag, "DpopReplayStoreClaimError");
+    }).pipe(Effect.provide(makeDpopReplayStoreLayer())),
   );
 });

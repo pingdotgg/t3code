@@ -492,7 +492,7 @@ export const make = Effect.gen(function* () {
     );
     if (seededGrant) {
       const result = validateGrantDetails(seededGrant, now, input);
-      return isBootstrapCredentialInvalidError(result) ? yield* result : result;
+      return Schema.is(BootstrapCredentialInvalidError)(result) ? yield* result : result;
     }
 
     const matching = yield* pairingLinks
@@ -502,7 +502,7 @@ export const make = Effect.gen(function* () {
       return yield* new UnknownBootstrapCredentialError({});
     }
     const result = validateStoredGrant(matching.value, now, input);
-    return isBootstrapCredentialInvalidError(result) ? yield* result : result;
+    return Schema.is(BootstrapCredentialInvalidError)(result) ? yield* result : result;
   });
 
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(

@@ -37,6 +37,24 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+## Replay-store upgrades require stopped older writers
+
+Before upgrading to the bucketed replay store, stop every older server that shares
+the secrets directory and let its in-flight requests finish. Do not run older
+servers alongside the new store. Older servers only check canonical
+`dpop-proof-*.bin` markers and cannot detect proofs claimed in the new buckets.
+
+The new store checks existing canonical markers but never creates or deletes
+them. They remain as fixed migration residue, while new replay state expires in
+the bucketed store. A process-local timer cannot establish that every other
+writer has stopped, so elapsed time since startup never disables legacy checks
+or permits legacy cleanup.
+
+Before rolling back, stop every new-version server sharing the directory and
+wait at least six minutes after its last accepted request before starting an
+older version. This lets accepted proofs expire before their bucket markers
+become invisible to the older server. Keep server clocks synchronized.
+
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes.
