@@ -3553,15 +3553,47 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   rollbackInput.target.providerTurn.id,
                 );
               }
+              let retainedThread = rollbackInput.providerThread;
               if (boundaryMessageId !== undefined) {
-                yield* sdkCall(
-                  "session.revert",
-                  { sessionID: sessionId, messageID: boundaryMessageId },
-                  () =>
-                    client.session.revert({ sessionID: sessionId, messageID: boundaryMessageId }),
+                const boundaryIndex = messages.findIndex(
+                  ({ info }) => info.id === boundaryMessageId,
                 );
+                if (boundaryIndex < 0)
+                  return yield* protocolError(
+                    "The OpenCode rewind boundary is no longer available.",
+                  );
+                const fork = unwrapData(
+                  "session.fork",
+                  yield* sdkCall(
+                    "session.fork",
+                    { sessionID: sessionId, messageID: boundaryMessageId },
+                    () =>
+                      client.session.fork({ sessionID: sessionId, messageID: boundaryMessageId }),
+                  ),
+                );
+                const retained = unwrapData(
+                  "session.messages",
+                  yield* sdkCall("session.messages", { sessionID: fork.id }, () =>
+                    client.session.messages({ sessionID: fork.id }),
+                  ),
+                );
+                if (retained.length !== boundaryIndex)
+                  return yield* protocolError(
+                    "OpenCode did not preserve the requested rewind boundary.",
+                  );
+                yield* sdkCall("session.update", { sessionID: fork.id }, () =>
+                  client.session.update({
+                    sessionID: fork.id,
+                    permission: openCodePermissionRules(input.runtimePolicy),
+                  }),
+                );
+                retainedThread = {
+                  ...rollbackInput.providerThread,
+                  nativeThreadRef: providerRef(fork.id),
+                };
+                registerThread(fork, retainedThread, state?.appThread ?? null);
               }
-              const snapshot = yield* readSnapshot(rollbackInput.providerThread);
+              const snapshot = yield* readSnapshot(retainedThread);
               return {
                 ...snapshot,
                 providerThread: {

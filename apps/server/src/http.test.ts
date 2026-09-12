@@ -402,6 +402,24 @@ describe("video asset byte ranges", () => {
     }).pipe(Effect.provide(fileResponseLayer)),
   );
 
+  it.effect("keeps attachment media out of the cache once its signed URL expires", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-attachment-media-" });
+      const filePath = path.join(directory, "audio.wav");
+      yield* fs.writeFileString(filePath, "RIFF");
+      const canonicalPath = yield* fs.realPath(filePath);
+      // An attachment is read straight from disk, so it carries no opened host file. Its URL is
+      // signed and short-lived; a cached copy would outlive the grant that served it.
+      const response = HttpServerResponse.toWeb(
+        yield* assetFileResponse({ path: canonicalPath, mimeType: "audio/wav" }),
+      );
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+    }).pipe(Effect.provide(fileResponseLayer)),
+  );
+
   it.effect("closes guarded descriptors after full, HEAD, rejected, and cancelled responses", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -500,6 +518,36 @@ describe("video asset byte ranges", () => {
       expect(image.headers.has("accept-ranges")).toBe(false);
       expect(yield* Effect.promise(() => image.text())).toBe("0123456789");
     }).pipe(Effect.provide(fileResponseLayer)),
+  );
+
+  it.effect(
+    "supports native audio header probes and seeking without changing explicit downloads",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-audio-range-" });
+        const file = path.join(directory, "recording.wav");
+        yield* fs.writeFileString(file, "0123456789");
+        const asset = { path: file, mimeType: "audio/wav" };
+        for (const [header, expected] of [
+          ["bytes=0-1", "01"],
+          ["bytes=5-", "56789"],
+        ] as const) {
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset, header));
+          expect(response.status).toBe(206);
+          expect(response.headers.get("content-type")).toBe("audio/wav");
+          expect(response.headers.get("accept-ranges")).toBe("bytes");
+          expect(response.headers.get("content-length")).toBe(String(expected.length));
+          expect(yield* Effect.promise(() => response.text())).toBe(expected);
+        }
+        const download = HttpServerResponse.toWeb(
+          yield* assetFileResponse({ ...asset, download: true, fileName: "recording.wav" }),
+        );
+        expect(download.status).toBe(200);
+        expect(download.headers.get("content-disposition")).toContain("attachment;");
+        expect(yield* Effect.promise(() => download.text())).toBe("0123456789");
+      }).pipe(Effect.provide(fileResponseLayer)),
   );
 
   it.effect("rejects ranges outside the file, including empty files", () =>

@@ -707,30 +707,34 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
-  it.effect("rolls back an identified checkpoint without fetching the full projection", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+  it.effect.each([true, false])(
+    "rolls back an identified checkpoint without fetching the full projection, restoreFiles=%s",
+    (restoreFiles) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const projectionRequests: ThreadId[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
 
-      yield* revertThreadCheckpoint({
-        commandId: CommandId.make("rollback-known-checkpoint"),
-        threadId: v2ThreadId,
-        checkpointId: CheckpointId.make("checkpoint-known"),
-        scopeId: CheckpointScopeId.make("scope-known"),
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(projectionRequests).toEqual([]);
-      expect(commands).toEqual([
-        {
-          type: "checkpoint.rollback",
-          commandId: "rollback-known-checkpoint",
+        yield* revertThreadCheckpoint({
+          commandId: CommandId.make("rollback-known-checkpoint"),
           threadId: v2ThreadId,
-          checkpointId: "checkpoint-known",
-          scopeId: "scope-known",
-        },
-      ]);
-    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+          checkpointId: CheckpointId.make("checkpoint-known"),
+          scopeId: CheckpointScopeId.make("scope-known"),
+          restoreFiles,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        expect(projectionRequests).toEqual([]);
+        expect(commands).toEqual([
+          {
+            type: "checkpoint.rollback",
+            commandId: "rollback-known-checkpoint",
+            threadId: v2ThreadId,
+            checkpointId: "checkpoint-known",
+            scopeId: "scope-known",
+            restoreFiles,
+          },
+        ]);
+      }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
   it.effect("validates identified checkpoints locally for older servers", () =>
