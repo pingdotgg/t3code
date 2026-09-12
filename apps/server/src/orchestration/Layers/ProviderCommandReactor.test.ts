@@ -850,6 +850,71 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("cancels an accepted turn start when the session stops before it begins", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-submitted-stop"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-accepted-then-stopped"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-accepted-then-stopped"),
+          role: "user",
+          text: "Send while stopping",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const placeholders = await harness.readTurnStartPlaceholders();
+          return placeholders[0]?.state === "submitted";
+        }),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-stop-before-turn-begins"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([]);
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(
+        thread?.activities.find(
+          (activity) =>
+            activity.kind === "provider.turn.start.failed" &&
+            activity.summary === "Provider turn start failed",
+        ),
+      ).toMatchObject({
+        payload: { requestId: "message-accepted-then-stopped" },
+      });
+    }),
+  );
+
   effectIt.effect("starts a turn accepted while an earlier checkpoint revert completes", () =>
     Effect.gen(function* () {
       const barrier = yield* Deferred.make<void>();
@@ -1531,14 +1596,22 @@ describe("ProviderCommandReactor", () => {
             stoppedThread?.activities.filter(
               (activity) => activity.summary === "Queued message was not sent",
             ),
-          ).toEqual([
-            expect.objectContaining({
-              payload: {
-                requestId: "user-message-during-compact-recovery-2",
-                detail: expect.any(String),
-              },
-            }),
-          ]);
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                payload: {
+                  requestId: "user-message-during-compact-recovery-2",
+                  detail: expect.any(String),
+                },
+              }),
+              expect.objectContaining({
+                payload: {
+                  requestId: "user-message-blocked-compact",
+                  detail: expect.any(String),
+                },
+              }),
+            ]),
+          );
           expect(harness.sendTurn).toHaveBeenCalledTimes(2);
           yield* Deferred.succeed(releaseQueuedSend, undefined);
           return;
@@ -1568,7 +1641,7 @@ describe("ProviderCommandReactor", () => {
             stoppedThread?.activities.filter(
               (activity) => activity.summary === "Queued message was not sent",
             ),
-          ).toHaveLength(2);
+          ).toHaveLength(3);
           return;
         }
         yield* Deferred.await(queuedSent);
@@ -1718,11 +1791,12 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
       expect(
         recoveredThread?.activities.find(
-          (activity) => activity.summary === "Queued message was not sent",
+          (activity) =>
+            activity.summary === "Queued message was not sent" &&
+            (activity.payload as Record<string, unknown>).requestId ===
+              "user-message-queued-before-stop",
         ),
-      ).toMatchObject({
-        payload: { requestId: "user-message-queued-before-stop" },
-      });
+      ).toBeDefined();
       expect(
         recoveredThread?.activities.find(
           (activity) => activity.kind === "provider.session.stop.failed",
