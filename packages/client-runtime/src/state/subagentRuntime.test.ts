@@ -461,6 +461,62 @@ describe("deriveAgentPanelModel", () => {
     expect(model.liveCount).toBe(0);
   });
 
+  it("counts a running workflow coordinator between phases", () => {
+    const betweenPhases = fold([
+      activity("task.started", {
+        taskId: "wf-between-phases",
+        taskType: "local_workflow",
+        title: "review",
+      }),
+      activity("task.progress", {
+        taskId: "wf-between-phases:wf:0",
+        title: "review:a",
+        status: "completed",
+        parentAgentId: "wf-between-phases",
+        agentIndex: 0,
+        phaseIndex: 0,
+      }),
+      activity("task.completed", {
+        taskId: "wf-between-phases:wf:0",
+        status: "completed",
+        parentAgentId: "wf-between-phases",
+      }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: betweenPhases });
+
+    expect(model.runningCount).toBe(1);
+    expect(model.settledCount).toBe(1);
+    expect(model.liveCount).toBe(1);
+    expect(model.runningCount + model.waitingCount + model.idleCount + model.settledCount).toBe(
+      betweenPhases.length,
+    );
+  });
+
+  it("does not count a workflow coordinator while a member is idle", () => {
+    const idleMember = fold([
+      activity("task.started", {
+        taskId: "wf-idle-member",
+        taskType: "local_workflow",
+        title: "review",
+      }),
+      activity("task.progress", {
+        taskId: "wf-idle-member:wf:0",
+        title: "review:a",
+        status: "idle",
+        parentAgentId: "wf-idle-member",
+        agentIndex: 0,
+        phaseIndex: 0,
+      }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: idleMember });
+
+    expect(model.runningCount).toBe(0);
+    expect(model.idleCount).toBe(1);
+    expect(model.liveCount).toBe(0);
+  });
+
   it("keeps direct spawns in first-seen order as their activity changes", () => {
     const directRoster = fold([
       activity("task.started", { taskId: "direct-a", title: "First" }, "2026-08-01T11:00:00.000Z"),
