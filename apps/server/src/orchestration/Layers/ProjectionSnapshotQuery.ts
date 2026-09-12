@@ -3537,6 +3537,7 @@ pending_approval_requests AS (
   const getThreadDetailSnapshot: ProjectionSnapshotQueryShape["getThreadDetailSnapshot"] = (
     threadId,
     window,
+    includeShell = false,
   ) =>
     // Read the thread detail and the snapshot sequence within a single
     // transaction so the sequence is consistent with the returned state; a
@@ -3547,6 +3548,9 @@ pending_approval_requests AS (
     sql
       .withTransaction(
         Effect.gen(function* () {
+          const shell = includeShell ? yield* getThreadShellById(threadId) : Option.none();
+          if (includeShell && Option.isNone(shell)) return Option.none();
+          const shellFields = Option.isSome(shell) ? { shell: shell.value } : {};
           if (window?.turnLimit === undefined) {
             const thread = yield* getThreadDetailByIdBounded(threadId, undefined, {
               mode: "client",
@@ -3555,7 +3559,7 @@ pending_approval_requests AS (
               return Option.none<OrchestrationThreadDetailSnapshot>();
             }
             const { snapshotSequence } = yield* getSnapshotSequence();
-            return Option.some({ snapshotSequence, thread: thread.value });
+            return Option.some({ snapshotSequence, thread: thread.value, ...shellFields });
           }
 
           // A malformed or foreign-thread cursor falls back to the first page
@@ -3647,6 +3651,7 @@ pending_approval_requests AS (
           return Option.some({
             snapshotSequence,
             thread: thread.value,
+            ...shellFields,
             page: {
               beforeCursor:
                 hasMore && oldest !== undefined
