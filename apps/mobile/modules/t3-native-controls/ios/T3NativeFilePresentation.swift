@@ -46,6 +46,16 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
           try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
           return
         }
+        // Quick Look knows which formats it renders; refuse before presenting so the caller
+        // can fall back instead of showing an "unsupported format" page.
+        guard QLPreviewController.canPreview(file as NSURL) else {
+          try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+          throw NSError(
+            domain: "T3NativePresentation",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "This file type cannot be previewed on this device."]
+          )
+        }
         item.previewItemURL = file
         item.previewItemTitle = title
         let preview = FilePreviewController()
@@ -137,26 +147,34 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
         try FileManager.default.moveItem(at: temporaryFile, to: download)
       }
       try Task.checkCancellation()
-      let type: UTType
+      // Pictures and PDFs are identified by content so a misnamed file still opens correctly.
+      // Anything else keeps its own extension: Quick Look decides from that whether it can
+      // render the document (Office, iWork, RTF and more) and refuses before we present.
+      let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
+      let originalExtension = filename.pathExtension
+      var type: UTType?
       if let image = CGImageSourceCreateWithURL(download as CFURL, nil),
         CGImageSourceGetCount(image) > 0, let imageType = CGImageSourceGetType(image),
         let detectedType = UTType(imageType as String) {
         type = detectedType
       } else if CGPDFDocument(download as CFURL) != nil {
         type = .pdf
-      } else if URL(fileURLWithPath: title).pathExtension.lowercased() == "svg" {
+      } else if originalExtension.lowercased() == "svg" {
         type = .svg
-      } else {
-        throw URLError(.cannotDecodeContentData)
       }
-      let filename = URL(fileURLWithPath: title).lastPathComponent as NSString
-      let originalExtension = filename.pathExtension
-      let fileExtension = UTType(filenameExtension: originalExtension) == type
-        ? originalExtension : type.preferredFilenameExtension ?? "png"
+      let fileExtension: String
+      if let type {
+        fileExtension = UTType(filenameExtension: originalExtension) == type
+          ? originalExtension : type.preferredFilenameExtension ?? originalExtension
+      } else {
+        fileExtension = originalExtension
+      }
       let stem = filename.deletingPathExtension
       var name = String(stem.prefix(60)).components(separatedBy: .controlCharacters).joined(separator: "_")
       while name.utf8.count > 200 { name.removeLast() }
-      let file = directory.appendingPathComponent("\(name.isEmpty ? "Preview" : name).\(fileExtension)")
+      let baseName = name.isEmpty ? "Preview" : name
+      let file = directory.appendingPathComponent(
+        fileExtension.isEmpty ? baseName : "\(baseName).\(fileExtension)")
       try FileManager.default.moveItem(at: download, to: file)
       return file
     } catch {
