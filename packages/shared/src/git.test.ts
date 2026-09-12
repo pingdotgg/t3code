@@ -1,4 +1,8 @@
-import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -233,12 +237,57 @@ describe("applyGitStatusStreamEvent", () => {
       pr: null,
     };
 
-    expect(applyGitStatusStreamEvent(current, { _tag: "remoteUpdated", remote })).toEqual({
+    const merged = applyGitStatusStreamEvent(current, { _tag: "remoteUpdated", remote });
+
+    expect(merged).toEqual({
       ...current,
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,
       pr: null,
     });
+    expect(Object.keys(merged)).not.toContain("vcs");
+  });
+
+  it("carries vcs through a local to remote to local sequence", () => {
+    const local: VcsStatusLocalResult = {
+      isRepo: true,
+      vcs: { kind: "jj", unsupportedReason: "Not a colocated Jujutsu repository." },
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    const remote: VcsStatusRemoteResult = {
+      hasUpstream: true,
+      aheadCount: 2,
+      behindCount: 1,
+      pr: null,
+    };
+
+    const afterLocal = applyGitStatusStreamEvent(null, { _tag: "localUpdated", local });
+    const afterRemote = applyGitStatusStreamEvent(afterLocal, { _tag: "remoteUpdated", remote });
+    const afterSecondLocal = applyGitStatusStreamEvent(afterRemote, {
+      _tag: "localUpdated",
+      local: { ...local, hasWorkingTreeChanges: true },
+    });
+
+    expect(afterRemote.vcs).toEqual(local.vcs);
+    expect(afterSecondLocal.vcs).toEqual(local.vcs);
+    expect(afterSecondLocal.aheadCount).toBe(2);
+  });
+
+  it("omits vcs from the synthetic local part of a remote-only update", () => {
+    const remote: VcsStatusRemoteResult = {
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    };
+
+    expect(applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", remote })).not.toHaveProperty(
+      "vcs",
+    );
   });
 });

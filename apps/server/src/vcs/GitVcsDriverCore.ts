@@ -82,7 +82,7 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
-const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
+export const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
   hasOriginRemote: false,
@@ -213,7 +213,7 @@ function parsePorcelainPath(line: string): string | null {
   return filePath.length > 0 ? filePath : null;
 }
 
-function filterBranchesForListQuery(
+export function filterBranchesForListQuery(
   refs: ReadonlyArray<VcsRef>,
   query?: string,
 ): ReadonlyArray<VcsRef> {
@@ -225,7 +225,7 @@ function filterBranchesForListQuery(
   return refs.filter((refName) => refName.name.toLowerCase().includes(normalizedQuery));
 }
 
-function paginateBranches(input: {
+export function paginateBranches(input: {
   refs: ReadonlyArray<VcsRef>;
   cursor?: number | undefined;
   limit?: number | undefined;
