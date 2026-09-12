@@ -55,6 +55,12 @@ catalog:
   vite-plus: 0.3.0
   yaml: ^2.9.0
 
+# Alchemy is pinned to a pkg.ing preview build of upstream main until a release
+# built against Effect rc.115 exists; its own @alchemy.run/* and
+# @distilled.cloud/* dependencies are pkg.ing tarballs too, which this check
+# would otherwise reject as transitive exotic sources.
+blockExoticSubdeps: false
+
 minimumReleaseAgeExclude:
   - "@clerk/backend@3.14.0"
   - "@clerk/clerk-js@6.30.1"
@@ -76,7 +82,6 @@ minimumReleaseAgeExclude:
   - "@effect/sql-pg@4.0.0-rc.115"
   - "@effect/sql-sqlite-bun@4.0.0-rc.115"
   - "@effect/vitest@4.0.0-rc.115"
-  - alchemy@2.0.0-beta.77
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
   - "@expo/cli@57.0.20"
@@ -90,8 +95,15 @@ minimumReleaseAgeExclude:
   - expo-widgets@57.0.15
   - electron@44.1.0
   - "@anthropic-ai/claude-agent-sdk@0.3.260"
+  - "@effect/sql-d1@4.0.0-rc.115"
+  - "@effect/sql-sqlite-do@4.0.0-rc.115"
 
 overrides:
+  # The Alchemy preview build pins its Fly and Railway providers to the released
+  # rc.9, which still depends on the released @distilled.cloud/core; that core
+  # calls rc.112 Config constructors. Point it at the same pkg.ing core the
+  # other providers use so one Effect-rc.115-compatible copy loads.
+  "@distilled.cloud/core": "https://pkg.ing/@distilled.cloud/core/92586a4137b3982be6ae30a7b3c749c326ea11cb"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
@@ -163,6 +175,8 @@ packageExtensions:
 
 patchedDependencies:
   "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
+  "@distilled.cloud/fly-io@1.0.0-rc.9": patches/@distilled.cloud__fly-io@1.0.0-rc.9.patch
+  "@distilled.cloud/railway@1.0.0-rc.9": patches/@distilled.cloud__railway@1.0.0-rc.9.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch

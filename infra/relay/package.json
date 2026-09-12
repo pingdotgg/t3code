@@ -18,7 +18,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "alchemy": "2.0.0-beta.77",
+    "alchemy": "https://pkg.ing/alchemy/2365753e583e15d1476c28055f6b12d3adfdd777",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "catalog:"
   },
