@@ -1639,6 +1639,7 @@ export default function ChatView(props: ChatViewProps) {
   // worktree send starts and cleared once the turn starts or the next send
   // begins, so a failed or cancelled card stays until the user acts.
   const [worktreeSetupRef, setWorktreeSetupRef] = useState<{
+    environmentId: EnvironmentId;
     threadId: ThreadId;
     ownerKey: string;
   } | null>(null);
@@ -3340,10 +3341,13 @@ export default function ChatView(props: ChatViewProps) {
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
+  // The setup runs on the environment that received the dispatch, so both
+  // the subscription and cancel target that one even if the draft's machine
+  // picker changes underneath.
   const worktreeSetupQuery = useEnvironmentQuery(
     worktreeSetupActive
       ? vcsEnvironment.worktreeSetup({
-          environmentId,
+          environmentId: worktreeSetupRef.environmentId,
           input: { threadId: worktreeSetupRef.threadId },
         })
       : null,
@@ -3371,9 +3375,12 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const onCancelWorktreeSetup = useCallback(() => {
-    if (!worktreeSetup || worktreeSetup.phase !== "running") return;
-    void cancelWorktreeSetup({ environmentId, input: { threadId: worktreeSetup.threadId } });
-  }, [cancelWorktreeSetup, environmentId, worktreeSetup]);
+    if (!worktreeSetup || !worktreeSetupRef || worktreeSetup.phase !== "running") return;
+    void cancelWorktreeSetup({
+      environmentId: worktreeSetupRef.environmentId,
+      input: { threadId: worktreeSetup.threadId },
+    });
+  }, [cancelWorktreeSetup, worktreeSetup, worktreeSetupRef]);
   // The setup terminal belongs to the thread that was set up. A failed
   // bootstrap deletes that thread and closes its terminals, so only offer the
   // terminal while the setup thread is still the active one.
@@ -7228,7 +7235,9 @@ export default function ChatView(props: ChatViewProps) {
       submissionIntent: resolvedSubmissionIntent,
     });
     setWorktreeSetupRef(
-      baseBranchForWorktree ? { threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey } : null,
+      baseBranchForWorktree
+        ? { environmentId, threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey }
+        : null,
     );
 
     const messageIdForSend = newMessageId();
@@ -8278,23 +8287,42 @@ export default function ChatView(props: ChatViewProps) {
   // the bootstrap. The cancelled dispatch fails and puts the message back in
   // the composer; the effect below resends it once that has settled.
   const onWorktreeSetupWorkLocally = useCallback(() => {
-    if (!worktreeSetup || worktreeSetup.phase !== "running" || !isLocalDraftThread) return;
-    const threadId = worktreeSetup.threadId;
+    if (
+      !worktreeSetup ||
+      !worktreeSetupRef ||
+      worktreeSetup.phase !== "running" ||
+      !isLocalDraftThread
+    ) {
+      return;
+    }
+    const target = {
+      environmentId: worktreeSetupRef.environmentId,
+      input: { threadId: worktreeSetup.threadId },
+    };
     void (async () => {
-      const result = await cancelWorktreeSetup({ environmentId, input: { threadId } });
+      const result = await cancelWorktreeSetup(target);
       if (result._tag !== "Success" || !result.value.cancelled) return;
       onEnvModeChange("local");
       setWorkLocallyResendPending(true);
     })();
-  }, [cancelWorktreeSetup, environmentId, isLocalDraftThread, onEnvModeChange, worktreeSetup]);
+  }, [cancelWorktreeSetup, isLocalDraftThread, onEnvModeChange, worktreeSetup, worktreeSetupRef]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
+  // Resend once the cancelled dispatch has settled and the composer is free.
+  // The flag stays set until `onSend` gets past its own guards, so a reconnect
+  // or a loading thread in between does not lose the message.
+  const workLocallyResendReady =
+    workLocallyResendPending &&
+    !isSendBusy &&
+    !isConnecting &&
+    !threadDetailLoading &&
+    clientSettingsHydrated &&
+    sendEnvMode === "local";
   useEffect(() => {
-    if (!workLocallyResendPending || isSendBusy || sendInFlightRef.current) return;
-    if (sendEnvMode !== "local") return;
+    if (!workLocallyResendReady || sendInFlightRef.current) return;
     setWorkLocallyResendPending(false);
     void onSendRef.current();
-  }, [isSendBusy, sendEnvMode, workLocallyResendPending]);
+  }, [workLocallyResendReady]);
 
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {

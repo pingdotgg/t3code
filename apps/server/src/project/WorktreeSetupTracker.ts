@@ -142,7 +142,12 @@ export const make = Effect.gen(function* () {
       const next = new Map(current);
       next.delete(threadId);
       return next;
-    }).pipe(Effect.andThen(publish(threadId, null)));
+    }).pipe(
+      Effect.andThen(publish(threadId, null)),
+      // A subscriber that outlives retention sees `null` here and accepts any
+      // sequence after it, so the counter can start over for this thread.
+      Effect.tap(() => Effect.sync(() => lastSequenceByThread.delete(threadId))),
+    );
 
   const begin: WorktreeSetupTracker["Service"]["begin"] = (input) =>
     Effect.gen(function* () {
@@ -291,7 +296,7 @@ export const make = Effect.gen(function* () {
               Effect.sync(() => {
                 if (change.threadId !== threadId) return;
                 if (change.snapshot !== null && change.snapshot.sequence <= lastSequence) return;
-                lastSequence = change.snapshot?.sequence ?? lastSequence;
+                lastSequence = change.snapshot?.sequence ?? -1;
                 Queue.offerUnsafe(mailbox, change.snapshot);
               }),
             ),
