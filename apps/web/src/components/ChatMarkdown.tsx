@@ -56,6 +56,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
   Suspense,
+  lazy,
   type CSSProperties,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
@@ -190,6 +191,19 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+
+/** Handles Mermaid module load failures without discarding the source. */
+function MermaidDiagramUnavailable({ fallback }: { fallback: ReactNode }) {
+  return <MermaidDiagramError>{fallback}</MermaidDiagramError>;
+}
+
+const MermaidDiagram = lazy(async () => {
+  try {
+    return await import("./MermaidDiagram");
+  } catch {
+    return { default: MermaidDiagramUnavailable };
+  }
+});
 
 interface ChatMarkdownProps {
   text: string;
@@ -544,6 +558,29 @@ function extractFenceLanguage(className: string | undefined): string {
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
 const FENCE_FILENAME_TOKEN_REGEX = /^[\w@][\w@./-]*\.[A-Za-z0-9]+$/;
 
+/** Uses the code node’s own source range so one incomplete fence cannot hide a completed one. */
+function isCompleteMermaidFenceAt(text: string, offset: number): boolean {
+  const fenceLine = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+  const [openingLine, ...bodyLines] = text.slice(offset).split("\n");
+  const opening = fenceLine.exec(openingLine ?? "");
+  const openingMarker = opening?.[1] ?? "";
+  if (!opening || !openingMarker) return false;
+
+  const language = (opening[2] ?? "").trim().split(/\s+/)[0] ?? "";
+  if (language !== "mermaid") return false;
+
+  return bodyLines.some((line) => {
+    const closing = fenceLine.exec(line);
+    const closingMarker = closing?.[1] ?? "";
+    return (
+      Boolean(closing) &&
+      closingMarker[0] === openingMarker[0] &&
+      closingMarker.length >= openingMarker.length &&
+      (closing?.[2] ?? "").trim() === ""
+    );
+  });
+}
+
 /** Pulls a filename out of fence meta: ```ts title="x.ts" / ```ts src/main.ts */
 function extractFenceTitle(meta: string | undefined): string | null {
   if (!meta) return null;
@@ -811,6 +848,22 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
           </MenuPopup>
         </Menu>
       </div>
+    </div>
+  );
+}
+
+/** Shows the original source alongside the diagram render failure. */
+function MermaidDiagramError({ children }: { children: ReactNode }) {
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1 border-b border-border/60 px-3 pb-1.5 text-xs text-warning"
+        data-mermaid-error=""
+        role="status"
+      >
+        Could not render diagram
+      </div>
+      {children}
     </div>
   );
 }
@@ -3141,7 +3194,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, text } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3149,6 +3202,45 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const highlightedSource = (
+      <RenderErrorBoundary
+        resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+        fallback={<pre {...props}>{children}</pre>}
+      >
+        <Suspense fallback={<pre {...props}>{children}</pre>}>
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </RenderErrorBoundary>
+    );
+    if (
+      language === "mermaid" &&
+      codeBlock.code.trim().length > 0 &&
+      !isStreaming &&
+      isCompleteMermaidFenceAt(text, node?.position?.start?.offset ?? -1)
+    ) {
+      return (
+        <MarkdownCodeBlock
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+        >
+          <Suspense fallback={highlightedSource}>
+            <MermaidDiagram
+              code={codeBlock.code}
+              fallback={highlightedSource}
+              theme={resolvedTheme}
+            />
+          </Suspense>
+        </MarkdownCodeBlock>
+      );
+    }
+
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
@@ -3156,19 +3248,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
-        >
-          <Suspense fallback={<pre {...props}>{children}</pre>}>
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
-              code={codeBlock.code}
-              themeName={diffThemeName}
-              isStreaming={isStreaming}
-            />
-          </Suspense>
-        </RenderErrorBoundary>
+        {highlightedSource}
       </MarkdownCodeBlock>
     );
   },
