@@ -115,6 +115,24 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const connect = createRuntimeCommand(runtime, {
+    label: "environment-catalog:connect",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (environmentId: EnvironmentIdType) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.connect(environmentId)),
+      ),
+  });
+  const disconnect = createRuntimeCommand(runtime, {
+    label: "environment-catalog:disconnect",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (environmentId: EnvironmentIdType) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.disconnect(environmentId)),
+      ),
+  });
 
   return {
     catalogAtom,
@@ -126,5 +144,7 @@ export function createEnvironmentCatalogAtoms<R, E>(
     remove,
     removeRelayEnvironments,
     retryNow,
+    connect,
+    disconnect,
   };
 }
