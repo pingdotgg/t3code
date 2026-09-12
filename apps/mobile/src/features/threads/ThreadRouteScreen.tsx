@@ -38,6 +38,8 @@ import {
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { resolveDevServerUrl, type ResolvedDevServer } from "../../lib/devServers";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
@@ -47,6 +49,8 @@ import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
+import { useThreadDevServers } from "../../state/preview";
+import { usePreparedConnection } from "../../state/session";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -628,6 +632,39 @@ function ThreadRouteContent(
       terminalMenuSessions,
     ],
   );
+  const linkedDevServers = useThreadDevServers({
+    environmentId: selectedThread?.environmentId ?? null,
+    threadId: selectedThread?.id ?? null,
+  });
+  const preparedConnection = usePreparedConnection(selectedThread?.environmentId ?? null);
+  const devServers = useMemo(() => {
+    const httpBaseUrl = Option.isSome(preparedConnection)
+      ? preparedConnection.value.httpBaseUrl
+      : null;
+    return linkedDevServers.map((server) => resolveDevServerUrl(httpBaseUrl, server));
+  }, [linkedDevServers, preparedConnection]);
+
+  // Header item factories are stabilized by source text, so a menu that was
+  // empty while discovery was still running cannot reapply itself. Version the
+  // native options on the resolved servers instead.
+  const devServersOptionsVersion = useMemo(
+    () => devServers.map((entry) => `${entry.url}:${entry.reachable}`),
+    [devServers],
+  );
+
+  const handleOpenDevServer = useCallback(async (resolved: ResolvedDevServer) => {
+    if (!resolved.reachable) {
+      Alert.alert(
+        "Dev server unreachable",
+        "This dev server cannot be reached from this device over the current connection.",
+      );
+      return;
+    }
+    if (!(await tryOpenExternalUrl(resolved.url, "dev-server"))) {
+      Alert.alert("Unable to open dev server", "The dev server URL could not be opened.");
+    }
+  }, []);
+
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
@@ -653,6 +690,8 @@ function ThreadRouteContent(
         )
       : [],
     terminalSessions: terminalMenuSessions,
+    devServers,
+    onOpenDevServer: handleOpenDevServer,
     showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
@@ -728,6 +767,16 @@ function ThreadRouteContent(
         onPress: () => handleOpenTerminal(null),
       });
     }
+    if (devServers.length > 0) {
+      // Android's in-flow header has no menus, so mirror the web sidebar
+      // globe: one tap opens the first reachable linked dev server.
+      const firstReachable = devServers.find((resolved) => resolved.reachable) ?? devServers[0]!;
+      actions.push({
+        accessibilityLabel: "Open dev server",
+        icon: "globe",
+        onPress: () => void handleOpenDevServer(firstReachable),
+      });
+    }
     actions.push({
       accessibilityLabel: "Open git controls",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -742,7 +791,9 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    devServers,
     fileInspector.supported,
+    handleOpenDevServer,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
@@ -913,7 +964,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
-        optionsVersion={threadGitControlProps.projectScripts}
+        optionsVersion={[threadGitControlProps.projectScripts, devServersOptionsVersion]}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
