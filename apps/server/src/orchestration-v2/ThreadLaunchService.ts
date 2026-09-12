@@ -59,6 +59,7 @@ export interface ThreadLaunchInitialMessage {
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
 }
 
 export interface ThreadLaunchInput {
@@ -225,6 +226,7 @@ const make = Effect.gen(function* () {
             cwd,
             message: message.text,
             attachments: message.attachments,
+            ...(message.context ? { context: message.context } : {}),
             modelSelection,
           })
           .pipe(Effect.map((result) => result.branch));
@@ -565,6 +567,7 @@ const make = Effect.gen(function* () {
                 ? {}
                 : { scheduledTaskId: input.initialMessage.scheduledTaskId }),
               attachments: input.initialMessage.attachments,
+              ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
               dispatchMode: { type: "defer_start" },

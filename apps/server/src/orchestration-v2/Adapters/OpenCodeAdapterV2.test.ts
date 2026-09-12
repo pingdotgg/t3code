@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
+  CheckpointId,
   NodeId,
   OpenCodeSettings,
   ProjectId,
@@ -2134,3 +2135,67 @@ describe("OpenCodeAdapterV2", () => {
     assert.isUndefined(openCodeBoundaryAfterProviderTurn([first, synthetic, third], third.id));
   });
 });
+
+it.effect.each([false, true])(
+  "OpenCode rewind forks history and validates the retained boundary, invalid=%s",
+  (invalid) =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const nativeSessionId = "rewind-source";
+      const forkId = "rewind-fork";
+      const calls: string[] = [];
+      const removed = {
+        info: { id: "first-user", sessionID: nativeSessionId, role: "user", time: { created: 1 } },
+        parts: [],
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness("rewind-fork", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => events.close(), { once: true });
+            return { stream: events.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }),
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            data: { id: sessionID, time: { created: 1, updated: 2 } },
+          }),
+          messages: async ({ sessionID }: { sessionID: string }) => ({
+            data: sessionID === nativeSessionId || invalid ? [removed] : [],
+          }),
+          fork: async ({ sessionID, messageID }: { sessionID: string; messageID: string }) => {
+            assert.equal(sessionID, nativeSessionId);
+            assert.equal(messageID, "first-user");
+            calls.push("fork");
+            return { data: { id: forkId, time: { created: 1, updated: 2 } } };
+          },
+          update: async () => {
+            calls.push("permissions");
+            return { data: {} };
+          },
+          revert: async () => {
+            throw new Error("Native revert would change workspace files");
+          },
+        },
+      });
+      const effect = harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("rewind-checkpoint"),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns: [],
+      });
+      if (invalid) {
+        const error = yield* effect.pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterRollbackThreadError");
+        assert.deepEqual(calls, ["fork"]);
+      } else {
+        const result = yield* effect;
+        assert.equal(result.providerThread.nativeThreadRef?.nativeId, forkId);
+        assert.equal(result.messages.length, 0);
+        assert.deepEqual(calls, ["fork", "permissions"]);
+      }
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+);

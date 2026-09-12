@@ -91,6 +91,7 @@ export interface ThreadFeedActivity {
 }
 
 export interface ThreadFeedMessage {
+  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
   readonly id: MessageId;
   readonly role: "user" | "assistant";
   readonly text: string;
@@ -1386,6 +1387,7 @@ export function buildThreadFeed(
           id: item.messageId,
           role: item.type === "user_message" ? "user" : "assistant",
           text: item.text,
+          ...(item.type === "user_message" && item.context ? { context: item.context } : {}),
           attachments: item.attachments ?? [],
           runId: item.runId,
           streaming: item.type === "assistant_message" && item.streaming,
@@ -1433,6 +1435,7 @@ export function buildThreadFeed(
         id: message.id,
         role: message.role === "assistant" ? "assistant" : "user",
         text: message.text,
+        ...(message.context ? { context: message.context } : {}),
         attachments: message.attachments ?? [],
         runId: null,
         streaming: message.streaming,

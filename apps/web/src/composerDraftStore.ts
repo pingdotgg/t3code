@@ -1,3 +1,4 @@
+import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
@@ -50,7 +51,6 @@ import {
   type TerminalContextDraft,
   migrateLegacyTerminalContextPlaceholders,
   normalizeTerminalContextText,
-  stripInlineTerminalContextPlaceholders,
 } from "./lib/terminalContext";
 import {
   appendInlineContextReference,
@@ -4198,9 +4198,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // Inline placeholders reference the source's terminal contexts,
             // which stay behind; re-anchor the moved prompt to whatever
             // contexts the destination already holds.
-            const movedPrompt = ensureInlineTerminalContextPlaceholders(
-              stripInlineTerminalContextPlaceholders(source.prompt),
-              destination.terminalContexts.length,
+            const movedPrompt = ensureInlineContextReferences(
+              stripInlineContextReferences(source.prompt),
+              destination.terminalContexts.map(terminalContextReference),
             );
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
@@ -4223,7 +4223,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // are still referenced from the destination.
             const nextSource: ComposerThreadDraftState = {
               ...source,
-              prompt: ensureInlineTerminalContextPlaceholders("", source.terminalContexts.length),
+              prompt: ensureInlineContextReferences(
+                "",
+                source.terminalContexts.map(terminalContextReference),
+              ),
               images: retainedImages,
               files: retainedFiles,
               nonPersistedImageIds: source.nonPersistedImageIds.filter(

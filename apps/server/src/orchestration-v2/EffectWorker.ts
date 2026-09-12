@@ -219,6 +219,7 @@ export const executorLayer: Layer.Layer<
                       threadId: effect.threadId,
                       messageId: message.id,
                       text: message.text,
+                      ...(message.context ? { context: message.context } : {}),
                       attachments: message.attachments,
                       modelSelection: run.modelSelection,
                       dispatchMode: {
@@ -326,6 +327,9 @@ export const executorLayer: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 checkpointId: effect.request.checkpointId,
                 scopeId: effect.request.scopeId,
+                ...(effect.request.restoreFiles === undefined
+                  ? {}
+                  : { restoreFiles: effect.request.restoreFiles }),
               })
               .pipe(
                 Effect.mapError(
