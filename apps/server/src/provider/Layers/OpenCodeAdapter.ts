@@ -245,8 +245,21 @@ type OpenCodeAskedRequestEvent = Extract<
 
 type OpenCodeRoutedRequestEvent = OpenCodeAskedRequestEvent | OpenCodeTerminalRequestEvent;
 
+type OpenCodeChildSessionEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "session.created" | "session.updated" | "session.deleted" | "session.status" }
+>;
+
 interface OpenCodeRequestRelationRetry {
   warned: boolean;
+  fiber?: Fiber.Fiber<void, never>;
+}
+
+interface OpenCodeSessionRelationRetry {
+  readonly events: Array<{
+    readonly event: OpenCodeChildSessionEvent;
+    readonly turnId: TurnId | undefined;
+  }>;
   fiber?: Fiber.Fiber<void, never>;
 }
 
@@ -316,6 +329,15 @@ function isOpenCodeChildRequestEvent(event: OpenCodeSubscribedEvent): boolean {
   }
 }
 
+function isOpenCodeChildSessionEvent(event: OpenCodeSubscribedEvent): boolean {
+  return (
+    event.type === "session.created" ||
+    event.type === "session.updated" ||
+    event.type === "session.deleted" ||
+    event.type === "session.status"
+  );
+}
+
 const OPENCODE_DEFAULT_TITLE_PATTERN =
   /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -343,7 +365,9 @@ interface OpenCodeSessionContext {
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
+  readonly terminalChildSessionIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
+  readonly sessionRelationRetries: Map<string, OpenCodeSessionRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
@@ -2034,6 +2058,108 @@ export function makeOpenCodeAdapter(
       retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
     });
 
+    const scheduleChildSessionRelationRetry = Effect.fn("scheduleChildSessionRelationRetry")(
+      function* (context: OpenCodeSessionContext, event: OpenCodeChildSessionEvent) {
+        const sessionId = openCodeEventSessionId(event);
+        if (sessionId === undefined) return;
+        const turnId = context.activeTurnId;
+        const existing = context.sessionRelationRetries.get(sessionId);
+        if (existing) {
+          existing.events.push({ event, turnId });
+          return;
+        }
+        const retry: OpenCodeSessionRelationRetry = { events: [{ event, turnId }] };
+        context.sessionRelationRetries.set(sessionId, retry);
+        const run = Effect.gen(function* () {
+          let retryCount = 0;
+          while (context.sessionRelationRetries.get(sessionId) === retry) {
+            const relation = yield* isRelatedOpenCodeSession(context, sessionId).pipe(
+              Effect.match({
+                onFailure: () => "unknown" as const,
+                onSuccess: (related) => (related ? "related" : "unrelated") as const,
+              }),
+            );
+            if (context.sessionRelationRetries.get(sessionId) !== retry) return;
+            if (relation === "unrelated") {
+              context.sessionRelationRetries.delete(sessionId);
+              return;
+            }
+            if (relation === "related") {
+              context.sessionRelationRetries.delete(sessionId);
+              for (const { event: replayEvent, turnId: replayTurnId } of retry.events) {
+                const replaySession =
+                  replayEvent.type === "session.status" ? undefined : replayEvent.properties.info;
+                const base = yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId: replayTurnId,
+                  itemId: sessionId,
+                  raw: replayEvent,
+                });
+                if (replayEvent.type === "session.created") {
+                  yield* emit({
+                    ...base,
+                    type: "task.started",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      title: replaySession.title,
+                      description: replaySession.title,
+                    },
+                  });
+                } else if (replayEvent.type === "session.updated") {
+                  yield* emit({
+                    ...base,
+                    type: "task.progress",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      title: replaySession.title,
+                      description: replaySession.title,
+                      summary: replaySession.title,
+                      status: "running",
+                    },
+                  });
+                } else if (
+                  replayEvent.type === "session.status" &&
+                  replayEvent.properties.status.type !== "idle"
+                ) {
+                  continue;
+                } else {
+                  if (context.terminalChildSessionIds.has(sessionId)) continue;
+                  context.terminalChildSessionIds.add(sessionId);
+                  yield* emit({
+                    ...base,
+                    type: "task.completed",
+                    payload: {
+                      taskId: sessionId,
+                      taskType: "local_agent",
+                      status: "completed",
+                      summary: replaySession?.title ?? "Completed",
+                    },
+                  });
+                  return;
+                }
+              }
+              return;
+            }
+            const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+            retryCount += 1;
+            yield* Effect.sleep(`${delayMs} millis`);
+          }
+        }).pipe(
+          Effect.catchCause(() => Effect.void),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (context.sessionRelationRetries.get(sessionId) === retry) {
+                context.sessionRelationRetries.delete(sessionId);
+              }
+            }),
+          ),
+        );
+        retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
+      },
+    );
+
     const schedulePendingRequestRecovery = Effect.fn("schedulePendingRequestRecovery")(function* (
       context: OpenCodeSessionContext,
     ) {
@@ -2204,8 +2330,6 @@ export function makeOpenCodeAdapter(
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
           addRelatedOpenCodeSession(context, session.id);
         }
-      } else if (event.type === "session.deleted") {
-        context.relatedSessionIds.delete(event.properties.info.id);
       }
 
       const payloadSessionId = openCodeEventSessionId(event);
@@ -2214,9 +2338,17 @@ export function makeOpenCodeAdapter(
       if (
         payloadSessionId !== undefined &&
         !context.relatedSessionIds.has(payloadSessionId) &&
-        isOpenCodeChildRequestEvent(event)
+        (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event))
       ) {
-        if (event.type === "permission.asked") {
+        if (
+          event.type === "session.created" ||
+          event.type === "session.updated" ||
+          event.type === "session.deleted" ||
+          event.type === "session.status"
+        ) {
+          yield* scheduleChildSessionRelationRetry(context, event);
+          return;
+        } else if (event.type === "permission.asked") {
           yield* scheduleRequestRelationRetry(context, event);
         } else if (event.type === "question.asked") {
           yield* scheduleRequestRelationRetry(context, event);
@@ -2236,7 +2368,7 @@ export function makeOpenCodeAdapter(
       }
       const isChildRequestEvent =
         payloadSessionId !== undefined &&
-        isOpenCodeChildRequestEvent(event) &&
+        (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event)) &&
         (context.relatedSessionIds.has(payloadSessionId) || isKnownPendingTerminalEvent);
       if (!isParentEvent && !isChildRequestEvent) {
         return;
@@ -2270,8 +2402,49 @@ export function makeOpenCodeAdapter(
       }
 
       switch (event.type) {
+        case "session.created": {
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.started",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                title: session.title,
+                description: session.title,
+              },
+            });
+          }
+          break;
+        }
         case "session.updated": {
-          const title = openCodeEventSessionTitle(event);
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.progress",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                title: session.title,
+                description: session.title,
+                summary: session.title,
+                status: "running",
+              },
+            });
+          }
+          const title = isParentEvent ? openCodeEventSessionTitle(event) : undefined;
           if (title) {
             yield* emit({
               ...(yield* buildEventBase({
@@ -2286,6 +2459,28 @@ export function makeOpenCodeAdapter(
                 },
               },
             });
+          }
+          break;
+        }
+        case "session.deleted": {
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.completed",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                status: "completed",
+                summary: session.title,
+              },
+            });
+            context.relatedSessionIds.delete(session.id);
           }
           break;
         }
@@ -2564,6 +2759,29 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.status": {
+          if (!isParentEvent) {
+            if (event.properties.status.type === "idle") {
+              const sessionId = event.properties.sessionID;
+              if (context.terminalChildSessionIds.has(sessionId)) break;
+              context.terminalChildSessionIds.add(sessionId);
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  itemId: sessionId,
+                  raw: event,
+                })),
+                type: "task.completed",
+                payload: {
+                  taskId: sessionId,
+                  taskType: "local_agent",
+                  status: "completed",
+                  summary: "Completed",
+                },
+              });
+            }
+            break;
+          }
           if (event.properties.status.type === "busy" || event.properties.status.type === "retry") {
             if (turnId === undefined) {
               break;
@@ -2989,7 +3207,9 @@ export function makeOpenCodeAdapter(
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
+          terminalChildSessionIds: new Set(),
           requestRelationRetries: new Map(),
+          sessionRelationRetries: new Map(),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
