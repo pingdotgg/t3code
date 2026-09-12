@@ -1,14 +1,24 @@
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   startSearchProcess,
   WorkspaceSearchProcessFailed,
   type SearchProcess,
 } from "./WorkspaceSearchProcess.ts";
-import type { WorkspaceSearchIndexVariant } from "./WorkspaceSearchIndexService.ts";
+import {
+  WorkspaceSearchIndexSearchFailed,
+  WorkspaceSearchIndexRefreshFailed,
+  type WorkspaceSearchIndexVariant,
+} from "./WorkspaceSearchIndexService.ts";
 import type { SearchOperation } from "./workspaceSearchProtocol.ts";
+
+const isRecoverable = Schema.is(
+  Schema.Union([WorkspaceSearchIndexSearchFailed, WorkspaceSearchIndexRefreshFailed]),
+);
 
 const make = Effect.gen(function* () {
   const semaphore = yield* Semaphore.make(1);
@@ -58,7 +68,14 @@ const make = Effect.gen(function* () {
             ? null
             : yield* active.process.request({ id, operation });
         }).pipe(
-          Effect.onError(stop),
+          Effect.onError((cause) =>
+            cause.reasons.length > 0 &&
+            cause.reasons.every(
+              (reason) => Cause.isFailReason(reason) && isRecoverable(reason.error),
+            )
+              ? Effect.void
+              : stop(),
+          ),
           Effect.ensuring(
             Effect.sync(() => {
               activeIndex = undefined;

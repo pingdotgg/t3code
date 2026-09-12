@@ -6,6 +6,7 @@ import { SearchRequest, SearchResponse } from "../src/workspace/workspaceSearchP
 import {
   WorkspaceSearchIndexRefreshFailed,
   WorkspaceSearchIndexScanTimedOut,
+  WorkspaceSearchIndexSearchFailed,
 } from "../src/workspace/WorkspaceSearchIndexService.ts";
 
 const decodeSearchRequest = Schema.decodeUnknownSync(SearchRequest);
@@ -42,6 +43,21 @@ process.on("message", (message) => {
     return;
   }
   if (input.method === "search" && input.query === "crash") process.exit(1);
+  if (input.method === "search" && input.query === "search-error") {
+    process.send?.(
+      encodeSearchResponse(
+        Exit.fail(
+          new WorkspaceSearchIndexSearchFailed({
+            cwd,
+            queryLength: input.query.length,
+            pageSize: input.limit + 1,
+            reason: "search rejected",
+          }),
+        ),
+      ),
+    );
+    return;
+  }
   if (input.method === "search" && input.query === "hold") {
     const socket = NodeNet.connect(
       Number(process.env.T3_SEARCH_TEST_RECEIPT_PORT),

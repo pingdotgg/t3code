@@ -220,14 +220,14 @@ it.effect("cancels a queued request without terminating the active search proces
       yield* Effect.gen(function* () {
         const index = yield* Index.make("workspace");
         const other = yield* Index.make("other");
-        const blocked = yield* index.search("block", 1).pipe(Effect.forkChild);
+        const before = yield* index.list();
+        const active = yield* index.search("hold", 1).pipe(Effect.forkChild);
         yield* Deferred.await(control.blocked);
         const queued = yield* other.list().pipe(Effect.forkChild);
         yield* Fiber.interrupt(queued);
-        expect(yield* Deferred.isDone(control.exited)).toBe(false);
-        yield* Fiber.interrupt(blocked);
-        yield* Deferred.await(control.exited);
-        expect((yield* other.list()).entries).toHaveLength(1);
+        yield* control.release;
+        expect(yield* Fiber.join(active)).toEqual(before);
+        expect((yield* other.list()).entries).toEqual(before.entries);
       }).pipe(Effect.provideService(HostProcessEnvironment, control.environment));
     }).pipe(withWorker),
   ),
@@ -252,6 +252,27 @@ it.effect("lets an active workspace finish while an unrelated index expires", ()
         yield* Fiber.join(closing);
         expect((yield* surviving.list()).entries).toEqual(before.entries);
       }).pipe(Effect.provideService(HostProcessEnvironment, control.environment));
+    }).pipe(withWorker),
+  ),
+);
+
+it.effect("preserves the shared process after ordinary search and refresh errors", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const index = yield* Index.make("workspace");
+      const other = yield* Index.make("other");
+      const before = yield* other.list();
+      expect(yield* Effect.flip(index.search("search-error", 1))).toMatchObject({
+        _tag: "WorkspaceSearchIndexSearchFailed",
+        reason: "search rejected",
+      });
+      expect((yield* other.list()).entries).toEqual(before.entries);
+      expect(yield* Effect.flip(index.refresh())).toMatchObject({
+        _tag: "WorkspaceSearchIndexRefreshFailed",
+        reason: "scan failed",
+      });
+      expect((yield* other.list()).entries).toEqual(before.entries);
+      expect((yield* index.list()).entries).toEqual(before.entries);
     }).pipe(withWorker),
   ),
 );

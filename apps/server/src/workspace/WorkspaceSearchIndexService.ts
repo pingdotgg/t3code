@@ -9,6 +9,9 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 
+export const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
+export const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
+
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
   {

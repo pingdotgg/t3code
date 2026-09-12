@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   WorkspaceSearchIndex,
+  WORKSPACE_INDEX_PAGE_SIZE,
   WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndexRefreshFailed,
   WorkspaceSearchIndexScanTimedOut,
@@ -59,13 +60,21 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     list: () =>
       remote
         .request({ method: "list" })
-        .pipe(Effect.flatMap(decodeList), Effect.mapError(searchFailure(0, 25_002))),
+        .pipe(
+          Effect.flatMap(decodeList),
+          Effect.mapError(searchFailure(0, WORKSPACE_INDEX_PAGE_SIZE)),
+        ),
     search: (query, limit, kind, imageOnly) =>
       remote
         .request({ method: "search", query, limit, kind, imageOnly })
         .pipe(
           Effect.flatMap(decodeSearch),
-          Effect.mapError(searchFailure(query.length, limit + 1)),
+          Effect.mapError(
+            searchFailure(
+              query.length,
+              imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1),
+            ),
+          ),
         ),
     searchContents: (input) =>
       remote

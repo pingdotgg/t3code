@@ -21,6 +21,8 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 import {
   WorkspaceSearchIndex,
+  WORKSPACE_INDEX_MAX_ENTRIES,
+  WORKSPACE_INDEX_PAGE_SIZE,
   WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndexDestroyFailed,
   WorkspaceSearchIndexRefreshFailed,
@@ -31,8 +33,6 @@ import {
 
 export * from "./WorkspaceSearchIndexService.ts";
 
-const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
-const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
