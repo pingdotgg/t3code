@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 import type { MaterialYouPalette } from "./materialYouPalette";
 import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme";
+import { createNativeReviewDiffTheme } from "../features/review/nativeReviewDiffAdapter";
 
 const palette: MaterialYouPalette = {
   primary: "#6750A4FF",
@@ -31,6 +32,31 @@ const palette: MaterialYouPalette = {
 };
 
 describe("Material You system colors", () => {
+  it.each(["light", "dark"] as const)(
+    "preserves %s colors in native review surfaces",
+    (appearance) => {
+      const variables = materialYouPaletteToMobileThemeVariables(
+        palette,
+        appearance,
+        getMobileThemeRuntimeVariables("t3-code", appearance),
+      );
+      const theme = createNativeReviewDiffTheme(appearance, "material-you", variables);
+
+      expect(theme).toMatchObject({
+        background: "#f7f2fa",
+        headerBackground: "#f7f2fa",
+        text: "#1c1b1f",
+        mutedText: "#49454f",
+        hunkText: "#6750a4",
+        hunkBackground: "#e1dce4",
+        border: appearance === "dark" ? "#e0dbe5" : "#dad4df",
+      });
+      for (const color of Object.values(theme)) {
+        expect(color).toMatch(/^#[\da-f]{6}$/i);
+      }
+    },
+  );
+
   it("overrides the selected theme without mutating its base variables", () => {
     const base = getMobileThemeRuntimeVariables("t3-code", "dark");
     const snapshot = { ...base };
