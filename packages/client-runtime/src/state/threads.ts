@@ -513,6 +513,49 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* applyLock.withPermits(1)(applyItemLocked(item).pipe(Effect.andThen(remember)));
   });
 
+  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
+    items: ReadonlyArray<OrchestrationThreadStreamItem>,
+  ) {
+    yield* applyLock.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* SubscriptionRef.get(state);
+        if (
+          Option.isNone(current.data) ||
+          (yield* Ref.get(pendingOlderPage)) !== null ||
+          items.some(
+            (item) =>
+              item.kind === "snapshot" ||
+              (item.kind === "event" &&
+                (item.event.type === "thread.reverted" || item.event.type === "thread.deleted")),
+          )
+        ) {
+          for (const item of items) {
+            yield* applyItemLocked(item);
+            yield* remember;
+          }
+          return;
+        }
+
+        let thread = current.data.value;
+        let sequence = yield* SubscriptionRef.get(lastSequence);
+        let synchronized = false;
+        for (const item of items) {
+          if (item.kind === "synchronized") {
+            synchronized = true;
+          } else if (item.kind === "event" && item.event.sequence > sequence) {
+            sequence = item.event.sequence;
+            const result = applyThreadDetailEvent(thread, item.event);
+            if (result.kind === "updated") thread = result.thread;
+          }
+        }
+        yield* SubscriptionRef.set(lastSequence, sequence);
+        if (thread !== current.data.value) yield* setThread(thread, "keep");
+        if (synchronized) yield* applyItemLocked({ kind: "synchronized" });
+        yield* remember;
+      }),
+    );
+  });
+
   // Merges an older disjoint page below the currently loaded window. All four
   // windowed collections prepend; identity dedupe guards the (server-bug or
   // cursor-misuse) case of overlapping pages so a row never renders twice.
@@ -773,7 +816,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEach(applyItem)),
+    ).pipe(
+      Stream.runForEachArray((items) =>
+        items.length === 1 ? applyItem(items[0]!) : applyItems(items),
+      ),
+    ),
   );
 
   // Expose loadOlderTurns to UI actions through the request registry.
