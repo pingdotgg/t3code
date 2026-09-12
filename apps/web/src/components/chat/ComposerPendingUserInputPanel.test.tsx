@@ -33,6 +33,8 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt) {
       onToggleOption={() => {}}
       onAdvance={() => {}}
       onDismiss={() => {}}
+      isAnswering={false}
+      onToggleAnswering={() => {}}
     />,
   );
 }

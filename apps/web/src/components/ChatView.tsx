@@ -2692,6 +2692,12 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadId,
     activePendingUserInput?.requestId,
   ]);
+  const [answeringRequestKey, setAnsweringRequestKey] = useState<string | null>(null);
+  const isAnsweringPendingUserInput =
+    activePendingUserInput !== null && answeringRequestKey === activePendingRequestKey;
+  if (answeringRequestKey !== null && !isAnsweringPendingUserInput) {
+    setAnsweringRequestKey(null);
+  }
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -6818,7 +6824,7 @@ export default function ChatView(props: ChatViewProps) {
       });
       return;
     }
-    if (activePendingProgress) {
+    if (isAnsweringPendingUserInput && activePendingProgress) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
         return;
@@ -7681,14 +7687,17 @@ export default function ChatView(props: ChatViewProps) {
           },
         };
       });
-      promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
+      if (isAnsweringPendingUserInput) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState({ cursor: 0 });
+      }
     },
     [
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       activePendingRequestKey,
       composerRef,
+      isAnsweringPendingUserInput,
     ],
   );
 
@@ -8826,7 +8835,15 @@ export default function ChatView(props: ChatViewProps) {
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
                             pendingUserInputs={pendingUserInputs}
-                            activePendingProgress={activePendingProgress}
+                            activePendingProgress={
+                              isAnsweringPendingUserInput ? activePendingProgress : null
+                            }
+                            onToggleAnsweringPendingUserInput={() => {
+                              setAnsweringRequestKey(
+                                isAnsweringPendingUserInput ? null : activePendingRequestKey,
+                              );
+                              scheduleComposerFocus();
+                            }}
                             activePendingResolvedAnswers={activePendingResolvedAnswers}
                             activePendingIsResponding={activePendingIsResponding}
                             activePendingDraftAnswers={activePendingDraftAnswers}

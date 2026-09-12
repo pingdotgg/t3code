@@ -1,6 +1,6 @@
 # Files in question answers
 
-When an agent asks a question that accepts a custom answer, use **Attach files** or paste an image into the answer field. On mobile, use the attachment button to choose photos or files. You can send a file by itself, with a selected option, or with a typed answer.
+When an agent asks a question that accepts a custom answer, choose **Answer question** on web or desktop, then use **Attach files** or paste an image into the answer field. **Back to message** returns to your normal draft. On mobile, use the attachment button to choose photos or files. You can send a file by itself, with a selected option, or with a typed answer.
 
 Each question keeps its own attachments as you move between questions. Your normal prompt draft stays separate. Wait for uploads to finish before submitting; retry or remove any failed upload. A failed response keeps the draft available to try again.
 

@@ -9,6 +9,7 @@ import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { Button } from "../ui/button";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -18,6 +19,8 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: ApprovalRequestId) => void;
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -28,6 +31,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  isAnswering,
+  onToggleAnswering,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -43,6 +48,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      isAnswering={isAnswering}
+      onToggleAnswering={onToggleAnswering}
     />
   );
 });
@@ -55,6 +62,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  isAnswering,
+  onToggleAnswering,
 }: {
   prompt: PendingUserInput;
   isResponding: boolean;
@@ -63,6 +72,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: ApprovalRequestId) => void;
+  isAnswering: boolean;
+  onToggleAnswering: () => void;
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
@@ -287,6 +298,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               );
             })}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-1"
+            disabled={isResponding}
+            onClick={onToggleAnswering}
+          >
+            {isAnswering ? "Back to message" : "Answer question"}
+          </Button>
         </ComposerBanner.Body>
       </CollapsiblePanel>
     </Collapsible>
