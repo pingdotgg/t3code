@@ -49,14 +49,17 @@ function TaskSegments({
         <span
           key={key}
           className={cn(
-            "h-[3px] min-w-0 flex-1 rounded-full",
-            step.status === "completed"
-              ? "bg-success"
-              : step.status === "inProgress"
-                ? "bg-primary"
-                : "bg-muted-foreground/25",
+            "relative h-[3px] min-w-0 flex-1 overflow-hidden rounded-full",
+            step.status === "inProgress" ? "bg-primary" : "bg-muted-foreground/25",
           )}
-        />
+        >
+          <span
+            className={cn(
+              "absolute inset-0 origin-left bg-success transition-transform duration-180 ease-out motion-reduce:transition-none",
+              step.status === "completed" ? "scale-x-100" : "scale-x-0",
+            )}
+          />
+        </span>
       ))}
     </span>
   );
