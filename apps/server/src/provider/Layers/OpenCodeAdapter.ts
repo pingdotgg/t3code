@@ -358,6 +358,11 @@ interface OpenCodeSessionContext {
   interruptedTurnId: TurnId | undefined;
   reconcileIdleStatus: boolean;
   awaitingBusyAfterInterruption: boolean;
+  /**
+   * True once OpenCode has natively reported this turn busy. Only then is a later
+   * idle reading trustworthy enough to treat a cached `activeTurnId` as stale.
+   */
+  nativeBusyObservedForActiveTurn: boolean;
   pendingIdleReconciliation: OpenCodeIdleReconciliation | undefined;
   pendingRequestRecovery: OpenCodePendingRequestRecovery | undefined;
   promptGeneration: number;
@@ -1130,6 +1135,7 @@ export function makeOpenCodeAdapter(
       }
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, true);
       context.activeTurnId = undefined;
+      context.nativeBusyObservedForActiveTurn = false;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.interruptedTurnId = undefined;
@@ -1299,6 +1305,7 @@ export function makeOpenCodeAdapter(
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
       context.promptAdmission = undefined;
       context.activeTurnId = undefined;
+      context.nativeBusyObservedForActiveTurn = false;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.awaitingBusyAfterInterruption = false;
@@ -1505,6 +1512,7 @@ export function makeOpenCodeAdapter(
       if (context.activeTurnId === turnId) {
         tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
         context.activeTurnId = undefined;
+        context.nativeBusyObservedForActiveTurn = false;
         context.activeAgent = undefined;
         context.activeVariant = undefined;
         yield* updateProviderSession(
@@ -2570,6 +2578,7 @@ export function makeOpenCodeAdapter(
             }
             yield* cancelIdleReconciliation(context);
             context.awaitingBusyAfterInterruption = false;
+            context.nativeBusyObservedForActiveTurn = true;
             if (context.promptAdmission?.turnId === turnId) {
               context.promptAdmission.busyObserved = true;
               yield* schedulePromptAdmissionRecovery(context, event);
@@ -2650,6 +2659,7 @@ export function makeOpenCodeAdapter(
           }
           const tokenUsage = activeTurnId ? takeOpenCodeTurnTokenUsage(context, false) : undefined;
           context.activeTurnId = undefined;
+          context.nativeBusyObservedForActiveTurn = false;
           context.activeAgent = undefined;
           context.activeVariant = undefined;
           context.reconcileIdleStatus = false;
@@ -3001,6 +3011,7 @@ export function makeOpenCodeAdapter(
           cancellation: undefined,
           interruptedTurnId: undefined,
           reconcileIdleStatus: false,
+          nativeBusyObservedForActiveTurn: false,
           awaitingBusyAfterInterruption: false,
           pendingIdleReconciliation: undefined,
           pendingRequestRecovery: undefined,
@@ -3132,7 +3143,59 @@ export function makeOpenCodeAdapter(
           }
           // A sendTurn while a turn is active is a steer. OpenCode queues the
           // prompt into the running session, so the active turn id is reused.
-          const steeringTurnId = context.activeTurnId;
+          //
+          // `activeTurnId` is cleared asynchronously by the event pump, so it can
+          // still name a turn OpenCode has already finished, and the follow-up is
+          // then folded into that turn. Reusing it therefore needs the native status
+          // confirmed — but only where an idle reading is authoritative for this
+          // turn. It is not authoritative while idle evidence is deliberately
+          // withheld: admission, post-interruption, and reconciliation all mean a
+          // known-stale idle is in flight and the prompt is a genuine mid-turn
+          // steer. Nor is it authoritative before OpenCode has reported this turn
+          // busy, since it then describes the state before the turn started rather
+          // than after it ended.
+          let steeringTurnId = context.activeTurnId;
+          const idleEvidenceWithheld =
+            context.promptAdmission !== undefined ||
+            context.pendingIdleReconciliation !== undefined ||
+            context.reconcileIdleStatus ||
+            context.awaitingBusyAfterInterruption;
+          if (
+            steeringTurnId !== undefined &&
+            !idleEvidenceWithheld &&
+            context.nativeBusyObservedForActiveTurn
+          ) {
+            const preflight = yield* runOpenCodeSdk("session.status", (signal) =>
+              context.client.session.status(undefined, { signal }),
+            ).pipe(Effect.timeout("1 second"), Effect.option);
+            if (sessions.get(input.threadId) !== context || (yield* Ref.get(context.stopped))) {
+              return yield* Effect.interrupt;
+            }
+            // An unavailable or undecodable status keeps the current behavior:
+            // never guess idle.
+            const preflightStatus = Option.isSome(preflight)
+              ? Option.getOrUndefined(decodeOpenCodeSessionStatusMap(preflight.value.data))
+              : undefined;
+            if (preflightStatus !== undefined && context.activeTurnId === steeringTurnId) {
+              const nativeStatus = preflightStatus[context.openCodeSessionId];
+              if (nativeStatus === undefined || nativeStatus.type === "idle") {
+                yield* completeOpenCodeTurn(context, steeringTurnId, context.promptGeneration, {
+                  type: "session.status.preflight",
+                  status: preflightStatus,
+                });
+                // The native idle this preflight stood in for is still in flight.
+                // Reconcile the next one against the live status instead of
+                // trusting it, so it retires the turn it belongs to rather than
+                // the turn opened below.
+                context.reconcileIdleStatus = true;
+              }
+            }
+            // The status request is a suspension point, so the pump may have
+            // retired the turn while it was in flight. Re-read rather than
+            // trust the id captured before it: on both exits from the block it
+            // can now name a turn OpenCode has already finished.
+            steeringTurnId = context.activeTurnId;
+          }
           const turnId = steeringTurnId ?? freshTurnId;
           const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
           const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
@@ -3169,6 +3232,7 @@ export function makeOpenCodeAdapter(
           context.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
+            context.nativeBusyObservedForActiveTurn = false;
           }
           context.turnTokenUsage?.promptMessageIds.add(messageId);
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
@@ -3262,6 +3326,7 @@ export function makeOpenCodeAdapter(
                       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                       context.promptAdmission = undefined;
                       context.activeTurnId = undefined;
+                      context.nativeBusyObservedForActiveTurn = false;
                       context.activeAgent = undefined;
                       context.activeVariant = undefined;
                       yield* updateProviderSession(
@@ -3310,6 +3375,7 @@ export function makeOpenCodeAdapter(
                     const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                     context.promptAdmission = undefined;
                     context.activeTurnId = undefined;
+                    context.nativeBusyObservedForActiveTurn = false;
                     context.activeAgent = undefined;
                     context.activeVariant = undefined;
                     context.awaitingBusyAfterInterruption = false;
