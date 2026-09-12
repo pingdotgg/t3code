@@ -86,3 +86,16 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 });
+
+it("keeps authenticated GitLab media and its original link when opening the mobile viewer", () => {
+  const href =
+    "https://git.example/-/project/123/uploads/e347d7ff85358d19b72222f1174b9a4b/image.png";
+  expect(resolveMarkdownMediaPreview(href, { ...input, imageEmbed: true })).toMatchObject({
+    kind: "image",
+    source: {
+      environmentId: input.environmentId,
+      resource: { _tag: "source-control-media", reference: { _tag: "gitlab", project: "123" } },
+      actionsSource: { reference: { kind: "url", url: href } },
+    },
+  });
+});

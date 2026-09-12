@@ -533,7 +533,8 @@ export function resolveViewedImageAsset(
     workspaceRoot: input.workspaceRoot,
     resolvedFilePath,
   });
-  if (media === null || media.access !== "environment") return null;
+  if (media === null || media.access !== "environment" || media.resource._tag !== "media-file")
+    return null;
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 

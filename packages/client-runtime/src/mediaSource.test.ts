@@ -8,6 +8,19 @@ const attachmentId =
   "11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222-mp4";
 
 describe("resolveMediaSource", () => {
+  it.each(["shot one.png", "Grüße 世界.mp4", "literal%20.png"])(
+    "decodes the GitLab display filename exactly once: %s",
+    (name) => {
+      const url = `https://git.example/acme/project/uploads/e347d7ff85358d19b72222f1174b9a4b/${encodeURIComponent(name)}`;
+      expect(resolveMediaSource(url, { threadId })).toMatchObject({
+        name,
+        access: "environment",
+        reference: { kind: "url", url },
+        resource: { _tag: "source-control-media", reference: { _tag: "gitlab", fileName: name } },
+      });
+    },
+  );
+
   describe("direct URLs", () => {
     it("keeps the authored URL and decodes the display name once", () => {
       const href = "https://cdn.example.com/clip%20one%2520%2Emp4?signature=a%2fb#t=2";

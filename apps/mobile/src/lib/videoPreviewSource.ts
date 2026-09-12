@@ -17,7 +17,13 @@ export type MediaVideoPreviewSource = {
       readonly environmentId: EnvironmentId;
       readonly resource: Extract<
         AssetResource,
-        { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" }
+        {
+          readonly _tag:
+            | "attachment"
+            | "media-file"
+            | "draft-workspace-file"
+            | "source-control-media";
+        }
       >;
     }
 );
@@ -36,25 +42,27 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
   return JSON.stringify(
     "uri" in source
       ? ["media-video", source.uri]
-      : source.resource._tag === "attachment"
-        ? ["media-video", source.environmentId, "attachment", source.resource.attachmentId]
-        : source.resource._tag === "media-file"
-          ? [
-              "media-video",
-              "media-file",
-              source.environmentId,
-              source.resource.threadId,
-              source.resource.path,
-              source.srcFragment ?? "",
-            ]
-          : [
-              "media-video",
-              "draft-workspace-file",
-              source.environmentId,
-              source.resource.cwd,
-              source.resource.path,
-              source.srcFragment ?? "",
-            ],
+      : source.resource._tag === "source-control-media"
+        ? ["media-video", source.environmentId, source.resource.reference]
+        : source.resource._tag === "attachment"
+          ? ["media-video", source.environmentId, "attachment", source.resource.attachmentId]
+          : source.resource._tag === "media-file"
+            ? [
+                "media-video",
+                "media-file",
+                source.environmentId,
+                source.resource.threadId,
+                source.resource.path,
+                source.srcFragment ?? "",
+              ]
+            : [
+                "media-video",
+                "draft-workspace-file",
+                source.environmentId,
+                source.resource.cwd,
+                source.resource.path,
+                source.srcFragment ?? "",
+              ],
   );
 }
 

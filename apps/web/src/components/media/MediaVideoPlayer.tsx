@@ -12,6 +12,8 @@ interface MediaVideoPlayerProps {
   readonly label: string;
   readonly sourceFailed?: boolean | undefined;
   readonly originalUrl?: string | undefined;
+  /** An explicitly playable public source to try once if the signed source fails. */
+  readonly fallbackSrc?: string | null | undefined;
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
   readonly autoPlay?: boolean | undefined;
@@ -31,6 +33,7 @@ export function MediaVideoPlayer({
   label,
   sourceFailed = false,
   originalUrl,
+  fallbackSrc,
   revision = null,
   preload = "visible",
   autoPlay = false,
@@ -47,11 +50,13 @@ export function MediaVideoPlayer({
     src: string;
     revision: string | null;
   } | null>(null);
+  const [fallbackFor, setFallbackFor] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [preloadedSrc, setPreloadedSrc] = useState<string | null>(null);
-  const src = playbackSource?.src ?? latestSrc;
+  const usingFallback = fallbackSrc != null && fallbackFor !== null && fallbackFor === latestSrc;
+  const src = playbackSource?.src ?? (usingFallback ? fallbackSrc : latestSrc);
   const sourceRevision = playbackSource === null ? revision : playbackSource.revision;
   const failed = src !== null ? failedSrc === src : sourceFailed;
 
@@ -116,6 +121,7 @@ export function MediaVideoPlayer({
     try {
       await onRetry?.();
       setPlaybackSource(null);
+      setFallbackFor(null);
       setFailedSrc(null);
       setLoadAttempt((current) => current + 1);
     } catch {
@@ -177,8 +183,12 @@ export function MediaVideoPlayer({
           onPause={refreshPausedRevision}
           onEnded={refreshPausedRevision}
           onError={() => {
-            if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
-            else setFailedSrc(src);
+            if (src === fallbackSrc) setFailedSrc(src);
+            else if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
+            else if (fallbackSrc && fallbackSrc !== src) {
+              setPlaybackSource(null);
+              setFallbackFor(latestSrc);
+            } else setFailedSrc(src);
           }}
         />
       ) : (
@@ -191,5 +201,14 @@ export function MediaVideoPlayer({
       )}
     </span>
   );
-  return actionsSource ? <MediaActions source={actionsSource}>{player}</MediaActions> : player;
+  let activeActionsSource = actionsSource;
+  if (actionsSource && src === fallbackSrc) {
+    const { asset: _asset, ...directSource } = actionsSource;
+    activeActionsSource = { ...directSource, src };
+  }
+  return activeActionsSource ? (
+    <MediaActions source={activeActionsSource}>{player}</MediaActions>
+  ) : (
+    player
+  );
 }

@@ -46,6 +46,7 @@ import {
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   classifyMarkdownImageSource,
+  type MarkdownImageContext,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
@@ -212,6 +213,7 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  imageContext?: MarkdownImageContext | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
@@ -1405,6 +1407,7 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
+  readonly onError?: (() => void) | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
@@ -1447,6 +1450,7 @@ function ChatMarkdownImage(props: {
     onError: () => {
       setFailedSrc(loadingSrc);
       setLoadedSrc(null);
+      props.onError?.();
     },
   });
 
@@ -1530,6 +1534,7 @@ function ChatMarkdownVideo(props: {
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
+  readonly fallbackSrc?: string | null | undefined;
   readonly sourceFailed?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
@@ -1543,6 +1548,7 @@ function ChatMarkdownVideo(props: {
       sourceFailed={props.sourceFailed}
       label={props.alt}
       originalUrl={props.originalUrl}
+      fallbackSrc={props.fallbackSrc}
       style={props.style}
       copyMarkdown={props.copyMarkdown}
       className={cn(
@@ -1565,7 +1571,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "source-control-media" }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1577,20 +1583,44 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly maxHeightRem?: number | undefined;
   readonly style?: CSSProperties | undefined;
   readonly workspaceRoot?: string | undefined;
+  readonly originalUrl?: string | undefined;
+  readonly className?: string | undefined;
+  readonly imageProps?:
+    | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
+    | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
+  const [failedAssetUrl, setFailedAssetUrl] = useState<string | null>(null);
   const path =
     resource._tag === "media-file"
       ? resource.path
       : resource._tag === "workspace-file" && props.workspaceRoot
         ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
         : undefined;
-  const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
-  const relativePath = reference?.relativePath;
-  const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  const authoredUrl =
+    resource._tag === "source-control-media"
+      ? (props.originalUrl ??
+        (resource.reference._tag === "github" ? resource.reference.url : null))
+      : null;
+  const showsAuthoredUrl =
+    authoredUrl !== null &&
+    (assetUrl._tag === "Failure" ||
+      (assetUrl._tag === "Success" && failedAssetUrl === assetUrl.url));
+  const src = showsAuthoredUrl
+    ? authoredUrl
+    : assetUrl._tag === "Success"
+      ? assetUrl.url + (props.srcFragment ?? "")
+      : null;
+  const sourceFailed = assetUrl._tag === "Failure" && authoredUrl === null;
+  const reference = path
+    ? mediaFileReference(path, props.workspaceRoot)
+    : props.originalUrl
+      ? mediaUrlReference(props.originalUrl)
+      : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
   // caller's height cap shrinks the box while keeping the ratio.
@@ -1607,9 +1637,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    asset: { environmentId: props.environmentId, resource },
+    ...(showsAuthoredUrl ? {} : { asset: { environmentId: props.environmentId, resource } }),
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -1626,7 +1656,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     return (
       <ChatMarkdownVideo
         src={src}
-        sourceFailed={assetUrl._tag === "Failure"}
+        sourceFailed={sourceFailed}
+        originalUrl={props.originalUrl}
+        fallbackSrc={authoredUrl}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         style={props.style}
@@ -1641,13 +1673,20 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure"}
+      sourceFailed={sourceFailed}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
-      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      className={cn(CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME, props.className)}
+      imageProps={props.imageProps}
+      originalUrl={props.originalUrl}
       style={style}
       actionsSource={actionsSource}
+      onError={
+        !showsAuthoredUrl && authoredUrl !== null && assetUrl._tag === "Success"
+          ? () => setFailedAssetUrl(assetUrl.url)
+          : undefined
+      }
       onImageExpand={props.onImageExpand}
     />
   );
@@ -2215,6 +2254,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   imageBaseDir,
+  imageContext,
   onImageExpand,
   renderContextReference,
 }: ChatMarkdownProps) {
@@ -2616,6 +2656,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       imageBaseDir,
+      imageContext,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2644,6 +2685,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       imageBaseDir,
+      imageContext,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -3045,9 +3087,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef, renderContextReference } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      expandMedia,
+      cwd,
+      imageBaseDir,
+      imageContext,
+      threadRef,
+      environmentId,
+      renderContextReference,
+    } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
     if (contextReference) {
@@ -3071,9 +3119,30 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
-    const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
+    const imageSource = classifyMarkdownImageSource(
+      classifiedSrc,
+      imageBaseDir ?? cwd,
+      imageContext,
+    );
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
-    if (imageSource._tag === "Direct") {
+    if (imageSource._tag === "SourceControlMedia" && environmentId !== null) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={{ _tag: "source-control-media", reference: imageSource.reference }}
+          alt={altText}
+          kind={kind}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          originalUrl={imageSource.uri}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
+    if (imageSource._tag === "Direct" || imageSource._tag === "SourceControlMedia") {
       const mediaSrc = resolveProtocolRelativeMediaUrl(imageSource.uri);
       const originalUrl =
         resolveExternalWebLinkHost(imageSource.uri) !== null ? imageSource.uri : undefined;

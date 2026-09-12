@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AttachmentCreateUploadUrlInput } from "./assets.ts";
+import { AttachmentCreateUploadUrlInput, AssetResource } from "./assets.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -56,5 +56,45 @@ describe("AttachmentCreateUploadUrlInput", () => {
         sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
       }),
     ).toBe(false);
+  });
+});
+
+describe("source-control asset validation", () => {
+  const reference = {
+    _tag: "gitlab",
+    origin: "https://git.example:3443",
+    project: "123",
+    secret: "e347d7ff85358d19b72222f1174b9a4b",
+    fileName: "image one.svg",
+  };
+  const isAssetResource = Schema.is(AssetResource);
+  const accepts = (input: unknown) =>
+    isAssetResource({ _tag: "source-control-media", reference: input });
+  it("accepts exact GitLab uploads and GitHub attachments", () => {
+    expect(accepts(reference)).toBe(true);
+    expect(accepts({ ...reference, project: "team/subgroup/repo" })).toBe(true);
+    expect(
+      accepts({ _tag: "github", url: "https://github.com/user-attachments/assets/1234-abcd" }),
+    ).toBe(true);
+  });
+  it.each([
+    { origin: "https://user:password@git.example" },
+    { origin: "https://git.example/path" },
+    { origin: "javascript:foo" },
+    { project: "../repo" },
+    { project: "team/../repo" },
+    { fileName: ".." },
+    { fileName: "a/b" },
+    { fileName: "a\\b" },
+    { secret: "../../secret" },
+  ])("rejects locations outside an exact upload: %j", (invalid) => {
+    expect(accepts({ ...reference, ...invalid })).toBe(false);
+  });
+  it.each([
+    "http://github.com/user-attachments/assets/1234",
+    "https://github.com.evil.test/user-attachments/assets/1234",
+    "https://github.com/user-attachments/assets/1234?redirect=evil",
+  ])("rejects unsupported GitHub URLs: %s", (url) => {
+    expect(accepts({ _tag: "github", url })).toBe(false);
   });
 });
