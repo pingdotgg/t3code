@@ -848,13 +848,19 @@ jobs:
           mkdir -p release-publish
 
           shopt -s nullglob
-          for pattern in \
-            "release/*.dmg" \
-            "release/*.zip" \
-            "release/*.AppImage" \
-            "release/*.exe" \
-            "release/*.blockmap" \
-            "release/*.yml"; do
+          patterns=(
+            "release/*.dmg"
+            "release/*.zip"
+            "release/*.AppImage"
+            "release/*.exe"
+          )
+          # Preview builds have no publish config, so electron-builder writes
+          # no feed manifest for them, but it still emits blockmaps beside the
+          # installers. Neither belongs on a release no updater may follow.
+          if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
+            patterns+=("release/*.blockmap" "release/*.yml")
+          fi
+          for pattern in "${patterns[@]}"; do
             for file in $pattern; do
               cp "$file" release-publish/
             done
