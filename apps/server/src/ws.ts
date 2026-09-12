@@ -126,6 +126,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as AgentSessionAutoImporter from "./project/AgentSessionAutoImporter.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -571,6 +572,7 @@ const makeWsRpcLayer = (
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const autoImporter = yield* AgentSessionAutoImporter.AgentSessionAutoImporter;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2385,6 +2387,20 @@ const makeWsRpcLayer = (
               ),
               Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsImportAll]: () =>
+          observeRpcEffect(WS_METHODS.agentSessionsImportAll, autoImporter.runNow, {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.agentSessionsStatus]: () =>
+          observeRpcEffect(WS_METHODS.agentSessionsStatus, autoImporter.status, {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.agentSessionsSubscribeStatus]: (_input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.agentSessionsSubscribeStatus,
+            Effect.succeed(autoImporter.streamStatus),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

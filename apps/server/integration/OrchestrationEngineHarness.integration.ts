@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApprovalRequestId,
   CodexSettings,
+  initialAgentSessionAutoImportStatus,
   ProviderDriverKind,
   type OrchestrationEvent,
   type OrchestrationThread,
@@ -87,6 +88,7 @@ import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as AgentAwarenessRelay from "../src/relay/AgentAwarenessRelay.ts";
+import * as AgentSessionAutoImporter from "../src/project/AgentSessionAutoImporter.ts";
 import * as PullRequestService from "../src/pullRequest/PullRequestService.ts";
 
 const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
@@ -404,6 +406,15 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         Layer.succeed(ThreadSettlementReactor.ThreadSettlementReactor, {
           start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(AgentSessionAutoImporter.AgentSessionAutoImporter, {
+          start: () => Effect.void,
+          runNow: Effect.succeed(initialAgentSessionAutoImportStatus),
+          status: Effect.succeed(initialAgentSessionAutoImportStatus),
+          streamStatus: Stream.empty,
           drain: Effect.void,
         }),
       ),

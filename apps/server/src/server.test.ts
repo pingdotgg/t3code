@@ -15,6 +15,7 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
+  initialAgentSessionAutoImportStatus,
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
@@ -142,6 +143,7 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import * as AgentSessionAutoImporter from "./project/AgentSessionAutoImporter.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -955,6 +957,15 @@ const buildAppUnderTest = (options?: {
             start: () => Effect.void,
             drainThrough: () => Effect.void,
             ...options?.layers?.threadDeletionReactor,
+          }),
+          // The ws rpc layer yields the auto-importer, but these tests never
+          // exercise its triggers: stub it so it provides no background work.
+          Layer.succeed(AgentSessionAutoImporter.AgentSessionAutoImporter, {
+            start: () => Effect.void,
+            runNow: Effect.succeed(initialAgentSessionAutoImportStatus),
+            status: Effect.succeed(initialAgentSessionAutoImportStatus),
+            streamStatus: Stream.empty,
+            drain: Effect.void,
           }),
         ),
       ),
