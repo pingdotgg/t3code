@@ -542,6 +542,28 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("does not expose a persisted environment as disconnected while it starts", () =>
+    Effect.gen(function* () {
+      const connectionStarted = yield* Deferred.make<void>();
+      const finishConnection = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforeSessionConnect: () =>
+          Deferred.succeed(connectionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishConnection)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const state = yield* registry.state(TARGET.environmentId);
+
+        yield* Deferred.await(connectionStarted);
+        expect(state.phase).toBe("connecting");
+        yield* Deferred.succeed(finishConnection, undefined);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("exposes the current RPC generation to late query subscribers", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);
