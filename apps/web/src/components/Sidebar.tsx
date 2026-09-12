@@ -4325,7 +4325,7 @@ export default function Sidebar() {
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
-          <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)]">
+          <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)] pt-1">
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
