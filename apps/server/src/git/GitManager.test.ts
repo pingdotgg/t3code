@@ -1014,6 +1014,25 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("reads a shared origin only once when verifying a warm branch PR lookup", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/origin-read"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/origin-read"]);
+      const gitConfigReads: string[] = [];
+      const { manager, ghCalls } = yield* makeManager({ gitConfigReads });
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-read" });
+      gitConfigReads.length = 0;
+      const previousGhCalls = ghCalls.length;
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-read" });
+      expect(gitConfigReads.filter((key) => key === "remote.origin.url")).toHaveLength(1);
+      expect(ghCalls).toHaveLength(previousGhCalls);
+    }),
+  );
+
   it.effect("turn-end refresh finds a new PR and keeps known PRs cached", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
