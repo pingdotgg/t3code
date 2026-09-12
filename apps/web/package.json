@@ -9,7 +9,8 @@
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run --passWithNoTests --project unit"
+    "test": "vp test run --passWithNoTests --project unit",
+    "test:html-visualization": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -33,6 +34,7 @@
     "@tanstack/react-router": "^1.160.2",
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
+    "dompurify": "^3.4.15",
     "effect": "catalog:",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
@@ -55,6 +57,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@playwright/test": "^1.63.0",
     "@rolldown/plugin-babel": "^0.2.0",
     "@tailwindcss/vite": "^4.0.0",
     "@tanstack/router-plugin": "^1.161.0",

@@ -1801,6 +1801,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         >
           <ChatMarkdown
             text={messageText}
+            allowHtmlVisualizations
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}

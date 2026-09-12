@@ -109,6 +109,13 @@ jobs:
       - name: Test
         run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
 
+      - name: Install Chromium for visualization security tests
+        working-directory: apps/web
+        run: vp exec playwright install chromium --only-shell --with-deps
+
+      - name: Test HTML visualization sandbox
+        run: vp run --filter @t3tools/web test:html-visualization
+
   # apps/server sets `fileParallelism: false`, so its 239 files run strictly
   # one at a time. Sharding spreads them over separate runners instead of
   # separate workers, so no two server test files ever share a machine and the

@@ -43,6 +43,7 @@ import {
   buildCodexDeveloperInstructions,
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -543,6 +544,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
 }
 
 function buildThreadStartParams(input: {
+  readonly configuredDeveloperInstructions?: string | null | undefined;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
@@ -551,6 +553,13 @@ function buildThreadStartParams(input: {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
     cwd: input.cwd,
+    // Collaboration-mode instructions can be persisted without reaching the model.
+    developerInstructions: [
+      input.configuredDeveloperInstructions,
+      buildRuntimeInstructions({ harness: "Codex" }),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
@@ -717,6 +726,7 @@ interface CodexThreadOpenClient {
 }
 
 export const openCodexThread = (input: {
+  readonly configuredDeveloperInstructions?: string | null | undefined;
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
@@ -727,6 +737,7 @@ export const openCodexThread = (input: {
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
+    configuredDeveloperInstructions: input.configuredDeveloperInstructions,
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
@@ -2368,8 +2379,13 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
+      const { config } = yield* client.request("config/read", {
+        cwd: options.cwd,
+        includeLayers: false,
+      });
 
       const opened = yield* openCodexThread({
+        configuredDeveloperInstructions: config.developer_instructions,
         client,
         threadId: options.threadId,
         runtimeMode: options.runtimeMode,

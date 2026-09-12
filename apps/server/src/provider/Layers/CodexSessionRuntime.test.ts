@@ -10,6 +10,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
@@ -872,6 +873,47 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  for (const resumeThreadId of [undefined, "saved-thread"]) {
+    it.effect(
+      `delivers runtime instructions while preserving custom instructions on ${resumeThreadId ? "resume" : "start"}`,
+      () =>
+        Effect.gen(function* () {
+          const calls: Array<{ method: string; developerInstructions: string | null | undefined }> =
+            [];
+          const response = makeThreadOpenResponse("opened-thread");
+          yield* openCodexThread({
+            client: {
+              request: (method, payload) => {
+                calls.push({ method, developerInstructions: payload.developerInstructions });
+                return Effect.succeed(response);
+              },
+              raw: {
+                request: (method, payload) => {
+                  calls.push({ method, developerInstructions: payload.developerInstructions });
+                  return Effect.succeed(response);
+                },
+              },
+            },
+            configuredDeveloperInstructions: "Keep the user's existing coding conventions.",
+            threadId: ThreadId.make("thread-1"),
+            runtimeMode: "full-access",
+            cwd: "/tmp/project",
+            requestedModel: undefined,
+            serviceTier: undefined,
+            resumeThreadId,
+          });
+          NodeAssert.equal(calls.length, 1);
+          NodeAssert.equal(calls[0]?.method, resumeThreadId ? "thread/resume" : "thread/start");
+          NodeAssert.equal(
+            calls[0]?.developerInstructions,
+            `Keep the user's existing coding conventions.\n\n${buildRuntimeInstructions({ harness: "Codex" })}`,
+          );
+          NodeAssert.match(calls[0]?.developerInstructions ?? "", /<html_visualizations>/);
+          NodeAssert.match(calls[0]?.developerInstructions ?? "", /t3-html/);
+        }),
+    );
+  }
+
   it.effect("resumes metadata when historical turns contain unknown error values", () =>
     Effect.gen(function* () {
       const response = makeThreadOpenResponse("saved-thread");
@@ -927,6 +969,7 @@ describe("openCodexThread", () => {
             sandbox: "workspace-write",
             approvalsReviewer: "auto_review",
             excludeTurns: true,
+            developerInstructions: buildRuntimeInstructions({ harness: "Codex" }),
           },
         },
       ]);

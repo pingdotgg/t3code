@@ -61,6 +61,10 @@ rl.on("line", (line) => {
     write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
     return;
   }
+  if (method === "config/read") {
+    write({ id, result: { config: {}, origins: {} } });
+    return;
+  }
   if (method === "skills/list" || method === "model/list") {
     write({ id, result: { data: [] } });
     return;

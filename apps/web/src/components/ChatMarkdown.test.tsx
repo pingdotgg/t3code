@@ -72,6 +72,59 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe("assistant HTML visualizations", () => {
+  it("keeps incomplete, streaming, ordinary, oversized, and non-assistant fences as source", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const complete =
+      '```t3-html title="Example"\n<details><summary>More</summary>Detail</details>\n```';
+    try {
+      for (const props of [
+        { text: complete },
+        { text: complete, allowHtmlVisualizations: true, isStreaming: true },
+        { text: complete.slice(0, -3), allowHtmlVisualizations: true },
+        { text: complete.slice(0, -3) + "    ```", allowHtmlVisualizations: true },
+        { text: complete.slice(0, -3) + "~~~", allowHtmlVisualizations: true },
+        { text: complete.replace("t3-html", "html"), allowHtmlVisualizations: true },
+        { text: "```t3-html\n" + "x".repeat(100_001) + "\n```", allowHtmlVisualizations: true },
+        {
+          text: '<pre><code class="language-t3-html">hello</code></pre>',
+          allowHtmlVisualizations: true,
+        },
+      ]) {
+        await act(async () => {
+          renderer?.unmount();
+          renderer = create(<ChatMarkdown cwd={undefined} {...props} />);
+        });
+        expect(renderer!.root.findAllByType("iframe")).toHaveLength(0);
+        expect(codeButton(renderer!, "Copy code").onClick).toBeTypeOf("function");
+      }
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={complete} allowHtmlVisualizations />);
+      });
+      expect(renderer!.root.findAllByType("iframe")).toHaveLength(1);
+      await act(async () => {
+        renderer!.root
+          .findAllByType(Button)
+          .find((button) => button.props.children === "Show source")!
+          .props.onClick();
+      });
+      expect(renderer!.root.findAllByType("iframe")).toHaveLength(0);
+      expect(codeButton(renderer!, "Copy code").onClick).toBeTypeOf("function");
+      await act(async () => {
+        renderer!.root
+          .findAllByType(Button)
+          .find((button) => button.props.children === "Show visualization")!
+          .props.onClick();
+      });
+      expect(renderer!.root.findAllByType("iframe")).toHaveLength(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
