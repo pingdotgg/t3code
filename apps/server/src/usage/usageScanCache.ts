@@ -83,10 +83,19 @@ interface SerializedCache {
   readonly models: readonly string[];
   readonly sessions: readonly string[];
   readonly files: Readonly<Record<string, SerializedFile>>;
+  /**
+   * Oldest window start an all-time scan asked for, when one has run. Present
+   * only then: it is what tells a later bounded scan to keep entries older
+   * than its own retention instead of pruning them.
+   */
+  readonly retainSinceMs?: number;
 }
 
 /** Serialises the cache, interning the repeated model and session strings. */
-export function encodeScanCache(cache: ScanCache): SerializedCache {
+export function encodeScanCache(
+  cache: ScanCache,
+  options: { readonly retainSinceMs?: number } = {},
+): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
   const modelIndex = new Map<string, number>();
@@ -129,11 +138,32 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, files };
+  const retainSinceMs = options.retainSinceMs;
+  return {
+    version: USAGE_SCAN_CACHE_VERSION,
+    models,
+    sessions,
+    files,
+    ...(retainSinceMs !== undefined && Number.isFinite(retainSinceMs) ? { retainSinceMs } : {}),
+  };
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
+}
+
+/**
+ * The all-time retention marker of a parsed document, or `null` when no
+ * all-time scan has been recorded. Kept apart from the file entries so the
+ * marker is never inferred from what happens to be cached.
+ */
+export function decodeScanCacheRetainSince(document: unknown): number | null {
+  if (typeof document !== "object" || document === null) return null;
+  const root = document as Partial<SerializedCache>;
+  if (root.version !== USAGE_SCAN_CACHE_VERSION) return null;
+  return typeof root.retainSinceMs === "number" && Number.isFinite(root.retainSinceMs)
+    ? root.retainSinceMs
+    : null;
 }
 
 /**

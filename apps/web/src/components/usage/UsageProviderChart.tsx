@@ -26,7 +26,8 @@ interface UsageProviderChartProps {
   readonly hourly: readonly HourlyTotals[];
   readonly metric: UsageChartMetric;
   readonly referenceTime: string | undefined;
-  readonly resolution: "day" | "hour";
+  /** Weeks arrive through `days`/`daily`, keyed by their start day. */
+  readonly resolution: "day" | "week" | "hour";
   readonly timeZone: string;
 }
 
@@ -308,7 +309,11 @@ export function UsageProviderChart({
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
+    resolution === "hour"
+      ? formatHourShort(period, timeZone)
+      : resolution === "week"
+        ? `Week of ${formatDayShort(period)}`
+        : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone)
@@ -344,7 +349,7 @@ export function UsageProviderChart({
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+            aria-label={`${resolution === "hour" ? "Hourly" : resolution === "week" ? "Weekly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
           >
             {ticks.map((tick) => {
               const y = toY(tick);

@@ -53,6 +53,7 @@ import {
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
+  decodeScanCacheRetainSince,
   dedupeWithinFile,
   encodeScanCache,
   pruneScanCache,
@@ -76,7 +77,12 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Longest window the UI offers, plus slack. Older entries are pruned. */
+/**
+ * Longest bounded window the UI offers, plus slack. Older entries are pruned
+ * until an all-time scan runs; from then on everything it walked is kept, so
+ * switching between periods never re-parses years of transcripts. See
+ * `retentionHorizonMs`.
+ */
 const CACHE_RETENTION_DAYS = 90;
 
 /** On-disk shape of the rate snapshot. */
@@ -142,6 +148,16 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+  // Oldest window start an all-time scan asked for, persisted with the cache
+  // as an explicit marker. Bounded scans never set it: a horizon inferred from
+  // whatever entries happen to be cached would pin itself to the oldest one
+  // and stop age pruning altogether.
+  let retentionHorizonMs = Number.POSITIVE_INFINITY;
+  // Scans for different windows run concurrently and each persists when it
+  // finishes. Snapshot and write hold this so a later, fuller snapshot cannot
+  // start writing until the earlier one has landed, which is what makes the
+  // last write to disk the newest cache state.
+  const scanCacheLock = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -286,22 +302,34 @@ export const make = Effect.gen(function* () {
       );
       if (document === null) return;
       for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      retentionHorizonMs = decodeScanCacheRetainSince(document) ?? Number.POSITIVE_INFINITY;
     }),
   );
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
-    // the next scan instead of leaving disk permanently stale.
-    yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
-      Effect.map(() => {
+  const persistScanCache = scanCacheLock
+    .withPermit(
+      Effect.gen(function* () {
+        if (!cacheDirty) return;
+        // Cleared before the write, not after: a scan still walking while this
+        // write is in flight dirties the cache again, and clearing afterwards
+        // would swallow that and leave its entries unpersisted. A failed write
+        // restores the flag so the next scan retries instead of leaving disk
+        // permanently stale.
         cacheDirty = false;
+        yield* encodeScanCacheFile(
+          encodeScanCache(fileCache, { retainSinceMs: retentionHorizonMs }),
+        ).pipe(
+          Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+          // A cache we cannot write is a slower next start, not a failed read.
+          Effect.catchCause(() =>
+            Effect.sync(() => {
+              cacheDirty = true;
+            }),
+          ),
+        );
       }),
-      // A cache we cannot write is a slower next start, not a failed read.
-      Effect.catchCause(() => Effect.void),
-    );
-  });
+    )
+    .pipe(Effect.withSpan("UsageService.persistScanCache"));
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -458,6 +486,16 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    const boundedRetentionMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // Only a scan reaching past the bounded retention moves the horizon. It
+    // moves before the walk, not after: scans for different windows run
+    // concurrently, and a bounded scan finishing mid-walk prunes with whatever
+    // horizon it sees, so the old entries this walk adds must already be
+    // protected. The marker must reach disk even when no file changed.
+    if (windowStartMs < boundedRetentionMs && windowStartMs < retentionHorizonMs) {
+      retentionHorizonMs = windowStartMs;
+      cacheDirty = true;
+    }
 
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
@@ -533,10 +571,10 @@ export const make = Effect.gen(function* () {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      retentionCutoffMs: Math.min(boundedRetentionMs, retentionHorizonMs),
     });
     if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
+    yield* persistScanCache;
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;

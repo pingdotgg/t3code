@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,11 +17,18 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  decodeScanCache,
+  decodeScanCacheRetainSince,
+  encodeScanCache,
+  type ScanCache,
+} from "./usageScanCache.ts";
 import * as UsageService from "./UsageService.ts";
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
@@ -36,6 +44,11 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
     },
   })}\n`;
 }
+
+/** The scan cache file is JSON of a shape `usageScanCache` narrows by hand. */
+const JsonDocument = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
+const decodeJsonDocument = Schema.decodeUnknownSync(JsonDocument);
+const encodeJsonDocument = Schema.encodeSync(JsonDocument);
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -156,6 +169,215 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps transcripts older than the bounded retention cached after an all-time scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      // Well past the 90-day retention that bounded windows prune to.
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() => NodeFSP.utimes(transcript, staleMtimeSeconds, staleMtimeSeconds));
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const service = yield* UsageService.make;
+
+        const first = yield* service.readSummary(allTime);
+        assert.strictEqual(totalOutputTokens(first), 5);
+
+        // The bounded window skips the file by mtime; it used to evict the
+        // entry too, turning the next all-time view into a cold re-parse.
+        const bounded = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(bounded), 0);
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        const persisted = yield* fileSystem.readFileString(cachePath);
+        assert.isTrue(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+
+        // A restarted server learns the horizon from what it loads, so its
+        // first bounded scan keeps the entry as well.
+        const restarted = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(WINDOW)), 0);
+        const afterRestart = yield* fileSystem.readFileString(cachePath);
+        assert.isTrue(decodeScanCache(decodeJsonDocument(afterRestart)).has(transcript));
+      }).pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-all-time-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still ages out old entries after a restart when no all-time scan ever ran", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const nowMs = yield* Clock.currentTimeMillis;
+      // A cache left behind by bounded scans only: an entry that has since
+      // aged past the retention, and no all-time marker.
+      const aged: ScanCache = new Map([
+        [
+          transcript,
+          {
+            size: 1,
+            mtimeMs: nowMs - 200 * 24 * 60 * 60 * 1000,
+            provider: "claude",
+            records: [],
+            tailRecords: [],
+            position: { resumeOffset: 1, guardLength: 1, guardHash: 0, codexState: null },
+          },
+        ],
+      ]);
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        yield* fileSystem.writeFileString(cachePath, encodeJsonDocument(encodeScanCache(aged)));
+
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        const persisted = yield* fileSystem.readFileString(cachePath);
+        assert.isFalse(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-bounded-prune-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("protects an all-time scan's old entries from a bounded scan finishing mid-walk", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() => NodeFSP.utimes(transcript, staleMtimeSeconds, staleMtimeSeconds));
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+      // Walked last, so by the time the all-time scan probes it the old
+      // transcript is already in the cache and the prune has not run yet.
+      const grokDir = NodePath.join(home, "grok", "sessions");
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const allTimeReachedGrok = yield* Deferred.make<void>();
+        const releaseAllTime = yield* Deferred.make<void>();
+        let grokProbes = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            exists: (path) => {
+              if (path !== grokDir) return fileSystem.exists(path);
+              grokProbes += 1;
+              if (grokProbes !== 1) return fileSystem.exists(path);
+              return Deferred.succeed(allTimeReachedGrok, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAllTime)),
+                Effect.andThen(fileSystem.exists(path)),
+              );
+            },
+          }),
+        );
+
+        const inFlight = yield* service.readSummary(allTime).pipe(Effect.forkChild);
+        yield* Deferred.await(allTimeReachedGrok);
+        // A bounded scan runs to completion, prune included, while the
+        // all-time scan is still walking.
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 0);
+        yield* Deferred.succeed(releaseAllTime, undefined);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(inFlight)), 5);
+
+        const persisted = yield* fileSystem.readFileString(
+          NodePath.join(config.stateDir, "usage-scan-cache.json"),
+        );
+        assert.isTrue(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-concurrent-prune-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("never lets an earlier, smaller snapshot land after a fuller one", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      // Only the all-time scan lists this one, so its snapshot is the only one
+      // carrying the entry and the retention marker.
+      const oldTranscript = NodePath.join(NodePath.dirname(transcript), "old.jsonl");
+      yield* Effect.promise(() => NodeFSP.writeFile(oldTranscript, claudeLine(2, 7)));
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() =>
+        NodeFSP.utimes(oldTranscript, staleMtimeSeconds, staleMtimeSeconds),
+      );
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+      const grokDir = NodePath.join(home, "grok", "sessions");
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        const firstWriteStarted = yield* Deferred.make<void>();
+        const releaseFirstWrite = yield* Deferred.make<void>();
+        const allTimeWalked = yield* Deferred.make<void>();
+        // Cache writes land here in completion order rather than on disk, so
+        // the test sees exactly which snapshot won.
+        const landed: string[] = [];
+        let cacheWrites = 0;
+        let grokProbes = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            // Grok is walked last: its probe resolving means the walk is done.
+            exists: (path) =>
+              fileSystem.exists(path).pipe(
+                Effect.tap(() => {
+                  if (path !== grokDir) return Effect.void;
+                  grokProbes += 1;
+                  return grokProbes === 2
+                    ? Deferred.succeed(allTimeWalked, undefined)
+                    : Effect.void;
+                }),
+              ),
+            writeFileString: (path, data, options) => {
+              if (path !== cachePath) return fileSystem.writeFileString(path, data, options);
+              cacheWrites += 1;
+              const land = Effect.sync(() => {
+                landed.push(data);
+              });
+              if (cacheWrites !== 1) return land;
+              return Deferred.succeed(firstWriteStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirstWrite)),
+                Effect.andThen(land),
+              );
+            },
+          }),
+        );
+
+        const bounded = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(firstWriteStarted);
+        // The all-time scan adds the old transcript and lowers the horizon
+        // while the bounded snapshot, which has neither, is still being written.
+        const allTimeScan = yield* service.readSummary(allTime).pipe(Effect.forkChild);
+        yield* Deferred.await(allTimeWalked);
+        yield* Deferred.succeed(releaseFirstWrite, undefined);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(bounded)), 5);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(allTimeScan)), 12);
+
+        assert.strictEqual(landed.length, 2);
+        const final = decodeJsonDocument(landed[1]);
+        assert.isTrue(decodeScanCache(final).has(transcript));
+        assert.isTrue(decodeScanCache(final).has(oldTranscript));
+        assert.isNotNull(decodeScanCacheRetainSince(final));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-write-barrier-test", home, settings }),
+        ),
+      );
     }).pipe(Effect.scoped),
   );
 
