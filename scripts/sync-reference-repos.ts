@@ -197,6 +197,13 @@ export const resolveReferenceRepoRef = Effect.fn("resolveReferenceRepoRef")(func
     });
   }
 
+  // A pkg.ing preview pin (`https://pkg.ing/<name>/<sha>`) names the upstream
+  // commit directly, so the reference syncs to that commit instead of a tag.
+  const previewCommit = /^https:\/\/pkg\.ing\/.+\/([0-9a-f]{7,40})$/u.exec(version)?.[1];
+  if (previewCommit !== undefined) {
+    return previewCommit;
+  }
+
   return `${repo.versionTagPrefix}${version}`;
 });
 
