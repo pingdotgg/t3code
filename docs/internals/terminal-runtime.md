@@ -37,6 +37,11 @@ owns and frees its own handles. The canonical upstream pin is
 web artifacts must be rebuilt when it changes. Web embeds the revision in its build
 info so the ABI check can detect drift without a second pin.
 
+Both adapters request 10,000 physical scrollback lines and independently cap
+Ghostty's page storage at 32 MiB per terminal. Ghostty prunes complete pages, so
+the retained row count is approximate and whichever limit is reached first wins.
+The explicit byte setting replaces libghostty-vt's low-level 10,000-byte default.
+
 Restoring scrollback must not send terminal replies to the current shell. Historical
 device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
