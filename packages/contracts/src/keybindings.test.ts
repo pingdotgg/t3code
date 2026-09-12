@@ -19,6 +19,7 @@ const decode = <S extends Schema.Top>(
     never
   >;
 
+const decodeKeybindingsConfig = Schema.decodeUnknownSync(KeybindingsConfig);
 const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as never);
 const encodeResolvedKeybindings = Schema.encodeEffect(ResolvedKeybindingsConfig);
 
@@ -302,3 +303,8 @@ it.effect("drops unknown fields in resolved keybinding rules", () =>
     }),
   ),
 );
+
+it("accepts the opt-in thread rename shortcut", () => {
+  const rules = [{ key: "mod+shift+r", command: "thread.rename", when: "!terminalFocus" }];
+  assert.deepStrictEqual(decodeKeybindingsConfig(rules), rules);
+});

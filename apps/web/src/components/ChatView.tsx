@@ -163,6 +163,7 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { requestThreadRename } from "../threadRenameBus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -6306,6 +6307,14 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "thread.rename") {
+        if (!isServerThread || !activeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) requestThreadRename(activeThreadRef);
+        return;
+      }
 
       if (command === "thread.copyReference") {
         event.preventDefault();
