@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -665,3 +666,40 @@ effectIt.effect("does not swallow process probe interruption", () =>
     }
   }),
 );
+
+effectIt.effect("idle poll ticks create no spans under the ambient parent", () => {
+  const spanNames: Array<string> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        spanNames.push(span.name);
+      };
+      return span;
+    },
+  });
+  // No retain call, so every tick takes the idle early-return path.
+  const layer = makeProbeFailureLayer(processProbeFailure);
+
+  const idlePolls = Effect.gen(function* () {
+    yield* PortScanner.PortDiscovery;
+    yield* TestClock.adjust(Duration.seconds(30));
+  });
+
+  // Nesting matters: the recording tracer must already be installed when the
+  // ambient span is created, and the layer (which forks the poll fiber) must
+  // build inside that ambient span so a leaked ParentSpan would be observed.
+  // Assertions run after the scope closes so the ambient span has ended.
+  return Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.withTracer(
+        Effect.withSpan("PortScannerTest.idlePollTick")(Effect.provide(idlePolls, layer)),
+        tracer,
+      ),
+    );
+    expect(spanNames).toContain("PortScannerTest.idlePollTick");
+    expect(spanNames.filter((name) => name === "PortDiscovery.pollTick")).toHaveLength(0);
+  });
+});
