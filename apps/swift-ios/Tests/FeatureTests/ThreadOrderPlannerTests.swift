@@ -71,47 +71,33 @@ struct ThreadOrderPlannerTests {
         }
     }
 
-    // MARK: - planMove
+    // MARK: - planReorder
 
     @Test
-    func moveUpWritesASingleKeyOnTheMovedThread() {
-        let assignments = ThreadOrderPlanner.planMove(
-            orderedIDs: ["a", "b", "c"],
+    func reorderWritesASingleKeyOnTheMovedThread() {
+        let assignments = ThreadOrderPlanner.planReorder(
+            orderedIDs: ["a", "c", "b"],
             keysByID: ["a": "f", "b": "m", "c": "t"],
-            movedID: "c",
-            direction: .up
+            movedID: "c"
         )
-        #expect(assignments?.count == 1)
-        #expect(assignments?[0].threadID == "c")
-        #expect(assignments![0].orderKey > "f")
-        #expect(assignments![0].orderKey < "m")
-    }
-
-    @Test
-    func movesOffTheSectionEndsReturnNil() {
-        let keys: [String: String?] = ["a": "f", "b": "m"]
-        #expect(ThreadOrderPlanner.planMove(
-            orderedIDs: ["a", "b"], keysByID: keys, movedID: "a", direction: .up
-        ) == nil)
-        #expect(ThreadOrderPlanner.planMove(
-            orderedIDs: ["a", "b"], keysByID: keys, movedID: "b", direction: .down
-        ) == nil)
+        #expect(assignments.count == 1)
+        #expect(assignments[0].threadID == "c")
+        #expect(assignments[0].orderKey > "f")
+        #expect(assignments[0].orderKey < "m")
     }
 
     @Test
     func keylessNeighborMaterializesTheWholeSectionInTheNewOrder() {
-        let assignments = ThreadOrderPlanner.planMove(
-            orderedIDs: ["a", "b", "c"],
+        let assignments = ThreadOrderPlanner.planReorder(
+            orderedIDs: ["b", "a", "c"],
             keysByID: ["a": nil, "b": "m", "c": nil],
-            movedID: "b",
-            direction: .up
+            movedID: "b"
         )
-        #expect(assignments != nil)
-        let keys = assignments!.map(\.orderKey)
+        let keys = assignments.map(\.orderKey)
         #expect(keys.sorted() == keys)
         // The requested order is [b, a, c]: b's new key sorts first.
         let keyByID = Dictionary(
-            uniqueKeysWithValues: assignments!.map { ($0.threadID, $0.orderKey) }
+            uniqueKeysWithValues: assignments.map { ($0.threadID, $0.orderKey) }
         )
         #expect(keyByID["b"]! < keyByID["a"]!)
         #expect(keyByID["a"]! < keyByID["c"]!)
@@ -119,16 +105,15 @@ struct ThreadOrderPlannerTests {
 
     @Test
     func keylessThreadMovesIntoTheArrangedRunWithOneWrite() {
-        let assignments = ThreadOrderPlanner.planMove(
-            orderedIDs: ["new", "reopened", "first", "last"],
+        let assignments = ThreadOrderPlanner.planReorder(
+            orderedIDs: ["new", "first", "reopened", "last"],
             keysByID: ["new": nil, "reopened": nil, "first": "f", "last": "t"],
-            movedID: "reopened",
-            direction: .down
+            movedID: "reopened"
         )
-        #expect(assignments?.count == 1)
-        #expect(assignments?[0].threadID == "reopened")
-        #expect(assignments![0].orderKey > "f")
-        #expect(assignments![0].orderKey < "t")
+        #expect(assignments.count == 1)
+        #expect(assignments[0].threadID == "reopened")
+        #expect(assignments[0].orderKey > "f")
+        #expect(assignments[0].orderKey < "t")
     }
 
     // MARK: - hidden-row reservations
@@ -167,109 +152,165 @@ struct ThreadOrderPlannerTests {
         #expect(keys.allSatisfy { !reserved.contains($0) })
     }
 
-    // MARK: - movePlanner / moveOptions capability gating
+    // MARK: - planDrop capability gating
 
     @Test
-    func movePlannerRequiresReorderSupportOnEveryAssignedEnvironment() {
-        let envA = sectionThreads(
+    func dropRequiresTheSectionCapabilityOnTheMovedEnvironment() {
+        // env-a supports pinned reordering but not active reordering: its
+        // active rows cannot be written in the active section.
+        let threads = sectionThreads(
+            environmentID: "env-a",
+            pinned: false,
+            keys: ["a-1": "f", "a-2": "m"],
+            supportsPinReorder: true,
+            supportsActiveReorder: false
+        )
+        let ordered = DailyUXSidebarIndex.orderedSection(threads, section: .active, now: now)
+        #expect(ThreadOrderPlanner.planDrop(
+            ordered: [ordered[1], ordered[0]],
+            all: threads,
+            section: .active,
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-2"
+        ) == nil)
+        // The same row is writable in the pinned section.
+        let pinned = sectionThreads(
             environmentID: "env-a",
             pinned: true,
-            keys: ["a-1": "f", "a-2": "t"],
-            supportsPinReorder: true
+            keys: ["a-1": "f", "a-2": "m"],
+            supportsPinReorder: true,
+            supportsActiveReorder: false
         )
-        // env-b predates reordering: its rows stay keyless and unwritable.
-        let envB = sectionThreads(
-            environmentID: "env-b",
-            pinned: true,
-            keys: ["b-1": nil],
-            supportsPinReorder: false
-        )
-        let all = envA + envB
-        let ordered = DailyUXSidebarIndex.orderedSection(all, section: .pinned, now: now)
-        // Keyed rows first (env-a), keyless env-b row last.
-        #expect(ordered.map(\.id) == ["env-a:a-1", "env-a:a-2", "env-b:b-1"])
-
-        let planner = ThreadOrderPlanner.movePlanner(
-            ordered: ordered,
-            all: all,
+        let pinnedOrdered = DailyUXSidebarIndex.orderedSection(pinned, section: .pinned, now: now)
+        #expect(ThreadOrderPlanner.planDrop(
+            ordered: [pinnedOrdered[1], pinnedOrdered[0]],
+            all: pinned,
             section: .pinned,
-            connectedEnvironmentIDs: ["env-a", "env-b"]
-        )
-        // Single-key move within the writable environment works.
-        let moving = ordered.first { $0.id == "env-a:a-2" }!
-        let assignments = planner(moving, .up)
-        #expect(assignments?.count == 1)
-        #expect(assignments?[0].threadID == "env-a:a-2")
-
-        // Moving the env-a row down past the keyless env-b row would need a
-        // spread rewrite touching env-b — refused, like React Native.
-        let edge = ordered.first { $0.id == "env-a:a-2" }!
-        #expect(planner(edge, .down) == nil)
-
-        // The env-b row itself gets no plan at all.
-        let unwritable = ordered.first { $0.id == "env-b:b-1" }!
-        #expect(planner(unwritable, .up) == nil)
-        #expect(planner(unwritable, .down) == nil)
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-2"
+        ) != nil)
     }
 
+    // MARK: - planDrop (hold-and-drag reorder)
+
     @Test
-    func moveOptionsReportPerDirectionAvailabilityForWritableRowsOnly() {
+    func dropToSectionEndWritesASingleKeyBelowTheLastRow() {
         let threads = sectionThreads(
             environmentID: "env-a",
             pinned: true,
             keys: ["a-1": "f", "a-2": "m", "a-3": "t"],
             supportsPinReorder: true
-        ) + sectionThreads(
-            environmentID: "env-b",
-            pinned: true,
-            keys: ["b-1": "n"],
-            supportsPinReorder: false
         )
-        var options: [String: FeatureThreadMoveOptions] = [:]
-        for thread in threads {
-            if let value = DailyUXSidebarIndex.moveOptions(
-                for: thread,
-                in: threads,
-                now: now,
-                connectedEnvironmentIDs: ["env-a", "env-b"]
-            ) {
-                options[thread.id] = value
-            }
-        }
-        // Ordered by key: a-1(f), a-2(m), b-1(n), a-3(t).
-        #expect(options["env-a:a-1"] == FeatureThreadMoveOptions(canMoveUp: false, canMoveDown: true))
-        #expect(options["env-a:a-3"] == FeatureThreadMoveOptions(canMoveUp: true, canMoveDown: false))
-        // env-b's row sorts mid-list by key but cannot be written itself.
-        #expect(options["env-b:b-1"] == nil)
-        // Moving a-2 down past the keyed env-b row is still a single write on
-        // a-2, so it stays enabled.
-        #expect(options["env-a:a-2"] == FeatureThreadMoveOptions(canMoveUp: true, canMoveDown: true))
+        let ordered = DailyUXSidebarIndex.orderedSection(threads, section: .pinned, now: now)
+        #expect(ordered.map(\.id) == ["env-a:a-1", "env-a:a-2", "env-a:a-3"])
+
+        // Dragging the first row below the last: post-drop order [a-2, a-3, a-1].
+        let assignments = ThreadOrderPlanner.planDrop(
+            ordered: [ordered[1], ordered[2], ordered[0]],
+            all: threads,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-1"
+        )
+        #expect(assignments?.count == 1)
+        #expect(assignments?[0].threadID == "env-a:a-1")
+        #expect(assignments![0].orderKey > "t")
     }
 
     @Test
-    func activeSectionUsesActiveOrderKeysAndCapability() {
+    func dropToSectionStartWritesASingleKeyAboveTheFirstRow() {
         let threads = sectionThreads(
             environmentID: "env-a",
             pinned: false,
-            keys: ["a-1": "f", "a-2": "m"],
+            keys: ["a-1": "f", "a-2": "m", "a-3": "t"],
             supportsActiveReorder: true
         )
         let ordered = DailyUXSidebarIndex.orderedSection(threads, section: .active, now: now)
-        let planner = ThreadOrderPlanner.movePlanner(
-            ordered: ordered,
+        // Keyless-first ordering does not apply here: every row is keyed, so
+        // keys decide — a-1(f), a-2(m), a-3(t).
+        #expect(ordered.map(\.id) == ["env-a:a-1", "env-a:a-2", "env-a:a-3"])
+
+        // Dragging the last row above the first: post-drop order [a-3, a-1, a-2].
+        let assignments = ThreadOrderPlanner.planDrop(
+            ordered: [ordered[2], ordered[0], ordered[1]],
             all: threads,
             section: .active,
-            connectedEnvironmentIDs: ["env-a"]
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-3"
         )
-        let assignments = planner(ordered[1], .up)
         #expect(assignments?.count == 1)
-        #expect(assignments?[0].threadID == "env-a:a-2")
+        #expect(assignments?[0].threadID == "env-a:a-3")
+        #expect(assignments![0].orderKey < "f")
     }
 
     @Test
-    func disconnectedEnvironmentRowsStayAnchorsButAreNeverWritten() {
-        // env-b is reorder-capable but currently disconnected: its last-known
-        // keys are stale, so its rows anchor positions without being writable.
+    func dropOntoKeylessNeighborsMaterializesTheSectionInTheDroppedOrder() {
+        // Pinned order: keyed a-2(m) first, then keyless by newest creation.
+        let threads = sectionThreads(
+            environmentID: "env-a",
+            pinned: true,
+            keys: ["a-1": nil, "a-2": "m", "a-3": nil],
+            supportsPinReorder: true
+        )
+        let ordered = DailyUXSidebarIndex.orderedSection(threads, section: .pinned, now: now)
+        #expect(ordered.map(\.id) == ["env-a:a-2", "env-a:a-1", "env-a:a-3"])
+
+        // Drag a-2 to the bottom: both new neighbors are keyless, so the whole
+        // section gets fresh spread keys in the dropped order.
+        let dropped = [ordered[1], ordered[2], ordered[0]]
+        let assignments = ThreadOrderPlanner.planDrop(
+            ordered: dropped,
+            all: threads,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-2"
+        )
+        #expect(assignments?.map(\.threadID) == ["env-a:a-1", "env-a:a-3", "env-a:a-2"])
+        let keys = assignments!.map(\.orderKey)
+        #expect(keys.sorted() == keys)
+    }
+
+    @Test
+    func dropRejectsAPlanThatWouldWriteToAnUnwritableNeighbor() {
+        let writable = sectionThreads(
+            environmentID: "env-a",
+            pinned: true,
+            keys: ["a-1": "f"],
+            supportsPinReorder: true
+        )
+        // env-b predates reordering: keyless and unwritable.
+        let legacy = sectionThreads(
+            environmentID: "env-b",
+            pinned: true,
+            keys: ["b-1": nil],
+            supportsPinReorder: false
+        )
+        let all = writable + legacy
+        let ordered = DailyUXSidebarIndex.orderedSection(all, section: .pinned, now: now)
+        #expect(ordered.map(\.id) == ["env-a:a-1", "env-b:b-1"])
+
+        // Dragging a-1 below the keyless env-b row needs a spread rewrite that
+        // would assign b-1 a key — refused, no partial write.
+        let dropped = [ordered[1], ordered[0]]
+        #expect(ThreadOrderPlanner.planDrop(
+            ordered: dropped,
+            all: all,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a", "env-b"],
+            movedID: "env-a:a-1"
+        ) == nil)
+        // The legacy row itself cannot be dragged either.
+        #expect(ThreadOrderPlanner.planDrop(
+            ordered: dropped,
+            all: all,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a", "env-b"],
+            movedID: "env-b:b-1"
+        ) == nil)
+    }
+
+    @Test
+    func dropRejectsAMovedRowOnADisconnectedEnvironment() {
         let threads = sectionThreads(
             environmentID: "env-a",
             pinned: true,
@@ -281,41 +322,61 @@ struct ThreadOrderPlannerTests {
             keys: ["b-1": "m"],
             supportsPinReorder: true
         )
-        let all = threads
-        let ordered = DailyUXSidebarIndex.orderedSection(all, section: .pinned, now: now)
+        let ordered = DailyUXSidebarIndex.orderedSection(threads, section: .pinned, now: now)
         #expect(ordered.map(\.id) == ["env-a:a-1", "env-b:b-1", "env-a:a-2"])
 
-        let planner = ThreadOrderPlanner.movePlanner(
-            ordered: ordered,
-            all: all,
+        // env-b is disconnected: its row anchors position but cannot be moved.
+        #expect(ThreadOrderPlanner.planDrop(
+            ordered: [ordered[1], ordered[0], ordered[2]],
+            all: threads,
             section: .pinned,
-            connectedEnvironmentIDs: ["env-a"]
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-b:b-1"
+        ) == nil)
+        // A connected row can still drop across the stale anchor with one write.
+        let assignments = ThreadOrderPlanner.planDrop(
+            ordered: [ordered[0], ordered[2], ordered[1]],
+            all: threads,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-2"
         )
-        // The disconnected row itself offers no move.
-        let stale = ordered.first { $0.id == "env-b:b-1" }!
-        #expect(planner(stale, .up) == nil)
-        #expect(planner(stale, .down) == nil)
-        // A connected row can still move past it with a single write.
-        let moving = ordered.first { $0.id == "env-a:a-2" }!
-        let assignments = planner(moving, .up)
         #expect(assignments == [
             FeatureThreadOrderAssignment(threadID: "env-a:a-2", orderKey: "j")
         ])
+    }
 
-        var options: [String: FeatureThreadMoveOptions] = [:]
-        for thread in threads {
-            if let value = DailyUXSidebarIndex.moveOptions(
-                for: thread,
-                in: threads,
-                now: now,
-                connectedEnvironmentIDs: ["env-a"]
-            ) {
-                options[thread.id] = value
-            }
-        }
-        #expect(options["env-b:b-1"] == nil)
-        #expect(options["env-a:a-1"] == FeatureThreadMoveOptions(canMoveUp: false, canMoveDown: true))
-        #expect(options["env-a:a-2"] == FeatureThreadMoveOptions(canMoveUp: true, canMoveDown: false))
+    @Test
+    func dropReservesKeysHeldByRowsOutsideTheDroppedOrder() {
+        let threads = sectionThreads(
+            environmentID: "env-a",
+            pinned: true,
+            keys: ["a-1": "f", "a-2": "t", "a-3": "z"],
+            supportsPinReorder: true
+        )
+        // A snoozed row holds "m" — the exact midpoint of f and t. Hidden from
+        // the section, its key stays reserved so the dropped row lands on the
+        // next free key instead of colliding with it.
+        var snoozed = thread(id: "env-a:snoozed", pinned: true, created: -10)
+        snoozed.pinOrderKey = "m"
+        snoozed.snoozedUntil = now.addingTimeInterval(3_600)
+        snoozed.supportsSnooze = true
+        let all = threads + [snoozed]
+        let ordered = DailyUXSidebarIndex.orderedSection(all, section: .pinned, now: now)
+        #expect(ordered.map(\.id) == ["env-a:a-1", "env-a:a-2", "env-a:a-3"])
+
+        // Drop a-3 between a-1(f) and a-2(t).
+        let assignments = ThreadOrderPlanner.planDrop(
+            ordered: [ordered[0], ordered[2], ordered[1]],
+            all: all,
+            section: .pinned,
+            connectedEnvironmentIDs: ["env-a"],
+            movedID: "env-a:a-3"
+        )
+        #expect(assignments?.count == 1)
+        #expect(assignments![0].orderKey > "f")
+        #expect(assignments![0].orderKey < "t")
+        #expect(assignments![0].orderKey != "m")
     }
 
     // MARK: - pinned section ordering

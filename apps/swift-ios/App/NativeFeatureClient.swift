@@ -1783,23 +1783,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
-    /// Executes a Move up / Move down from the thread context menu. Plans the
-    /// move against the canonical ordered section across every connected
-    /// environment (a spread rewrite can write keys on neighbors hosted by
-    /// other servers), then refreshes each environment it touched. Returns the
-    /// assignments the server confirmed so the caller can patch local state if
-    /// a refresh fell behind.
+    /// Executes a hold-and-drag reorder. `orderedIDs` is the moved thread's
+    /// displayed section order after the drop — the same input web passes to
+    /// `planPinnedReorder`. Rows absent from the current snapshot are skipped;
+    /// every row a spread rewrite would write must sit in a connected,
+    /// reorder-capable environment or the whole drop is rejected before any
+    /// write. Returns the assignments the server confirmed so the caller can
+    /// patch local state if a refresh fell behind.
     @discardableResult
-    func moveThread(
+    func reorderThread(
         id: String,
-        direction: FeatureThreadMoveDirection
+        section: FeatureThreadOrderSection,
+        orderedIDs: [String]
     ) async throws -> [FeatureThreadOrderAssignment] {
         guard !threadMoveInFlight else { return [] }
-        guard let snapshot = latestSnapshot,
-              let thread = snapshot.threads.first(where: { $0.id == id }) else {
+        guard let snapshot = latestSnapshot else {
             throw NativeFeatureClientError.threadNotFound
         }
-        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
         // Only currently-connected environments are writable; a disconnected
         // server's rows keep their stale keys as anchors but never receive
         // writes, so a spread rewrite cannot half-land on a dead client.
@@ -1808,17 +1808,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 .filter { $0.value == .connected }
                 .map(\.key)
         )
-        let planner = ThreadOrderPlanner.movePlanner(
-            ordered: DailyUXSidebarIndex.orderedSection(
-                snapshot.threads,
-                section: section,
-                now: .now
-            ),
+        let threadsByID = Dictionary(
+            snapshot.threads.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard let assignments = ThreadOrderPlanner.planDrop(
+            ordered: orderedIDs.compactMap { threadsByID[$0] },
             all: snapshot.threads,
             section: section,
-            connectedEnvironmentIDs: connectedEnvironmentIDs
-        )
-        guard let assignments = planner(thread, direction), !assignments.isEmpty else {
+            connectedEnvironmentIDs: connectedEnvironmentIDs,
+            movedID: id
+        ) else {
             return []
         }
 

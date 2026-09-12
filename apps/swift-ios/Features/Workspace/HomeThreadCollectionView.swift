@@ -27,8 +27,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
-    let onMove: (FeatureThread, FeatureThreadMoveDirection) -> Void
-    let onMoveOptions: (FeatureThread) -> FeatureThreadMoveOptions?
+    /// Whether the row can lift for drag reordering (reorder-capable,
+    /// connected environment).
+    let onCanReorder: (FeatureThread) -> Bool
+    /// Commits a drop: the thread, its section, and the section's displayed
+    /// thread order after the drop. Completion reports whether the writes
+    /// landed so the view can snap back on failure.
+    let onReorder: (
+        FeatureThread,
+        FeatureThreadOrderSection,
+        [String],
+        @escaping (Bool) -> Void
+    ) -> Void
     let onDelete: (FeatureThread) -> Void
     let onPullRequestChange: (String, String, HomeThreadPullRequestPresentation?) -> Void
 
@@ -56,6 +66,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         collectionView.contentInset = UIEdgeInsets(top: 4, left: 0, bottom: 74, right: 0)
         collectionView.verticalScrollIndicatorInsets = UIEdgeInsets(top: 4, left: 0, bottom: 74, right: 0)
         collectionView.delegate = context.coordinator
+        // Long-press-and-drag reorders a row inside its section; a stationary
+        // hold still opens the context menu (UIKit resolves the two).
+        collectionView.dragInteractionEnabled = true
+        collectionView.dragDelegate = context.coordinator
+        collectionView.dropDelegate = context.coordinator
         context.coordinator.configure(collectionView)
         return collectionView
     }
@@ -68,10 +83,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         coordinator.invalidateTimer()
         coordinator.cancelPendingSwipeActions()
         collectionView.delegate = nil
+        collectionView.dragDelegate = nil
+        collectionView.dropDelegate = nil
     }
 
     @MainActor
-    final class Coordinator: NSObject, UICollectionViewDelegate {
+    final class Coordinator: NSObject, UICollectionViewDelegate,
+        UICollectionViewDragDelegate, UICollectionViewDropDelegate {
         private enum Section: Hashable {
             case main
         }
@@ -80,6 +98,16 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             let id: UUID
             let settled: Bool
             let finish: (Bool) -> Void
+        }
+
+        /// A drop the collection view already shows but the model has not
+        /// caught up with yet: stream updates keep displaying this order until
+        /// the reorder write confirms or fails.
+        private struct PendingReorder {
+            let id: UUID
+            let section: FeatureThreadOrderSection
+            let orderedThreadIDs: [String]
+            let deadline: Date
         }
 
         private var parent: HomeThreadCollectionView
@@ -94,6 +122,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var timerTick = 0
         private var timerInterval: TimeInterval = 0
         private var pendingSwipeCompletions: [String: PendingSwipeCompletion] = [:]
+        private var draggedThread: (id: String, section: FeatureThreadOrderSection)?
+        private var pendingReorder: PendingReorder?
         private var isApplyingSnapshot = false
         private var hasQueuedUpdate = false
 
@@ -111,7 +141,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
             self.registration = registration
 
-            dataSource = UICollectionViewDiffableDataSource<Section, HomeCollectionItem.ID>(
+            let dataSource = UICollectionViewDiffableDataSource<Section, HomeCollectionItem.ID>(
                 collectionView: collectionView
             ) { [weak self] collectionView, indexPath, identifier in
                 guard let self, let registration = self.registration else { return nil }
@@ -121,6 +151,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     item: identifier
                 )
             }
+            // The data source applies a same-view reorder drop itself; the
+            // drop's commit to the server happens in didReorder.
+            var reorderingHandlers = UICollectionViewDiffableDataSource<
+                Section, HomeCollectionItem.ID
+            >.ReorderingHandlers()
+            reorderingHandlers.canReorderItem = { [weak self] identifier in
+                self?.isReorderable(identifier) ?? false
+            }
+            reorderingHandlers.didReorder = { [weak self] transaction in
+                self?.didReorder(transaction)
+            }
+            dataSource.reorderingHandlers = reorderingHandlers
+            self.dataSource = dataSource
 
             update(parent: parent, collectionView: collectionView)
         }
@@ -133,8 +176,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         /// Keep a row's content and size fixed during its removal. Stream updates
         /// that arrive mid-animation are applied together after that animation.
+        /// Updates also wait out an active drag so a lifted row's snapshot does
+        /// not shift under the user's finger.
         private func applyLatestSnapshot(in collectionView: UICollectionView) {
-            guard !isApplyingSnapshot, hasQueuedUpdate, let dataSource else { return }
+            guard !isApplyingSnapshot, hasQueuedUpdate,
+                  !collectionView.hasActiveDrag, let dataSource else { return }
             hasQueuedUpdate = false
             let previousItems = itemsByID
             let previousThreadItemIDs = threadItemIDs
@@ -161,7 +207,22 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             startTimer()
 
             let currentIdentifiers = dataSource.snapshot().itemIdentifiers
-            let newIdentifiers = items.map(\.id)
+            var newIdentifiers = items.map(\.id)
+            if let pending = pendingReorder {
+                // Converged once the rows still present carry the dropped
+                // order — rows joining or leaving mid-write don't count.
+                let natural = sectionThreadIDs(in: newIdentifiers, section: pending.section)
+                let held = Set(pending.orderedThreadIDs)
+                let caughtUp = natural.filter(held.contains)
+                    == pending.orderedThreadIDs.filter(Set(natural).contains)
+                if caughtUp || Date.now > pending.deadline {
+                    pendingReorder = nil
+                } else {
+                    // The drop already shows; hold its order until the write
+                    // lands so a mid-flight stream update cannot revert it.
+                    newIdentifiers = applyingPendingReorder(pending, to: newIdentifiers)
+                }
+            }
             let resolvedSwipes = pendingSwipeCompletions.filter { threadID, pending in
                 guard let identifier = threadItemIDs[threadID],
                       case let .thread(thread, _, _, _, _, _) = itemsByID[identifier] else {
@@ -291,6 +352,258 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         isArchived: isArchived
                     )
                 )
+            }
+        }
+
+        // MARK: - Drag to reorder
+
+        /// A row lifts for reordering only when its environment can take the
+        /// write right now — `onCanReorder` is false for pre-reorder servers
+        /// and disconnected environments. Lifts are also blocked while an
+        /// earlier drop's write is still outstanding, since the client runs
+        /// one reorder at a time and a second would snap back on top of it.
+        private func isReorderable(_ identifier: HomeCollectionItem.ID) -> Bool {
+            guard pendingReorder == nil,
+                  case let .thread(_, shelf) = identifier,
+                  shelf == .active,
+                  let item = itemsByID[identifier],
+                  case let .thread(thread, _, _, _, _, _) = item else { return false }
+            return parent.onCanReorder(thread)
+        }
+
+        /// Item-index bounds of a section's displayed rows. `upper` sits just
+        /// past the last row — on the pinned divider, a shelf header, or one
+        /// past the list end — so an "insert before" drop there still lands
+        /// inside the section.
+        private func sectionBounds(
+            _ section: FeatureThreadOrderSection,
+            in identifiers: [HomeCollectionItem.ID]
+        ) -> (lower: Int, upper: Int)? {
+            var lower: Int?
+            var upper = 0
+            for (index, identifier) in identifiers.enumerated() {
+                guard case let .thread(_, shelf) = identifier,
+                      shelf == .active,
+                      let item = itemsByID[identifier],
+                      case let .thread(thread, _, _, _, _, _) = item,
+                      (thread.pinnedAt != nil) == (section == .pinned) else { continue }
+                if lower == nil { lower = index }
+                upper = index + 1
+            }
+            guard let lower else { return nil }
+            return (lower, upper)
+        }
+
+        /// The section's displayed thread order within an item list — the
+        /// same list a drop plans against on web (`planPinnedReorder` on the
+        /// displayed order, hidden rows' keys reserved by the client).
+        private func sectionThreadIDs(
+            in identifiers: [HomeCollectionItem.ID],
+            section: FeatureThreadOrderSection
+        ) -> [String] {
+            identifiers.compactMap { identifier in
+                guard case let .thread(threadID, shelf) = identifier,
+                      shelf == .active,
+                      let item = itemsByID[identifier],
+                      case let .thread(thread, _, _, _, _, _) = item,
+                      (thread.pinnedAt != nil) == (section == .pinned) else { return nil }
+                return threadID
+            }
+        }
+
+        /// Permute only the pending section's rows inside an identifier list;
+        /// headers, dividers, and the other section stay put.
+        private func applyingPendingReorder(
+            _ pending: PendingReorder,
+            to identifiers: [HomeCollectionItem.ID]
+        ) -> [HomeCollectionItem.ID] {
+            var rank: [String: Int] = [:]
+            for (index, threadID) in pending.orderedThreadIDs.enumerated() {
+                rank[threadID] = index
+            }
+            let regionIndices = identifiers.indices.filter { index in
+                guard case let .thread(_, shelf) = identifiers[index],
+                      shelf == .active,
+                      let item = itemsByID[identifiers[index]],
+                      case let .thread(thread, _, _, _, _, _) = item else { return false }
+                return (thread.pinnedAt != nil) == (pending.section == .pinned)
+            }
+            let reordered = regionIndices
+                .map { identifiers[$0] }
+                .enumerated()
+                .sorted { left, right in
+                    let leftRank = left.element.threadID.flatMap { rank[$0] } ?? .max
+                    let rightRank = right.element.threadID.flatMap { rank[$0] } ?? .max
+                    return leftRank != rightRank ? leftRank < rightRank : left.offset < right.offset
+                }
+                .map(\.element)
+            var result = identifiers
+            for (position, index) in regionIndices.enumerated() {
+                result[index] = reordered[position]
+            }
+            return result
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            itemsForBeginning session: UIDragSession,
+            at indexPath: IndexPath
+        ) -> [UIDragItem] {
+            guard let identifier = dataSource?.itemIdentifier(for: indexPath),
+                  isReorderable(identifier),
+                  case let .thread(thread, _, _, _, _, _) = itemsByID[identifier] else {
+                return []
+            }
+            draggedThread = (
+                id: thread.id,
+                section: thread.pinnedAt != nil ? .pinned : .active
+            )
+            let dragItem = UIDragItem(itemProvider: NSItemProvider())
+            dragItem.localObject = thread.id
+            return [dragItem]
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            itemsForAddingTo session: UIDragSession,
+            at indexPath: IndexPath,
+            point: CGPoint
+        ) -> [UIDragItem] {
+            []
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dragSessionAllowsMoveOperation session: UIDragSession
+        ) -> Bool {
+            true
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dragSessionIsRestrictedToDraggingBounds session: UIDragSession
+        ) -> Bool {
+            true
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dragSessionWillBegin session: UIDragSession
+        ) {
+            PlatformHapticEngine.shared.selection(enabled: parent.hapticsEnabled)
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dragSessionDidEnd session: UIDragSession
+        ) {
+            draggedThread = nil
+            // Flush any update deferred while the row was lifted.
+            applyLatestSnapshot(in: collectionView)
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dropSessionDidUpdate session: UIDropSession,
+            withDestinationIndexPath destinationIndexPath: IndexPath?
+        ) -> UICollectionViewDropProposal {
+            guard session.localDragSession != nil,
+                  let dragged = draggedThread,
+                  let identifiers = dataSource?.snapshot().itemIdentifiers,
+                  let bounds = sectionBounds(dragged.section, in: identifiers) else {
+                return UICollectionViewDropProposal(operation: .forbidden)
+            }
+            if let destinationIndexPath {
+                let within = destinationIndexPath.section == 0
+                    && destinationIndexPath.item >= bounds.lower
+                    && destinationIndexPath.item <= bounds.upper
+                return UICollectionViewDropProposal(
+                    operation: within ? .move : .forbidden,
+                    intent: .insertAtDestinationIndexPath
+                )
+            }
+            // Hovering past the last row only works when the section runs to
+            // the end of the list (no shelves below it).
+            return UICollectionViewDropProposal(
+                operation: bounds.upper >= identifiers.count ? .move : .forbidden,
+                intent: .insertAtDestinationIndexPath
+            )
+        }
+
+        func collectionView(
+            _ collectionView: UICollectionView,
+            performDropWith coordinator: UICollectionViewDropCoordinator
+        ) {
+            guard coordinator.session.localDragSession != nil,
+                  let dragged = draggedThread,
+                  let dataSource,
+                  let item = coordinator.items.first else { return }
+            if let destinationIndexPath = coordinator.destinationIndexPath {
+                // Clamped into the section by dropSessionDidUpdate; the data
+                // source applies the move and reports it via didReorder.
+                coordinator.drop(item.dragItem, toItemAt: destinationIndexPath)
+                return
+            }
+            // Dropped past the last row of a section that ends the list:
+            // move the row there ourselves (no system move, no didReorder).
+            let identifiers = dataSource.snapshot().itemIdentifiers
+            guard let bounds = sectionBounds(dragged.section, in: identifiers),
+                  bounds.upper >= identifiers.count,
+                  let draggedIdentifier = threadItemIDs[dragged.id],
+                  let lastIdentifier = identifiers.last,
+                  draggedIdentifier != lastIdentifier else { return }
+            var snapshot = dataSource.snapshot()
+            snapshot.deleteItems([draggedIdentifier])
+            snapshot.insertItems([draggedIdentifier], afterItem: lastIdentifier)
+            dataSource.apply(snapshot, animatingDifferences: true)
+            commitReorder(section: dragged.section, identifiers: snapshot.itemIdentifiers)
+        }
+
+        private func didReorder(
+            _ transaction: NSDiffableDataSourceTransaction<Section, HomeCollectionItem.ID>
+        ) {
+            guard let dragged = draggedThread else { return }
+            commitReorder(
+                section: dragged.section,
+                identifiers: transaction.finalSnapshot.itemIdentifiers
+            )
+        }
+
+        /// Hand the dropped order to the model. A failed write snaps the rows
+        /// back; a confirmed one holds until the next snapshot carries it.
+        private func commitReorder(
+            section: FeatureThreadOrderSection,
+            identifiers: [HomeCollectionItem.ID]
+        ) {
+            // One commit per drop: a second path firing for the same drop
+            // would overwrite the hold and race the in-flight write.
+            guard pendingReorder == nil,
+                  let dragged = draggedThread,
+                  let identifier = threadItemIDs[dragged.id],
+                  case let .thread(thread, _, _, _, _, _) = itemsByID[identifier] else { return }
+            let orderedIDs = sectionThreadIDs(in: identifiers, section: section)
+            // A drop back onto the same slot changes nothing — skip the write.
+            let unchanged = sectionThreadIDs(
+                in: parent.collectionItems.map(\.id),
+                section: section
+            )
+            guard orderedIDs.contains(dragged.id), orderedIDs != unchanged else { return }
+            PlatformHapticEngine.shared.selection(enabled: parent.hapticsEnabled)
+            let completionID = UUID()
+            pendingReorder = PendingReorder(
+                id: completionID,
+                section: section,
+                orderedThreadIDs: orderedIDs,
+                deadline: .now.addingTimeInterval(10)
+            )
+            parent.onReorder(thread, section, orderedIDs) { [weak self] succeeded in
+                guard let self,
+                      !succeeded,
+                      self.pendingReorder?.id == completionID,
+                      let collectionView = self.collectionView else { return }
+                self.pendingReorder = nil
+                self.hasQueuedUpdate = true
+                self.applyLatestSnapshot(in: collectionView)
             }
         }
 
@@ -715,28 +1028,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             var statusActions: [UIMenuElement] = []
             if !isArchived {
-                // Planned against the canonical section when the menu opens;
-                // nil means the row's environment predates reordering, and a
-                // false direction means the move has no valid plan (edge of
-                // the section or an unwritable neighbor).
-                if let moveOptions = parent.onMoveOptions(thread) {
-                    for direction in [FeatureThreadMoveDirection.up, .down] {
-                        let enabled = direction == .up
-                            ? moveOptions.canMoveUp
-                            : moveOptions.canMoveDown
-                        statusActions.append(
-                            UIAction(
-                                title: direction == .up ? "Move up" : "Move down",
-                                image: UIImage(
-                                    systemName: direction == .up ? "arrow.up" : "arrow.down"
-                                ),
-                                attributes: enabled ? [] : .disabled
-                            ) { [weak self] _ in
-                                self?.parent.onMove(thread, direction)
-                            }
-                        )
-                    }
-                }
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
                     statusActions.append(

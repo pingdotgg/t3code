@@ -553,38 +553,44 @@ public final class FeatureRootModel {
         }
     }
 
-    /// Move up / Move down availability for a thread row, planned on demand
-    /// against the canonical section (every connected environment). Nil when
-    /// the row's environment predates reordering or is not connected.
-    public func moveOptions(for thread: FeatureThread) -> FeatureThreadMoveOptions? {
-        let connectedEnvironmentIDs = Set(
-            snapshot.environments
-                .filter { $0.connectionState == .connected }
-                .map(\.id)
-        )
-        return DailyUXSidebarIndex.moveOptions(
-            for: thread,
-            in: snapshot.threads,
-            now: .now,
-            connectedEnvironmentIDs: connectedEnvironmentIDs
-        )
+    /// Whether a thread row can lift for drag reordering: its environment
+    /// accepts reorder writes for its section and is currently connected.
+    public func canReorder(_ thread: FeatureThread) -> Bool {
+        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
+        guard ThreadOrderPlanner.isWritable(thread, section: section) else { return false }
+        return snapshot.environments.contains {
+            $0.id == thread.environmentID && $0.connectionState == .connected
+        }
     }
 
-    public func moveThread(_ id: String, direction: FeatureThreadMoveDirection) async {
+    /// Commits a dropped order: `orderedIDs` is the section's displayed order
+    /// with the dragged row already in its new slot. Returns false when the
+    /// write was rejected or failed so the collection view can snap the row
+    /// back.
+    @discardableResult
+    public func reorderThread(
+        _ id: String,
+        section: FeatureThreadOrderSection,
+        orderedIDs: [String]
+    ) async -> Bool {
         let environment = currentEnvironmentIdentity
-        await perform {
-            // The section is fixed by the plan the client is about to run —
-            // reading it after the await would misapply confirmed keys if a
-            // pin/unpin landed in between.
-            let section: FeatureThreadOrderSection = snapshot.threads
-                .first(where: { $0.id == id })?.pinnedAt != nil ? .pinned : .active
-            do {
-                let assignments = try await client.moveThread(id: id, direction: direction)
-                applyMoveAssignments(assignments, section: section, environment: environment)
-            } catch let partial as FeatureThreadMovePartialError {
-                applyMoveAssignments(partial.confirmed, section: section, environment: environment)
-                throw partial.underlying
-            }
+        do {
+            let assignments = try await client.reorderThread(
+                id: id,
+                section: section,
+                orderedIDs: orderedIDs
+            )
+            applyMoveAssignments(assignments, section: section, environment: environment)
+            return !assignments.isEmpty
+        } catch let partial as FeatureThreadMovePartialError {
+            applyMoveAssignments(partial.confirmed, section: section, environment: environment)
+            await perform { throw partial.underlying }
+            // Confirmed keys are in the model; snapping back renders the true
+            // arrangement instead of holding a full order that never landed.
+            return false
+        } catch {
+            await perform { throw error }
+            return false
         }
     }
 

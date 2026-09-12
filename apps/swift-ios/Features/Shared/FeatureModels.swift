@@ -419,16 +419,11 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
 
 }
 
-/// The thread-list section a context-menu move arranges. Pinned threads write
+/// The thread-list section a drag reorder arranges. Pinned threads write
 /// `pinOrderKey`; active threads write `activeOrderKey`.
 public enum FeatureThreadOrderSection: String, Sendable, Equatable {
     case pinned
     case active
-}
-
-public enum FeatureThreadMoveDirection: String, Sendable, Equatable {
-    case up
-    case down
 }
 
 /// One `orderKey` write needed to realize a move. A move between keyed

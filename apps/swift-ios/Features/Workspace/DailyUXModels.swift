@@ -754,37 +754,9 @@ struct DailyUXSidebarIndex {
         )
     }
 
-    /// Move up / Move down availability for one row, planned against the
-    /// canonical section (every environment, before project filtering and
-    /// search). Nil when the thread's environment predates reordering or is
-    /// not in `connectedEnvironmentIDs` — a move planned against a
-    /// disconnected server's stale keys would target a dead client.
-    /// Built on demand when a context menu opens — the same per-row check
-    /// React Native runs — rather than once per row per index rebuild.
-    static func moveOptions(
-        for thread: FeatureThread,
-        in threads: [FeatureThread],
-        now: Date,
-        connectedEnvironmentIDs: Set<String>
-    ) -> FeatureThreadMoveOptions? {
-        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
-        guard ThreadOrderPlanner.isWritable(thread, section: section),
-              connectedEnvironmentIDs.contains(thread.environmentID ?? "") else { return nil }
-        let planner = ThreadOrderPlanner.movePlanner(
-            ordered: orderedSection(threads, section: section, now: now),
-            all: threads,
-            section: section,
-            connectedEnvironmentIDs: connectedEnvironmentIDs
-        )
-        return FeatureThreadMoveOptions(
-            canMoveUp: planner(thread, .up) != nil,
-            canMoveDown: planner(thread, .down) != nil
-        )
-    }
-
     /// The pinned or active list in display order, independent of project
     /// filtering and search — the same canonical section React Native plans
-    /// `thread.pin.reorder` / `thread.active.reorder` against, so a menu move
+    /// `thread.pin.reorder` / `thread.active.reorder` against, so a reorder
     /// means the same thing no matter which rows are on screen.
     static func orderedSection(
         _ threads: [FeatureThread],

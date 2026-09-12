@@ -69,13 +69,15 @@ public protocol FeatureClient: AnyObject {
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
     func setThreadPinned(id: String, pinned: Bool) async throws
-    /// Executes a Move up / Move down on the thread's list section. Returns
-    /// the order-key assignments the server confirmed; an empty result means
-    /// the move was unavailable (capability or section edge).
+    /// Commits a drag reorder: `orderedIDs` is the thread's displayed section
+    /// order after the drop. Returns the order-key assignments the server
+    /// confirmed; an empty result means the move was unavailable (capability,
+    /// connectivity, or an unwritable neighbor).
     @discardableResult
-    func moveThread(
+    func reorderThread(
         id: String,
-        direction: FeatureThreadMoveDirection
+        section: FeatureThreadOrderSection,
+        orderedIDs: [String]
     ) async throws -> [FeatureThreadOrderAssignment]
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws
@@ -476,9 +478,10 @@ public extension FeatureClient {
     func setThreadSettled(id: String, settled: Bool) async throws {}
     func setThreadSnoozed(id: String, until: Date?) async throws {}
     func setThreadPinned(id: String, pinned: Bool) async throws {}
-    func moveThread(
+    func reorderThread(
         id: String,
-        direction: FeatureThreadMoveDirection
+        section: FeatureThreadOrderSection,
+        orderedIDs: [String]
     ) async throws -> [FeatureThreadOrderAssignment] { [] }
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {}
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws {}
