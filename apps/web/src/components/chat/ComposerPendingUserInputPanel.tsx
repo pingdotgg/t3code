@@ -1,5 +1,8 @@
-import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { type ApprovalRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { memo, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import type { Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -9,8 +12,88 @@ import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import ChatMarkdown from "../ChatMarkdown";
+import { useOpenLink } from "../../browser/useOpenLink";
+import { toastManager } from "../ui/toast";
+
+/** Removes inline formatting and link targets from the collapsed question preview. */
+function MarkdownText({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
+/** Preserves word boundaries when block Markdown is flattened into inline card text. */
+function MarkdownBlockText({ children }: { children?: ReactNode }) {
+  return <>{children} </>;
+}
+
+const inlineMarkdownComponents = {
+  p: MarkdownBlockText,
+  h1: MarkdownBlockText,
+  h2: MarkdownBlockText,
+  h3: MarkdownBlockText,
+  h4: MarkdownBlockText,
+  h5: MarkdownBlockText,
+  h6: MarkdownBlockText,
+  li: MarkdownBlockText,
+  th: MarkdownBlockText,
+  td: MarkdownBlockText,
+  br: () => " ",
+  img: ({ alt }) => alt,
+  a: ({ href, children }) =>
+    href ? (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="pointer-events-auto text-primary underline underline-offset-2"
+      >
+        {children}
+      </a>
+    ) : (
+      children
+    ),
+} satisfies Components;
+const plainMarkdownComponents = {
+  ...inlineMarkdownComponents,
+  a: MarkdownText,
+  strong: MarkdownText,
+  em: MarkdownText,
+  del: MarkdownText,
+  code: MarkdownText,
+} satisfies Components;
+const inlineMarkdownElements = [
+  ...Object.keys(inlineMarkdownComponents),
+  "strong",
+  "em",
+  "del",
+  "code",
+];
+const remarkPlugins = [remarkGfm];
+
+/** Restricts option copy to inline Markdown; previews also remove inline styling and links. */
+const PendingUserInputMarkdown = memo(function PendingUserInputMarkdown({
+  text,
+  plainText = false,
+}: {
+  text: string;
+  plainText?: boolean;
+}) {
+  return (
+    <ReactMarkdown
+      allowedElements={inlineMarkdownElements}
+      unwrapDisallowed
+      remarkPlugins={remarkPlugins}
+      skipHtml
+      components={plainText ? plainMarkdownComponents : inlineMarkdownComponents}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+});
 
 interface PendingUserInputPanelProps {
+  cwd?: string | undefined;
+  threadRef?: ScopedThreadRef | undefined;
   pendingUserInputs: PendingUserInput[];
   respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
@@ -21,6 +104,8 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  cwd,
+  threadRef,
   pendingUserInputs,
   respondingRequestIds,
   answers,
@@ -37,6 +122,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
     <ComposerPendingUserInputCard
       key={activePrompt.requestId}
       prompt={activePrompt}
+      cwd={cwd}
+      threadRef={threadRef}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
@@ -48,6 +135,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 });
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  cwd,
+  threadRef,
   prompt,
   isResponding,
   answers,
@@ -56,6 +145,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance,
   onDismiss,
 }: {
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef | undefined;
   prompt: PendingUserInput;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
@@ -66,6 +157,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const optionA11yIdPrefix = useId();
+  const openLink = useOpenLink(threadRef);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -191,8 +284,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
+            <span
+              className="min-w-0 flex-1 truncate text-secondary-label"
+              data-pending-user-input-preview
+            >
+              <PendingUserInputMarkdown text={activeQuestion.question} plainText />
             </span>
           ) : null}
         </ComposerBanner.Content>
@@ -228,66 +324,96 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Actions>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ComposerBanner.Body className="pe-1 pb-1">
-          <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
-          {activeQuestion.multiSelect ? (
-            <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
-          ) : null}
-          <div className="mt-2 space-y-0.5">
-            {activeQuestion.options.map((option, index) => {
-              const optionValue = option.value ?? option.label;
-              const isOptimisticallySelected =
-                optimisticSingleSelect?.questionId === activeQuestion.id &&
-                optimisticSingleSelect.optionValue === optionValue;
-              const isSelected =
-                isOptimisticallySelected ||
-                (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
-              const shortcutKey = index < 9 ? index + 1 : null;
-              const className = cn(
-                "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
-                isSelected
-                  ? "bg-muted/55 text-foreground"
-                  : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                isResponding && "opacity-50 cursor-not-allowed",
-                !isResponding && "cursor-pointer",
-              );
-              const content = (
-                <>
-                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                    <span className="text-sm font-medium">{option.label}</span>
-                    {option.description && option.description !== option.label ? (
-                      <span className="text-secondary-label text-[11px]">{option.description}</span>
+        <ComposerBanner.Scroll key={activeQuestion.id}>
+          <ComposerBanner.Body className="pe-1 pb-1">
+            <ChatMarkdown text={activeQuestion.question} cwd={cwd} threadRef={threadRef} />
+            {activeQuestion.multiSelect ? (
+              <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+            ) : null}
+            <div
+              className="mt-2 space-y-0.5"
+              onClick={(event) => {
+                if (!(event.target instanceof Element) || event.defaultPrevented) return;
+                const link = event.target.closest<HTMLAnchorElement>("a[href]");
+                if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+                  return;
+                event.preventDefault();
+                void openLink(link.href).catch((error: unknown) => {
+                  console.error(error);
+                  toastManager.add({ type: "error", title: "Unable to open question link" });
+                });
+              }}
+            >
+              {activeQuestion.options.map((option, index) => {
+                const optionValue = option.value ?? option.label;
+                const isOptimisticallySelected =
+                  optimisticSingleSelect?.questionId === activeQuestion.id &&
+                  optimisticSingleSelect.optionValue === optionValue;
+                const isSelected =
+                  isOptimisticallySelected ||
+                  (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
+                const shortcutKey = index < 9 ? index + 1 : null;
+                const labelId = `${optionA11yIdPrefix}-label-${index}`;
+                const descriptionId = `${optionA11yIdPrefix}-description-${index}`;
+                const className = cn(
+                  "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150",
+                  isSelected
+                    ? "bg-muted/55 text-foreground"
+                    : "bg-transparent text-foreground/85 hover:bg-muted/30",
+                  isResponding && "opacity-50 cursor-not-allowed",
+                  !isResponding && "cursor-pointer",
+                );
+                const content = (
+                  <div className="relative z-10 flex min-w-0 flex-1 items-center gap-2 pointer-events-none">
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5 [overflow-wrap:anywhere]">
+                      <span id={labelId} className="text-sm font-medium">
+                        <PendingUserInputMarkdown text={option.label} />
+                      </span>
+                      {option.description && option.description !== option.label ? (
+                        <span id={descriptionId} className="text-secondary-label text-[11px]">
+                          <PendingUserInputMarkdown text={option.description} />
+                        </span>
+                      ) : null}
+                    </div>
+                    {isSelected ? (
+                      <CheckIcon className="size-3.5 shrink-0 text-primary" />
+                    ) : shortcutKey !== null ? (
+                      <kbd
+                        className={cn(
+                          "flex size-5 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground tabular-nums",
+                        )}
+                      >
+                        {shortcutKey}
+                      </kbd>
                     ) : null}
                   </div>
-                  {isSelected ? (
-                    <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                  ) : shortcutKey !== null ? (
-                    <kbd
-                      className={cn(
-                        "flex size-5 shrink-0 items-center justify-center text-[10px] font-medium text-muted-foreground tabular-nums",
-                      )}
-                    >
-                      {shortcutKey}
-                    </kbd>
-                  ) : null}
-                </>
-              );
-              return (
-                <button
-                  key={`${activeQuestion.id}:${optionValue}`}
-                  type="button"
-                  disabled={isResponding}
-                  onClick={() => {
-                    handleOptionSelection(activeQuestion.id, optionValue);
-                  }}
-                  className={className}
-                >
-                  {content}
-                </button>
-              );
-            })}
-          </div>
-        </ComposerBanner.Body>
+                );
+                // The full-row button and links are siblings. Text clicks reach the
+                // button; links opt into pointer events without selecting an answer.
+                return (
+                  <div key={`${activeQuestion.id}:${optionValue}`} className={className}>
+                    <button
+                      type="button"
+                      disabled={isResponding}
+                      aria-pressed={isSelected}
+                      aria-labelledby={labelId}
+                      aria-describedby={
+                        option.description && option.description !== option.label
+                          ? descriptionId
+                          : undefined
+                      }
+                      onClick={() => {
+                        handleOptionSelection(activeQuestion.id, optionValue);
+                      }}
+                      className="absolute inset-0 z-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-primary/25"
+                    />
+                    {content}
+                  </div>
+                );
+              })}
+            </div>
+          </ComposerBanner.Body>
+        </ComposerBanner.Scroll>
       </CollapsiblePanel>
     </Collapsible>
   );

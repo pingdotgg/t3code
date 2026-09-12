@@ -6,6 +6,12 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Answer agent questions
+
+When an agent asks a question, choose an answer or type your own in the composer.
+On web and desktop, you can open links in an answer option to read more before
+deciding. Opening a link does not select the option or submit an answer.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can
