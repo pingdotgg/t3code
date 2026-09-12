@@ -35,6 +35,8 @@ struct WorkspaceThreadSelection: Equatable {
 
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -59,6 +61,7 @@ public struct WorkspaceView: View {
     @State private var deletingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var sidebarBoundaryNow = Date.now
+    @State private var columnVisibility = NavigationSplitViewVisibility.doubleColumn
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
     @FocusState private var isSearchFocused: Bool
@@ -131,7 +134,10 @@ public struct WorkspaceView: View {
     }
 
     public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+        NavigationSplitView(
+            columnVisibility: $columnVisibility,
+            preferredCompactColumn: $preferredCompactColumn
+        ) {
             sidebar
                 .navigationSplitViewColumnWidth(
                     min: T3Metrics.minimumSidebarWidth,
@@ -140,6 +146,21 @@ public struct WorkspaceView: View {
                 )
         } detail: {
             detail
+                .toolbar {
+                    // The sidebar column hides its own navigation bar, so the
+                    // system reveal control only appears while the sidebar is
+                    // hidden; this button exists solely to hide it.
+                    if horizontalSizeClass == .regular && columnVisibility != .detailOnly {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Hide sidebar", systemImage: "sidebar.leading") {
+                                withAnimation(reduceMotion ? nil : .default) {
+                                    columnVisibility = .detailOnly
+                                }
+                            }
+                            .accessibilityIdentifier("detail-sidebar-toggle")
+                        }
+                    }
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showingNewTask) {
@@ -669,6 +690,7 @@ public struct WorkspaceView: View {
             guard model.snapshot.projects.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
             selectedProjectID = id
+            columnVisibility = .doubleColumn
             closeSelectedThread()
         case let .newTask(projectID):
             if let projectID,
