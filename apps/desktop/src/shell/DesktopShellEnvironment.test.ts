@@ -1,8 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import type * as Tracer from "effect/Tracer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -67,7 +72,7 @@ function withProcessEnv<A, E, R>(
 function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
-  readonly handler: (command: ChildProcess.Command) => string;
+  readonly handler: (command: ChildProcess.Command) => string | Effect.Effect<string>;
   readonly failure?: PlatformError.PlatformError;
 }) {
   const environmentLayer = Layer.succeed(
@@ -79,9 +84,13 @@ function runShellEnvironment(input: {
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
-      input.failure === undefined
-        ? Effect.succeed(makeProcess(input.handler(command)))
-        : Effect.fail(input.failure),
+      Effect.suspend(() => {
+        if (input.failure !== undefined) return Effect.fail(input.failure);
+        const output = input.handler(command);
+        return (Effect.isEffect(output) ? output : Effect.succeed(output)).pipe(
+          Effect.map(makeProcess),
+        );
+      }),
     ),
   );
 
@@ -126,6 +135,75 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
+    }),
+  );
+
+  it.effect("retries a timed-out login shell before starting with an incomplete PATH", () =>
+    Effect.gen(function* () {
+      const env = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+      let attempts = 0;
+      const capture = yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand" || command.command === "/bin/launchctl") return "";
+          attempts++;
+          return attempts === 1 ? Effect.never : envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
+        },
+      }).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(capture);
+      assert.equal(attempts, 2);
+      assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin");
+    }),
+  );
+
+  it.effect("fails capture when both login shell and launchctl provide no PATH", () =>
+    Effect.gen(function* () {
+      const env = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const spans = new Map<string, Tracer.Span>();
+      const result = yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          Effect.gen(function* () {
+            let span: Tracer.AnySpan = yield* Effect.currentSpan.pipe(Effect.orDie);
+            while (span._tag === "Span") {
+              spans.set(span.name, span);
+              if (Option.isNone(span.parent)) break;
+              span = span.parent.value;
+            }
+            return "";
+          }),
+      }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+      for (const name of ["installPosixEnvironment", "installIntoProcess"]) {
+        const status = spans.get(`desktop.shellEnvironment.${name}`)?.status;
+        assert.equal(status?._tag, "Ended");
+        if (status?._tag === "Ended") assert.isTrue(Exit.isFailure(status.exit));
+      }
+      assert.equal(env.PATH, "/usr/bin");
+    }),
+  );
+
+  it.effect("bounds repeated timeouts and still tries launchctl", () =>
+    Effect.gen(function* () {
+      const env = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: string[] = [];
+      const capture = yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "/bin/launchctl" ? "" : Effect.never;
+        },
+      }).pipe(Effect.exit, Effect.forkChild);
+
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(capture)));
+      assert.deepEqual(commands, ["/bin/zsh", "/bin/zsh", "/bin/launchctl"]);
     }),
   );
 
@@ -294,7 +372,13 @@ describe("DesktopShellEnvironment", () => {
         },
       });
 
-      assert.deepEqual(commands, ["/opt/homebrew/bin/nu", "/bin/zsh", "/bin/launchctl"]);
+      assert.deepEqual(commands, [
+        "/opt/homebrew/bin/nu",
+        "/opt/homebrew/bin/nu",
+        "/bin/zsh",
+        "/bin/zsh",
+        "/bin/launchctl",
+      ]);
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
     }),
   );
@@ -429,12 +513,13 @@ describe("DesktopShellEnvironment", () => {
       handler: () => "",
       failure: cause,
     }).pipe(
+      Effect.exit,
       Effect.andThen(
         Effect.sync(() => {
           const errors = messages
             .flatMap((message) => (Array.isArray(message) ? message : [message]))
             .filter(isDesktopShellEnvironmentCommandError);
-          assert.lengthOf(errors, 1);
+          assert.lengthOf(errors, 2);
           assert.equal(errors[0]?.probe, "login-shell");
           assert.equal(errors[0]?.executable, "bash");
           assert.equal(errors[0]?.argumentCount, 2);
