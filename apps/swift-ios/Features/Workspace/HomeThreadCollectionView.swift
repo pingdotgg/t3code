@@ -43,6 +43,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
             coordinator?.trailingSwipeActions(at: indexPath)
         }
+        configuration.leadingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
+            coordinator?.leadingSwipeActions(at: indexPath)
+        }
 
         let collectionView = UICollectionView(
             frame: .zero,
@@ -311,6 +314,26 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             // thread; rows with nothing to settle keep the full swipe disabled.
             configuration.performsFirstActionWithFullSwipe =
                 HomeThreadSwipeAction.performsFullSwipe(with: actions)
+            return configuration
+        }
+
+        func leadingSwipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+            guard case let .thread(thread, _, _, isArchived, _, _) = item(at: indexPath) else {
+                return nil
+            }
+
+            let actions = HomeThreadSwipeAction.leadingActions(
+                for: thread,
+                isArchived: isArchived
+            )
+            guard !actions.isEmpty else { return nil }
+            let configuration = UISwipeActionsConfiguration(
+                actions: actions.map { contextualAction($0, for: thread) }
+            )
+            // The leading edge only ever carries the pin toggle, which is
+            // reversible, so a full swipe can run it directly.
+            configuration.performsFirstActionWithFullSwipe =
+                HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions)
             return configuration
         }
 
@@ -937,14 +960,15 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     }
 }
 
-/// The trailing swipe actions a Home row offers, resolved as data so the row's
+/// The swipe actions a Home row offers, resolved as data so the row's
 /// gesture semantics stay deterministic and testable without hosting a
 /// collection view. Order is outermost-first, matching
-/// `UISwipeActionsConfiguration`, which lays trailing actions out from the
-/// trailing edge inward and runs the first action on a full swipe.
+/// `UISwipeActionsConfiguration`, which lays actions out from the swiped
+/// edge inward and runs the first action on a full swipe.
 enum HomeThreadSwipeAction: Equatable {
     case delete
     case restore
+    case pin
     case unpin
     case settle
     case reopen
@@ -995,14 +1019,33 @@ enum HomeThreadSwipeAction: Equatable {
         return actions
     }
 
-    /// The full swipe is armed only when the edge action settles or reopens.
-    /// Nothing else may run from the gesture alone.
+    /// The leading swipe is a dedicated pin toggle, mirroring the context
+    /// menu's availability: archived rows offer nothing on this edge.
+    static func leadingActions(
+        for thread: FeatureThread,
+        isArchived: Bool
+    ) -> [HomeThreadSwipeAction] {
+        guard !isArchived, thread.canTogglePin else { return [] }
+        return [thread.pinnedAt != nil ? .unpin : .pin]
+    }
+
+    /// The trailing full swipe is armed only when the edge action settles or
+    /// reopens. Nothing else may run from that gesture alone.
     static func performsFullSwipe(with actions: [HomeThreadSwipeAction]) -> Bool {
         actions.first?.isSettlement ?? false
     }
 
+    /// The leading full swipe is armed only for the reversible pin toggle.
+    static func performsLeadingFullSwipe(with actions: [HomeThreadSwipeAction]) -> Bool {
+        actions.first.map(\.isPinToggle) ?? false
+    }
+
     var isSettlement: Bool {
         self == .settle || self == .reopen
+    }
+
+    var isPinToggle: Bool {
+        self == .pin || self == .unpin
     }
 
     var intent: Intent {
@@ -1010,6 +1053,7 @@ enum HomeThreadSwipeAction: Equatable {
         case .delete: .delete
         case .restore: .setArchived(false)
         case .archive: .setArchived(true)
+        case .pin: .setPinned(true)
         case .unpin: .setPinned(false)
         case .settle: .setSettled(true)
         case .reopen: .setSettled(false)
@@ -1020,6 +1064,7 @@ enum HomeThreadSwipeAction: Equatable {
         switch self {
         case .delete: "Delete"
         case .restore: "Restore"
+        case .pin: "Pin"
         case .unpin: "Unpin"
         case .settle: "Settle"
         case .reopen: "Reopen"
@@ -1031,6 +1076,7 @@ enum HomeThreadSwipeAction: Equatable {
         switch self {
         case .delete: "trash"
         case .restore: "arrow.uturn.backward"
+        case .pin: "pin"
         case .unpin: "pin.slash"
         case .settle: "checkmark"
         case .reopen: "arrow.counterclockwise"
@@ -1047,6 +1093,7 @@ enum HomeThreadSwipeAction: Equatable {
         switch self {
         case .delete: nil
         case .restore, .unpin, .reopen: .systemBlue
+        case .pin: .systemOrange
         case .settle: .systemGreen
         case .archive: .systemGray
         }
