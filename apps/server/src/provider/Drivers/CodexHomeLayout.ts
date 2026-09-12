@@ -29,6 +29,17 @@ const KNOWN_SHARED_DIRECTORIES = [
   "mcp-oauth-locks",
 ] as const;
 
+/**
+ * Shared directories holding rollout transcripts. Codex moves a rollout from
+ * `sessions` to `archived_sessions` when it archives it, so anything reading
+ * usage has to walk both or the rollout drops out of the totals on archive.
+ *
+ * Order decides reporting, not totals. A rollout under both roots is claimed by
+ * whichever is walked first, so the live root owns it in the per-source file and
+ * session counts; the summed totals are the same either way.
+ */
+export const CODEX_TRANSCRIPT_DIRECTORIES = ["sessions", "archived_sessions"] as const;
+
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
 const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
