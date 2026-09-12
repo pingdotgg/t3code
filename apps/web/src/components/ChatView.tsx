@@ -963,6 +963,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
+  const storeSetTerminalOpen = useTerminalUiStateStore((state) => state.setTerminalOpen);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore(
     (state) => state.splitTerminalVertical,
@@ -1025,6 +1026,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       storeSetTerminalHeight(threadRef, height);
     },
     [storeSetTerminalHeight, threadRef],
+  );
+  const setTerminalCollapsed = useCallback(
+    (collapsed: boolean) => {
+      storeSetTerminalOpen(threadRef, !collapsed);
+    },
+    [storeSetTerminalOpen, threadRef],
   );
 
   const splitTerminal = useCallback(() => {
@@ -1206,6 +1213,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           onActiveTerminalChange={activateTerminal}
           onCloseTerminal={closeTerminal}
           onHeightChange={setTerminalHeight}
+          onCollapsedChange={setTerminalCollapsed}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
