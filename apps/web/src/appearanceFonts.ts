@@ -7,12 +7,15 @@
 
 import {
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_CONVERSATION_FONT_SIZE,
   DEFAULT_INTERFACE_FONT_SIZE,
   DEFAULT_PROMPT_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
+  MAX_CONVERSATION_FONT_SIZE,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PROMPT_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_CONVERSATION_FONT_SIZE,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
 } from "@t3tools/contracts";
@@ -76,6 +79,7 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  readonly sizeConversation: number | null;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   /** Grayscale `antialiased` rendering; false keeps the heavier platform default. */
@@ -109,7 +113,18 @@ export function applyAppearanceFontVariables(
     }
   }
 
-  root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  const interfaceSize = clampInterfaceFontSize(preferences.sizeInterface);
+  root.style.fontSize = `${interfaceSize}px`;
+  const conversationSize = clampConversationFontSize(preferences.sizeConversation, interfaceSize);
+  root.style.setProperty("--font-size-conversation", `${conversationSize}px`);
+  // Preserve existing fixed-pixel labels when following Interface; scale them
+  // only when the conversation size is explicitly overridden.
+  root.style.setProperty(
+    "--font-scale-conversation",
+    String(
+      preferences.sizeConversation === null ? 1 : conversationSize / DEFAULT_INTERFACE_FONT_SIZE,
+    ),
+  );
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);
@@ -139,6 +154,17 @@ export function clampInterfaceFontSize(value: number): number {
     MAX_INTERFACE_FONT_SIZE,
     DEFAULT_INTERFACE_FONT_SIZE,
   );
+}
+
+export function clampConversationFontSize(value: number | null, fallback: number): number {
+  return value === null
+    ? clampInterfaceFontSize(fallback)
+    : clampFontSize(
+        value,
+        MIN_CONVERSATION_FONT_SIZE,
+        MAX_CONVERSATION_FONT_SIZE,
+        DEFAULT_CONVERSATION_FONT_SIZE,
+      );
 }
 
 export function clampPromptFontSize(value: number): number {
