@@ -307,6 +307,46 @@ export async function pickComposerFiles(input: {
   return { files: attachments, error };
 }
 
+/**
+ * Longest edge kept when a photo has to be re-encoded. Matches the web composer's
+ * MAX_DIMENSION so every client hands providers the same resolution.
+ */
+const PHOTO_MAX_EDGE = 2048;
+const PHOTO_JPEG_QUALITY = 0.85;
+
+/**
+ * Renders a photo-library pick to a provider-readable JPEG. Decode, downscale, and encode run
+ * natively; only the bounded result crosses the bridge. Camera photos are 12-48 MP HEIC files,
+ * so a full-size conversion is both slow to transfer and far more than a model can use.
+ */
+async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: string }> {
+  const { ImageManipulator, SaveFormat } = await import("expo-image-manipulator");
+  let image = await ImageManipulator.manipulate(uri).renderAsync();
+  try {
+    const longestEdge = Math.max(image.width, image.height);
+    if (longestEdge > PHOTO_MAX_EDGE) {
+      const resized = await ImageManipulator.manipulate(image)
+        .resize(
+          image.width >= image.height ? { width: PHOTO_MAX_EDGE } : { height: PHOTO_MAX_EDGE },
+        )
+        .renderAsync();
+      image.release();
+      image = resized;
+    }
+    const saved = await image.saveAsync({
+      format: SaveFormat.JPEG,
+      compress: PHOTO_JPEG_QUALITY,
+      base64: true,
+    });
+    if (!saved.base64) {
+      throw new Error("The rendered photo has no bytes.");
+    }
+    return { base64: saved.base64, uri: saved.uri };
+  } finally {
+    image.release();
+  }
+}
+
 async function loadImagePicker() {
   try {
     return await import("expo-image-picker");
@@ -369,7 +409,10 @@ export async function pickComposerMedia(input: {
       mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
       allowsMultipleSelection: true,
       selectionLimit: remainingSlots,
-      base64: true,
+      // Bytes stay in the picker's file until we know how much of them we need. Asking for
+      // base64 here made iOS decode and re-encode every camera photo at full resolution and
+      // hand JS a 10 MB+ string, which stalled the composer for seconds.
+      base64: false,
       quality: 1,
       shouldDownloadFromNetwork: true,
     });
@@ -397,7 +440,7 @@ export async function pickComposerMedia(input: {
       error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`;
       break;
     }
-    let mimeType = asset.mimeType?.toLowerCase();
+    const mimeType = asset.mimeType?.toLowerCase();
     if (asset.type === "video" || mimeType?.startsWith("video/")) {
       if (input.maxVideoBytes === undefined) {
         error = "Video attachments are unavailable here.";
@@ -426,56 +469,67 @@ export async function pickComposerMedia(input: {
       continue;
     }
 
-    let base64 = asset.base64;
-    if (!base64) {
-      error = `Failed to read '${asset.fileName ?? "image"}'.`;
-      continue;
+    const name = asset.fileName?.trim() || "image";
+    // The picker's reported size is a hint, not a measurement: Android content streams can
+    // deliver more bytes than they advertise. Only a size read from the file itself decides
+    // whether the original bytes are safe to load into JS.
+    let sourceBytes: number | null = null;
+    try {
+      const { File } = await import("expo-file-system");
+      sourceBytes = new File(asset.uri).size;
+    } catch {
+      sourceBytes = null;
     }
+    // Originals the provider can read and that fit the cap pass through byte for byte so
+    // transparency and animation survive. Everything else (HEIC/HEIF, oversized JPEGs,
+    // unmeasurable sources) is rendered to a bounded JPEG off the JS thread.
+    const originalMimeType =
+      mimeType !== undefined &&
+      isProviderSendTurnSupportedImageMimeType(mimeType) &&
+      sourceBytes !== null &&
+      sourceBytes > 0 &&
+      sourceBytes <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+        ? mimeType
+        : null;
 
-    let name = asset.fileName?.trim() || "image";
-    // The iOS picker returns JPEG base64 even when its metadata describes HEIC,
-    // PNG, or GIF. Keep supported originals so transparency and animation survive;
-    // use the native JPEG conversion for formats providers cannot accept.
-    if (base64.startsWith("/9j/")) {
-      if (
-        mimeType &&
-        mimeType !== "image/jpeg" &&
-        isProviderSendTurnSupportedImageMimeType(mimeType)
-      ) {
-        try {
-          const { File } = await import("expo-file-system");
-          base64 = await new File(asset.uri).base64();
-        } catch {
-          error = `Failed to read '${name}'.`;
-          continue;
-        }
+    let image: { base64: string; mimeType: string; name: string; previewUri: string };
+    try {
+      if (originalMimeType !== null) {
+        const { File } = await import("expo-file-system");
+        image = {
+          base64: await new File(asset.uri).base64(),
+          mimeType: originalMimeType,
+          name,
+          previewUri: asset.uri,
+        };
       } else {
-        mimeType = "image/jpeg";
-        if (!/\.jpe?g$/i.test(name)) {
-          name = `${name.replace(/\.[^.]+$/, "")}.jpg`;
-        }
+        const rendered = await renderPhotoAsJpeg(asset.uri);
+        image = {
+          base64: rendered.base64,
+          mimeType: "image/jpeg",
+          name: /\.jpe?g$/i.test(name) ? name : `${name.replace(/\.[^.]+$/, "")}.jpg`,
+          previewUri: rendered.uri,
+        };
       }
-    }
-    if (!mimeType || !isProviderSendTurnSupportedImageMimeType(mimeType)) {
-      error = `'${name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+    } catch {
+      error = `Failed to read '${name}'.`;
       continue;
     }
 
-    const sizeBytes = estimateBase64ByteSize(base64);
+    const sizeBytes = estimateBase64ByteSize(image.base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      error = `'${asset.fileName ?? "image"}' exceeds the 10 MB attachment limit.`;
+      error = `'${name}' exceeds the 10 MB attachment limit.`;
       continue;
     }
 
-    const dataUrl = `data:${mimeType};base64,${base64}`;
     attachments.push({
       id: uuidv4(),
       type: "image",
-      name,
-      mimeType,
+      name: image.name,
+      mimeType: image.mimeType,
       sizeBytes,
-      dataUrl,
-      previewUri: mimeType === asset.mimeType?.toLowerCase() ? asset.uri : dataUrl,
+      dataUrl: `data:${image.mimeType};base64,${image.base64}`,
+      previewUri: image.previewUri,
     });
   }
 

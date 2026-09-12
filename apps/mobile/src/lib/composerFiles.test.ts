@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   size: vi.fn(),
   readBase64: vi.fn(),
+  manipulate: vi.fn(),
+  release: vi.fn(),
 }));
 
 vi.mock("expo-file-system", () => {
@@ -80,6 +82,10 @@ vi.mock("expo-file-system", () => {
 
 vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
+vi.mock("expo-image-manipulator", () => ({
+  SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
+  ImageManipulator: { manipulate: mocks.manipulate },
+}));
 vi.mock("./uuid", () => ({ uuidv4: () => "attachment-id" }));
 
 import {
@@ -106,20 +112,50 @@ describe("composer file attachments", () => {
   });
 
   describe("photo library image conversion", () => {
-    const jpeg = "/9j/2Q==";
+    const rendered = { uri: "file:///cache/ImageManipulator/photo.jpg", base64: "/9j/2Q==" };
     const photo: ImagePickerAsset = {
       uri: "file:///picker/photo.heic",
       type: "image",
       fileName: "photo.HEIC",
       mimeType: "image/heic",
-      fileSize: 20 * 1024 * 1024,
-      base64: jpeg,
-      width: 1,
-      height: 1,
+      fileSize: 4 * 1024 * 1024,
+      width: 4032,
+      height: 3024,
+    };
+    /**
+     * Stands in for the native manipulator: `size` is what decoding the source yields,
+     * `resizes` records every requested resize, and `saved` is what saving returns.
+     */
+    const native = {
+      size: { width: 1, height: 1 },
+      resizes: [] as Array<{ width?: number | null; height?: number | null }>,
+      saved: rendered as { uri: string; base64?: string },
     };
 
+    beforeEach(() => {
+      native.size = { width: 1, height: 1 };
+      native.resizes = [];
+      native.saved = rendered;
+      mocks.manipulate.mockReset();
+      mocks.release.mockReset();
+      mocks.manipulate.mockImplementation(() => {
+        const context = {
+          resize(size: { width?: number | null; height?: number | null }) {
+            native.resizes.push(size);
+            return context;
+          },
+          renderAsync: async () => ({
+            ...native.size,
+            release: mocks.release,
+            saveAsync: async () => native.saved,
+          }),
+        };
+        return context;
+      });
+    });
+
     it.each(["image/heic", "image/heif", undefined])(
-      "attaches the native JPEG conversion with matching metadata when the source MIME is %s",
+      "renders a %s photo to JPEG natively and previews the rendered file",
       async (mimeType) => {
         mocks.pickMedia.mockResolvedValue({
           canceled: false,
@@ -128,6 +164,9 @@ describe("composer file attachments", () => {
 
         const result = await pickComposerImages({ existingCount: 0 });
 
+        expect(mocks.pickMedia).toHaveBeenCalledWith(expect.objectContaining({ base64: false }));
+        expect(mocks.manipulate).toHaveBeenCalledWith(photo.uri);
+        expect(mocks.readBase64).not.toHaveBeenCalled();
         expect(result).toEqual({
           images: [
             {
@@ -136,8 +175,8 @@ describe("composer file attachments", () => {
               name: "photo.jpg",
               mimeType: "image/jpeg",
               sizeBytes: 4,
-              dataUrl: `data:image/jpeg;base64,${jpeg}`,
-              previewUri: `data:image/jpeg;base64,${jpeg}`,
+              dataUrl: `data:image/jpeg;base64,${rendered.base64}`,
+              previewUri: rendered.uri,
             },
           ],
           error: null,
@@ -146,10 +185,25 @@ describe("composer file attachments", () => {
     );
 
     it.each([
+      { size: { width: 4032, height: 3024 }, resizes: [{ width: 2048 }] },
+      { size: { width: 3024, height: 4032 }, resizes: [{ height: 2048 }] },
+      { size: { width: 2048, height: 1536 }, resizes: [] },
+    ])("bounds a $size.width x $size.height photo to a 2048 px longest edge", async (input) => {
+      native.size = input.size;
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      await pickComposerImages({ existingCount: 0 });
+
+      expect(native.resizes).toEqual(input.resizes);
+      // Every decoded bitmap is released, including the full-size one a resize replaces.
+      expect(mocks.release).toHaveBeenCalledTimes(input.resizes.length + 1);
+    });
+
+    it.each([
       { extension: "png", mimeType: "image/png", base64: "iVBORw0KGgo=" },
       { extension: "gif", mimeType: "image/gif", base64: "R0lGODlh" },
       { extension: "webp", mimeType: "image/webp", base64: "UklGRgQAAABXRUJQ" },
-    ])("preserves original $extension bytes instead of the picker's JPEG", async (original) => {
+    ])("keeps original $extension bytes from the picker file", async (original) => {
       const name = `photo.${original.extension}`;
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
@@ -159,6 +213,8 @@ describe("composer file attachments", () => {
 
       const result = await pickComposerImages({ existingCount: 0 });
 
+      expect(mocks.manipulate).not.toHaveBeenCalled();
+      expect(mocks.readBase64).toHaveBeenCalledWith(photo.uri);
       expect(result.error).toBeNull();
       expect(result.images).toEqual([
         expect.objectContaining({
@@ -166,17 +222,66 @@ describe("composer file attachments", () => {
           mimeType: original.mimeType,
           dataUrl: `data:${original.mimeType};base64,${original.base64}`,
           sizeBytes: Buffer.from(original.base64, "base64").byteLength,
+          previewUri: photo.uri,
         }),
       ]);
     });
 
-    it("checks the converted JPEG size even when the HEIC source was smaller", async () => {
-      const oversized =
-        jpeg.slice(0, 4) + "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+    it("renders a supported original that exceeds the image limit instead of rejecting it", async () => {
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
-        assets: [{ ...photo, fileSize: 42, base64: oversized }],
+        assets: [{ ...photo, fileName: "photo.jpg", mimeType: "image/jpeg" }],
       });
+      mocks.size.mockReturnValue(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(mocks.manipulate).toHaveBeenCalledWith(photo.uri);
+      expect(result.error).toBeNull();
+      expect(result.images).toEqual([
+        expect.objectContaining({ name: "photo.jpg", mimeType: "image/jpeg", sizeBytes: 4 }),
+      ]);
+    });
+
+    it("measures the picker file instead of trusting the reported size", async () => {
+      // A content stream can deliver more bytes than the picker advertises; a supported
+      // original only skips rendering when the file itself measures within the limit.
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, fileName: "photo.png", mimeType: "image/png", fileSize: 42 }],
+      });
+      mocks.size.mockReturnValue(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(mocks.readBase64).not.toHaveBeenCalled();
+      expect(mocks.manipulate).toHaveBeenCalledWith(photo.uri);
+      expect(result.images).toEqual([expect.objectContaining({ mimeType: "image/jpeg" })]);
+    });
+
+    it("renders a supported original whose size cannot be measured", async () => {
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [
+          { ...photo, uri: "content://media/1", fileName: "photo.png", mimeType: "image/png" },
+        ],
+      });
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(mocks.readBase64).not.toHaveBeenCalled();
+      expect(mocks.manipulate).toHaveBeenCalledWith("content://media/1");
+      expect(result.images).toEqual([expect.objectContaining({ mimeType: "image/jpeg" })]);
+    });
+
+    it("checks the rendered JPEG against the image limit", async () => {
+      native.saved = {
+        uri: rendered.uri,
+        base64:
+          rendered.base64.slice(0, 4) +
+          "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4),
+      };
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
 
       await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
         images: [],
@@ -184,19 +289,7 @@ describe("composer file attachments", () => {
       });
     });
 
-    it("does not relabel unconverted HEIC bytes as JPEG", async () => {
-      mocks.pickMedia.mockResolvedValue({
-        canceled: false,
-        assets: [{ ...photo, base64: "AAAAGGZ0eXBoZWlj" }],
-      });
-
-      const result = await pickComposerImages({ existingCount: 0 });
-
-      expect(result.images).toEqual([]);
-      expect(result.error).toContain("not a supported image type");
-    });
-
-    it("retains a converted photo when another original cannot be read", async () => {
+    it("retains a rendered photo when another original cannot be read", async () => {
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
         assets: [{ ...photo, fileName: "missing.gif", mimeType: "image/gif" }, photo],
@@ -208,6 +301,21 @@ describe("composer file attachments", () => {
       expect(result.images).toEqual([expect.objectContaining({ name: "photo.jpg" })]);
       expect(result.error).toBe("Failed to read 'missing.gif'.");
     });
+
+    it("reports a photo the native renderer cannot decode", async () => {
+      mocks.manipulate.mockImplementation(() => ({
+        resize: () => {
+          throw new Error("unreachable");
+        },
+        renderAsync: () => Promise.reject(new Error("corrupt")),
+      }));
+      mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
+        images: [],
+        error: "Failed to read 'photo.HEIC'.",
+      });
+    });
   });
 
   describe("photo library videos", () => {
@@ -217,10 +325,13 @@ describe("composer file attachments", () => {
       fileName: "photo.png",
       mimeType: "image/png",
       fileSize: 3,
-      base64: "YWJj",
       width: 1,
       height: 1,
     };
+
+    beforeEach(() => {
+      mocks.readBase64.mockResolvedValue("YWJj");
+    });
     const video: ImagePickerAsset = {
       uri: "file:///picker/clip.mov",
       type: "video",
@@ -234,7 +345,9 @@ describe("composer file attachments", () => {
 
     it("retains mixed photos and videos, keeping video bytes in durable file storage", async () => {
       mocks.pickMedia.mockResolvedValue({ canceled: false, assets: [image, video] });
-      mocks.size.mockReturnValue(video.fileSize);
+      mocks.size.mockImplementation((uri: string) =>
+        uri.endsWith("clip.mov") ? video.fileSize : 3,
+      );
 
       const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 50 * 1024 * 1024 });
 
@@ -345,7 +458,7 @@ describe("composer file attachments", () => {
           canceled: false,
           assets: [{ ...video, fileSize: reported }, image],
         });
-        mocks.size.mockReturnValue(stored);
+        mocks.size.mockImplementation((uri: string) => (uri.endsWith("clip.mov") ? stored : 3));
 
         const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: limit });
 
