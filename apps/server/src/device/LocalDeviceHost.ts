@@ -222,6 +222,18 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   return env;
 });
 
+// Filter on the hub host, so Linux clients can still use a remote Mac's simulators.
+const hubArguments = (entryPath: string, port: number, hostPlatform: NodeJS.Platform) => [
+  entryPath,
+  "--port",
+  String(port),
+  "--host",
+  "127.0.0.1",
+  "--hide-sidebar",
+  "--hide-boot-device",
+  ...(hostPlatform === "darwin" ? [] : ["--platform", "android"]),
+];
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -384,28 +396,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return yield* Effect.gen(function* () {
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(
-            nodePath,
-            [
-              hubTool.entryPath,
-              "--port",
-              String(port),
-              "--host",
-              "127.0.0.1",
-              "--hide-sidebar",
-              "--hide-boot-device",
-            ],
-            {
-              detached: false,
-              shell: false,
-              stdout: "pipe",
-              stderr: "pipe",
-              env: yield* hubEnvironment(hostEnvironment).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(HostProcess.Platform, hostPlatform),
-              ),
-            },
-          ),
+          ChildProcess.make(nodePath, hubArguments(hubTool.entryPath, port, hostPlatform), {
+            detached: false,
+            shell: false,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: yield* hubEnvironment(hostEnvironment).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(HostProcess.Platform, hostPlatform),
+            ),
+          }),
         )
         .pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -792,6 +792,7 @@ export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 
 /** Exposed for tests. */
 export const __testing = {
+  hubArguments,
   AgentDeviceDaemonFile,
   androidSdk,
   platformReason,
