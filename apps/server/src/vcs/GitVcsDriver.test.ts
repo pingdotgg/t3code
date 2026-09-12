@@ -102,6 +102,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         // Restores never delete untracked files; staged additions are index
         // state and return to the checkpoint's tracked set.
         assert.strictEqual(yield* fileSystem.exists(addedPath), !staged);
+        yield* fileSystem.remove(addedPath, { force: true });
       }
       yield* fileSystem.writeFileString(
         path.join(root, ".git", "info", "exclude"),

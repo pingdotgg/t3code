@@ -1344,15 +1344,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       WHERE pending.turn_id IS NULL
         AND pending.state = 'pending'
         AND pending.pending_message_id IS NOT NULL
-        AND EXISTS (
-          SELECT 1
+        AND (
+          SELECT MAX(requested.sequence)
           FROM orchestration_events AS requested
           WHERE requested.aggregate_kind = 'thread'
             AND requested.stream_id = pending.thread_id
             AND requested.event_type = 'thread.turn-start-requested'
-            AND requested.sequence <= ${throughSequence}
             AND json_extract(requested.payload_json, '$.messageId') = pending.pending_message_id
-        )
+        ) <= ${throughSequence}
       ORDER BY pending.row_id ASC
     `,
   });
@@ -1393,22 +1392,36 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listSubmittedTurnStartRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.Struct({ throughSequence: Schema.NullOr(Schema.Number) }),
     Result: SubmittedTurnStartRowSchema,
-    execute: () => sql`
-      SELECT
-        thread_id AS "threadId",
-        pending_message_id AS "messageId",
-        submitted_turn_id AS "turnId",
-        requested_at AS "requestedAt"
-      FROM projection_turns
-      WHERE turn_id IS NULL
-        AND state = 'submitted'
-        AND pending_message_id IS NOT NULL
-        AND submitted_turn_id IS NOT NULL
-        AND checkpoint_turn_count IS NULL
-      ORDER BY thread_id ASC, row_id ASC
-    `,
+    execute: ({ throughSequence }) => {
+      const requestSequenceBound =
+        throughSequence === null
+          ? sql`1 = 1`
+          : sql`(
+              SELECT MAX(requested.sequence)
+              FROM orchestration_events AS requested
+              WHERE requested.aggregate_kind = 'thread'
+                AND requested.stream_id = submitted.thread_id
+                AND requested.event_type = 'thread.turn-start-requested'
+                AND json_extract(requested.payload_json, '$.messageId') = submitted.pending_message_id
+            ) <= ${throughSequence}`;
+      return sql`
+        SELECT
+          submitted.thread_id AS "threadId",
+          submitted.pending_message_id AS "messageId",
+          submitted.submitted_turn_id AS "turnId",
+          submitted.requested_at AS "requestedAt"
+        FROM projection_turns AS submitted
+        WHERE submitted.turn_id IS NULL
+          AND submitted.state = 'submitted'
+          AND submitted.pending_message_id IS NOT NULL
+          AND submitted.submitted_turn_id IS NOT NULL
+          AND submitted.checkpoint_turn_count IS NULL
+          AND ${requestSequenceBound}
+        ORDER BY submitted.thread_id ASC, submitted.row_id ASC
+      `;
+    },
   });
 
   const listSubmittedTurnStartRowsByThread = SqlSchema.findAll({
@@ -2187,7 +2200,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listSubmittedTurnStartRows(undefined).pipe(
+          listSubmittedTurnStartRows({ throughSequence: null }).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getSnapshot:listSubmittedTurnStarts:query",
@@ -2512,7 +2525,7 @@ pending_approval_requests AS (
               ),
             ),
           ),
-          listSubmittedTurnStartRows(undefined).pipe(
+          listSubmittedTurnStartRows({ throughSequence: null }).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
                 "ProjectionSnapshotQuery.getCommandReadModel:listSubmittedTurnStarts:query",
@@ -3452,6 +3465,18 @@ pending_approval_requests AS (
       ),
     );
 
+  const listSubmittedTurnStarts: ProjectionSnapshotQueryShape["listSubmittedTurnStarts"] = (
+    throughSequence,
+  ) =>
+    listSubmittedTurnStartRows({ throughSequence }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listSubmittedTurnStarts:query",
+          "ProjectionSnapshotQuery.listSubmittedTurnStarts:decodeRow",
+        ),
+      ),
+    );
+
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
@@ -3942,6 +3967,7 @@ pending_approval_requests AS (
     getThreadRuntimeContext,
     getTurnStartMessage,
     listPendingTurnStarts,
+    listSubmittedTurnStarts,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
