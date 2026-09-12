@@ -1502,7 +1502,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             .map((attachment) => `Attached file: ${attachment.name} (${attachment.id})`)
             .join("\n");
           replies.push(
-            [`${question.question}\n${answer.trim()}`, attachmentLabels].filter(Boolean).join("\n"),
+            [
+              `Agent question: ${question.question}\nUser answer: ${answer.trim()}`,
+              attachmentLabels,
+            ]
+              .filter(Boolean)
+              .join("\n"),
           );
         }
         // Commit the answer and its message together. The normal turn path

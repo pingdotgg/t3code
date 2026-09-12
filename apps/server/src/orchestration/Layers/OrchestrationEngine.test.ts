@@ -284,7 +284,7 @@ describe("OrchestrationEngine", () => {
         expect(userMessages).toHaveLength(1);
         expect(userMessages?.[0]?.attachments).toEqual(response.attachmentsByQuestionId["1"]);
         expect(userMessages?.[0]?.text).toBe(
-          "Which package manager?\npnpm\n\nWhat should it be named?\nExample\nAttached file: spec.txt (thread-1-00000000-0000-4000-8000-0000000000aa-txt)",
+          "Agent question: Which package manager?\nUser answer: pnpm\n\nAgent question: What should it be named?\nUser answer: Example\nAttached file: spec.txt (thread-1-00000000-0000-4000-8000-0000000000aa-txt)",
         );
         expect(
           after.threads[0]?.activities.find((activity) => activity.kind === "user-input.resolved")
