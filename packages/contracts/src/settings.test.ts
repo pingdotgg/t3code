@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  HermesSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +20,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeHermesSettings = Schema.decodeUnknownSync(HermesSettings);
 
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
@@ -591,6 +593,7 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.claudeAgent.enabled).toBe(true);
     expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
+    expect(decoded.providers.hermes.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
   });
 
@@ -763,6 +766,20 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
+  });
+});
+
+describe("HermesSettings", () => {
+  it("decodes defaults", () => {
+    const decoded = decodeHermesSettings({});
+    expect(decoded.enabled).toBe(false);
+    expect(decoded.binaryPath).toBe("hermes");
+    expect(decoded.customModels).toEqual([]);
+  });
+
+  it("is reachable via ServerSettings defaults", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.providers.hermes.binaryPath).toBe("hermes");
   });
 });
 
