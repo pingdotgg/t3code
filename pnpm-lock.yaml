@@ -59,11 +59,9 @@ overrides:
   '@clerk/react': 6.14.7
   '@clerk/shared': 4.30.1
   '@effect/atom-react': 4.0.0-rc.112
-  '@effect/platform-bun': 4.0.0-rc.112
   '@effect/platform-node': 4.0.0-rc.112
   '@effect/platform-node-shared': 4.0.0-rc.112
   '@effect/sql-pg': 4.0.0-rc.112
-  '@effect/sql-sqlite-bun': 4.0.0-rc.112
   '@effect/vitest': 4.0.0-rc.112
   '@effect/vitest>vitest': '-'
   '@expo/dom-webview': 57.0.1
@@ -90,7 +88,7 @@ patchedDependencies:
   '@clerk/expo@4.2.0': 72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1
   '@effect/vitest@4.0.0-rc.112': a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b
   '@expo/metro-config@57.0.12': 96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2
-  '@ff-labs/fff-node@0.9.4': ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368
+  '@ff-labs/fff-node@0.9.4': c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8
   '@legendapp/list@3.3.5': a05e968651a1352d2f374324016d1034b763b9fb2c5bf5f95111540d6899a52b
   '@pierre/diffs@1.3.0-beta.10': 0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
@@ -495,21 +493,15 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.260
         version: 0.3.260(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@effect/platform-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
       '@effect/platform-node':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
-      '@effect/sql-sqlite-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@ff-labs/fff-node':
         specifier: 0.9.4
-        version: 0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)
+        version: 0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)
       '@opencode-ai/sdk':
         specifier: ^1.3.15
         version: 1.15.13
@@ -553,9 +545,6 @@ importers:
       '@t3tools/web':
         specifier: workspace:*
         version: link:../web
-      '@types/bun':
-        specifier: 1.3.14
-        version: 1.3.14
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -1065,7 +1054,7 @@ packages:
     resolution: {integrity: sha512-rH5BFh0Xq7aExpSpITyQbC+Jqfc9XgwJXidHVHTi1tNRC6/KAWg4tOzBfwiFIxljFLLYcApzlYFvLa/fTYcEjw==}
     peerDependencies:
       '@distilled.cloud/cloudflare': 1.0.0-rc.8
-      '@effect/platform-bun': 4.0.0-rc.112
+      '@effect/platform-bun': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/platform-node': 4.0.0-rc.112
       effect: 4.0.0-rc.112
       rolldown: 1.2.5
@@ -5349,9 +5338,6 @@ packages:
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
 
-  '@types/bun@1.3.14':
-    resolution: {integrity: sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw==}
-
   '@types/cacheable-request@6.0.3':
     resolution: {integrity: sha512-IQ3EbTzGxIigb1I3qPZc1rWJnH0BmSKv5QYTalEwweFvyBDLSAe24zP0le/hyi7ecGfZVlIVAg4BZqb8WBwKqw==}
 
@@ -6089,7 +6075,7 @@ packages:
     peerDependencies:
       '@alchemy.run/frontend-frameworks': 2.0.0-beta.76
       '@aws/durable-execution-sdk-js': ^2.1.0
-      '@effect/platform-bun': 4.0.0-rc.112
+      '@effect/platform-bun': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/platform-node': 4.0.0-rc.112
       '@effect/sql-mysql2': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/sql-pg': 4.0.0-rc.112
@@ -6969,7 +6955,7 @@ packages:
       '@effect/sql-mysql2': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-pg': 4.0.0-rc.112
       '@effect/sql-pglite': '>=4.0.0-beta.105 || >=4.0.0'
-      '@effect/sql-sqlite-bun': 4.0.0-rc.112
+      '@effect/sql-sqlite-bun': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-do': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-node': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-wasm': '>=4.0.0-beta.105 || >=4.0.0'
@@ -12666,6 +12652,7 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   '@effect/platform-node-shared@4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)':
     dependencies:
@@ -12706,6 +12693,7 @@ snapshots:
   '@effect/sql-sqlite-bun@4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
       effect: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
+    optional: true
 
   '@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
@@ -13655,7 +13643,7 @@ snapshots:
   '@ff-labs/fff-bin-win32-x64@0.9.4':
     optional: true
 
-  '@ff-labs/fff-node@0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)':
+  '@ff-labs/fff-node@0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
@@ -15839,10 +15827,6 @@ snapshots:
       '@types/connect': 3.4.38
       '@types/node': 24.12.4
 
-  '@types/bun@1.3.14':
-    dependencies:
-      bun-types: 1.3.14
-
   '@types/cacheable-request@6.0.3':
     dependencies:
       '@types/http-cache-semantics': 4.2.0
@@ -17000,6 +16984,7 @@ snapshots:
   bun-types@1.3.14:
     dependencies:
       '@types/node': 24.12.4
+    optional: true
 
   bytes@3.1.2: {}
 
