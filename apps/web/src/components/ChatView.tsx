@@ -47,6 +47,7 @@ import {
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import { appendCodexFollowupPrompt } from "@t3tools/client-runtime/codex-markdown-directives";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseCodexFeedbackCommand,
@@ -3671,6 +3672,28 @@ export default function ChatView(props: ChatViewProps) {
       const currentDraft = composer.getSendContext().prompt;
       const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
       if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+        return;
+      }
+      scheduleComposerFocus();
+    },
+    [composerRef, scheduleComposerFocus],
+  );
+  const useCodexFollowup = useCallback(
+    (prompt: string) => {
+      const composer = composerRef.current;
+      if (!composer) return;
+
+      const currentDraft = composer.getSendContext().prompt;
+      if (appendCodexFollowupPrompt(currentDraft, prompt) === currentDraft) {
+        scheduleComposerFocus();
+        return;
+      }
+      if (!composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
         toastManager.add({
           type: "error",
           title: "Unable to add to chat",
@@ -8735,6 +8758,7 @@ export default function ChatView(props: ChatViewProps) {
                       agentPanelModel,
                       onOpenAgents: addAgentsSurface,
                       onUseArtifactTemplate: useArtifactTemplate,
+                      onUseCodexFollowup: useCodexFollowup,
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}

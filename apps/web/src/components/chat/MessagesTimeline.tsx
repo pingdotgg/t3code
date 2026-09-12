@@ -255,6 +255,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onUseCodexFollowup: ((prompt: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -374,6 +375,7 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  onUseCodexFollowup?: (prompt: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -433,6 +435,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
+  onUseCodexFollowup,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -815,6 +818,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onUseCodexFollowup,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -840,6 +844,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      onUseCodexFollowup,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -1807,6 +1812,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onUseCodexFollowup={ctx.onUseCodexFollowup}
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
