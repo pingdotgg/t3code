@@ -21,6 +21,8 @@ interface NativeReviewWordDiffPatch {
   >["rangesByRowId"];
 }
 
+const INITIAL_VISIBLE_RANGE: NativeReviewVisibleRange = { firstRowIndex: 0, lastRowIndex: 80 };
+
 function createEmptyTokenPatch(resetKey: string): string {
   return JSON.stringify({ resetKey, tokensByRowId: {} });
 }
@@ -55,10 +57,10 @@ export function useNativeReviewDiffHighlighting(input: {
   const highlightedRowIdsRef = useRef<Set<string>>(new Set());
   const wordHighlightedRowIdsRef = useRef<Set<string>>(new Set());
   const contentResetKeyRef = useRef(contentResetKey);
-  const visibleRangeRef = useRef<NativeReviewVisibleRange>({
-    firstRowIndex: 0,
-    lastRowIndex: 80,
-  });
+  const visibleRangeRef = useRef<NativeReviewVisibleRange>(INITIAL_VISIBLE_RANGE);
+  // The range the latest highlight request covered. Scroll distance is measured
+  // from here, not from the previous viewport event, so a slow scroll still adds up.
+  const requestedRangeRef = useRef<NativeReviewVisibleRange>(INITIAL_VISIBLE_RANGE);
   const visibleChunkIndexRef = useRef(0);
   const [tokensPatchJson, setTokensPatchJson] = useState(() => createEmptyTokenPatch(resetKey));
   const [wordDiffRangesPatch, setWordDiffRangesPatch] = useState<NativeReviewWordDiffPatch>(() => ({
@@ -77,11 +79,12 @@ export function useNativeReviewDiffHighlighting(input: {
     visibleChunkIndexRef.current = 0;
     if (contentResetKeyRef.current !== contentResetKey) {
       contentResetKeyRef.current = contentResetKey;
-      visibleRangeRef.current = { firstRowIndex: 0, lastRowIndex: 80 };
+      visibleRangeRef.current = INITIAL_VISIBLE_RANGE;
     }
     setTokensPatchJson(createEmptyTokenPatch(resetKey));
     setWordDiffRangesPatch({ resetKey, wordDiffRangesByRowId: {} });
     if (enabled && rows.length > 0) {
+      requestedRangeRef.current = visibleRangeRef.current;
       setVisibleHighlightRequest((request) => request + 1);
     }
   }, [contentResetKey, enabled, resetKey, rows.length]);
@@ -180,13 +183,14 @@ export function useNativeReviewDiffHighlighting(input: {
   }, [resetKey, wordDiffRangesPatch]);
 
   const updateVisibleRange = useCallback((nextRange: NativeReviewVisibleRange) => {
-    const previousRange = visibleRangeRef.current;
+    const requestedRange = requestedRangeRef.current;
     const movedRows =
-      Math.abs(nextRange.firstRowIndex - previousRange.firstRowIndex) +
-      Math.abs(nextRange.lastRowIndex - previousRange.lastRowIndex);
+      Math.abs(nextRange.firstRowIndex - requestedRange.firstRowIndex) +
+      Math.abs(nextRange.lastRowIndex - requestedRange.lastRowIndex);
 
     visibleRangeRef.current = nextRange;
     if (movedRows >= 20) {
+      requestedRangeRef.current = nextRange;
       setVisibleHighlightRequest((request) => request + 1);
     }
   }, []);

@@ -256,6 +256,146 @@ describe("resolveNativeReviewDiffView", () => {
     }
     expect(frames.size).toBe(0);
   });
+
+  it("requests new word ranges after many small scroll steps", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const { useNativeReviewDiffHighlighting } =
+      await import("../review/useNativeReviewDiffHighlighting");
+    const rows: NativeReviewDiffRow[] = Array.from({ length: 2000 }, (_, index) => ({
+      kind: "hunk" as const,
+      id: `gap:${index}`,
+      fileId: "gap",
+    }));
+    let changeRange:
+      | ReturnType<typeof useNativeReviewDiffHighlighting>["updateVisibleRange"]
+      | undefined;
+    function Harness() {
+      const result = useNativeReviewDiffHighlighting({
+        files: [],
+        rows,
+        scheme: "dark",
+        enabled: true,
+        collapsedFileIds: [],
+        resetKey: "source",
+        contentResetKey: "view",
+      });
+      useLayoutEffect(() => {
+        changeRange = result.updateVisibleRange;
+      }, [result.updateVisibleRange]);
+      return null;
+    }
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(createElement(Harness));
+      });
+      const mountJobCount = wordJobs.length;
+      // Android reports the viewport one row at a time during a slow drag.
+      for (let step = 1; step <= 500; step += 1) {
+        await act(async () => {
+          changeRange!({ firstRowIndex: step, lastRowIndex: step + 40 });
+        });
+      }
+      const requestedStarts = wordJobs.slice(mountJobCount).map((job) => job.input.firstRowIndex);
+      expect(requestedStarts.length).toBeGreaterThan(0);
+      expect(requestedStarts.at(-1)).toBeGreaterThanOrEqual(490);
+      // Each request waits for the viewport to move 20 rows past the previous request.
+      expect(requestedStarts).toEqual(
+        Array.from({ length: requestedStarts.length }, (_, index) => 1 + index * 10),
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("delivers word ranges for review comment cards as a keyed patch", async () => {
+    setExpoViewConfigAvailable();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const frames = new Map<number, (time: number) => void>();
+    let frameId = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const sent: string[] = [];
+    const nativeProps: Array<Record<string, unknown>> = [];
+    const nativeHandle = {
+      setRowsJson: async () => undefined,
+      setTokensJson: async () => undefined,
+      setTokensPatchJson: async (json: string) => {
+        sent.push(json);
+      },
+    };
+    const NativeMock = forwardRef<typeof nativeHandle, Record<string, unknown>>(
+      function NativeMock(props, ref) {
+        nativeProps.push(props);
+        useImperativeHandle(ref, () => nativeHandle, []);
+        return null;
+      },
+    );
+    expoMocks.requireNativeView.mockReturnValue(NativeMock);
+    const { resolveNativeReviewDiffView } = await import("./nativeReviewDiffSurface");
+    const { useNativeReviewCommentWordDiffs } =
+      await import("../review/useNativeReviewCommentWordDiffs");
+    const NativeView = resolveNativeReviewDiffView();
+    if (!NativeView) throw new Error("Expected the native payload sender");
+    const rows: NativeReviewDiffRow[] = [
+      {
+        kind: "line",
+        id: "c:snippet:0",
+        change: "delete",
+        content: 'const item = renderPanel({ title: "before", active: true });',
+      },
+      {
+        kind: "line",
+        id: "c:snippet:1",
+        change: "add",
+        content: 'const item = renderPanel({ title: "after", active: true });',
+      },
+    ];
+    function Card() {
+      const { tokensResetKey, wordDiffRangesPatchJson } = useNativeReviewCommentWordDiffs({
+        rows,
+        enabled: true,
+      });
+      return createElement(NativeView!, {
+        appearanceScheme: "dark",
+        themeJson: "{}",
+        rowHeight: 20,
+        contentWidth: 1000,
+        rowsJson: "[]",
+        tokensResetKey,
+        wordDiffRangesPatchJson,
+      });
+    }
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(createElement(Card));
+      });
+      await act(async () => {
+        await wordJobs.at(-1)!.complete();
+      });
+      await act(async () => {
+        const pending = [...frames.values()];
+        frames.clear();
+        for (const callback of pending) callback(performance.now());
+        await Promise.resolve();
+      });
+      const patch = sent.map((json) => JSON.parse(json)).find((p) => "wordDiffRangesByRowId" in p);
+      expect(patch).toBeDefined();
+      expect(patch.resetKey).toBe(nativeProps.at(-1)!.tokensResetKey);
+      expect(Object.keys(patch.wordDiffRangesByRowId).sort()).toEqual([
+        "c:snippet:0",
+        "c:snippet:1",
+      ]);
+      expect(patch.wordDiffRangesByRowId["c:snippet:0"]).toEqual([{ start: 35, end: 41 }]);
+      expect(patch.wordDiffRangesByRowId["c:snippet:1"]).toEqual([{ start: 35, end: 40 }]);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
 });
 
 describe("isPendingNativeViewRegistration", () => {
