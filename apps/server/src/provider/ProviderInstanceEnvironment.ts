@@ -14,7 +14,9 @@ export function mergeProviderInstanceEnvironment(
   for (const variable of environment) {
     // Child processes do not apply shell expansion to environment values.
     next[variable.name] =
-      variable.name === "CODEX_HOME" || variable.name === "CLAUDE_CONFIG_DIR"
+      variable.name === "CODEX_HOME" ||
+      variable.name === "CLAUDE_CONFIG_DIR" ||
+      variable.name === "COPILOT_HOME"
         ? expandHomePath(variable.value)
         : variable.value;
   }

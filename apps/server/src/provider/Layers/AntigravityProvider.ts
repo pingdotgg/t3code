@@ -29,7 +29,6 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -37,7 +36,6 @@ const HEALTH_CHECK_TIMEOUT = "90 seconds";
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
-const UNSUPPORTED_LIMITS_MESSAGE = "Google Antigravity does not report subscription quota windows.";
 
 type SessionSetupResult = Pick<
   AcpSessionRuntimeStartResult["sessionSetupResult"],
@@ -153,11 +151,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         message: settings.enabled
           ? "Checking Antigravity availability."
           : "Antigravity is disabled in T3 Code settings.",
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "unsupported",
-          message: UNSUPPORTED_LIMITS_MESSAGE,
-        }),
       },
     }),
     setup: { canAuthenticate: true, canInstall: true },
@@ -208,7 +201,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
       const nextAuth =
-        draft.auth.status === "unknown" && detectedAuth && detectedAuth.status === "authenticated"
+        draft.auth.status !== "authenticated" && detectedAuth?.status === "authenticated"
           ? detectedAuth
           : draft.auth;
       const authenticated = nextAuth.status === "authenticated";
@@ -219,22 +212,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : nextAuth.status === "unauthenticated"
             ? SIGN_IN_MESSAGE
             : AUTH_UNCHECKED_MESSAGE);
-      const usageLimits =
-        missingInstallation || errorMessage
-          ? makeUnavailableUsageLimits({
-              checkedAt: updatedAt,
-              reason: "probeFailed",
-              message:
-                errorMessage ??
-                "Antigravity is not installed or its executable could not be found.",
-            })
-          : draft.usageLimits && !draft.usageLimits.unavailable
-            ? draft.usageLimits
-            : makeUnavailableUsageLimits({
-                checkedAt: updatedAt,
-                reason: "unsupported",
-                message: UNSUPPORTED_LIMITS_MESSAGE,
-              });
       return {
         ...state,
         draft: {
@@ -244,7 +221,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           version: initialized?.agentInfo?.version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
-          usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
@@ -257,7 +233,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...(initialized !== undefined
             ? {
                 supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
+                  supportsTextGeneration && nextAuth.status !== "unauthenticated",
               }
             : {}),
           ...(message ? { message } : {}),
@@ -320,14 +296,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult),
           supportsTextGeneration,
-          usageLimits:
-            draft.usageLimits && !draft.usageLimits.unavailable
-              ? draft.usageLimits
-              : makeUnavailableUsageLimits({
-                  checkedAt: updatedAt,
-                  reason: "unsupported",
-                  message: UNSUPPORTED_LIMITS_MESSAGE,
-                }),
           ...(cwd
             ? {
                 workspaceSnapshots: [
@@ -408,11 +376,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             skills: [],
             workspaceSnapshots: [],
             supportsTextGeneration: false,
-            usageLimits: makeUnavailableUsageLimits({
-              checkedAt: updatedAt,
-              reason: "unsupported",
-              message: UNSUPPORTED_LIMITS_MESSAGE,
-            }),
           },
         }) satisfies AntigravityProviderState,
     );

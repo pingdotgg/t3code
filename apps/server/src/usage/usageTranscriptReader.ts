@@ -470,13 +470,14 @@ export function readCopilotDbRecords(filePath: string): readonly UsageRecord[] |
 
 function readVarint(buf: Buffer, offset: number): [value: number, nextOffset: number] {
   let res = 0;
-  let shift = 0;
+  let multiplier = 1;
   while (offset < buf.length) {
     const b = buf[offset++];
     if (b === undefined) break;
-    res |= (b & 0x7f) << shift;
-    shift += 7;
+    res += (b & 0x7f) * multiplier;
+    multiplier *= 128;
     if (!(b & 0x80)) break;
+    if (multiplier > Number.MAX_SAFE_INTEGER) break;
   }
   return [res, offset];
 }
@@ -514,6 +515,7 @@ export function parseAntigravityProto(raw: Uint8Array | Buffer): AntigravityProt
       } else if (wire === 2) {
         const [len, afterLen] = readVarint(b, i);
         i = afterLen;
+        if (len < 0 || i + len > b.length) break;
         const sub = b.subarray(i, i + len);
         i += len;
         onField(tag, wire, 0, sub);
@@ -570,10 +572,9 @@ export function readAntigravityDbRecords(filePath: string): readonly UsageRecord
       for (const row of rows) {
         const proto = parseAntigravityProto(row.data);
         if (proto.inputTokens === 0 && proto.outputTokens === 0) continue;
+        if (proto.timestampSeconds <= 0) continue;
         const timestampMs =
-          proto.timestampSeconds > 0
-            ? proto.timestampSeconds * 1000
-            : DateTime.toEpochMillis(DateTime.nowUnsafe());
+          proto.timestampSeconds > 1e11 ? proto.timestampSeconds : proto.timestampSeconds * 1000;
         const uncachedInputTokens = Math.max(0, proto.inputTokens - proto.cachedTokens);
         records.push({
           provider: "antigravity",

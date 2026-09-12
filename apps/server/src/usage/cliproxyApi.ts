@@ -106,8 +106,15 @@ export function resolveHubDriver(provider: string): ProviderDriverKind | null {
   const p = provider.trim().toLowerCase();
   if (p === "codex" || p === "openai" || p === "chatgpt") return ProviderDriverKind.make("codex");
   if (p === "claude" || p === "anthropic") return ProviderDriverKind.make("claudeAgent");
-  if (p === "copilot" || p === "github") return ProviderDriverKind.make("copilot");
-  if (p === "antigravity" || p === "gemini" || p === "google")
+  if (p === "copilot" || p === "github" || p === "github-copilot" || p.includes("copilot"))
+    return ProviderDriverKind.make("copilot");
+  if (
+    p === "antigravity" ||
+    p === "gemini" ||
+    p === "google" ||
+    p === "gemini-cli" ||
+    p.includes("antigravity")
+  )
     return ProviderDriverKind.make("antigravity");
   return null;
 }
@@ -218,13 +225,13 @@ function parseGenericWindows(data: unknown): ReadonlyArray<ServerProviderUsageWi
               : undefined;
     const windowDurationMins =
       typeof record["limit_window_seconds"] === "number"
-        ? record["limit_window_seconds"] / 60
+        ? Math.max(0, Math.round(record["limit_window_seconds"] / 60))
         : typeof record["window_seconds"] === "number"
-          ? record["window_seconds"] / 60
+          ? Math.max(0, Math.round(record["window_seconds"] / 60))
           : typeof record["window_duration_mins"] === "number"
-            ? record["window_duration_mins"]
+            ? Math.max(0, Math.round(record["window_duration_mins"]))
             : typeof record["windowDurationMins"] === "number"
-              ? record["windowDurationMins"]
+              ? Math.max(0, Math.round(record["windowDurationMins"]))
               : undefined;
     const rawKind = String(record["kind"] ?? id).toLowerCase();
     const kind =

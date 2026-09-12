@@ -17,11 +17,13 @@ describe("mergeProviderInstanceEnvironment", () => {
       const baseEnv = {
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        COPILOT_HOME: "~/.inherited-copilot",
       };
       const environment = mergeProviderInstanceEnvironment(
         [
           { name: "CODEX_HOME", value, sensitive: false },
           { name: "CLAUDE_CONFIG_DIR", value, sensitive: false },
+          { name: "COPILOT_HOME", value, sensitive: false },
           { name: "CUSTOM_VALUE", value, sensitive: false },
         ],
         baseEnv,
@@ -30,17 +32,23 @@ describe("mergeProviderInstanceEnvironment", () => {
       expect(environment).toEqual({
         CODEX_HOME: path.join(NodeOS.homedir(), tail),
         CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), tail),
+        COPILOT_HOME: path.join(NodeOS.homedir(), tail),
         CUSTOM_VALUE: value,
       });
       expect(baseEnv).toEqual({
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
+        COPILOT_HOME: "~/.inherited-copilot",
       });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("leaves inherited provider homes unchanged", () => {
-    const baseEnv = { CODEX_HOME: "~/.codex", CLAUDE_CONFIG_DIR: "~\\.claude" };
+    const baseEnv = {
+      CODEX_HOME: "~/.codex",
+      CLAUDE_CONFIG_DIR: "~\\.claude",
+      COPILOT_HOME: "~/.copilot",
+    };
 
     expect(
       mergeProviderInstanceEnvironment(

@@ -120,14 +120,18 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
         ),
       );
 
+      if (promptResult.stopReason === "cancelled") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "GitHub Copilot ACP request was cancelled.",
+        });
+      }
+
       const trimmed = (yield* Ref.get(outputRef)).trim();
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "GitHub Copilot ACP request was cancelled."
-              : "GitHub Copilot Agent returned empty output.",
+          detail: "GitHub Copilot Agent returned empty output.",
         });
       }
 

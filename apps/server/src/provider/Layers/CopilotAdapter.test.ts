@@ -34,4 +34,22 @@ it("requires a settlement to match the live Copilot turn", () => {
       turnId: staleTurnId,
     }),
   );
+  assert.isTrue(
+    copilotPromptSettlementBelongsToContext({
+      liveAcpSessionId: "session-1",
+      expectedAcpSessionId: "session-1",
+      liveActiveTurnId: undefined,
+      liveSessionActiveTurnId: staleTurnId,
+      turnId: staleTurnId,
+    }),
+  );
+  assert.isTrue(
+    copilotPromptSettlementBelongsToContext({
+      liveAcpSessionId: "session-1",
+      expectedAcpSessionId: "session-1",
+      liveActiveTurnId: staleTurnId,
+      liveSessionActiveTurnId: undefined,
+      turnId: staleTurnId,
+    }),
+  );
 });

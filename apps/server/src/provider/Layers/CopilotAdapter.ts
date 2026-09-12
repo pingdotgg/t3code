@@ -1328,7 +1328,7 @@ export function makeCopilotAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
       startSession,
       sendTurn,
       interruptTurn,

@@ -2,10 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { CopilotSettings } from "@t3tools/contracts";
 
+import { writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
   buildInitialCopilotProviderSnapshot,
   checkCopilotProviderStatus,
@@ -37,7 +37,7 @@ describe("buildInitialCopilotProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking GitHub Copilot");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.supportsConversationRollback).toBe(false);
     }),
   );
 });
@@ -73,14 +73,17 @@ it.layer(NodeServices.layer)("checkCopilotProviderStatus", (it) => {
       const snapshot = yield* Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-copilot-version-" });
-          const copilotPath = path.join(dir, "copilot");
-          yield* fs.writeFileString(
-            copilotPath,
-            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
-          );
-          yield* fs.chmod(copilotPath, 0o755);
+          const copilotPath = writeFakeCli({
+            directory: dir,
+            name: "copilot",
+            source: [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              `process.stderr.write(${JSON.stringify(`${secretStderr}\n`)});`,
+              "process.exit(2);",
+              "",
+            ].join("\n"),
+          });
 
           return yield* checkCopilotProviderStatus(
             decodeCopilotSettings({ enabled: true, binaryPath: copilotPath }),

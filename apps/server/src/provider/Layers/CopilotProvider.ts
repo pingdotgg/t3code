@@ -50,7 +50,7 @@ export const COPILOT_PRESENTATION = {
   displayName: "GitHub Copilot",
   badgeLabel: "Preview",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  supportsConversationRollback: false,
 } as const;
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -193,15 +193,20 @@ function readLocalCopilotAuth(processEnv?: Record<string, string | undefined>): 
       const cleaned = content.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, "");
       const raw = JSON.parse(cleaned);
       const login = raw?.lastLoggedInUser?.login;
-      const tokens = raw?.copilotTokens ?? {};
+      const tokens =
+        typeof raw?.copilotTokens === "object" && raw?.copilotTokens !== null
+          ? (raw.copilotTokens as Record<string, unknown>)
+          : undefined;
       const token =
-        (typeof login === "string" && tokens[`https://github.com:${login}`]) ||
-        (typeof tokens === "object" && tokens !== null ? Object.values(tokens)[0] : undefined);
+        typeof login === "string" &&
+        tokens &&
+        typeof tokens[`https://github.com:${login}`] === "string"
+          ? (tokens[`https://github.com:${login}`] as string)
+          : undefined;
       if (typeof login === "string" && login.length > 0) {
         return {
           status: "authenticated",
           label: `GitHub (${login})`,
-          email: login,
           ...(typeof token === "string" ? { token } : {}),
         };
       }
@@ -231,7 +236,15 @@ function fetchCopilotRateLimitWindows(
     const data = (await response.json()) as {
       rate?: { limit: number; remaining: number; reset: number };
     };
-    if (!data?.rate || typeof data.rate.limit !== "number" || data.rate.limit <= 0) return empty;
+    if (
+      !data?.rate ||
+      typeof data.rate.limit !== "number" ||
+      data.rate.limit <= 0 ||
+      typeof data.rate.remaining !== "number" ||
+      typeof data.rate.reset !== "number"
+    ) {
+      return empty;
+    }
     const { limit, remaining, reset } = data.rate;
     const used = Math.max(0, limit - remaining);
     const usedPercent = Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
@@ -556,7 +569,6 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
           status: "authenticated",
           type: "oauth-personal",
           label: localAuth.label ?? "GitHub Copilot",
-          email: localAuth.email,
         }
       : { status: "unknown" };
   const windows =
