@@ -1393,9 +1393,10 @@ const make = Effect.gen(function* () {
 
   const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
     "getSourceProposedPlanReferenceForPendingTurnStart",
-  )(function* (threadId: ThreadId) {
-    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+  )(function* (threadId: ThreadId, turnId: TurnId) {
+    const pendingTurnStart = yield* projectionTurnRepository.getAdoptableTurnStartByThreadId({
       threadId,
+      turnId,
     });
     if (Option.isNone(pendingTurnStart)) {
       return null;
@@ -1433,7 +1434,15 @@ const make = Effect.gen(function* () {
       return null;
     }
 
-    return yield* getSourceProposedPlanReferenceForPendingTurnStart(threadId);
+    const existingTurn = yield* projectionTurnRepository.getByTurnId({
+      threadId,
+      turnId: eventTurnId,
+    });
+    if (Option.isSome(existingTurn) && existingTurn.value.pendingMessageId !== null) {
+      return null;
+    }
+
+    return yield* getSourceProposedPlanReferenceForPendingTurnStart(threadId, eventTurnId);
   });
 
   const markSourceProposedPlanImplemented = Effect.fn("markSourceProposedPlanImplemented")(
@@ -1498,7 +1507,7 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         isTerminalTurn ||
         isCompactedThreadState
-          ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+          ? yield* projectionTurnRepository.getUnresolvedTurnStartByThreadId({
               threadId: thread.id,
             })
           : Option.none();
@@ -1646,6 +1655,38 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+        }
+
+        // A turn.started processed before its acknowledgement cannot resolve
+        // the source plan through pending-start lookups; by the time the turn
+        // ends the late ack may have bound the plan reference to the turn row,
+        // so retry the mark here.
+        if (isTerminalTurn && eventTurnId !== undefined) {
+          const turn = yield* projectionTurnRepository.getByTurnId({
+            threadId: thread.id,
+            turnId: eventTurnId,
+          });
+          const sourceThreadId = Option.getOrNull(turn)?.sourceProposedPlanThreadId ?? null;
+          const sourcePlanId = Option.getOrNull(turn)?.sourceProposedPlanId ?? null;
+          if (sourceThreadId !== null && sourcePlanId !== null) {
+            yield* markSourceProposedPlanImplemented(
+              sourceThreadId,
+              sourcePlanId,
+              thread.id,
+              now,
+            ).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "provider runtime ingestion failed to mark source proposed plan",
+                  {
+                    eventId: event.eventId,
+                    eventType: event.type,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+              ),
+            );
+          }
         }
       }
 

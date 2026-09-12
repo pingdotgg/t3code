@@ -811,64 +811,121 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
-      const tracked = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
-      });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-        });
-      }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      yield* fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
-      const cleaned = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
-        allowNonZeroExit: true,
-      });
-      if (cleaned.exitCode !== 0) {
-        // Git can remove every child, then fail trying to remove './' itself.
-        const emptiedWorkspace =
-          cleaned.exitCode === 1 &&
-          /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
-          (yield* fileSystem.readDirectory(input.cwd).pipe(
-            Effect.map((entries) => entries.length === 0),
-            Effect.catch(() => Effect.succeed(false)),
-          ));
-        if (!emptiedWorkspace)
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: cleaned.exitCode,
-            detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
-          });
-      }
+      // Restoring away the last tracked file can remove a nested workspace
+      // directory; recreate it before any further Git command runs in it.
+      const restoreWorkspaceDirectory = fileSystem
+        .makeDirectory(input.cwd, {
+          recursive: true,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProcessExitError({
+                operation,
+                command: "git restore",
+                cwd: input.cwd,
+                exitCode: 0,
+                detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+              }),
+          ),
+        );
 
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
+      // The projected source ref can outlive the ref itself; fall back to the
+      // target-only restore rather than rejecting a valid rollback.
+      const current =
+        input.fromCheckpointRef === undefined
+          ? null
+          : yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+      if (current !== null) {
+        const changedPaths = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--relative",
+            "-z",
+            `${commitOid}^{commit}`,
+            `${current}^{commit}`,
+            "--",
+            ".",
+          ],
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        });
+        if (changedPaths.stdout.length === 0) {
+          return true;
+        }
+
+        // Limit the restore to paths changed by the discarded turns. Files edited after
+        // the current checkpoint but absent from that diff belong to concurrent user work.
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: [
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            current,
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+          ],
+          stdin: changedPaths.stdout,
         });
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            commitOid,
+            "--worktree",
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+          ],
+          stdin: changedPaths.stdout,
+        });
+        yield* restoreWorkspaceDirectory;
+        if (yield* hasHeadCommit(input.cwd)) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "--literal-pathspecs",
+              "reset",
+              "--quiet",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
+            stdin: changedPaths.stdout,
+          });
+        }
+      } else {
+        const tracked = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
+        });
+        // An empty index and checkpoint have nothing for git restore's pathspec to match.
+        if (tracked.stdout.length > 0) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+          });
+          yield* restoreWorkspaceDirectory;
+        }
+        if (yield* hasHeadCommit(input.cwd)) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", "."],
+          });
+        }
       }
 
       return true;
