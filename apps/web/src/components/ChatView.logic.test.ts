@@ -1,6 +1,8 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  CheckpointRef,
   EnvironmentId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -10,6 +12,9 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AsyncResult } from "effect/unstable/reactivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentThreadDetails } from "../state/threads";
 
 import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
@@ -59,6 +64,14 @@ import {
   resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
+  isPaintOnlyThreadTimeline,
+  peekHeldThreadTimeline,
+  peekRememberedThreadTimeline,
+  rememberReadyThreadTimeline,
+  resetHeldThreadTimeline,
+  resolveThreadSwitchTimeline,
+  threadKeysShareEnvironment,
+  timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -72,6 +85,8 @@ import {
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   toolGroupConsumesUpwardNavigation,
+  waitForRevertedMessage,
+  prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
 
 describe("agent browser close confirmation", () => {
@@ -118,7 +133,7 @@ describe("floating browser preview", () => {
     const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
     const panels = useRightPanelStore.getState();
     const revision = panels.getUserActionRevision(ref);
-    usePreviewMiniPlayerStore.getState().open(ref, "agent-tab");
+    usePreviewMiniPlayerStore.getState().open(ref, { kind: "browser", tabId: "agent-tab" });
     panels.reconcileBrowserSurfaces(ref, ["agent-tab"]);
     const intent = selectThreadPreviewMiniPlayer(
       usePreviewMiniPlayerStore.getState().byThreadKey,
@@ -127,7 +142,7 @@ describe("floating browser preview", () => {
     const isFloating = () =>
       shouldRenderPreviewMiniPlayer(
         selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, ref)
-          ?.tabId ?? null,
+          ?.source ?? null,
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
       );
 
@@ -144,22 +159,61 @@ describe("floating browser preview", () => {
   });
 
   it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    const tab = { kind: "browser", tabId: "tab-1" } as const;
     expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:one",
         kind: "preview",
         resourceId: "tab-1",
       }),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:two",
         kind: "preview",
         resourceId: "tab-2",
       }),
     ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(tab, { id: "diff", kind: "diff" })).toBe(true);
+  });
+
+  it("only hides a floating device while that device is rendered in the panel", () => {
+    const pixel = {
+      kind: "device",
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    const target = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5580",
+        kind: "device",
+        target,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5554",
+        kind: "device",
+        target: { ...target, deviceId: "emulator-5554" },
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(pixel, { id: "device", kind: "device" })).toBe(true);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "emulator-5580",
+      }),
+    ).toBe(true);
   });
 });
 
@@ -562,6 +616,179 @@ describe("draft hero submission transition", () => {
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveThreadSwitchTimeline", () => {
+  afterEach(() => {
+    resetHeldThreadTimeline();
+  });
+
+  const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
+
+  it("keeps the previous thread's entries while the next thread is loading", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("shows the new thread once its detail is ready", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["b1"],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["b1"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not invent a timeline on the first open of a thread", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+        lastReady: null,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("keeps the held thread workspace cwd with the snapshot", () => {
+    rememberReadyThreadTimeline({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+    expect(peekHeldThreadTimeline<string[]>()).toEqual({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+  });
+
+  it("survives a ChatView remount by remembering the last ready timeline", () => {
+    rememberReadyThreadTimeline(held);
+    expect(peekHeldThreadTimeline<string[]>()).toEqual(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("paints a remembered destination instead of the last-viewed thread", () => {
+    rememberReadyThreadTimeline(held);
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("prefers live entries over a remembered snapshot", () => {
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["fresh-b"],
+      }),
+    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not keep a remembered snapshot on a resolved empty thread", () => {
+    rememberReadyThreadTimeline(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("does not hold another environment's timeline across a jump", () => {
+    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-2:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-2:thread-b" });
+  });
+
+  it("treats a foreign held timeline as paint-only", () => {
+    expect(isPaintOnlyThreadTimeline("env-1:thread-a", "env-1:thread-b")).toBe(true);
+    expect(isPaintOnlyThreadTimeline("env-1:thread-b", "env-1:thread-b")).toBe(false);
+  });
+
+  it("does not remember a timeline that still has handoff blob previews", () => {
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "blob:handoff",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "https://cdn.example/a.png",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(false);
   });
 });
 
@@ -2020,5 +2247,136 @@ describe("threadShellHasStarted", () => {
       threadShellHasStarted({ latestTurn: null, latestUserMessageAt: null, session: null }),
     ).toBe(false);
     expect(threadShellHasStarted(null)).toBe(false);
+  });
+});
+
+describe("rewind draft recovery", () => {
+  const message = {
+    id: MessageId.make("rewound-message"),
+    role: "user" as const,
+    text: "edit this question",
+    turnId: TurnId.make("rewound-turn"),
+    createdAt: now,
+    updatedAt: now,
+    streaming: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("waits past command acceptance until the exact message disappears", async () => {
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    let accepted = false;
+    const result = waitForRevertedMessage({ environmentId, threadId }, message.id, 0, async () => {
+      accepted = true;
+    });
+    let completed = false;
+    void result.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(accepted).toBe(true);
+    expect(completed).toBe(false);
+    appAtomRegistry.set(
+      atom,
+      makeThread({
+        messages: [],
+        latestTurn: completedTurn,
+        checkpoints: [
+          {
+            turnId: completedTurn.turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: now,
+          },
+        ],
+      }),
+    );
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    appAtomRegistry.set(atom, makeThread({ messages: [] }));
+    await result;
+  });
+
+  it("rejects a new provider rewind failure without restoring a draft", async () => {
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const result = waitForRevertedMessage({ environmentId, threadId }, message.id, 0, async () => {
+      appAtomRegistry.set(
+        atom,
+        makeThread({
+          messages: [message],
+          activities: [
+            {
+              id: EventId.make("rewind-failed"),
+              kind: "checkpoint.revert.failed",
+              tone: "error",
+              summary: "Checkpoint revert failed",
+              payload: { detail: "Native history unavailable", turnCount: 0 },
+              turnId: null,
+              createdAt: now,
+            },
+          ],
+        }),
+      );
+    });
+    await expect(result).rejects.toThrow("Native history unavailable");
+  });
+
+  it("bounds waits when a provider never finishes", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const result = waitForRevertedMessage(
+      { environmentId, threadId },
+      message.id,
+      0,
+      async () => {},
+      20,
+    );
+    const timeoutIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 20);
+    const rewindTimeout = setTimeoutSpy.mock.results[timeoutIndex]?.value;
+    expect(rewindTimeout).toBeDefined();
+    const rejection = expect(result).rejects.toThrow("Timed out waiting");
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(rewindTimeout);
+  });
+
+  it("copies attachment bytes before rewind into a fresh file", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("original bytes"));
+    vi.stubGlobal("fetch", fetchMock);
+    const files = await prepareRevertedMessageAttachments({
+      message: {
+        ...message,
+        attachments: [
+          {
+            type: "file",
+            id: "old-attachment",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 14,
+          },
+        ],
+      },
+      environmentId,
+      httpBaseUrl: "https://server.test",
+      createAssetUrl: async () =>
+        AsyncResult.success({ relativeUrl: "/asset/signed", expiresAt: Date.now() + 60_000 }),
+    });
+    expect(files[0]).toBeInstanceOf(File);
+    expect(files[0]?.name).toBe("notes.txt");
+    expect(await files[0]?.text()).toBe("original bytes");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://server.test/asset/signed");
   });
 });

@@ -145,6 +145,7 @@ function makeTerminalContext(input: {
 
 function resetComposerDraftStore() {
   useComposerDraftStore.setState({
+    rewindingThreadKeys: new Set(),
     draftsByThreadKey: {},
     draftThreadsByThreadKey: {},
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
@@ -275,6 +276,28 @@ describe("composerDraftStore addImages", () => {
     expect(revokeSpy).toHaveBeenCalledWith("blob:duplicate");
   });
 
+  it("restores images with matching metadata without replacing unsent bytes", () => {
+    const store = useComposerDraftStore.getState();
+    const unsent = makeImage({ id: "unsent", previewUrl: "blob:unsent" });
+    const restored = {
+      ...unsent,
+      id: "restored",
+      previewUrl: "blob:restored",
+      file: new File([new Uint8Array(unsent.sizeBytes).fill(2)], unsent.name, {
+        type: unsent.mimeType,
+        lastModified: unsent.file.lastModified,
+      }),
+    };
+    store.addImages(threadRef, [unsent]);
+    store.addImages(threadRef, [restored, restored], { allowDuplicates: true });
+
+    const images = store.getComposerDraft(threadRef)?.images;
+    expect(images?.map((image) => image.id)).toEqual(["unsent", "restored"]);
+    expect(images?.[0]?.file).toBe(unsent.file);
+    expect(images?.[1]?.file).toBe(restored.file);
+    expect(revokeSpy).not.toHaveBeenCalled();
+  });
+
   it("deduplicates against existing images across calls by file signature", () => {
     const first = makeImage({
       id: "img-a",
@@ -387,6 +410,16 @@ describe("composerDraftStore unsent draft marker", () => {
 
     useComposerDraftStore.getState().clearComposerContent(threadRef);
     expect(hasDraft()).toBe(false);
+  });
+
+  it("does not persist active rewind locks", () => {
+    const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    useComposerDraftStore.setState({ rewindingThreadKeys: new Set([threadKey]) });
+
+    expect(useComposerDraftStore.getState().rewindingThreadKeys.has(threadKey)).toBe(true);
+    expect(partializeComposerDraftStoreState(useComposerDraftStore.getState())).not.toHaveProperty(
+      "rewindingThreadKeys",
+    );
   });
 });
 
@@ -662,6 +695,23 @@ describe("composerDraftStore file attachments", () => {
     expect(store.getComposerDraft(threadRef)?.files.map((file) => file.id)).toEqual([
       "file-original",
     ]);
+  });
+
+  it("restores files with matching metadata without replacing unsent bytes", () => {
+    const store = useComposerDraftStore.getState();
+    const unsent = makeFile("unsent");
+    const restored = {
+      ...unsent,
+      id: "restored",
+      file: new File(["edited"], unsent.name, { type: unsent.mimeType }),
+    };
+    store.addFiles(threadRef, [unsent]);
+    store.addFiles(threadRef, [restored, restored], { allowDuplicates: true });
+
+    const files = store.getComposerDraft(threadRef)?.files;
+    expect(files?.map((file) => file.id)).toEqual(["unsent", "restored"]);
+    expect(files?.[0]?.file).toBe(unsent.file);
+    expect(files?.[1]?.file).toBe(restored.file);
   });
 
   it("keeps same-name videos with different MIME types", () => {
@@ -1136,10 +1186,19 @@ describe("composerDraftStore project draft thread mapping", () => {
       store.addImage(localDraftId, makeImage({ id: "img-local", previewUrl: "blob:local-draft" }));
       store.setPrompt(localThreadRef, "local thread draft");
       store.setPrompt(remoteThreadRef, "remote thread draft");
+      useComposerDraftStore.setState({
+        rewindingThreadKeys: new Set([
+          threadKeyFor(threadId, TEST_ENVIRONMENT_ID),
+          threadKeyFor(otherThreadId, OTHER_TEST_ENVIRONMENT_ID),
+        ]),
+      });
 
       clearComposerDraftsEnvironment(TEST_ENVIRONMENT_ID);
 
       const next = useComposerDraftStore.getState();
+      expect([...next.rewindingThreadKeys]).toEqual([
+        threadKeyFor(otherThreadId, OTHER_TEST_ENVIRONMENT_ID),
+      ]);
       expect(next.getDraftThreadByProjectRef(projectRef)).toBeNull();
       expect(next.getDraftThreadByProjectRef(remoteProjectRef)).not.toBeNull();
       expect(next.getComposerDraft(localDraftId)).toBeNull();

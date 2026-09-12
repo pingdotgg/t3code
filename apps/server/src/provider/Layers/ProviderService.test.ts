@@ -1654,6 +1654,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
+      const modelSelection = createModelSelection(codexInstanceId, "gpt-5.6-sol", [
+        { id: "reasoningEffort", value: "high" },
+      ]);
 
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: ProviderDriverKind.make("codex"),
@@ -1671,6 +1674,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         threadId: session.threadId,
         input: "hello",
         attachments: [],
+        modelSelection,
       });
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
 
@@ -1708,6 +1712,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
         numTurns: 0,
       });
 
+      const rewindCursor = { threadId: "rewound-provider-thread" };
+      routing.codex.updateSession(session.threadId, (session) => ({
+        ...session,
+        resumeCursor: rewindCursor,
+      }));
+      yield* provider.rollbackConversation({ threadId: session.threadId, numTurns: 1 });
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const rewoundBinding = yield* directory.getBinding(session.threadId);
+      assert(Option.isSome(rewoundBinding));
+      assert.deepEqual(rewoundBinding.value.resumeCursor, rewindCursor);
+      assert.deepEqual(
+        (rewoundBinding.value.runtimePayload as { modelSelection?: unknown }).modelSelection,
+        modelSelection,
+      );
+
       yield* provider.stopSession({ threadId: session.threadId });
       routing.codex.startSession.mockClear();
       routing.codex.sendTurn.mockClear();
@@ -1727,13 +1746,90 @@ routing.layer("ProviderServiceLive routing", (it) => {
           cwd?: string;
           resumeCursor?: unknown;
           threadId?: string;
+          modelSelection?: unknown;
         };
         assert.equal(startPayload.provider, "codex");
         assert.equal(startPayload.cwd, fixtureCwd("project"));
-        assert.deepEqual(startPayload.resumeCursor, session.resumeCursor);
+        assert.deepEqual(startPayload.resumeCursor, rewindCursor);
+        assert.deepEqual(startPayload.modelSelection, modelSelection);
         assert.equal(startPayload.threadId, session.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("preserves background turn boundaries when stopping before rollback recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-background-rewind");
+      const initial = yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const cursor = {
+        resume: "550e8400-e29b-41d4-a716-446655440010",
+        turnCount: 2,
+        turnStartMessageIds: ["user-prompt", "background-assistant"],
+      };
+      routing.claude.updateSession(threadId, (session) => ({ ...session, resumeCursor: cursor }));
+      const completed = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-background-rewind"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-background-rewind"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("background-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(completed);
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      assert.deepEqual(binding.value.resumeCursor, cursor);
+      yield* provider.stopSession({ threadId });
+      routing.claude.startSession.mockClear();
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      assert.deepEqual(routing.claude.startSession.mock.calls[0]?.[0].resumeCursor, cursor);
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.claude.listSessions.mockReturnValueOnce(
+        Effect.succeed([{ ...initial, resumeCursor: cursor }]),
+      );
+      const staleCompleted = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-stale-background-rewind"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-stale-background-rewind"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        turnId: asTurnId("old-background-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(staleCompleted);
+      const replacementBinding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(replacementBinding));
+      assert.equal(replacementBinding.value.providerInstanceId, codexInstanceId);
+      assert.deepEqual(replacementBinding.value.resumeCursor, replacement.resumeCursor);
     }),
   );
 
@@ -4802,7 +4898,8 @@ describe("agent browser access", () => {
   const startSessionWith = (
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
-    projectOverride?: boolean,
+    projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
+    options?: { readonly withoutOrchestration?: boolean },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -4875,13 +4972,26 @@ describe("agent browser access", () => {
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(projectionLayer),
+        Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
             enableAgentDeviceAccess,
-            projectAgentBrowserAccessOverrides:
-              projectOverride === undefined ? {} : { [projectId]: projectOverride },
+            projectSettingsOverrides:
+              projectOverride === undefined
+                ? {}
+                : typeof projectOverride === "boolean"
+                  ? { [projectId]: { enableAgentBrowserAccess: projectOverride } }
+                  : {
+                      [projectId]: {
+                        ...(projectOverride.browser !== undefined
+                          ? { enableAgentBrowserAccess: projectOverride.browser }
+                          : {}),
+                        ...(projectOverride.device !== undefined
+                          ? { enableAgentDeviceAccess: projectOverride.device }
+                          : {}),
+                      },
+                    },
           }),
         ),
         Layer.provide(serverConfigTestLayer),
@@ -4962,6 +5072,31 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, true);
+      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a project device override grants device access when the environment denies it", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-project-device-on");
+      const issued = yield* startSessionWith({ browser: false, device: false }, threadId, {
+        device: true,
+      });
+      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Without orchestration the project cannot be resolved, so an overridden
+  // capability is withheld; one no project overrides keeps its environment value.
+  it.effect("withholds only the overridden capability when the project cannot be resolved", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-no-orchestration-device-override");
+      const issued = yield* startSessionWith(
+        { browser: true, device: true },
+        threadId,
+        { device: false },
+        { withoutOrchestration: true },
+      );
       assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

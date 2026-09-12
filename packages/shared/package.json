@@ -103,6 +103,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./projectSettings": {
+      "types": "./src/projectSettings.ts",
+      "import": "./src/projectSettings.ts"
+    },
     "./threadEnvMode": {
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"
@@ -270,6 +274,10 @@
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
+    },
+    "./thirdPartyLicenses": {
+      "types": "./src/thirdPartyLicenses.ts",
+      "import": "./src/thirdPartyLicenses.ts"
     },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
