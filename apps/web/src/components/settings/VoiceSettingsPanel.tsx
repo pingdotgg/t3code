@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   useClientSettings,
@@ -167,14 +167,30 @@ export function VoiceSettingsPanel() {
     }
   }, []);
 
+  const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
+  useLayoutEffect(() => {
+    connectionEpoch.current = { prepared };
+    return () => {
+      connectionEpoch.current = null;
+    };
+  }, [prepared]);
+
   const refreshModels = useCallback(async () => {
     if (!prepared) return;
-    const [nextStatus, nextModels] = await Promise.all([
-      runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
-      runtime.runPromise(getEnvironmentSpeechModels(prepared)),
-    ]);
-    setStatus({ prepared, value: nextStatus });
-    setModels(nextModels.models);
+    const epoch = connectionEpoch.current;
+    if (epoch?.prepared !== prepared) return;
+    try {
+      const [nextStatus, nextModels] = await Promise.all([
+        runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
+        runtime.runPromise(getEnvironmentSpeechModels(prepared)),
+      ]);
+      if (connectionEpoch.current !== epoch) return;
+      setStatus({ prepared, value: nextStatus });
+      setModels(nextModels.models);
+    } catch (error) {
+      if (connectionEpoch.current !== epoch) return;
+      throw error;
+    }
   }, [prepared]);
 
   useEffect(() => {

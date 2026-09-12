@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   cancel: vi.fn(),
+  listModels: vi.fn(),
   connection: {},
   settings: {
     voiceTranscriptionEnvironmentId: null as string | null,
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
   getEnvironmentSpeechStatus: () => Promise.resolve({ supported: true }),
   getEnvironmentSpeechModels: () =>
+    mocks.listModels() ??
     Promise.resolve({
       models: [
         {
@@ -67,8 +69,34 @@ let root: ReactTestRenderer;
 afterEach(async () => {
   if (root) await act(async () => root.unmount());
   vi.unstubAllGlobals();
+  mocks.listModels.mockReset();
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
+});
+it("ignores a previous environment model response", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  let resolve!: (value: { models: unknown[] }) => void;
+  const pending = {
+    promise: new Promise<{ models: unknown[] }>((done) => {
+      resolve = done;
+    }),
+    resolve: (value: { models: unknown[] }) => resolve(value),
+  };
+  mocks.listModels.mockReturnValueOnce(pending.promise);
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+  mocks.connection = {};
+  await act(async () => {
+    root.update(createElement(VoiceSettingsPanel));
+  });
+  expect(root.root.findByProps({ "aria-label": "Cancel Model download" })).toBeDefined();
+  await act(async () => {
+    pending.resolve({ models: [] });
+  });
+  expect(root.root.findByProps({ "aria-label": "Cancel Model download" })).toBeDefined();
 });
 it("shows friendly labels for default voice options", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

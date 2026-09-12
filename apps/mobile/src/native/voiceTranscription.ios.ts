@@ -33,10 +33,12 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
+export function getLocalVoiceTranscriber() {
   const locale = getDeviceLocale();
   if (!AppleTranscription.isAvailable(locale)) return null;
-  return { prepare: (options) => prepareVoiceTranscription(locale, options) };
+  return {
+    prepare: (options) => prepareVoiceTranscription(locale, options),
+  } satisfies VoiceTranscriber;
 }
 
 async function prepareVoiceTranscription(
