@@ -222,6 +222,19 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const run of runs) {
+        const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+        if (node?.checkpointScopeId != null) {
+          effects.push({
+            id: `effect:checkpoint.baseline.cleanup:${run.id}`,
+            commandId,
+            threadId: projection.thread.id,
+            request: {
+              type: "checkpoint.baseline.cleanup",
+              runId: run.id,
+              scopeId: node.checkpointScopeId,
+            },
+          });
+        }
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",

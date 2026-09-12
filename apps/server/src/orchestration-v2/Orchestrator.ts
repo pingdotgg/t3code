@@ -6650,6 +6650,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...run, status: "interrupted", completedAt: now },
         });
         yield* stopCompletionCohort();
+        const scopeId = rootNode.checkpointScopeId;
+        if (scopeId !== null) {
+          // Commit cleanup with cancellation: the worker may already have saved
+          // its baseline and will be interrupted before it can enqueue cleanup.
+          yield* Ref.update(effects, (existing) => [
+            ...existing,
+            {
+              id: `effect:checkpoint.baseline.cleanup:${run.id}`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: {
+                type: "checkpoint.baseline.cleanup",
+                runId: run.id,
+                scopeId,
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }
         return {
           effectTypes: ["provider-turn.start", "provider-turn.restart"],
           reason: `Run ${run.id} was interrupted before its provider turn started.`,

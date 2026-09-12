@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { checkpointStartRef } from "../checkpointing/Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
@@ -115,6 +116,11 @@ export type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
 
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 
+export class CheckpointBaselineCleanupError extends Schema.TaggedError<CheckpointBaselineCleanupError>()(
+  "CheckpointBaselineCleanupError",
+  { scopeId: CheckpointScopeId, ordinalWithinScope: Schema.Number, cause: Schema.Defect() },
+) {}
+
 export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
     readonly threadId: ThreadId;
@@ -135,6 +141,10 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
+  readonly discardBaseline: (input: {
+    readonly scope: OrchestrationV2CheckpointScope;
+    readonly ordinalWithinScope: number;
+  }) => Effect.Effect<void, CheckpointBaselineCleanupError>;
   readonly capture: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly runId: RunId | null;
@@ -294,13 +304,25 @@ export const layer: Layer.Layer<
             cwd: input.scope.cwd,
             checkpointRef,
           });
-          if (exists) {
-            return;
+          if (!exists) {
+            yield* checkpointStore.captureCheckpoint({ cwd: input.scope.cwd, checkpointRef });
           }
-
+          const startRef = checkpointStartRef(
+            checkpointRefForScopeOrdinal({
+              scopeId: input.scope.id,
+              ordinalWithinScope: input.ordinalWithinScope + 1,
+            }),
+          );
+          if (
+            yield* checkpointStore.hasCheckpointRef({
+              cwd: input.scope.cwd,
+              checkpointRef: startRef,
+            })
+          )
+            return;
           yield* checkpointStore.captureCheckpoint({
             cwd: input.scope.cwd,
-            checkpointRef,
+            checkpointRef: startRef,
           });
         }),
       ).pipe(
@@ -377,7 +399,7 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = checkpointRefForScopeOrdinal({
+          const legacyPreviousCheckpointRef = checkpointRefForScopeOrdinal({
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
@@ -430,6 +452,13 @@ export const layer: Layer.Layer<
             });
           }
 
+          const startRef = checkpointStartRef(checkpointRef);
+          const previousCheckpointRef = (yield* checkpointStore.hasCheckpointRef({
+            cwd: input.scope.cwd,
+            checkpointRef: startRef,
+          }))
+            ? startRef
+            : legacyPreviousCheckpointRef;
           const previousExists = yield* checkpointStore.hasCheckpointRef({
             cwd: input.scope.cwd,
             checkpointRef: previousCheckpointRef,
@@ -529,7 +558,10 @@ export const layer: Layer.Layer<
         input.scope.cwd,
         checkpointStore.deleteCheckpointRefs({
           cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          checkpointRefs: input.checkpoints.flatMap((checkpoint) => [
+            checkpoint.ref,
+            checkpointStartRef(checkpoint.ref),
+          ]),
         }),
       ).pipe(
         Effect.mapError(
@@ -543,6 +575,38 @@ export const layer: Layer.Layer<
       );
 
     return CheckpointServiceV2.of({
+      discardBaseline: (input) =>
+        withWorkspaceLock(
+          input.scope.cwd,
+          Effect.gen(function* () {
+            // Mirrors captureBaseline: a workspace without a Git repository
+            // never stored a start ref, and resolving a driver for one here
+            // would fail this cleanup into an endless outbox retry.
+            if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+              return;
+            }
+            yield* checkpointStore.deleteCheckpointRefs({
+              cwd: input.scope.cwd,
+              checkpointRefs: [
+                checkpointStartRef(
+                  checkpointRefForScopeOrdinal({
+                    scopeId: input.scope.id,
+                    ordinalWithinScope: input.ordinalWithinScope,
+                  }),
+                ),
+              ],
+            });
+          }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CheckpointBaselineCleanupError({
+                scopeId: input.scope.id,
+                ordinalWithinScope: input.ordinalWithinScope,
+                cause,
+              }),
+          ),
+        ),
       prepareRootRunScope: (input) =>
         makeRootRunScope({ ...input, idAllocator }).pipe(
           Effect.mapError(

@@ -33,6 +33,11 @@ export class CheckpointCaptureExecutionError extends Schema.TaggedError<Checkpoi
 const isCheckpointCaptureExecutionError = Schema.is(CheckpointCaptureExecutionError);
 
 export interface CheckpointCaptureServiceV2Shape {
+  readonly cleanupBaseline: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly scopeId: CheckpointScopeId;
+  }) => Effect.Effect<void, CheckpointCaptureExecutionError>;
   readonly execute: (input: {
     readonly threadId: ThreadId;
     readonly runId: RunId;
@@ -133,7 +138,21 @@ export const layer: Layer.Layer<
         threadId: input.threadId,
         commandType: "checkpoint.capture",
         acceptedAt: capturedAt,
-        effects: [],
+        effects:
+          checkpoint.status === "ready"
+            ? []
+            : [
+                {
+                  id: `effect:checkpoint.baseline.cleanup:${run.id}`,
+                  commandId,
+                  threadId: input.threadId,
+                  request: {
+                    type: "checkpoint.baseline.cleanup",
+                    runId: run.id,
+                    scopeId: scope.id,
+                  },
+                },
+              ],
         events: [
           ...(threadStartCheckpoint === null
             ? []
@@ -227,6 +246,40 @@ export const layer: Layer.Layer<
     });
 
     return CheckpointCaptureServiceV2.of({
+      cleanupBaseline: Effect.fn("checkpoint.cleanupBaseline")(
+        function* (input) {
+          const projection = yield* projections.getThreadProjection(input.threadId);
+          const run = projection.runs.find((candidate) => candidate.id === input.runId);
+          const scope = projection.checkpointScopes.find(
+            (candidate) => candidate.id === input.scopeId,
+          );
+          if (run === undefined || scope === undefined) return;
+          // Never discard a baseline still needed by capture or a historical diff.
+          if (
+            !["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(run.status)
+          )
+            return;
+          // A later turn can materialize a ready baseline at this ordinal with
+          // no run owner. Only this run's own checkpoint can retain its start ref.
+          const checkpoint = projection.checkpoints.find(
+            (candidate) =>
+              candidate.scopeId === scope.id &&
+              candidate.ordinalWithinScope === run.ordinal &&
+              candidate.runId === run.id,
+          );
+          if (checkpoint?.status === "ready") return;
+          // A completed run only abandons its baseline once capture has actually
+          // run and failed, which commits a non-ready row alongside this effect.
+          // No row means capture is still queued behind us and would lose the
+          // per-turn baseline it is about to diff against.
+          if (run.status === "completed" && checkpoint === undefined) return;
+          yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: run.ordinal });
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.mapError((cause) => new CheckpointCaptureExecutionError({ ...input, cause })),
+          ),
+      ),
       execute: (input) =>
         execute(input).pipe(
           Effect.mapError((cause) =>

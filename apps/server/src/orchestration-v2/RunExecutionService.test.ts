@@ -2715,7 +2715,7 @@ it.effect("omits interrupt results and subagent cascade for a superseded attempt
 
 it.effect("emits run_interrupt_result when superseded attempt still has a hard-stop request", () =>
   Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
+    const { written, observed, effects } = yield* captureRootRunTermination({
       key: "stop-then-steer-supersede",
       shouldFinalizeRun: () => Effect.succeed(false),
       hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
@@ -2725,6 +2725,7 @@ it.effect("emits run_interrupt_result when superseded attempt still has a hard-s
       ["run_interrupt_result"],
     );
     assert.deepEqual(observed, ["pull-requests-refreshed"]);
+    assert.deepEqual(effects, ["checkpoint.baseline.cleanup"]);
     const ids = backgroundScenarioIds("stop-then-steer-supersede");
     const expectedRequestId = yield* Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
@@ -2889,6 +2890,7 @@ function captureRootRunTermination(input: {
     const writtenItems = yield* Ref.make<
       ReadonlyArray<{ readonly type: string; readonly parentItemId: string | null }>
     >([]);
+    const effects: string[] = [];
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: {
@@ -2915,6 +2917,7 @@ function captureRootRunTermination(input: {
               }),
             writeWithEffects: (payload) =>
               Effect.gen(function* () {
+                effects.push(...payload.effects.map((effect) => effect.request.type));
                 for (const event of payload.events) {
                   if (event.type === "turn-item.updated") {
                     yield* captureTurnItem(event.payload);
@@ -3037,7 +3040,7 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed), effects };
   });
 }
 
@@ -3354,6 +3357,26 @@ function rootTerminalEvent(
     : { ...common, status, failure: null };
 }
 
+it.effect.each(["completed", "interrupted", "failed", "cancelled"] as const)(
+  "persists checkpoint work appropriate to a $status terminal",
+  (status) =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      yield* runBackgroundItemScenario(
+        `baseline-cleanup-${status}`,
+        (ids) => [rootTerminalEvent(ids, status)],
+        {
+          onEffects: (effects) => {
+            requests.push(...effects.map((effect) => effect.request.type));
+          },
+        },
+      );
+      assert.deepEqual(requests, [
+        status === "completed" ? "checkpoint.capture" : "checkpoint.baseline.cleanup",
+      ]);
+    }),
+);
+
 function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapterV2Event>,
@@ -3363,6 +3386,9 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onEffects?: (
+      effects: Parameters<EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"],
+    ) => void;
   },
 ) {
   return Effect.gen(function* () {
@@ -3378,6 +3404,7 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                options?.onEffects?.(input.effects);
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,

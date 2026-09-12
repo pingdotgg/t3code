@@ -393,6 +393,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         runFinalizationServiceProvided,
+        checkpointCaptureServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
         providerTurnControlServiceProvided,

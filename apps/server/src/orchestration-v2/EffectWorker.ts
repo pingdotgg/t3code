@@ -24,6 +24,7 @@ import {
   type OrchestrationEffectV2,
 } from "./EffectOutbox.ts";
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import { CheckpointCaptureServiceV2 } from "./CheckpointCaptureService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
@@ -83,6 +84,7 @@ export const executorLayer: Layer.Layer<
   | ProviderSessionManagerV2
   | RunFinalizationService
   | CheckpointRollbackServiceV2
+  | CheckpointCaptureServiceV2
   | ProviderTurnControlServiceV2
   | ProviderTurnStartServiceV2
   | RuntimeRequestServiceV2
@@ -95,6 +97,7 @@ export const executorLayer: Layer.Layer<
     const runFinalization = yield* RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackServiceV2;
+    const checkpointCapture = yield* CheckpointCaptureServiceV2;
     const providerSessions = yield* ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlServiceV2;
     const providerTurnStart = yield* ProviderTurnStartServiceV2;
@@ -344,6 +347,23 @@ export const executorLayer: Layer.Layer<
           case "checkpoint.capture":
             return runFinalization
               .finalize({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                scopeId: effect.request.scopeId,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "checkpoint.baseline.cleanup":
+            return checkpointCapture
+              .cleanupBaseline({
                 threadId: effect.threadId,
                 runId: effect.request.runId,
                 scopeId: effect.request.scopeId,
