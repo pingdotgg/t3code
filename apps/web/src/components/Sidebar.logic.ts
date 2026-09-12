@@ -23,6 +23,22 @@ import { isLatestTurnSettled } from "../session-logic";
 
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+
+const EMPTY_SHELF_THREADS: readonly never[] = [];
+
+/** Collapsed shelves keep only the open thread, scoped to its environment. */
+export function visibleSidebarShelfThreads<T extends { id: string; environmentId: string }>(
+  threads: readonly T[],
+  expanded: boolean,
+  routeThreadKey: string | null,
+): readonly T[] {
+  if (expanded) return threads;
+  if (routeThreadKey === null) return EMPTY_SHELF_THREADS;
+  const openThread = threads.find(
+    (thread) => `${thread.environmentId}:${thread.id}` === routeThreadKey,
+  );
+  return openThread === undefined ? EMPTY_SHELF_THREADS : [openThread];
+}
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
 // thread holds a live, fully hydrated detail subscription (all messages and

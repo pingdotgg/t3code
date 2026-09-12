@@ -13,6 +13,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
+  visibleSidebarShelfThreads,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
@@ -67,6 +68,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("visibleSidebarShelfThreads", () => {
+  it("hides collapsed rows except the open thread in its exact environment", () => {
+    const threads = [
+      { id: "same", environmentId: "local" },
+      { id: "same", environmentId: "remote" },
+      { id: "other", environmentId: "local" },
+    ];
+    expect(visibleSidebarShelfThreads(threads, false, "remote:same")).toEqual([threads[1]]);
+    expect(visibleSidebarShelfThreads(threads, false, null)).toEqual([]);
+    expect(visibleSidebarShelfThreads(threads, false, "missing:same")).toEqual([]);
+    expect(visibleSidebarShelfThreads(threads, true, "remote:same")).toBe(threads);
+  });
+});
 
 describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
