@@ -40,6 +40,15 @@ It places `t3` in `~/.local/bin` and reuses the same download when you later
 run `t3 service install`. Set `T3CODE_VERSION` to pin an exact version, or
 `T3CODE_RELEASE_BASE_URL` to download from a mirror.
 
+Once a self-contained `t3` is installed, `t3 update` moves the machine to a
+newer one without npm: it downloads the newest release on the channel the
+running `t3` came from, verifies it, points the `t3` launcher at it, and
+updates the background service when one is installed for the same T3 home.
+Pass an exact version (`t3 update 0.0.41-preview.20260912.1595`) to pin one,
+`--channel` to follow a different release train, or `--allow-downgrade` to
+move backwards. Versions published only to npm cannot be installed this way;
+the command says so and names the `npm install` to run instead.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

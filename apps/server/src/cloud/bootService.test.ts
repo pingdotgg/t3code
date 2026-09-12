@@ -37,6 +37,35 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
   expect(unit).not.toContain("versions/1.2.3");
 });
 
+it("reads the served T3 home back out of a rendered unit or plist", () => {
+  const plan = (baseDir: string) => ({
+    program: ["/usr/bin/node", `${baseDir}/runtime/service-launcher.mjs`],
+    launcherPath: `${baseDir}/runtime/service-launcher.mjs`,
+    baseDir,
+    logPath: `${baseDir}/userdata/logs/boot-service.log`,
+    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+  });
+
+  expect(
+    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
+  ).toBe("/home/theo/.t3");
+  // Spaces and specifiers are quoted and escaped on the way in.
+  expect(
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+    ),
+  ).toBe("/home/theo/T3 Data/100%");
+  expect(
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
+        homeDir: "/Users/theo",
+        environmentPath: "/usr/bin",
+      }),
+    ),
+  ).toBe("/Users/theo/a&b");
+  expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
+});
+
 it("runs archive-distributed runtimes as their own executable", () => {
   const unit = BootService.renderBootServiceUnit({
     program: ["/home/theo/.t3/runtime/versions/1.3.0-preview.20260911.7/t3", "__service-launcher"],
