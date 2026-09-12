@@ -13,6 +13,7 @@ import { useCallback, useMemo } from "react";
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  openWorkspaceMenuLabel,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -39,6 +40,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { openFileManagerPath, useFileManagerActionForEnvironment } from "../fileManagerReveal";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -68,6 +70,7 @@ export function useThreadActionMenu(input: {
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
+  const fileManagerAction = useFileManagerActionForEnvironment(threadRef?.environmentId ?? null);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -128,6 +131,7 @@ export function useThreadActionMenu(input: {
         // what the user is looking at.
         const thread = readThreadShell(threadRef);
         if (!thread) return;
+        const threadWorkspacePath = thread.worktreePath ?? projectCwd;
         const now = new Date();
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
@@ -147,6 +151,13 @@ export function useThreadActionMenu(input: {
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
           snoozePresets,
+          openWorkspaceLabel:
+            threadWorkspacePath && fileManagerAction
+              ? openWorkspaceMenuLabel(
+                  fileManagerAction.open.managerName,
+                  thread.worktreePath !== null,
+                )
+              : null,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -254,7 +265,7 @@ export function useThreadActionMenu(input: {
             markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
             return;
           case "copy-path": {
-            const workspacePath = thread.worktreePath ?? projectCwd;
+            const workspacePath = threadWorkspacePath;
             if (!workspacePath) {
               toastManager.add(
                 stackedThreadToast({
@@ -266,6 +277,15 @@ export function useThreadActionMenu(input: {
               return;
             }
             copyPathToClipboard(workspacePath, { path: workspacePath });
+            return;
+          }
+          case "open-in-file-manager": {
+            if (!threadWorkspacePath || !fileManagerAction) return;
+            await openFileManagerPath(
+              fileManagerAction,
+              threadWorkspacePath,
+              `Failed to open ${thread.worktreePath ? "worktree" : "project"}`,
+            );
             return;
           }
           case "copy-branch":
@@ -345,6 +365,7 @@ export function useThreadActionMenu(input: {
       projectCwd,
       projectGroupingSettings,
       projects,
+      fileManagerAction,
       router,
       settleThread,
       snoozeThread,

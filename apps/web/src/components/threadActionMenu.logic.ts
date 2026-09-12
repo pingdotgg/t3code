@@ -1,6 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+import type { FileManagerOpenName } from "./preview/fileExplorerLabel";
+
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
  * `snooze:<presetId>` so the union stays closed while the preset list
@@ -23,6 +25,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "open-in-file-manager"
   | "archive"
   | "delete";
 
@@ -42,6 +45,14 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  readonly openWorkspaceLabel: string | null;
+}
+
+export function openWorkspaceMenuLabel(
+  fileManagerName: FileManagerOpenName,
+  hasWorktree: boolean,
+): string {
+  return `Open ${hasWorktree ? "worktree" : "project"} in ${fileManagerName}`;
 }
 
 /**
@@ -120,6 +131,15 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
+    ...(state.openWorkspaceLabel
+      ? [
+          {
+            id: "open-in-file-manager" as const,
+            label: state.openWorkspaceLabel,
+            icon: "folder",
+          },
+        ]
+      : []),
     { id: "project-settings", label: "Project settings", icon: "settings" },
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
