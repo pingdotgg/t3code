@@ -5,6 +5,7 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
+      - "!v*-preview.*"
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
     - cron: "8,38 * * * *"
@@ -18,6 +19,7 @@ on:
         options:
           - stable
           - nightly
+          - preview
       version:
         description: "Stable version override (for example 1.2.3). Defaults to the version the latest nightly previewed."
         required: false
@@ -30,7 +32,7 @@ on:
 # newest-wins single slot, so a queued stable tag can never be silently
 # dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
-  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
+  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -72,7 +74,7 @@ jobs:
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
-            } else if (context.eventName === 'workflow_dispatch' && process.env.DISPATCH_CHANNEL !== 'nightly') {
+            } else if (context.eventName === 'workflow_dispatch' && process.env.DISPATCH_CHANNEL !== 'nightly' && process.env.DISPATCH_CHANNEL !== 'preview') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
               core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
               core.setOutput('ref', sha);
@@ -142,6 +144,26 @@ jobs:
 
             echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
             echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "preview" ]]; then
+            # Temporary channel for dogfooding the archive-based CLI runtime.
+            # Same versioning as nightly under its own prerelease identifier.
+            # A preview release is reachable only by downloading it by hand:
+            # it is never published to npm, its desktop builds carry no update
+            # feed, and no updater manifest is attached to the release, so
+            # neither stable nor nightly installs can ever be offered one.
+            nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
+
+            node scripts/resolve-nightly-release.ts \
+              --channel preview \
+              --date "$nightly_date" \
+              --run-number "$NIGHTLY_RUN_NUMBER" \
+              --sha "$NIGHTLY_SHA" \
+              --github-output
+
+            echo "release_channel=preview" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -403,6 +425,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # cli_archive: whether the job also builds the self-contained CLI
+          # archive. The executable is built on the runner's own Node, so only
+          # native runners qualify. macOS x64 has no native runner: a
+          # cross-built executable crashed under Rosetta in the smoke test and
+          # cannot be verified on real x64 hardware in CI, so it is skipped
+          # until it can be.
           - label: macOS arm64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -410,6 +438,7 @@ jobs:
             arch: arm64
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
+            cli_archive: true
           - label: macOS x64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -417,6 +446,7 @@ jobs:
             arch: x64
             rust_target: x86_64-apple-darwin
             resource_key: darwin-x64
+            cli_archive: false
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
@@ -424,6 +454,7 @@ jobs:
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
             resource_key: linux-x64
+            cli_archive: true
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
             platform: win
@@ -431,6 +462,7 @@ jobs:
             arch: x64
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
+            cli_archive: true
           # - label: Windows arm64
           #   runner: windows-11-arm
           #   platform: win
@@ -710,6 +742,105 @@ jobs:
 
           vp run dist:desktop:artifact "${args[@]}"
 
+      # The single-executable is built with a Node that supports --build-sea
+      # (25.7+); the repo itself stays on the engines.node version. It always
+      # injects into the runner's own Node: tsdown's cross-target download path
+      # runs `tar` on a drive-letter path on Windows, which GNU tar reads as a
+      # remote host, and a cross-built macOS binary cannot be smoke-tested.
+      - name: Build CLI single-executable
+        if: matrix.cli_archive
+        shell: bash
+        env:
+          # The exact version, not a major: vp downloads it from nodejs.org/dist on
+          # the runner, and only exact versions have a dist directory. Keep in
+          # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Import macOS signing certificate for the CLI archive
+        if: matrix.cli_archive && matrix.platform == 'mac'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "macOS CLI signing disabled (missing CSC_LINK); the archive is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/t3-cli-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          cert_path="$RUNNER_TEMP/t3-cli-signing.p12"
+          printf '%s' "$CSC_LINK" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -n 1)"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity found in CSC_LINK." >&2
+            exit 1
+          fi
+          echo "::add-mask::$keychain_password"
+          echo "T3CODE_CLI_MAC_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "macOS CLI signing enabled."
+
+      - name: Stage resource monitor for the CLI archive
+        if: matrix.cli_archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
+
+      - name: Build CLI archive
+        if: matrix.cli_archive
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == "mac" && -n "${APPLE_API_KEY:-}" ]]; then
+            key_path="$RUNNER_TEMP/AuthKey_cli_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            export APPLE_API_KEY="$key_path"
+          fi
+          node scripts/build-cli-archive.ts \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        if: matrix.cli_archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Upload CLI archive
+        if: matrix.cli_archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-cli/*
+          if-no-files-found: error
+
       - name: Collect release assets
         shell: bash
         run: |
@@ -717,13 +848,19 @@ jobs:
           mkdir -p release-publish
 
           shopt -s nullglob
-          for pattern in \
-            "release/*.dmg" \
-            "release/*.zip" \
-            "release/*.AppImage" \
-            "release/*.exe" \
-            "release/*.blockmap" \
-            "release/*.yml"; do
+          patterns=(
+            "release/*.dmg"
+            "release/*.zip"
+            "release/*.AppImage"
+            "release/*.exe"
+          )
+          # Preview builds have no publish config, so electron-builder writes
+          # no feed manifest for them, but it still emits blockmaps beside the
+          # installers. Neither belongs on a release no updater may follow.
+          if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
+            patterns+=("release/*.blockmap" "release/*.yml")
+          fi
+          for pattern in "${patterns[@]}"; do
             for file in $pattern; do
               cp "$file" release-publish/
             done
@@ -775,10 +912,12 @@ jobs:
           path: resource-monitor-publish/${{ matrix.resource_key }}/*
           if-no-files-found: error
 
+  # Preview releases never reach npm: the archive on the GitHub Release is the
+  # only way to obtain one, so no dist-tag can ever resolve to a preview build.
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, relay_public_config, quality, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -856,7 +995,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && (needs.publish_cli.result == 'success' || (needs.preflight.outputs.release_channel == 'preview' && needs.publish_cli.result == 'skipped')) }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -887,7 +1026,48 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download all CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+
+      # Installers verify archives against this file, so it is written from the
+      # signed bytes that get uploaded, never from an earlier stage.
+      - name: Write CLI archive checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      # The desktop build omits the publish config for preview versions, so
+      # electron-builder emits no updater manifests for them. Refuse to publish
+      # if one shows up anyway: a `latest*.yml` or `nightly*.yml` on a preview
+      # release is what would let a stable or nightly install update onto it.
+      - name: Refuse updater metadata on preview releases
+        if: needs.preflight.outputs.release_channel == 'preview'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob extglob
+          # builder-debug.yml is electron-builder's config dump, not a feed.
+          updater_files=(release-assets/!(builder-debug).yml release-assets/*.blockmap)
+          if [[ ${#updater_files[@]} -ne 0 ]]; then
+            printf 'Preview releases must not carry updater metadata, found: %s\n' "${updater_files[*]}" >&2
+            exit 1
+          fi
+
       - name: Merge macOS updater manifests
+        if: needs.preflight.outputs.release_channel != 'preview'
         run: |
           shopt -s nullglob
           for x64_manifest in release-assets/*-mac-x64.yml; do
@@ -897,6 +1077,27 @@ jobs:
               rm -f "$x64_manifest"
             fi
           done
+
+      # Updater manifests and blockmaps are what electron-updater consumes.
+      # They are only listed for channels an updater is meant to follow.
+      - id: release_files
+        name: Resolve release asset list
+        shell: bash
+        run: |
+          {
+            echo 'files<<EOF'
+            echo 'release-assets/*.dmg'
+            echo 'release-assets/*.zip'
+            echo 'release-assets/*.AppImage'
+            echo 'release-assets/*.exe'
+            if [[ "${{ needs.preflight.outputs.release_channel }}" != "preview" ]]; then
+              echo 'release-assets/*.blockmap'
+              echo 'release-assets/*.yml'
+            fi
+            echo 'release-assets/*.tar.gz'
+            echo 'release-assets/SHA256SUMS'
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
@@ -909,13 +1110,7 @@ jobs:
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
@@ -929,20 +1124,14 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
-            release-assets/*.exe
-            release-assets/*.blockmap
-            release-assets/*.yml
+          files: ${{ steps.release_files.outputs.files }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     uses: ./.github/workflows/publish-aur.yml
     with:
       release_tag: ${{ needs.preflight.outputs.tag }}
@@ -952,7 +1141,7 @@ jobs:
   deploy_web:
     name: Deploy hosted web app
     needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
@@ -1206,6 +1395,7 @@ jobs:
     if: |
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
+      needs.preflight.outputs.release_channel != 'preview' &&
       needs.relay_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&

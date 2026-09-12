@@ -11,7 +11,7 @@ import * as String from "effect/String";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const ReleaseChannel = Schema.Literals(["stable", "nightly"]);
+const ReleaseChannel = Schema.Literals(["stable", "nightly", "preview"]);
 type ReleaseChannel = typeof ReleaseChannel.Type;
 
 export class InvalidReleaseTagError extends Schema.TaggedError<InvalidReleaseTagError>()(
@@ -151,10 +151,12 @@ const parseStableTag = (tag: string): StableVersion | undefined => {
   if (!major || !minor || !patch) return undefined;
 
   const prereleaseIdentifiers = prerelease ? prerelease.split(".") : [];
-  // Nightly tags also start with `v` and carry a `nightly.*` prerelease
-  // identifier. They must not be considered stable candidates when resolving
-  // the previous stable tag.
-  if (prereleaseIdentifiers[0] === "nightly") return undefined;
+  // Nightly and preview tags also start with `v` and carry their channel as
+  // the prerelease identifier. They must not be considered stable candidates
+  // when resolving the previous stable tag.
+  if (prereleaseIdentifiers[0] === "nightly" || prereleaseIdentifiers[0] === "preview") {
+    return undefined;
+  }
 
   return {
     major: Number(major),
@@ -172,10 +174,15 @@ const compareNightlyVersions = (left: NightlyVersion, right: NightlyVersion): nu
   return left.runNumber - right.runNumber;
 };
 
-const parseNightlyTag = (tag: string): NightlyVersion | undefined => {
+const parseNightlyTag = (
+  tag: string,
+  channel: "nightly" | "preview" = "nightly",
+): NightlyVersion | undefined => {
   // Accept both the current `v<semver>` format and the legacy `nightly-v<semver>`
   // format so release note diffs keep working across the tag-format transition.
-  const match = /^(?:nightly-)?v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})\.(\d+)$/.exec(tag);
+  const match = new RegExp(
+    `^(?:nightly-)?v(\\d+)\\.(\\d+)\\.(\\d+)-${channel}\\.(\\d{8})\\.(\\d+)$`,
+  ).exec(tag);
   if (!match) return undefined;
 
   const [, major, minor, patch, date, runNumber] = match;
@@ -213,13 +220,13 @@ export const resolvePreviousReleaseTag = (
       return candidates[0]?.tag;
     }
 
-    const current = parseNightlyTag(currentTag);
+    const current = parseNightlyTag(currentTag, channel);
     if (!current) {
       return yield* new InvalidReleaseTagError({ channel, currentTag });
     }
 
     const candidates = tags
-      .map((tag) => ({ tag, parsed: parseNightlyTag(tag) }))
+      .map((tag) => ({ tag, parsed: parseNightlyTag(tag, channel) }))
       .filter(
         (entry): entry is { tag: string; parsed: NightlyVersion } => entry.parsed !== undefined,
       )
