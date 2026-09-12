@@ -52,9 +52,15 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  mergeComposerDraftPromptWithPendingAnswer,
+  resolveComposerDraftPromptAfterReturningPendingAnswer,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
+  collectPendingUserInputCustomAnswers,
+  resolveComposerDraftToCarryIntoPendingUserInput,
+  shouldRescueCancelledPendingUserInput,
+  pendingUserInputRequestKey,
   resolveComposerInteractionMode,
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
@@ -1157,6 +1163,250 @@ describe("buildThreadTurnInterruptInput", () => {
         }),
       ),
     ).toEqual({ threadId });
+  });
+});
+
+describe("pendingUserInputRequestKey", () => {
+  it("rescues only answers belonging to the original environment and thread", () => {
+    const first = scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("thread-a"));
+    const otherThread = scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("thread-b"));
+    const otherEnvironment = scopeThreadRef(EnvironmentId.make("env-b"), ThreadId.make("thread-a"));
+    const answers = {
+      [pendingUserInputRequestKey(first, "req-1")]: {
+        question: { customAnswer: "original draft" },
+      },
+      [pendingUserInputRequestKey(otherThread, "req-1")]: {
+        question: { customAnswer: "other thread" },
+      },
+      [pendingUserInputRequestKey(otherEnvironment, "req-1")]: {
+        question: { customAnswer: "other environment" },
+      },
+    };
+    expect(
+      collectPendingUserInputCustomAnswers(
+        answers[pendingUserInputRequestKey({ ...first }, "req-1")],
+      ),
+    ).toBe("original draft");
+    expect(
+      collectPendingUserInputCustomAnswers(answers[pendingUserInputRequestKey(first, "req-2")]),
+    ).toBeNull();
+  });
+
+  it("shares the scoped key used by submission and pending question state", () => {
+    const target = scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("thread-a"));
+    expect(pendingUserInputRequestKey(target, "req-1")).toBe(
+      JSON.stringify(["env-a", "thread-a", "req-1"]),
+    );
+    expect(pendingUserInputRequestKey("draft-a", "req-1")).not.toBe(
+      pendingUserInputRequestKey(target, "req-1"),
+    );
+  });
+});
+
+describe("shouldRescueCancelledPendingUserInput", () => {
+  it.each([
+    ["env-a", true],
+    ["env-b", false],
+  ] as const)("compares scoped owners by value for %s", (environment, expected) => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous: {
+          requestId: "req-1",
+          draftTarget: scopeThreadRef(EnvironmentId.make("env-a"), ThreadId.make("thread-a")),
+        },
+        nextRequestId: null,
+        currentDraftTarget: scopeThreadRef(
+          EnvironmentId.make(environment),
+          ThreadId.make("thread-a"),
+        ),
+        wasSubmitted: false,
+      }),
+    ).toBe(expected);
+  });
+
+  const previous = { requestId: "req-1", draftTarget: "thread-a" };
+
+  it("rescues when the request disappears without being submitted", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous,
+        nextRequestId: null,
+        currentDraftTarget: "thread-a",
+        wasSubmitted: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("rescues when another question replaces the request in the same render", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous,
+        nextRequestId: "req-2",
+        currentDraftTarget: "thread-a",
+        wasSubmitted: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not rescue a submitted answer", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous,
+        nextRequestId: null,
+        currentDraftTarget: "thread-a",
+        wasSubmitted: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not rescue when the request is unchanged", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous,
+        nextRequestId: "req-1",
+        currentDraftTarget: "thread-a",
+        wasSubmitted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not rescue after switching to another thread", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous,
+        nextRequestId: null,
+        currentDraftTarget: "thread-b",
+        wasSubmitted: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does nothing without a previous request", () => {
+    expect(
+      shouldRescueCancelledPendingUserInput({
+        previous: null,
+        nextRequestId: null,
+        currentDraftTarget: "thread-a",
+        wasSubmitted: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("collectPendingUserInputCustomAnswers", () => {
+  it("keeps every non-blank answer of a multi-question request", () => {
+    expect(
+      collectPendingUserInputCustomAnswers({
+        q1: { customAnswer: "first" },
+        q2: { customAnswer: "   " },
+        q3: { customAnswer: "third" },
+      }),
+    ).toBe("first\n\nthird");
+  });
+
+  it("returns null when nothing non-blank was typed", () => {
+    expect(collectPendingUserInputCustomAnswers({ q1: { customAnswer: " " }, q2: {} })).toBeNull();
+    expect(collectPendingUserInputCustomAnswers(undefined)).toBeNull();
+  });
+});
+
+describe("mergeComposerDraftPromptWithPendingAnswer", () => {
+  it("replaces a blank existing draft outright", () => {
+    expect(mergeComposerDraftPromptWithPendingAnswer("", "run the migration instead")).toBe(
+      "run the migration instead",
+    );
+    expect(mergeComposerDraftPromptWithPendingAnswer("   ", "run the migration instead")).toBe(
+      "run the migration instead",
+    );
+  });
+
+  it("leaves an identical existing draft untouched instead of duplicating it", () => {
+    expect(mergeComposerDraftPromptWithPendingAnswer("same text", "same text")).toBe("same text");
+  });
+
+  it("appends the rescued answer after a blank line when the existing draft differs", () => {
+    expect(mergeComposerDraftPromptWithPendingAnswer("older unsent note", "rescued answer")).toBe(
+      "older unsent note\n\nrescued answer",
+    );
+  });
+
+  it("returns null for a blank/whitespace-only custom answer, regardless of the existing draft", () => {
+    expect(mergeComposerDraftPromptWithPendingAnswer("older unsent note", "")).toBeNull();
+    expect(mergeComposerDraftPromptWithPendingAnswer("older unsent note", "   ")).toBeNull();
+    expect(mergeComposerDraftPromptWithPendingAnswer("", "")).toBeNull();
+  });
+});
+
+describe("resolveComposerDraftPromptAfterReturningPendingAnswer", () => {
+  it("discards only the matching carried copy when the user erases their answer", () => {
+    expect(
+      resolveComposerDraftPromptAfterReturningPendingAnswer({
+        draftPrompt: "original composer text",
+        carriedDraftPrompt: "original composer text",
+        pendingCustomAnswer: "",
+        discardEmptyCarriedDraft: true,
+      }),
+    ).toBe("");
+    expect(
+      resolveComposerDraftPromptAfterReturningPendingAnswer({
+        draftPrompt: "another draft",
+        carriedDraftPrompt: "original composer text",
+        pendingCustomAnswer: "",
+        discardEmptyCarriedDraft: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves the carried draft when an option replaces an empty custom answer", () => {
+    expect(
+      resolveComposerDraftPromptAfterReturningPendingAnswer({
+        draftPrompt: "original composer text",
+        carriedDraftPrompt: "original composer text",
+        pendingCustomAnswer: "",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveComposerDraftToCarryIntoPendingUserInput", () => {
+  it("carries the typed draft into a question that has just arrived", () => {
+    expect(
+      resolveComposerDraftToCarryIntoPendingUserInput({
+        hasAnswerState: false,
+        draftPrompt: "actually, use the existing migration",
+      }),
+    ).toBe("actually, use the existing migration");
+  });
+
+  it("leaves a question alone once it already has answer state", () => {
+    expect(
+      resolveComposerDraftToCarryIntoPendingUserInput({
+        hasAnswerState: true,
+        draftPrompt: "typed after coming back to the thread",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not carry text into a question that rejects custom answers", () => {
+    expect(
+      resolveComposerDraftToCarryIntoPendingUserInput({
+        hasAnswerState: false,
+        allowCustomAnswer: false,
+        draftPrompt: "keep this as a draft",
+      }),
+    ).toBeNull();
+  });
+
+  it("carries nothing when the draft is blank", () => {
+    expect(
+      resolveComposerDraftToCarryIntoPendingUserInput({ hasAnswerState: false, draftPrompt: "" }),
+    ).toBeNull();
+    expect(
+      resolveComposerDraftToCarryIntoPendingUserInput({
+        hasAnswerState: false,
+        draftPrompt: "  \n ",
+      }),
+    ).toBeNull();
   });
 });
 

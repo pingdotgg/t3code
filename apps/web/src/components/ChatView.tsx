@@ -1,3 +1,4 @@
+import { usePendingUserInputDraft } from "./chat/usePendingUserInputDraft";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -414,6 +415,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  pendingUserInputRequestKey,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
@@ -2689,11 +2691,10 @@ export default function ChatView(props: ChatViewProps) {
     [threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
-  const activePendingRequestKey = JSON.stringify([
-    environmentId,
-    activeThreadId,
-    activePendingUserInput?.requestId,
-  ]);
+  const activePendingRequestKey = pendingUserInputRequestKey(
+    composerDraftTarget,
+    activePendingUserInput?.requestId ?? null,
+  );
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -2815,6 +2816,13 @@ export default function ChatView(props: ChatViewProps) {
         : null,
     [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
   );
+  const { returnQuestionTextToComposerDraft, beginSubmission: beginPendingUserInputSubmission } =
+    usePendingUserInputDraft({
+      composerDraftTarget,
+      activePendingUserInput,
+      pendingUserInputAnswersByRequestId,
+      setPendingUserInputAnswersByRequestId,
+    });
   const activePendingResolvedAnswers = useMemo(
     () =>
       activePendingUserInput
@@ -7663,6 +7671,7 @@ export default function ChatView(props: ChatViewProps) {
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
+      const restoreFailedSubmission = beginPendingUserInputSubmission(requestId);
       const result = await respondToThreadUserInput({
         environmentId,
         input: {
@@ -7674,12 +7683,15 @@ export default function ChatView(props: ChatViewProps) {
             : {}),
         },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit user input.",
-        );
+      if (result._tag === "Failure") {
+        restoreFailedSubmission();
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : "Failed to submit user input.",
+          );
+        }
       }
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
@@ -7690,6 +7702,7 @@ export default function ChatView(props: ChatViewProps) {
       activePendingUserInput,
       activePendingIsResponding,
       environmentId,
+      beginPendingUserInputSubmission,
       respondToThreadUserInput,
       setThreadError,
     ],
@@ -7739,6 +7752,14 @@ export default function ChatView(props: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
+      // Choosing an option replaces typed text as the answer, but the text
+      // may be the draft carried in when the question appeared, so it goes
+      // back to the draft instead of being discarded.
+      returnQuestionTextToComposerDraft(
+        activePendingUserInput.requestId,
+        activePendingDraftAnswers[questionId]?.customAnswer ?? "",
+        composerDraftTarget,
+      );
       setPendingUserInputAnswersByRequestId((existing) => {
         const question =
           (activePendingProgress?.activeQuestion?.id === questionId
@@ -7765,10 +7786,13 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState({ cursor: 0 });
     },
     [
+      activePendingDraftAnswers,
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       activePendingRequestKey,
+      composerDraftTarget,
       composerRef,
+      returnQuestionTextToComposerDraft,
     ],
   );
 
