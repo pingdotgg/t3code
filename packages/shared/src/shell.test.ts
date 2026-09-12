@@ -1,9 +1,11 @@
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -25,8 +27,11 @@ import {
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
+  withCommandDirectoryCache,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
+
+vi.mock("node:fs", { spy: true });
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -423,6 +428,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         const resolved = yield* resolveCommandPath(command, {
           env: { PATH: cwd, PATHEXT: ".CMD" },
         }).pipe(
+          withCommandDirectoryCache,
           Effect.provideService(HostProcessPlatform, "win32"),
           Effect.provideService(CommandResolutionCache, new Map()),
           Effect.provideService(FileSystem.FileSystem, {
@@ -435,6 +441,108 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
         expect(resolved).toBe(executable);
       }),
+  );
+
+  it.effect.each(["case-insensitive", "case-sensitive"] as const)(
+    "honors %s macOS filesystems when filtering directory entries",
+    (caseSensitivity) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const access = vi.spyOn(NodeFS, "accessSync").mockImplementation(() => {});
+        const available = yield* isCommandAvailable("code", { env: { PATH: "/editor-bin" } }).pipe(
+          withCommandDirectoryCache,
+          Effect.provideService(HostProcessPlatform, "darwin"),
+          Effect.provideService(CommandResolutionCache, new Map()),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: () => Effect.succeed(["Code"]),
+            stat: (filePath) =>
+              path.basename(filePath) === "Code" ||
+              (caseSensitivity === "case-insensitive" && path.basename(filePath) === "code")
+                ? Effect.succeed({ type: "File" } as FileSystem.File.Info)
+                : Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "FileSystem",
+                      method: "stat",
+                    }),
+                  ),
+          }),
+          Effect.ensuring(Effect.sync(() => access.mockRestore())),
+        );
+        expect(available).toBe(caseSensitivity === "case-insensitive");
+      }),
+  );
+
+  it.effect("shares directory listings across commands while preserving PATH priority", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const first = yield* fs.makeTempDirectoryScoped();
+      const second = yield* fs.makeTempDirectoryScoped();
+      const missing = path.join(first, "missing-directory");
+      yield* fs.writeFileString(path.join(first, "cursor.CMD"), "");
+      yield* fs.writeFileString(path.join(second, "cursor.EXE"), "");
+      yield* fs.writeFileString(path.join(second, "explorer.EXE"), "");
+      const env = { PATH: [missing, first, second].join(";"), PATHEXT: ".EXE;.CMD" };
+      const listings: string[] = [];
+      const stats: string[] = [];
+      yield* Effect.gen(function* () {
+        expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
+        expect(yield* resolveCommandPath("explorer", { env })).toBe(
+          path.join(second, "explorer.EXE"),
+        );
+        expect(yield* isCommandAvailable("absent-editor", { env })).toBe(false);
+      }).pipe(
+        withCommandDirectoryCache,
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readDirectory: (directory) => {
+            listings.push(directory);
+            return fs.readDirectory(directory);
+          },
+          stat: (file) => {
+            stats.push(file);
+            return fs.stat(file);
+          },
+        }),
+      );
+      expect(listings).toEqual([missing, first, second]);
+      expect(stats).toEqual([path.join(first, "cursor.CMD"), path.join(second, "explorer.EXE")]);
+      yield* fs.writeFileString(path.join(first, "new-editor.EXE"), "");
+      expect(yield* resolveCommandPath("new-editor", { env }).pipe(withCommandDirectoryCache)).toBe(
+        path.join(first, "new-editor.EXE"),
+      );
+    }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+  );
+
+  it.effect("falls back to file probes when a directory cannot be listed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const executable = path.join(directory, "editor.CMD");
+      yield* fs.writeFileString(executable, "");
+      const resolved = yield* resolveCommandPath("editor", {
+        env: { PATH: directory, PATHEXT: ".CMD" },
+      }).pipe(
+        withCommandDirectoryCache,
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readDirectory: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "readDirectory",
+              }),
+            ),
+        }),
+      );
+      expect(resolved).toBe(executable);
+    }),
   );
 
   it.effect("keeps cached misses until expiry while allowing explicit paths", () =>
