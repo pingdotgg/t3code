@@ -4,15 +4,20 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
@@ -27,7 +32,9 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
+import { deregisterManagedRelayEnvironmentCommand } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -84,11 +91,20 @@ function CloudEnvironmentRowsContent(
   props: CloudEnvironmentRowsProps & { readonly discoveryAvailable?: boolean },
 ) {
   const controller = useConnectionController();
+  const managedRelaySession = useAtomValue(managedRelaySessionAtom);
+  const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
   const discoveryAvailable = props.discoveryAvailable ?? true;
   const availableCloudEnvironments = discoveryAvailable
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
     : [];
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
+  // Deregistrations run serially per account, so a second tap queues behind the
+  // first; every queued row stays disabled through its discovery refresh.
+  const [deregisteringEnvironmentIds, setDeregisteringEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
 
@@ -105,6 +121,56 @@ function CloudEnvironmentRowsContent(
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
+
+  const handleDeregisterCloudEnvironment = useCallback(
+    (environment: RelayClientEnvironmentRecord) => {
+      Alert.alert(
+        "Deregister environment?",
+        `Remove ${environment.label} from your T3 Connect account? This revokes its T3 Connect access and removes its managed tunnel.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Deregister",
+            style: "destructive",
+            onPress: async () => {
+              if (!managedRelaySession) {
+                Alert.alert(
+                  "Could not deregister environment",
+                  "Sign in to T3 Connect before deregistering an environment.",
+                );
+                return;
+              }
+              setDeregisteringEnvironmentIds((current) =>
+                new Set(current).add(environment.environmentId),
+              );
+              try {
+                const result = await deregisterEnvironment({
+                  accountId: managedRelaySession.accountId,
+                  environmentId: environment.environmentId,
+                });
+                if (AsyncResult.isSuccess(result)) {
+                  await controller.refreshRelayEnvironments();
+                  return;
+                }
+                const error = Cause.squash(result.cause);
+                Alert.alert(
+                  "Could not deregister environment",
+                  error instanceof Error ? error.message : "The environment could not be removed.",
+                );
+              } finally {
+                setDeregisteringEnvironmentIds((current) => {
+                  const next = new Set(current);
+                  next.delete(environment.environmentId);
+                  return next;
+                });
+              }
+            },
+          },
+        ],
+      );
+    },
+    [controller, deregisterEnvironment, managedRelaySession],
+  );
 
   const showHeader = props.showHeader ?? true;
 
@@ -156,6 +222,8 @@ function CloudEnvironmentRowsContent(
               environment={environment}
               borderTop={props.connectedCloudEnvironments.length > 0 || index !== 0}
               onConnect={() => handleConnectCloudEnvironment(environment)}
+              onDeregister={() => handleDeregisterCloudEnvironment(environment.environment)}
+              deregistering={deregisteringEnvironmentIds.has(environment.environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
@@ -242,8 +310,10 @@ function ConnectedCloudEnvironmentRow(props: {
 function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly borderTop: boolean;
+  readonly deregistering: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
+  readonly onDeregister: () => void;
   readonly onToggleError: () => void;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
@@ -266,6 +336,8 @@ function CloudEnvironmentRow(props: {
           props.onConnect();
         }
       }}
+      onDeregister={props.onDeregister}
+      deregistering={props.deregistering}
       onToggleError={props.onToggleError}
       statusText={presentation.statusText}
       value={false}
@@ -278,12 +350,14 @@ function CloudEnvironmentRowShell(props: {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly deregistering?: boolean;
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
   /** Absent for environments the relay lists but this device has not connected to. */
   readonly machine?: EnvironmentMachineKind;
   readonly onToggleError: () => void;
+  readonly onDeregister?: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
   readonly value: boolean;
@@ -406,11 +480,33 @@ function CloudEnvironmentRowShell(props: {
           ) : null}
         </StatusContainer>
       </View>
-      <ThemedSwitch
-        disabled={props.disabled}
-        onValueChange={props.onValueChange}
-        value={props.value}
-      />
+      <View className="flex-row items-center gap-2">
+        <ThemedSwitch
+          disabled={props.disabled || props.deregistering}
+          onValueChange={props.onValueChange}
+          value={props.value}
+        />
+        {props.onDeregister ? (
+          <Pressable
+            accessibilityLabel={`Deregister ${props.label}`}
+            accessibilityRole="button"
+            disabled={props.deregistering}
+            onPress={props.onDeregister}
+            className="h-10 w-10 items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70 disabled:opacity-50"
+          >
+            {props.deregistering ? (
+              <ActivityIndicator colorClassName={"accent-danger-foreground"} size="small" />
+            ) : (
+              <SymbolView
+                name="trash"
+                size={14}
+                tintColorClassName={"accent-danger-foreground"}
+                type="monochrome"
+              />
+            )}
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
