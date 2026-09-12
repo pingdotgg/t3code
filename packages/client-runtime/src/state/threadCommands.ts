@@ -80,11 +80,9 @@ export function formatCodexGoalUsage(goal: CodexGoal): string {
   const budget = goal.tokenBudget == null ? "" : ` / ${goal.tokenBudget.toLocaleString()}`;
   return `${goal.tokensUsed.toLocaleString()} tokens${budget}, ${goal.timeUsedSeconds.toLocaleString()} seconds`;
 }
-
 export function formatCodexGoalDescription(goal: CodexGoal): string {
   return `${goal.objective} - ${formatCodexGoalUsage(goal)}`;
 }
-
 const CODEX_GOAL_STATUS_LABELS: Record<CodexGoalStatus, string> = {
   active: "active",
   paused: "paused",
@@ -97,13 +95,11 @@ const CODEX_GOAL_STATUS_LABELS: Record<CodexGoalStatus, string> = {
 export function formatCodexGoalStatus(status: CodexGoalStatus): string {
   return CODEX_GOAL_STATUS_LABELS[status];
 }
-
 export function formatCodexGoalError(error: unknown): string {
   if (!(error instanceof Error)) return "Codex Goal operation failed.";
   const reason = error.cause instanceof Error ? error.cause.message.trim() : "";
   return reason.length === 0 ? error.message : `${error.message}: ${reason}`;
 }
-
 export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/i.exec(value.trim());
   if (match === null) return null;
@@ -140,7 +136,6 @@ export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
 
   return { action: "set", objective: argument, status: "active" };
 }
-
 export function toCodexGoalSetInput(
   threadId: CodexGoalSetInput["threadId"],
   command: Extract<CodexGoalCommand, { readonly action: "set" }>,
