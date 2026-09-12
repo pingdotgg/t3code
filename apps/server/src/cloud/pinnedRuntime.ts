@@ -6,6 +6,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -161,10 +162,22 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       "--no-audit",
       `t3@${input.version}`,
     ];
+    // npx exports its resolved allow-scripts policy as npm_config_allow_scripts,
+    // which npm 12 reads as a project-scoped --allow-scripts and refuses with
+    // EALLOWSCRIPTS. npm matches config variable names case-insensitively, so
+    // unset every spelling the child would inherit (Node drops undefined
+    // entries) and leave the rest of the npm configuration alone.
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const installEnv = Object.fromEntries(
+      Object.keys(hostEnvironment)
+        .filter((key) => /^npm_config_allow[-_]scripts$/i.test(key))
+        .map((key) => [key, undefined]),
+    );
     yield* runner
       .run({
         command: "npm",
         args: installArgs,
+        env: installEnv,
         // Native dependencies may compile from source on slower machines.
         timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
       })
@@ -178,6 +191,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
                 runner.run({
                   command: "pnpm",
                   args: ["--package=npm@11", "dlx", "npm", ...installArgs],
+                  env: installEnv,
                   timeout: PINNED_RUNTIME_INSTALL_TIMEOUT,
                 })
               : Effect.fail(error),

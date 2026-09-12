@@ -228,6 +228,67 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("drops every spelling of the inherited allow-scripts policy from the installer", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-env-" });
+      // npx exports the lowercase name and npm reads the uppercase one just the
+      // same. Unrelated npm configuration must still reach the child.
+      const stubbed = {
+        npm_config_allow_scripts: "true",
+        NPM_CONFIG_ALLOW_SCRIPTS: "true",
+        npm_config_registry: "https://registry.example.test/",
+      };
+      const previous = Object.fromEntries(
+        Object.keys(stubbed).map((key) => [key, process.env[key]]),
+      );
+      Object.assign(process.env, stubbed);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const [key, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+          }
+        }),
+      );
+
+      // Spawn a real child with exactly what the installer hands npm, so the
+      // assertion covers the environment the child sees rather than the input.
+      const real = yield* Effect.service(ProcessRunner.ProcessRunner).pipe(
+        Effect.provide(ProcessRunner.layer),
+      );
+      const inner = successfulRunner(fs, path);
+      let childEnv: Record<string, string | undefined> | undefined;
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            const probe = yield* real.run({
+              ...input,
+              command: process.execPath,
+              args: ["-e", "process.stdout.write(JSON.stringify(process.env))"],
+            });
+            childEnv = JSON.parse(probe.stdout) as Record<string, string | undefined>;
+            return yield* inner.run(input);
+          }),
+      });
+
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner,
+        validate: () => Effect.void,
+      });
+
+      assert.isDefined(childEnv);
+      assert.notProperty(childEnv, "npm_config_allow_scripts");
+      assert.notProperty(childEnv, "NPM_CONFIG_ALLOW_SCRIPTS");
+      assert.equal(childEnv.npm_config_registry, "https://registry.example.test/");
+    }),
+  );
+
   it.effect("removes staging when installation is interrupted", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
