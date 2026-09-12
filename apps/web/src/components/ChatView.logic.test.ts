@@ -2180,6 +2180,10 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("DIV", { role: "textbox" }))).toBe(false);
   });
 
+  it.each(["IFRAME", "WEBVIEW"])("leaves a focused %s preview alone", (tagName) => {
+    expect(shouldRefocusComposerOnWindowFocus(element(tagName))).toBe(false);
+  });
+
   it("leaves a focused terminal alone in the drawer and the right panel", () => {
     expect(
       shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "data-terminal-owner" })),
