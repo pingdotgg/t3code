@@ -1020,7 +1020,7 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
-  it("keeps accounts and custom instances separate, filtering by driver", () => {
+  it("keeps unidentified custom instances separate, filtering by driver", () => {
     const report = collectProviderUsageLimits(
       selected.instanceId,
       [
@@ -1059,6 +1059,45 @@ describe("/usage-limits", () => {
       plan: "Codex OSS",
     });
     expect(report?.notices).toEqual([]);
+  });
+
+  it("keeps the freshest usable duplicate and its latest native credits", () => {
+    const failed = provider({
+      auth: selected.auth,
+      usageLimits: { ...limits, unavailable: { reason: "probeFailed" } },
+    });
+    const credited = provider({
+      instanceId: ProviderInstanceId.make("codex-credit"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:20:00.000Z",
+        windows: [{ ...window, usedPercent: 50 }],
+        resetCredits: { availableCount: 2 },
+      },
+    });
+    const freshest = provider({
+      instanceId: ProviderInstanceId.make("codex-fresh"),
+      auth: selected.auth,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 55 }],
+      },
+    });
+    const report = collectProviderUsageLimits(
+      failed.instanceId,
+      [failed, credited, freshest],
+      sources,
+      now,
+    );
+    expect(report?.accounts.map((account) => account.id)).toEqual(["codex-fresh", "hub:oss"]);
+    expect(report?.accounts[0]).toMatchObject({
+      limits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ usedPercent: 55 }],
+        resetCredits: { availableCount: 2 },
+      },
+      resetCreditInput: { instanceId: "codex-credit" },
+    });
   });
 
   it("supports a source-only provider and keeps duplicates when the native probe failed", () => {

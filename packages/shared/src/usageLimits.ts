@@ -644,11 +644,39 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const native = providersWithLimits(providers).filter(
-    (provider) => provider.driver === selected.driver,
-  );
-  const nativeAccounts = new Set(
-    native.flatMap((provider) => {
+  const nativeByAccount = new Map<
+    string,
+    { provider: ServerProvider; creditProvider: ServerProvider | null }
+  >();
+  for (const provider of providersWithLimits(providers)) {
+    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    const key =
+      accountKey(provider.driver, provider.auth.email) ?? `instance:${provider.instanceId}`;
+    const previous = nativeByAccount.get(key);
+    const previousUsable = previous ? limitsNotice(previous.provider.usageLimits!) === null : false;
+    const usable = limitsNotice(provider.usageLimits) === null;
+    const providerWins =
+      !previous ||
+      (usable && !previousUsable) ||
+      (usable === previousUsable &&
+        Date.parse(provider.usageLimits.checkedAt) >
+          Date.parse(previous.provider.usageLimits!.checkedAt));
+    const previousCredit = previous?.creditProvider;
+    const creditProvider =
+      provider.usageLimits.resetCredits &&
+      (!previousCredit ||
+        Date.parse(provider.usageLimits.checkedAt) >
+          Date.parse(previousCredit.usageLimits!.checkedAt))
+        ? provider
+        : (previousCredit ?? null);
+    nativeByAccount.set(key, {
+      provider: providerWins ? provider : previous.provider,
+      creditProvider,
+    });
+  }
+  const native = [...nativeByAccount.values()];
+  const nativeAccountKeys = new Set(
+    native.flatMap(({ provider }) => {
       const key = accountKey(provider.driver, provider.auth.email);
       return key && provider.usageLimits?.windows.length && !provider.usageLimits.unavailable
         ? [key]
@@ -657,7 +685,7 @@ export function collectProviderUsageLimits(
   );
   const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
   const notices: string[] = [];
-  for (const provider of native) {
+  for (const { provider, creditProvider } of native) {
     if (!provider.usageLimits) continue;
     const key = accountKey(provider.driver, provider.auth.email);
     const hubCredits = sources
@@ -684,9 +712,12 @@ export function collectProviderUsageLimits(
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
-      (!provider.usageLimits.resetCredits ||
+      (!creditProvider ||
         Date.parse(hubCredits.account.usageLimits.checkedAt) >
-          Date.parse(provider.usageLimits.checkedAt));
+          Date.parse(creditProvider.usageLimits!.checkedAt));
+    const shownCredits = showHubCredits
+      ? hubCredits.account.usageLimits.resetCredits
+      : creditProvider?.usageLimits?.resetCredits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -700,12 +731,12 @@ export function collectProviderUsageLimits(
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
             }
-          : { instanceId: provider.instanceId },
+          : { instanceId: creditProvider?.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: showHubCredits
-        ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
+      limits: shownCredits
+        ? { ...provider.usageLimits, resetCredits: shownCredits }
         : provider.usageLimits,
     });
   }
@@ -713,7 +744,7 @@ export function collectProviderUsageLimits(
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = accountKey(account.driver, account.email);
-      if (key && nativeAccounts.has(key)) continue;
+      if (key && nativeAccountKeys.has(key)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
