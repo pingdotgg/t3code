@@ -1794,6 +1794,31 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect("ensureRemote preserves local remote URLs containing spaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const path = yield* Path.Path;
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const existingUrl = path.join(cwd, "local remote (fetch).git");
+        const newUrl = path.join(cwd, "another remote.git");
+        yield* git(cwd, ["remote", "add", "origin", existingUrl]);
+        yield* git(cwd, ["remote", "set-url", "--push", "origin", newUrl]);
+
+        assert.equal(
+          yield* driver.ensureRemote({ cwd, preferredName: "origin", url: existingUrl }),
+          "origin",
+        );
+        assert.equal(
+          yield* driver.ensureRemote({ cwd, preferredName: "origin", url: newUrl }),
+          "origin-1",
+        );
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin"]), existingUrl);
+        assert.equal(yield* git(cwd, ["remote", "get-url", "origin-1"]), newUrl);
+        assert.equal(yield* git(cwd, ["remote", "get-url", "--push", "origin"]), newUrl);
+      }),
+    );
+
     it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
