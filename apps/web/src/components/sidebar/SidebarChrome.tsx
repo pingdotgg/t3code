@@ -1,11 +1,12 @@
 import {
   ArrowLeftIcon,
+  ArrowUpRightIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -29,9 +30,11 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
+import { SidebarPullRequestsPreview } from "./SidebarPullRequestsPreview";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
@@ -106,27 +109,109 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
   );
 }
 
+/**
+ * A footer icon button. Without a `preview` a press navigates to the page and
+ * hover shows the label. With one, a press opens a glance at the page instead,
+ * whose heading leads on to the page; the preview only mounts while open, so
+ * its data subscriptions never run for an idle footer.
+ */
 function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  preview,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  preview?: ReactNode;
 }) {
+  if (!preview) {
+    return (
+      <SidebarMenuItem className="shrink-0">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+                {icon}
+              </SidebarMenuButton>
+            }
+          />
+          <TooltipPopup side="top">{label}</TooltipPopup>
+        </Tooltip>
+      </SidebarMenuItem>
+    );
+  }
+  return (
+    <SidebarUtilityPreviewItem icon={icon} label={label} onClick={onClick}>
+      {preview}
+    </SidebarUtilityPreviewItem>
+  );
+}
+
+function SidebarUtilityPreviewItem({
+  icon,
+  label,
+  onClick,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  // Opens on press only, never on hover: a panel that appears by itself is easy to trigger by
+  // accident. Base UI moves focus in on open and back to the trigger on Escape or outside press.
+  const [open, setOpen] = useState(false);
   return (
     <SidebarMenuItem className="shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
-              {icon}
-            </SidebarMenuButton>
-          }
-        />
-        <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
+      <Popover open={open} onOpenChange={setOpen}>
+        <Tooltip disabled={open}>
+          <TooltipTrigger
+            render={
+              <PopoverTrigger
+                render={
+                  <SidebarMenuButton aria-label={label} size="icon">
+                    {icon}
+                  </SidebarMenuButton>
+                }
+              />
+            }
+          />
+          <TooltipPopup side="top">{label}</TooltipPopup>
+        </Tooltip>
+        <PopoverPopup
+          align="center"
+          aria-label={label}
+          className="max-w-none shadow-xl shadow-black/25"
+          // Rows are links that navigate in place; close so the glance does not outlive the page
+          // it was about. Link handlers stop propagation, so this runs during capture.
+          onClickCapture={(event) => {
+            if (event.target instanceof Element && event.target.closest("a")) setOpen(false);
+          }}
+          side="top"
+          tooltipStyle
+          viewportClassName="not-data-transitioning:overflow-y-auto"
+        >
+          <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2 p-1 text-xs">
+            <button
+              aria-label={`Open ${label}`}
+              className="group/preview-heading -mx-1 flex w-fit items-center gap-1 rounded-sm px-1 text-sm leading-5 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                setOpen(false);
+                onClick();
+              }}
+              type="button"
+            >
+              <span className="underline-offset-2 group-hover/preview-heading:underline">
+                {label}
+              </span>
+              <ArrowUpRightIcon aria-hidden className="size-3.5 text-muted-foreground" />
+            </button>
+            {children}
+          </div>
+        </PopoverPopup>
+      </Popover>
     </SidebarMenuItem>
   );
 }
@@ -207,6 +292,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<GitPullRequestIcon />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+              // A drawer tap goes straight to the page; the glance is for the docked sidebar.
+              preview={isMobile ? undefined : <SidebarPullRequestsPreview />}
             />
           ) : null}
           <SidebarUtilityItem
