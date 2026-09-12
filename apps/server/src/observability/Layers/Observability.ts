@@ -1,12 +1,15 @@
 import { httpHeaderRedactionLayer } from "@t3tools/shared/httpObservability";
-import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import {
+  makeLocalFileTracer,
+  makeTraceSink,
+  otlpSerializationLayer,
+} from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
 import * as OtlpMetrics from "effect/unstable/observability/OtlpMetrics";
-import * as OtlpSerialization from "effect/unstable/observability/OtlpSerialization";
 import * as OtlpTracer from "effect/unstable/observability/OtlpTracer";
 
 import * as ServerConfig from "../../config.ts";
@@ -14,11 +17,10 @@ import * as ResourceAttribution from "../../resourceTelemetry/ResourceAttributio
 import { ServerLoggerLive } from "../../serverLogger.ts";
 import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 
-const otlpSerializationLayer = OtlpSerialization.layerJson;
-
 export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const serializationLayer = otlpSerializationLayer(config.otlpProtocol);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
     const traceReferencesLayer = Layer.mergeAll(
@@ -72,7 +74,7 @@ export const ObservabilityLive = Layer.unwrap(
           BrowserTraceCollector.layer(sink),
         );
       }),
-    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(otlpSerializationLayer));
+    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(serializationLayer));
 
     const metricsLayer =
       config.otlpMetricsUrl === undefined
@@ -87,7 +89,7 @@ export const ObservabilityLive = Layer.unwrap(
                 "service.mode": config.mode,
               },
             },
-          }).pipe(Layer.provideMerge(otlpSerializationLayer));
+          }).pipe(Layer.provideMerge(serializationLayer));
 
     return Layer.mergeAll(ServerLoggerLive, traceReferencesLayer, tracerLayer, metricsLayer);
   }),
