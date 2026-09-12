@@ -56,14 +56,14 @@ import {
   recoverServiceOnboardingOffer,
 } from "./service.ts";
 
-const jsonFlag = Flag.boolean("json").pipe(
+const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
   Flag.withDefault(false),
 );
 
 const isCloudCliTokenManagerError = Schema.is(CliTokenManager.CloudCliTokenManagerError);
 
-const headlessFlag = Flag.boolean("headless").pipe(
+const headlessFlag = Flag.Boolean("headless").pipe(
   Flag.withDescription("Authorize without a local browser using out-of-band OAuth."),
   Flag.withDefault(false),
 );
@@ -73,8 +73,8 @@ const headlessFlag = Flag.boolean("headless").pipe(
  * OAuth callback, so out-of-band OAuth is the only flow that can work.
  */
 export const headlessSessionConfig = Config.all({
-  sshConnection: Config.string("SSH_CONNECTION").pipe(Config.option),
-  sshTty: Config.string("SSH_TTY").pipe(Config.option),
+  sshConnection: Config.String("SSH_CONNECTION").pipe(Config.option),
+  sshTty: Config.String("SSH_TTY").pipe(Config.option),
 }).pipe(
   Config.map(({ sshConnection, sshTty }) => Option.isSome(sshConnection) || Option.isSome(sshTty)),
 );
@@ -82,7 +82,7 @@ export const headlessSessionConfig = Config.all({
 const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_oauth_code")(
   function* ({ authorizeUrl, validate }: CliTokenManager.OutOfBandOAuthPromptInput) {
     yield* Console.log(formatHeadlessAuthorizationPrompt(authorizeUrl));
-    return yield* Prompt.run(Prompt.text({ message: "Authorization code", validate }));
+    return yield* Prompt.run(Prompt.String({ message: "Authorization code", validate }));
   },
 );
 
@@ -215,7 +215,7 @@ const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
 
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
-    Prompt.confirm({
+    Prompt.Confirm({
       message: `The T3 relay client is required for T3 Connect. Download and install version ${version}?`,
       initial: false,
     }),
@@ -512,7 +512,7 @@ const connectLoginCommand = Command.make("login", {
 const connectLinkCommand = Command.make("link", {
   ...projectLocationFlags,
   headless: headlessFlag,
-  publishOnly: Flag.boolean("publish-only").pipe(
+  publishOnly: Flag.Boolean("publish-only").pipe(
     Flag.withDescription(
       "Link to publish agent activity only — no managed tunnel. Reach this environment out of band (e.g. Tailscale).",
     ),
@@ -585,7 +585,7 @@ const connectStatusCommand = Command.make("status", {
 
 const connectPublishCommand = Command.make("publish", {
   ...projectLocationFlags,
-  disable: Flag.boolean("disable").pipe(
+  disable: Flag.Boolean("disable").pipe(
     Flag.withDescription("Stop publishing agent activity to your mobile clients."),
     Flag.withDefault(false),
   ),

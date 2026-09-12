@@ -1,0 +1,19 @@
+diff --git a/lib/credentials.js b/lib/credentials.js
+index 3c801225b366c1eced942effba0950acd3cc2f3f..dfecff442d23ad01f4cf4db2efba7b528c95f54d 100644
+--- a/lib/credentials.js
++++ b/lib/credentials.js
+@@ -43,10 +43,10 @@ export const CredentialsFromToken = (config) => Layer.succeed(Credentials, Effec
+     apiBaseUrl: config.apiBaseUrl,
+ })));
+ const envConfig = EffectConfig.all({
+-    apiToken: EffectConfig.option(EffectConfig.string("RAILWAY_API_TOKEN")),
+-    railwayToken: EffectConfig.option(EffectConfig.string("RAILWAY_TOKEN")),
+-    projectToken: EffectConfig.option(EffectConfig.string("RAILWAY_PROJECT_TOKEN")),
+-    apiBaseUrl: EffectConfig.string("RAILWAY_API_URL").pipe(EffectConfig.withDefault(DEFAULT_API_BASE_URL)),
++    apiToken: EffectConfig.option(EffectConfig.String("RAILWAY_API_TOKEN")),
++    railwayToken: EffectConfig.option(EffectConfig.String("RAILWAY_TOKEN")),
++    projectToken: EffectConfig.option(EffectConfig.String("RAILWAY_PROJECT_TOKEN")),
++    apiBaseUrl: EffectConfig.String("RAILWAY_API_URL").pipe(EffectConfig.withDefault(DEFAULT_API_BASE_URL)),
+ });
+ const MISSING_TOKEN = "RAILWAY_API_TOKEN (or RAILWAY_TOKEN / RAILWAY_PROJECT_TOKEN) environment variable is required";
+ /**

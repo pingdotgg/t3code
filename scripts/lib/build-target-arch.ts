@@ -11,8 +11,8 @@ interface PlatformConfig {
 }
 
 const WindowsProcessorArchitectureConfig = Config.all({
-  processorArchitecture: Config.string("PROCESSOR_ARCHITECTURE").pipe(Config.option),
-  processorArchitectureW6432: Config.string("PROCESSOR_ARCHITEW6432").pipe(Config.option),
+  processorArchitecture: Config.String("PROCESSOR_ARCHITECTURE").pipe(Config.option),
+  processorArchitectureW6432: Config.String("PROCESSOR_ARCHITEW6432").pipe(Config.option),
 });
 
 function normalizeWindowsArch(value: string | undefined): BuildArch | undefined {

@@ -106,7 +106,7 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
 
 const serviceReconcileFlags = {
   ...projectLocationFlags,
-  allowDowngrade: Flag.boolean("allow-downgrade").pipe(
+  allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
     Flag.withDescription("Allow replacing a newer installed service with this older CLI version."),
     Flag.withDefault(false),
   ),
@@ -212,7 +212,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
   // enable-linger equivalent on macOS. Do not promise more than that.
   const platform = yield* HostProcessPlatform;
   const wanted = yield* Prompt.run(
-    Prompt.confirm({
+    Prompt.Confirm({
       message: installed
         ? "The installed T3 Code service needs an update or repair. Update it now?"
         : platform === "darwin"

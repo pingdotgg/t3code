@@ -42,15 +42,15 @@ export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
 export const applyWebBrandAssetsCommand = Command.make(
   "apply-web-brand-assets",
   {
-    brand: Argument.choice("brand", WEB_ASSET_BRANDS).pipe(
+    brand: Argument.Literals("brand", WEB_ASSET_BRANDS).pipe(
       Argument.withDescription("Asset brand to copy into the hosted web output directory."),
       Argument.optional,
     ),
-    channel: Flag.choice("channel", WEB_ASSET_CHANNELS).pipe(
+    channel: Flag.Literals("channel", WEB_ASSET_CHANNELS).pipe(
       Flag.withDescription("Hosted release channel to map to a web asset brand."),
       Flag.optional,
     ),
-    targetDirectory: Argument.string("target-directory").pipe(
+    targetDirectory: Argument.String("target-directory").pipe(
       Argument.withDescription("Output directory that contains the hosted web build assets."),
       Argument.optional,
     ),

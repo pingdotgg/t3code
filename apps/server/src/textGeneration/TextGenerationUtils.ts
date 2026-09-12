@@ -9,7 +9,9 @@ const decodeJsonThreadTitle = Schema.decodeOption(
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
-  const document = Schema.toJsonSchemaDocument(schema);
+  // Closed objects (`additionalProperties: false`): structured-output modes
+  // require it, and it was the generator default before effect rc.113.
+  const document = Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" });
   if (document.definitions && Object.keys(document.definitions).length > 0) {
     return { ...document.schema, $defs: document.definitions };
   }

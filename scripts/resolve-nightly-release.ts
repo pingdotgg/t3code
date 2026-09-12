@@ -158,7 +158,7 @@ export const writeNightlyReleaseOutput = Effect.fn("writeNightlyReleaseOutput")(
   ] as const;
 
   if (writeGithubOutput) {
-    const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT").pipe(
+    const githubOutputPath = yield* Config.NonEmptyString("GITHUB_OUTPUT").pipe(
       Effect.mapError(
         (cause) =>
           new NightlyReleaseGitHubOutputConfigError({
@@ -186,23 +186,23 @@ export const writeNightlyReleaseOutput = Effect.fn("writeNightlyReleaseOutput")(
 const command = Command.make(
   "resolve-nightly-release",
   {
-    date: Flag.string("date").pipe(
+    date: Flag.String("date").pipe(
       Flag.withSchema(DateSchema),
       Flag.withDescription("Nightly build date in YYYYMMDD."),
     ),
-    runNumber: Flag.string("run-number").pipe(
+    runNumber: Flag.String("run-number").pipe(
       Flag.withSchema(RunNumberSchema),
       Flag.withDescription("GitHub Actions run number."),
     ),
-    sha: Flag.string("sha").pipe(
+    sha: Flag.String("sha").pipe(
       Flag.withSchema(ShaSchema),
       Flag.withDescription("Commit sha for the nightly build."),
     ),
-    githubOutput: Flag.boolean("github-output").pipe(
+    githubOutput: Flag.Boolean("github-output").pipe(
       Flag.withDescription("Write values to GITHUB_OUTPUT instead of stdout."),
       Flag.withDefault(false),
     ),
-    root: Flag.string("root").pipe(
+    root: Flag.String("root").pipe(
       Flag.withDescription("Workspace root used to resolve apps/desktop/package.json."),
       Flag.optional,
     ),

@@ -197,6 +197,13 @@ export const resolveReferenceRepoRef = Effect.fn("resolveReferenceRepoRef")(func
     });
   }
 
+  // A pkg.ing preview pin (`https://pkg.ing/<name>/<sha>`) names the upstream
+  // commit directly, so the reference syncs to that commit instead of a tag.
+  const previewCommit = /^https:\/\/pkg\.ing\/.+\/([0-9a-f]{7,40})$/u.exec(version)?.[1];
+  if (previewCommit !== undefined) {
+    return previewCommit;
+  }
+
   return `${repo.versionTagPrefix}${version}`;
 });
 
@@ -296,21 +303,21 @@ export const syncReferenceRepos = Effect.fn("syncReferenceRepos")(function* (
 export const syncReferenceReposCommand = Command.make(
   "sync-reference-repos",
   {
-    repo: Flag.string("repo").pipe(
+    repo: Flag.String("repo").pipe(
       Flag.withDescription("Sync only the named reference repo. Defaults to all configured repos."),
       Flag.optional,
     ),
-    latest: Flag.boolean("latest").pipe(
+    latest: Flag.Boolean("latest").pipe(
       Flag.withDescription(
         "Sync each repo from its latest branch instead of the installed version.",
       ),
       Flag.withDefault(false),
     ),
-    root: Flag.string("root").pipe(
+    root: Flag.String("root").pipe(
       Flag.withDescription("Workspace root used to resolve versions and subtree prefixes."),
       Flag.optional,
     ),
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Print planned subtree operations without running git."),
       Flag.withDefault(false),
     ),
