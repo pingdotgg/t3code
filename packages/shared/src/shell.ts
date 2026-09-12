@@ -289,6 +289,18 @@ export type ShellEnvironmentReader = (
   execFile?: ExecFileSyncLike,
 ) => Partial<Record<string, string>>;
 
+// zsh only reads ~/.zshrc when interactive, and that file is where version
+// managers and custom bin dirs commonly export PATH, so its probe keeps `-i`
+// but prepends `+m`: clearing MONITOR before startup means the shell never
+// calls tcsetpgrp() on a controlling TTY owned by another process group, which
+// is what stopped `-ilc` probes on SIGTTOU (SSH daemons started from a
+// terminal hand sessions exactly that). Other shells keep the plain login
+// probe: bash login shells never read ~/.bashrc, and fish reads config.fish
+// for login shells, so `-i` would only reintroduce the hang.
+function loginShellProbeArgs(shell: string, command: string): Array<string> {
+  return NodePath.posix.basename(shell) === "zsh" ? ["+m", "-ilc", command] : ["-lc", command];
+}
+
 export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   shell,
   names,
@@ -298,10 +310,14 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
+  const output = execFile(
+    shell,
+    loginShellProbeArgs(shell, buildEnvironmentCaptureCommand(names)),
+    {
+      encoding: "utf8",
+      timeout: 5000,
+    },
+  );
 
   const environment: Partial<Record<string, string>> = {};
   for (const name of names) {

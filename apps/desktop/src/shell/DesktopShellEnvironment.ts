@@ -331,6 +331,16 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   return "";
 });
 
+// zsh only reads ~/.zshrc when interactive, and that file is where version
+// managers and custom bin dirs commonly export PATH, so its probe keeps `-i`
+// but prepends `+m`: clearing MONITOR before startup means the shell never
+// calls tcsetpgrp() on a controlling TTY owned by another process group, which
+// is what stopped `-ilc` probes on SIGTTOU. Other shells keep the plain login
+// probe: bash login shells never read ~/.bashrc, and fish reads config.fish
+// for login shells, so `-i` would only reintroduce the hang.
+const loginShellProbeArgs = (shell: string, command: string): ReadonlyArray<string> =>
+  executableName(shell) === "zsh" ? ["+m", "-ilc", command] : ["-lc", command];
+
 const readLoginShellEnvironment = (
   shell: string,
   names: ReadonlyArray<string>,
@@ -340,7 +350,7 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        args: loginShellProbeArgs(shell, capturePosixEnvironmentCommand(names)),
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
