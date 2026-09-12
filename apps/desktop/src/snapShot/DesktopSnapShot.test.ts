@@ -2484,7 +2484,7 @@ it.each(["client", "frame"] as const)(
   },
 );
 
-it.each(["darwin", "win32"] as const)(
+it.each(["darwin", "win32", "linux"] as const)(
   "extracts the same structured accessibility tree on %s",
   async (platform) => {
     const bounds = { x: 100, y: 200, width: 800, height: 600 };
@@ -2492,12 +2492,25 @@ it.each(["darwin", "win32"] as const)(
       role: "window",
       name: "Editor",
       bounds,
-      tree: async () => ({ name: "Editor", children: [{ name: "Save", children: [] }] }),
+      tree: async () => ({
+        name: "Editor",
+        children: [
+          { name: "Save", children: [] },
+          { name: "Below scroll view", children: [] },
+        ],
+      }),
       children: async () => [
         {
           role: "button",
           name: "Save",
           bounds: { x: 300, y: 350, width: 100, height: 50 },
+          children: async () => [],
+        },
+        {
+          role: "static_text",
+          name: "Below scroll view",
+          bounds: { x: 300, y: 1_000, width: 100, height: 50 },
+          visible: false,
           children: async () => [],
         },
       ],
@@ -2520,6 +2533,12 @@ it.each(["darwin", "win32"] as const)(
         ? result.accessibility.root.children[0]?.name
         : undefined,
       "Save",
+    );
+    assert.deepInclude(
+      result?.accessibility?.format === "element-tree"
+        ? result.accessibility.root.children[1]
+        : undefined,
+      { name: "Below scroll view", bounds: null, state: { visible: false } },
     );
     assert.lengthOf(accessibilityByPidMock.mock.calls, platform === "win32" ? 0 : 1);
     assert.lengthOf(accessibilityForegroundMock.mock.calls, platform === "win32" ? 1 : 0);
@@ -2553,6 +2572,48 @@ it.each(["darwin", "win32"] as const)(
         ),
       );
       assert.lengthOf(tree.mock.calls, 0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+it.each([
+  ["darwin", "", "value", 650],
+  ["win32", "", "value", 650],
+  ["linux", "x11", "value", 650],
+  ["linux", "wayland", "value", 650],
+  ["darwin", "", "name", 100],
+] as const)(
+  "preserves long text outside the scroll view on %s %s (%s)",
+  async (platform, session, field, lines) => {
+    const text = `${"Document line\n".repeat(lines)}End of document`;
+    vi.stubEnv("XDG_SESSION_TYPE", session);
+    const bounds = { x: 0, y: 0, width: 800, height: 600 };
+    const window = {
+      role: "window",
+      name: "Editor",
+      bounds,
+      tree: async () => ({ name: "Editor", children: [{ [field]: text, children: [] }] }),
+      children: async () => [
+        { role: "text_area", [field]: text, bounds, children: async () => [] },
+      ],
+    };
+    accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [window] });
+    accessibilityForegroundMock
+      .mockReset()
+      .mockResolvedValue({ pid: 123, asElement: () => window });
+    try {
+      const result = await readAccessibleWindowContext(
+        { title: "Editor", bounds, owner: { processId: 123 } },
+        platform,
+        "Editor",
+      );
+      assert.deepEqual(result?.accessibility, {
+        format: "flat-text",
+        text: `Editor\n${text}`,
+        truncated: false,
+      });
     } finally {
       vi.unstubAllEnvs();
     }
@@ -2684,6 +2745,81 @@ it("falls back to completed flat text when rich traversal reaches the deadline",
     await vi.advanceTimersByTimeAsync(0);
     vi.useRealTimers();
   }
+});
+
+it("keeps a truncated element tree when the flat text read fails", async () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    children: async () => [
+      {
+        role: "window",
+        name: "Editor",
+        bounds,
+        tree: async () => {
+          throw new Error("Text read failed");
+        },
+        children: async () => [
+          {
+            role: "text_area",
+            value: "x".repeat(8_001),
+            bounds: { x: 10, y: 50, width: 700, height: 500 },
+            children: async () => [],
+          },
+        ],
+      },
+    ],
+  });
+
+  const result = await readAccessibleWindowContext(
+    { title: "Editor", bounds, owner: { processId: 123 } },
+    "darwin",
+    "Editor",
+  );
+  assert.equal(result?.accessibility?.format, "element-tree");
+  assert.isTrue(result?.accessibility?.truncated);
+  assert.deepEqual(
+    result?.accessibility?.format === "element-tree"
+      ? result.accessibility.root.children[0]?.bounds
+      : undefined,
+    { x: 10, y: 50, width: 700, height: 500 },
+  );
+});
+
+it("keeps a truncated tree when flat text would not recover any text", async () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    children: async () => [
+      {
+        role: "window",
+        name: "Editor",
+        bounds,
+        tree: async () => ({ name: "Editor", children: [{ name: "Help", children: [] }] }),
+        children: async () => [
+          {
+            role: "button",
+            name: "Help",
+            description: "Help text ".repeat(250),
+            bounds,
+            children: async () => [],
+          },
+        ],
+      },
+    ],
+  });
+
+  const result = await readAccessibleWindowContext(
+    { title: "Editor", bounds, owner: { processId: 123 } },
+    "darwin",
+    "Editor",
+  );
+  assert.equal(result?.accessibility?.format, "element-tree");
+  assert.isTrue(result?.accessibility?.truncated);
+  assert.include(
+    result?.accessibility?.format === "element-tree"
+      ? result.accessibility.root.children[0]?.description
+      : undefined,
+    "Help text",
+  );
 });
 
 it("times out after three seconds without overlapping the outstanding accessibility read", async () => {

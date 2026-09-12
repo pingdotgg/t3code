@@ -57,25 +57,27 @@ function accessibilityReadSnapshot(
         descendantLocationsReliable: progress.richLocationsReliable,
       })
     : undefined;
-  const accessibleText =
-    progress.accessibleText ??
-    (richTree
-      ? accessibleWindowText(richTree.root, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)
-      : undefined);
+  const richText = richTree
+    ? accessibleWindowText(richTree.root, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)
+    : undefined;
+  const accessibleText = progress.accessibleText ?? richText;
+  const richTruncated = progress.richTruncated || richTree?.truncated === true;
   const accessibility: SnapShotAccessibility | undefined =
-    progress.richComplete && richTree
+    progress.richComplete &&
+    richTree &&
+    (!richTruncated || !progress.accessibleText || progress.accessibleText === richText)
       ? {
           format: "element-tree",
           coordinateSpace: "captured-image",
           imageSize,
-          truncated: progress.richTruncated || richTree.truncated,
+          truncated: richTruncated,
           root: richTree.root,
         }
-      : progress.flatComplete && accessibleText
+      : progress.flatComplete && progress.accessibleText
         ? {
             format: "flat-text",
-            text: accessibleText,
-            truncated: accessibleText.length >= SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
+            text: progress.accessibleText,
+            truncated: progress.accessibleText.length >= SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
           }
         : richTree
           ? {
