@@ -251,6 +251,7 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId;
+  readonly deviceTabs?: ReactNode;
 }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environment = useEnvironment(target.environmentId ?? primaryEnvironmentId);
@@ -264,17 +265,20 @@ export function ScheduledTasksSettings(target: {
         })
       : null,
   );
-  if (!environment || !tasksQuery.data) {
+  if (!environment || environment.connection.phase !== "connected" || !tasksQuery.data) {
     return (
       <SettingsPageContainer className="max-w-3xl">
+        {target.deviceTabs}
         <SettingsSection title="Schedule Tasks" icon={<Clock3Icon className="size-3.5" />}>
           <p className="px-5 py-4 text-xs text-muted-foreground" role="status">
-            {tasksQuery.error ??
-              (environment
-                ? "Loading automations…"
-                : target.environmentId
-                  ? "The environment for this automation is unavailable. Reconnect to view it."
-                  : "Connect an environment to manage automations.")}
+            {environment && environment.connection.phase !== "connected"
+              ? "This environment is unavailable. Reconnect to manage automations."
+              : (tasksQuery.error ??
+                (environment
+                  ? "Loading automations…"
+                  : target.environmentId
+                    ? "The environment for this automation is unavailable. Reconnect to view it."
+                    : "Connect an environment to manage automations."))}
           </p>
         </SettingsSection>
       </SettingsPageContainer>
@@ -287,6 +291,7 @@ export function ScheduledTasksSettings(target: {
       taskId={target.taskId}
       tasks={tasksQuery.data.tasks}
       error={tasksQuery.error}
+      deviceTabs={target.deviceTabs}
     />
   );
 }
@@ -296,11 +301,13 @@ function EnvironmentScheduledTasksSettings({
   taskId,
   tasks,
   error,
+  deviceTabs,
 }: {
   readonly environmentId: EnvironmentId;
   readonly taskId: ScheduledTaskId | undefined;
   readonly tasks: ReadonlyArray<ScheduledTask>;
   readonly error: string | null;
+  readonly deviceTabs?: ReactNode;
 }) {
   useRelativeTimeTick(15_000);
   const allProjects = useProjects();
@@ -465,6 +472,7 @@ function EnvironmentScheduledTasksSettings({
 
   return (
     <SettingsPageContainer className="max-w-3xl">
+      {deviceTabs}
       <SettingsSection
         title="Schedule Tasks"
         icon={<Clock3Icon className="size-3.5" />}
