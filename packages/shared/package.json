@@ -31,6 +31,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./vcs": {
+      "types": "./src/vcs.ts",
+      "import": "./src/vcs.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
