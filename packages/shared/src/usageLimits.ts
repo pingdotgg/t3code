@@ -1,6 +1,6 @@
 /**
  * Selection and pace maths for the provider limits view, shared by web and
- * mobile so both agree on which providers show, what "ahead of pace" means,
+ * mobile so both agree on which providers show, what reserve or deficit means,
  * and how a reset is phrased.
  *
  * @module usageLimits
@@ -347,6 +347,23 @@ export interface LimitPoolMember {
   readonly window: ServerProviderUsageWindow;
 }
 
+export type LimitPace = "ahead" | "on" | "under";
+export type LimitPaceStatus = "reserve" | "on" | "deficit";
+
+/**
+ * Even-spend comparison for one window. Positive `gapPercent` is a deficit
+ * (more quota used than the clock's share). This is not a forecast of how
+ * the remaining quota will be spent.
+ */
+export interface LimitPaceDetail {
+  readonly pace: LimitPace;
+  readonly status: LimitPaceStatus;
+  /** `usedPercent - expectedUsedPercent`, rounded. Positive is deficit. */
+  readonly gapPercent: number;
+  readonly expectedUsedPercent: number;
+  readonly elapsedShare: number;
+}
+
 /**
  * One window id across every account that reports it: the pooled share left,
  * pace against the clock, and the resets in the order they will land, each
@@ -364,7 +381,13 @@ export interface LimitPoolWindow {
   }>;
   readonly remainingPercent: number;
   readonly usedPercent: number;
+  /**
+   * Mean even-spend gap of the accounts that report this window. A one-account
+   * card is that account's pace; several accounts average, so a reserve and a
+   * deficit can cancel.
+   */
   readonly pace: LimitPace | null;
+  readonly paceDetail: LimitPaceDetail | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -447,16 +470,10 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Pace compares spend against the clock, so it is judged only over the
-    // members that have a clock; a window with no reset would otherwise
-    // count as spend with no time elapsed and skew the verdict.
-    const timed = members.flatMap((m) => {
-      const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
-    });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
-    const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+    const detail = averagePaceDetail(
+      members.map((member) => member.window),
+      now,
+    );
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -481,7 +498,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
-      pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      pace: detail?.pace ?? null,
+      paceDetail: detail,
       resets,
     };
   });
@@ -510,32 +528,148 @@ function resetMillis(window: ServerProviderUsageWindow): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-/** Elapsed share of the window, 0..1, or null when its length or reset is unknown. */
+/**
+ * How far the window has run, 0..1. Needs both a reset and a duration: the
+ * countdown says when it ends, the duration says how long it is. Null when
+ * either is missing, the clock has already reset, or the reset is further
+ * away than the declared length (the window has not started).
+ */
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
   const length = window.windowDurationMins * MINUTE;
-  if (length <= 0) return null;
-  return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
+  if (length <= 0 || !Number.isFinite(now)) return null;
+  const timeUntilReset = resetsAt - now;
+  if (timeUntilReset <= 0 || timeUntilReset > length) return null;
+  return (length - timeUntilReset) / length;
 }
 
-export type LimitPace = "ahead" | "on" | "under";
+/**
+ * Hide even-spend pace until this share of the window has elapsed. Earlier
+ * figures swing on a few minutes of usage and read as false precision.
+ */
+const PACE_MIN_ELAPSED = 0.03;
+
+/**
+ * Hide pace when the raw used-vs-expected gap is this close to even. A 1–2
+ * point drift is noise, not a reserve or deficit worth marking.
+ */
+const PACE_DEAD_ZONE = 2;
+
+/**
+ * Signed whole-point gap: absolute value first, then round. Rounding the
+ * signed gap in JavaScript pulls negative halves toward zero (`-7.5` → `-7`)
+ * and understates reserve.
+ */
+function displayedPaceGap(delta: number): number {
+  if (!Number.isFinite(delta) || delta === 0) return 0;
+  return Math.sign(delta) * Math.round(Math.abs(delta));
+}
 
 /**
  * Usage against the clock. Spending evenly leaves the same share of quota as
- * there is time left in the window; within five points of that counts as on
- * pace, further ahead means the window may run dry first.
+ * there is time left in the window. Gaps inside the dead zone have no pace.
  */
 export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPace | null {
-  const elapsed = elapsedShare(window, now);
-  return elapsed === null ? null : paceOfShares(window.usedPercent, elapsed);
+  return paceDetail(window, now)?.pace ?? null;
 }
 
-function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
-  const gap = usedPercent - elapsed * 100;
-  if (gap > 5) return "ahead";
-  if (gap < -5) return "under";
-  return "on";
+function clampPercent(value: number): number | null {
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, value));
+}
+
+function paceFromGap(gapPercent: number): { pace: LimitPace; status: LimitPaceStatus } {
+  if (gapPercent > 0) return { pace: "ahead", status: "deficit" };
+  if (gapPercent < 0) return { pace: "under", status: "reserve" };
+  return { pace: "on", status: "on" };
+}
+
+/**
+ * Even-spend comparison for one provider window. The window runs from 0% to
+ * 100% used over `windowDurationMins` and ends at `resetsAt`. Expected use
+ * is the elapsed share of that span; reserve or deficit is used minus that
+ * expected value. Returns null when duration or reset is missing, the reset
+ * is outside the window, the clock has barely started, the raw gap is
+ * inside the dead zone, or the inputs are not finite.
+ */
+export function paceDetail(window: ServerProviderUsageWindow, now: number): LimitPaceDetail | null {
+  return averagePaceDetail([window], now);
+}
+
+/**
+ * Mean even-spend gap of the windows that can report one. Accounts missing a
+ * duration or reset are skipped; on-pace accounts count as a zero gap so they
+ * pull the mean toward even. Dead zone and rounding apply to the mean,
+ * not to each account first.
+ */
+export function averagePaceDetail(
+  windows: readonly ServerProviderUsageWindow[],
+  now: number,
+): LimitPaceDetail | null {
+  const parts: { gap: number; elapsed: number; expectedUsedPercent: number }[] = [];
+  for (const window of windows) {
+    const elapsed = elapsedShare(window, now);
+    if (elapsed === null || elapsed < PACE_MIN_ELAPSED || elapsed >= 1) continue;
+    const usedPercent = clampPercent(window.usedPercent);
+    if (usedPercent === null) continue;
+    const expectedUsedPercent = elapsed * 100;
+    const gap = usedPercent - expectedUsedPercent;
+    if (!Number.isFinite(gap)) continue;
+    parts.push({ gap, elapsed, expectedUsedPercent });
+  }
+  if (parts.length === 0) return null;
+  const n = parts.length;
+  const gap = parts.reduce((sum, part) => sum + part.gap, 0) / n;
+  if (Math.abs(gap) <= PACE_DEAD_ZONE) return null;
+  const gapPercent = displayedPaceGap(gap);
+  const { pace, status } = paceFromGap(gapPercent);
+  return {
+    pace,
+    status,
+    gapPercent,
+    expectedUsedPercent: parts.reduce((sum, part) => sum + part.expectedUsedPercent, 0) / n,
+    elapsedShare: parts.reduce((sum, part) => sum + part.elapsed, 0) / n,
+  };
+}
+
+/** Where the remaining fill would sit if use matched elapsed time, 0..100. */
+export function evenPaceRemainingPercent(detail: LimitPaceDetail): number {
+  return Math.round((1 - detail.elapsedShare) * 100);
+}
+
+export interface LimitPaceReadout {
+  readonly marker: string;
+  /** Gap only, for the compact icon+percent chip. */
+  readonly percent: string;
+  readonly explanation: string;
+}
+
+/** Reserve or deficit copy. Reset forecasts stay out of the line. */
+export function formatAllowancePace(detail: LimitPaceDetail): LimitPaceReadout {
+  const absGap = Math.abs(detail.gapPercent);
+  let marker: string;
+  switch (detail.status) {
+    case "reserve":
+      marker = `${absGap}% in reserve`;
+      break;
+    case "deficit":
+      marker = `${absGap}% in deficit`;
+      break;
+    case "on":
+      marker = "On pace";
+      break;
+    default: {
+      const _exhaustive: never = detail.status;
+      throw new Error(`Unhandled pace status: ${_exhaustive}`);
+    }
+  }
+  const expected = Math.round(detail.expectedUsedPercent);
+  return {
+    marker,
+    percent: `${absGap}%`,
+    explanation: `${marker}. Even pace by now is ${expected}% used.`,
+  };
 }
 
 /** `2h 13m`, `3d 4h`, `12m`. */

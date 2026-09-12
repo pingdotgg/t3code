@@ -5,8 +5,11 @@ import {
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
+  evenPaceRemainingPercent,
+  formatAllowancePace,
   formatDuration,
   formatResetsIn,
+  paceDetail,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -26,7 +29,6 @@ import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -79,6 +81,7 @@ function PoolWindowCard({
 }) {
   const navigation = useNavigation();
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const paceReadout = pool.paceDetail ? formatAllowancePace(pool.paceDetail) : null;
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
@@ -105,8 +108,13 @@ function PoolWindowCard({
             <Text className="text-sm text-foreground-muted">left</Text>
           </View>
         </View>
-        {pool.pace ? (
-          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
+        {paceReadout ? (
+          <Text
+            className="max-w-[11rem] text-right text-xs text-foreground-tertiary"
+            accessibilityLabel={paceReadout.explanation}
+          >
+            {paceReadout.percent}
+          </Text>
         ) : null}
       </View>
       {nextRefill ? (
@@ -118,21 +126,43 @@ function PoolWindowCard({
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          const rowPace = paceDetail(window, now);
           return (
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${rowPace ? `, ${formatAllowancePace(rowPace).marker}` : ""}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
-              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
+              className="h-7 min-w-0 flex-1 overflow-visible rounded-md bg-transparent"
             >
-              <AccountSegment
-                remaining={remainingPercent(window)}
-                color={color}
-                pending={Boolean(window.resetsAt)}
-              />
-              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+              <View className="absolute inset-0 overflow-hidden rounded-md bg-subtle">
+                <AccountSegment
+                  remaining={remainingPercent(window)}
+                  color={color}
+                  pending={Boolean(window.resetsAt)}
+                />
+              </View>
+              {rowPace ? (
+                <View
+                  pointerEvents="none"
+                  className={
+                    rowPace.status === "deficit"
+                      ? "absolute z-10 w-0.5 rounded-full bg-red-500"
+                      : "absolute z-10 w-0.5 rounded-full bg-emerald-500"
+                  }
+                  style={{
+                    left: `${evenPaceRemainingPercent(rowPace)}%`,
+                    marginLeft: -1,
+                    top: "-10%",
+                    height: "120%",
+                  }}
+                />
+              ) : null}
+              <View
+                pointerEvents="none"
+                className="absolute inset-0 z-20 items-center justify-center"
+              >
                 <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                   {index + 1}
                 </Text>
@@ -177,7 +207,9 @@ function PoolWindowCard({
                 ) : null}
                 {credits ? (
                   <>
-                    {resetsIn ? <Text className="text-xs text-foreground-tertiary">·</Text> : null}
+                    {resetsIn ? (
+                      <Text className="text-xs text-foreground-tertiary">·</Text>
+                    ) : null}
                     <SymbolView name="ticket" size={13} tintColorClassName="accent-icon" />
                     <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                       {credits}
@@ -279,6 +311,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
+  const accountPaceDetail = window ? paceDetail(window, now) : null;
+  const accountPace =
+    account && window && accountPaceDetail ? formatAllowancePace(accountPaceDetail) : null;
   const [revealed, setRevealed] = useState(false);
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -329,6 +364,14 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                 {remainingPercent(window)}% left
               </Text>
+              {accountPace ? (
+                <Text
+                  className="text-sm text-foreground-muted"
+                  accessibilityLabel={accountPace.explanation}
+                >
+                  {accountPace.marker}
+                </Text>
+              ) : null}
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">
                   Resets{" "}

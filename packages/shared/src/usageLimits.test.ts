@@ -19,9 +19,12 @@ import {
   collectLimitPools,
   collectLimitSources,
   collectLimitsGroups,
+  averagePaceDetail,
   elapsedShare,
+  formatAllowancePace,
   formatResetsIn,
   limitsNotice,
+  paceDetail,
   paceOf,
   providersWithLimits,
   remainingPercent,
@@ -59,7 +62,9 @@ describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceOf(window, now)).toBe("under");
-    expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
+    expect(paceOf({ ...window, usedPercent: 60 }, now)).toBeNull();
+    expect(paceOf({ ...window, usedPercent: 62 }, now)).toBeNull();
+    expect(paceOf({ ...window, usedPercent: 63 }, now)).toBe("ahead");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
   });
 
@@ -77,6 +82,54 @@ describe("pace", () => {
     expect(formatResetsIn({ ...window, resetsAt: "2026-09-03T11:00:00.000Z" }, now)).toBe(
       "resets now",
     );
+  });
+
+  it("labels reserve and deficit from the used-vs-elapsed gap", () => {
+    expect(paceDetail(window, now)).toMatchObject({ status: "reserve", gapPercent: -20 });
+    expect(paceDetail({ ...window, usedPercent: 80 }, now)).toMatchObject({
+      status: "deficit",
+      gapPercent: 20,
+    });
+    expect(formatAllowancePace(paceDetail(window, now)!).marker).toBe("20% in reserve");
+    expect(formatAllowancePace(paceDetail(window, now)!).percent).toBe("20%");
+    expect(formatAllowancePace(paceDetail({ ...window, usedPercent: 80 }, now)!).marker).toBe(
+      "20% in deficit",
+    );
+  });
+
+  it("hides pace until 3% of the window has elapsed or when reset is outside the duration", () => {
+    expect(paceDetail({ ...window, resetsAt: "2026-09-03T16:55:00.000Z" }, now)).toBeNull();
+    expect(paceDetail({ ...window, resetsAt: "2026-09-03T18:00:00.000Z" }, now)).toBeNull();
+    expect(elapsedShare({ ...window, resetsAt: "2026-09-03T17:00:00.000Z" }, now)).toBe(0);
+    expect(
+      paceDetail({ ...window, usedPercent: 12, resetsAt: "2026-09-03T17:00:00.000Z" }, now),
+    ).toBeNull();
+  });
+
+  it("rounds the displayed gap from the absolute delta so reserve halves are not pulled toward zero", () => {
+    // 60.5% elapsed of 300 minutes; used 53% → raw −7.5. JS Math.round(-7.5) is −7.
+    const half = { ...window, usedPercent: 53, resetsAt: "2026-09-03T13:58:30.000Z" };
+    expect(paceDetail(half, now)).toMatchObject({ status: "reserve", gapPercent: -8 });
+    expect(formatAllowancePace(paceDetail(half, now)!).marker).toBe("8% in reserve");
+  });
+
+  it("matches the CodexBar session reserve: 49% left at 75% elapsed is 24% reserve", () => {
+    const session = { ...window, usedPercent: 51, resetsAt: "2026-09-03T13:15:00.000Z" };
+    expect(elapsedShare(session, now)).toBeCloseTo(0.75);
+    expect(formatAllowancePace(paceDetail(session, now)!).marker).toBe("24% in reserve");
+  });
+
+  it("averages even-spend gaps across windows that can report pace", () => {
+    const reserve = window;
+    const deficit = { ...window, usedPercent: 70 };
+    expect(averagePaceDetail([reserve, deficit], now)).toMatchObject({
+      status: "reserve",
+      gapPercent: -5,
+    });
+    expect(averagePaceDetail([reserve, { ...window, usedPercent: 80 }], now)).toBeNull();
+    expect(
+      averagePaceDetail([reserve, { ...deficit, windowDurationMins: undefined }], now),
+    ).toMatchObject({ status: "reserve", gapPercent: -20 });
   });
 });
 
@@ -710,8 +763,14 @@ describe("pools", () => {
       ["claudeAgent", 2],
       ["codex", 1],
     ]);
+    // One Codex account: card-level pace is the account's even-spend gap.
+    expect(pools[1]?.windows[0]).toMatchObject({
+      id: "seven_day",
+      pace: "under",
+      paceDetail: { status: "reserve", gapPercent: -7 },
+    });
     const [session, week] = pools[0]!.windows;
-    // A member with no reset has no clock, so it does not vote on pace.
+    // Two accounts: pace is the mean even-spend gap of windows that report it.
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
         account.key === "hub:b"
@@ -726,14 +785,14 @@ describe("pools", () => {
       ),
       now,
     );
-    // Only a votes: 80% used, 80% elapsed.
-    expect(untimed[0]?.windows[0]?.pace).toBe("on");
-    // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
+    expect(untimed[0]?.windows[0]?.pace).toBeNull();
+    expect(untimed[0]?.windows[0]?.paceDetail).toBeNull();
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,
       usedPercent: 60,
       pace: "under",
+      paceDetail: { status: "reserve", gapPercent: -10 },
     });
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
@@ -741,7 +800,13 @@ describe("pools", () => {
       ["hub:a", 40],
       ["hub:b", 20],
     ]);
-    expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
+    expect(week).toMatchObject({
+      id: "seven_day",
+      remainingPercent: 80,
+      members: [{}],
+      pace: "under",
+      paceDetail: { status: "reserve", gapPercent: -37 },
+    });
     // Codex reports `primary` for both its five-hour and (on Go) monthly window.
     const mixed = collectLimitPools(
       [
