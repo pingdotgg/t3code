@@ -303,6 +303,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           desktopBootstrapToken: "desktop-token",
           desktopTelemetryFd: 4,
           desktopTelemetryControlFd: 5,
+          desktopLifetimeFd: 6,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           otlpTracesUrl: "http://localhost:4318/v1/traces",
@@ -360,6 +361,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         desktopBootstrapToken: "desktop-token",
         desktopTelemetryFd: 4,
         desktopTelemetryControlFd: 5,
+        desktopLifetimeFd: 6,
         resourceMonitorPath: undefined,
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
@@ -369,6 +371,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
       assert.equal(resolved.desktopTelemetryControlFd, 5);
+      assert.equal(resolved.desktopLifetimeFd, 6);
     }),
   );
 

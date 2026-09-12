@@ -52,6 +52,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     tailscaleServePort: 443,
     desktopTelemetryFd: 4,
     desktopTelemetryControlFd: 5,
+    desktopLifetimeFd: 6,
   },
   bootstrapDelivery: "fd3",
   extendEnv: true,
@@ -191,7 +192,7 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
-  it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
+  it.effect("spawns the backend with bootstrap, telemetry, and desktop lifetime fds", () =>
     Effect.scoped(
       Effect.gen(function* () {
         let spawnedCommand: ChildProcess.Command | undefined;
@@ -260,6 +261,7 @@ describe("DesktopBackendManager", () => {
         assert.isDefined(spawnedCommand.options.forceKillAfter);
         assert.equal(spawnedCommand.options.additionalFds?.fd4?.type, "input");
         assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
+        assert.deepEqual(spawnedCommand.options.additionalFds?.fd6, { type: "input" });
         assert.equal(
           Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
           2_000,

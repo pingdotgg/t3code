@@ -18,6 +18,7 @@ import {
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
   readBootstrapEnvelope,
+  waitForDesktopLifetimeEnd,
 } from "./bootstrap.ts";
 import { assertNone, assertSome } from "@effect/vitest/utils";
 
@@ -251,5 +252,38 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         const payload = yield* Fiber.join(fiber);
         assertNone(payload);
       }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
+
+it.layer(NodeServices.layer)("waitForDesktopLifetimeEnd", (it) => {
+  it.effect("completes when the desktop closes its end of the pipe", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lifetime-" });
+      const fifoPath = NodePath.join(tempDir, "desktop.pipe");
+
+      yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
+
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; exec sleep 60', "sh", fifoPath], {
+            stdio: ["ignore", "ignore", "ignore"],
+          }),
+        ),
+        (writer) =>
+          Effect.sync(() => {
+            writer.kill("SIGKILL");
+          }),
+      );
+      // The lifetime watcher owns this fd and closes it when the pipe ends.
+      const fd = NodeFS.openSync(fifoPath, "r");
+
+      const watcher = yield* waitForDesktopLifetimeEnd(fd).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      assert.isUndefined(watcher.pollUnsafe());
+
+      writer.kill("SIGKILL");
+      yield* Fiber.join(watcher);
+    }),
   );
 });
