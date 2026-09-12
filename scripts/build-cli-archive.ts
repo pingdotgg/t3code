@@ -345,6 +345,50 @@ const WindowsSigningConfig = Config.all({
   ),
 });
 
+/**
+ * Node's --build-sea injects the blob into a copy of node.exe by rebuilding
+ * its resource section but, unlike its Mach-O path, leaves node's original
+ * Authenticode data-directory entry in the PE header. The file grows, so the
+ * entry now points into the middle of the new section at bytes that are not a
+ * certificate table. signtool refuses to sign such an image (0x800700C1, "not
+ * a valid Win32 application") and cannot `remove /s` it either, since the SIP
+ * fails to parse the garbage. Clearing the entry is exactly what a signature
+ * strip does, without needing a parser that trusts the broken table.
+ */
+const stripStaleAuthenticodeEntry = Effect.fn("stripStaleAuthenticodeEntry")(function* (
+  executablePath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* fs.readFile(executablePath);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const peOffset = view.getUint32(0x3c, true);
+  if (view.getUint32(peOffset, true) !== 0x00004550) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: executablePath,
+      hint: "Expected a PE executable to strip the stale signature entry from.",
+    });
+  }
+  const optionalHeader = peOffset + 24;
+  const magic = view.getUint16(optionalHeader, true);
+  // Data directories start at +112 (PE32+) or +96 (PE32); the certificate
+  // table is directory index 4, eight bytes (file offset, size).
+  const securityEntry = optionalHeader + (magic === 0x20b ? 112 : 96) + 4 * 8;
+  const offset = view.getUint32(securityEntry, true);
+  const size = view.getUint32(securityEntry + 4, true);
+  if (offset === 0 && size === 0) return;
+  if (offset + size === bytes.byteLength) {
+    // A certificate table that still ends at EOF is intact; leave it for
+    // signtool to replace rather than second-guessing it here.
+    return;
+  }
+  view.setUint32(securityEntry, 0, true);
+  view.setUint32(securityEntry + 4, 0, true);
+  yield* fs.writeFile(executablePath, bytes);
+  yield* Effect.log(
+    `[cli-archive] Cleared the stale Authenticode entry (offset ${String(offset)}, size ${String(size)}) left by --build-sea.`,
+  );
+});
+
 /** Signs t3.exe through the same Azure Trusted Signing setup the installer uses. */
 const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
   executablePath: string,
@@ -357,30 +401,11 @@ const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
     yield* Effect.log("[cli-archive] Windows signing disabled (missing Azure Trusted Signing).");
     return;
   }
-  // Node's --build-sea injects the blob into a copy of node.exe by rebuilding
-  // its resource section, but unlike its Mach-O path it leaves the original
-  // Authenticode entry in place. The certificate table then points at bytes
-  // that moved, and signtool refuses the image with 0x800700C1 ("not a valid
-  // Win32 application") until that stale signature is removed. The Trusted
-  // Signing module ships a Windows SDK signtool; `signtool remove /s` strips
-  // the security directory so the fresh signature lands on a clean PE.
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const stripScript = [
-    "$ErrorActionPreference = 'Stop';",
-    "$signtool = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'TrustedSigning') -Recurse -Filter signtool.exe |",
-    "  Where-Object { $_.FullName -match '\\\\x64\\\\signtool\\.exe$' } | Select-Object -First 1 -ExpandProperty FullName;",
-    "if (-not $signtool) { $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source };",
-    "if (-not $signtool) { throw 'signtool.exe not found; run the Trusted Signing preparation step first.' };",
-    `& $signtool remove /s ${quote(executablePath)};`,
-    'if ($LASTEXITCODE -ne 0) { throw "signtool remove failed with exit code $LASTEXITCODE" }',
-  ].join(" ");
-  yield* runCommand(
-    ChildProcess.make("pwsh", ["-NoProfile", "-NonInteractive", "-Command", stripScript]),
-    "signtool remove t3.exe",
-  );
+  yield* stripStaleAuthenticodeEntry(executablePath);
   // Mirrors electron-builder's invocation for the installer: every value
   // single-quoted, the file path in Windows form. `$ErrorActionPreference`
   // makes a signing failure inside the cmdlet surface as a non-zero exit.
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
   const script = [
     "$ErrorActionPreference = 'Stop';",
     "Invoke-TrustedSigning",
