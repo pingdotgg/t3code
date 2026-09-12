@@ -443,6 +443,7 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
+  options?: { readonly viewerAllowsPause: boolean },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
   const protect = <A>(
@@ -493,12 +494,13 @@ function withRateLimitBackoff(
   const wrapped = {
     kind: api.kind,
     capabilities: api.capabilities,
-    // Let through a pause, whoever asked. This lookup stands in front of everything else here,
-    // so refusing it turns a paused host into one that reads as signed out, and refusing it for a
-    // press the reader made turns that press into a failure. Its answer is then held for the ten
-    // minutes that signing in moves on, so a paused host is asked at most once for it either way,
-    // which is not the burst a pause exists to stop.
-    getViewer: interactive("getViewer", api.getViewer),
+    // Refused during a pause like any other read, except for the caller that asks for the
+    // bypass: a lookup that failed is not held, so letting every background read through would
+    // spawn this host's CLI on each of them and re-extend the pause it was already in.
+    getViewer:
+      options?.viewerAllowsPause === true
+        ? interactive("getViewer", api.getViewer)
+        : wrap("getViewer", api.getViewer),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -850,7 +852,10 @@ export const make = Effect.gen(function* () {
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits);
+      // Let through a pause: a press the reader is waiting on has to be answered, and the
+      // callers that are not that press are held back at the gate below instead, before they
+      // reach this lookup at all.
+      const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd }))).pipe(
         Effect.map((viewer) => ({
           host,
@@ -883,6 +888,7 @@ export const make = Effect.gen(function* () {
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
+    options?: { readonly allowPaused: boolean },
   ) =>
     Effect.forEach(
       [...new Set(projects.map(({ host }) => host))],
@@ -902,7 +908,29 @@ export const make = Effect.gen(function* () {
           // roots are the same lookup, and putting them on separate flights would spawn two of
           // this host's CLIs on a cold page load, which is the coalescing this exists for.
           const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
-          return Cache.get(viewerFlights, key);
+          if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
+          // The pause is checked here rather than inside the lookup, so that it holds back the
+          // callers nobody is waiting on without splitting the flight they share with a press.
+          // A failed lookup is held nowhere, so letting a background read through would spawn
+          // this host's CLI on every refresh for as long as the pause lasted, and re-extend it.
+          return rateLimits.check({ provider: api.kind, host }).pipe(
+            Effect.flatMap(() => Cache.get(viewerFlights, key)),
+            Effect.catch((error) =>
+              Effect.succeed<ResolvedViewer>({
+                host,
+                kind: api.kind,
+                viewer: null,
+                error: new PullRequestProviderError({
+                  provider: api.kind,
+                  operation: "getViewer",
+                  reason: "rate-limited",
+                  detail: error.detail,
+                  retryAt: error.retryAt,
+                  cause: error,
+                }),
+              }),
+            ),
+          );
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
     );
@@ -1585,13 +1613,14 @@ export const make = Effect.gen(function* () {
    * would otherwise hide every tick this reader has made and file the next press under rows that
    * are orphaned once it recovers. The reader is waiting on every one of these paths, a press or
    * the boxes on a diff they just opened, so the lookup is let through a host's backoff rather
-   * than failing with it and turning a pause into a refusal.
+   * than failing with it and turning a pause into a refusal. Scoped to here: the bypass is
+   * bounded by what the reader does, while a background read would repeat it on every refresh.
    */
   const requiredViewerOf = (
     project: SupportedProject,
     operation: string,
   ): Effect.Effect<string | null, PullRequestError> =>
-    resolveViewers([project], new Map()).pipe(
+    resolveViewers([project], new Map(), { allowPaused: true }).pipe(
       Effect.flatMap(([resolved]) => {
         const error = resolved?.error ?? null;
         return error === null

@@ -1527,20 +1527,10 @@ it.effect("uses a manual rate limit to pause later reads", () =>
         action: "close",
       }),
     );
-    const paused = yield* service.list({ state: "open", involvement: "all" });
+    const error = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
 
-    // The listing itself never reaches the host, and the repository behind it is reported as one
-    // that could not be read.
     assert.strictEqual(listCalls, 0);
-    assert.deepStrictEqual(paused.entries, []);
-    assert.deepStrictEqual(
-      paused.errors.map((error) => error.projectId),
-      ["p1"],
-    );
-    // Who is signed in is not what a pause holds back. It is asked once per host per ten minutes
-    // and it stands in front of everything else here, so refusing it would report a host that is
-    // merely backing off as one nobody is signed in to.
-    assert.strictEqual(paused.viewers["github.com"], "bilal");
+    assert.strictEqual(error._tag, "PullRequestOperationError");
   }),
 );
 
@@ -5422,6 +5412,69 @@ it.effect("records a press while the host is backing off", () =>
         { path: "src/b.ts", state: "viewed" },
       ],
     );
+    assert.strictEqual(viewerLookups, 2);
+  }),
+);
+
+it.effect("asks who is reading through a pause only for the press that is waiting on it", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerLookups += 1;
+              return "bilal";
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+          // Backing off for the hour, so the pause outlives the ten minutes who is signed in is
+          // held for.
+          getFileRevisions: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getFileRevisions",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    assert.strictEqual(viewerLookups, 1);
+    yield* TestClock.adjust("11 minutes");
+
+    // A listing is not the reader waiting on this lookup, and a failed one is held nowhere, so
+    // letting it through would spawn the host's CLI on every refresh for as long as the pause
+    // lasts and re-extend it each time.
+    const listed = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    assert.strictEqual(listed._tag, "PullRequestOperationError");
+    assert.strictEqual(viewerLookups, 1);
+
+    // The press is bounded by what the reader does, and its rows are keyed by who they are, so
+    // it is asked rather than refused.
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
     assert.strictEqual(viewerLookups, 2);
   }),
 );
