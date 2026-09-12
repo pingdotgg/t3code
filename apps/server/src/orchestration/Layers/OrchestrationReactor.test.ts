@@ -12,6 +12,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
+import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
@@ -88,6 +89,16 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
+          Layer.succeed(PullRequestSyncReactor.PullRequestSyncReactor, {
+            start: () => {
+              started.push("pull-request-sync-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+            requestSync: () => Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
           Layer.succeed(AgentSessionAutoImporter.AgentSessionAutoImporter, {
             start: () => {
               started.push("agent-session-auto-importer");
@@ -120,9 +131,10 @@ describe("OrchestrationReactor", () => {
       "provider-command-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
-      "thread-settlement-reactor",
-      "agent-session-auto-importer",
       "thread-pull-request-reactor",
+      "thread-settlement-reactor",
+      "pull-request-sync-reactor",
+      "agent-session-auto-importer",
       "agent-awareness-relay",
     ]);
 

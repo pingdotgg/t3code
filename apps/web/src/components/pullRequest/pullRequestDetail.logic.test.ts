@@ -1,3 +1,5 @@
+import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   PullRequestAction,
   type PullRequestCheck,
@@ -7,16 +9,20 @@ import {
   type PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { formatInlineContextReference } from "~/lib/composerContextReferences";
+import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
   isThreadOwnPullRequest,
@@ -35,8 +41,10 @@ import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
+  allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
+  resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
@@ -84,6 +92,21 @@ const TIMELINE_SOURCE: Pick<
   mergedAt: null,
   closedAt: null,
 };
+
+describe("pull request merge method", () => {
+  it("uses the current choice, then the project default, then the last choice", () => {
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], null, "squash", "rebase"),
+    ).toBe("squash");
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], "rebase", "squash", "merge"),
+    ).toBe("rebase");
+    expect(resolvePullRequestMergeMethod(["merge", "rebase"], null, "squash", "rebase")).toBe(
+      "rebase",
+    );
+    expect(resolvePullRequestMergeMethod(["squash"], null, "merge", "rebase")).toBe("squash");
+  });
+});
 
 describe("pull request activity refresh", () => {
   const first = {
@@ -1029,7 +1052,39 @@ describe("asking about a change rather than working on it", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
   };
+
+  it.each(["", "Please consider "])("preserves PR plan feedback with prose %j", (prose) => {
+    const comment = buildPullRequestReferenceContext(base);
+    const draftText = prose + formatInlineContextReference(reviewCommentContextReference(comment));
+    const submission = resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" });
+    const context = buildMessageContext({
+      terminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [comment],
+    });
+    expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
+    expect(context?.records[0]).toMatchObject({ pullRequest: base });
+    const legacyText = serializeLegacyContextMessage({
+      text: submission.text,
+      records: context!.records,
+    });
+    expect(legacyText).toContain(base.url);
+    expect(legacyText).toContain(prose);
+    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
+    expect(legacyText).not.toContain("t3-context://");
+  });
+
+  it("builds a neutral composer reference without prescribing an action", () => {
+    const context = buildPullRequestReferenceContext(base);
+
+    expect(context.pullRequest).toEqual(expect.objectContaining({ number: 42, state: "open" }));
+    expect(context.text).toContain("https://github.com/pingdotgg/t3code/pull/42");
+    expect(context.text).not.toContain("Do not change any code");
+    expect(context.text).not.toContain("Walk through this pull request");
+  });
 
   it("leaves the composer empty, and everything the agent needs in the chip", () => {
     const handoff = buildAskAboutPullRequestHandoff(base);
@@ -1039,6 +1094,15 @@ describe("asking about a change rather than working on it", () => {
         // What the chip reads as: which pull request, and what it is called.
         filePath: "PR #42",
         rangeLabel: "Add the pull requests page",
+        pullRequest: {
+          number: 42,
+          title: "Add the pull requests page",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+        },
       }),
     ]);
     const chip = handoff.reviewComments[0]!;
@@ -1103,9 +1167,45 @@ describe("a second ask into the same composer", () => {
     expect(next.map((comment) => comment.id)).toEqual(["pull-request-context:42"]);
   });
 
+  it("keeps a reader's own pull request reference when a later handoff lands", () => {
+    const own = buildPullRequestReferenceContext({
+      number: 42,
+      title: "Add the pull requests page",
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      headBranch: "feature",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft: false,
+    });
+    const prompt = `Look at this. ${formatInlineContextReference(reviewCommentContextReference(own))} `;
+
+    expect(stripPullRequestHandoffReferences(prompt, [own])).toBe(prompt);
+    expect(
+      handoffReviewComments([own], [chip("pull-request-context:42")]).map((comment) => comment.id),
+    ).toEqual([own.id, "pull-request-context:42"]);
+  });
+
   it("empties what the last ask left, so the two are never sent as one question", () => {
     const handed = "Explain this pull request.";
     expect(handoffPrompt({ prompt: handed, lastHandoffPrompt: handed }, "")).toBe("");
+  });
+
+  it("removes the previous handoff chip before replacing its prompt", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = `Explain this pull request. ${formatInlineContextReference(
+      reviewCommentContextReference(previous),
+    )} `;
+    expect(stripPullRequestHandoffReferences(prompt, [previous])).toBe(
+      "Explain this pull request.",
+    );
+  });
+
+  it("keeps a handoff reference when the next action deliberately repeats it", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = formatInlineContextReference(reviewCommentContextReference(previous));
+    expect(stripPullRequestHandoffReferences(prompt, [previous], new Set([previous.id]))).toBe(
+      prompt,
+    );
   });
 
   it("replaces the last ask's prompt with this one's", () => {
@@ -1404,10 +1504,64 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
   });
 
+  it("isolates stored and displayed details between hosts with the same repository and number", () => {
+    const storage = makeStorage();
+    const publicRef = { ...reference, host: "github.com" };
+    const enterpriseRef = { ...reference, host: "github.example.com" };
+    const publicDetail = detail();
+    const enterpriseDetail = detail({
+      title: "Enterprise change",
+      url: "https://github.example.com/acme/web/pull/7",
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", publicRef, publicDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
+    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, enterpriseDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", publicRef)?.title).toBe(
+      publicDetail.title,
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)?.title).toBe(
+      enterpriseDetail.title,
+    );
+    expect(
+      resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: publicDetail,
+        reference: enterpriseRef,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: enterpriseDetail,
+        reference: enterpriseRef,
+      }),
+    ).toBe(enterpriseDetail);
+    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, publicDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
+  });
+
   it("shrugs off corrupt storage and no storage at all", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
   });
+});
+
+describe("single-PR merge compatibility during stack discovery", () => {
+  it.each([
+    [false, true, false, null, true],
+    [false, false, true, null, true],
+    [true, false, true, null, false],
+    [true, false, false, "Lookup failed", false],
+    [true, true, false, null, false],
+    [true, false, false, null, true],
+  ] as const)(
+    "capability=%s stack=%s pending=%s error=%s permits=%s",
+    (supportsStackActions, hasStack, stackPending, stackError, allowed) => {
+      expect(
+        allowsSinglePullRequestMerge({ supportsStackActions, hasStack, stackPending, stackError }),
+      ).toBe(allowed);
+    },
+  );
 });

@@ -37,6 +37,7 @@ export function SettingsSwitchRow(props: {
         ) : null}
       </View>
       <ThemedSwitch
+        accessibilityLabel={props.label}
         disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}

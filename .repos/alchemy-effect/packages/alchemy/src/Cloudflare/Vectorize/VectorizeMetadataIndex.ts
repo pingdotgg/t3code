@@ -56,11 +56,8 @@ export type MetadataIndex = Resource<
  * A metadata index is identified by its parent index and `propertyName` and
  * is immutable — changing the property name, type, or parent index triggers
  * a replacement.
- * @resource
- * @product Vectorize
- * @category AI
- * @section Creating a Metadata Index
- * @example Index a string metadata property
+ * ### Creating a Metadata Index
+ * **Example:** Index a string metadata property
  * ```typescript
  * const index = yield* Cloudflare.Vectorize.Index("my-index", {
  *   dimensions: 768,
@@ -74,7 +71,7 @@ export type MetadataIndex = Resource<
  * });
  * ```
  *
- * @example Index a numeric metadata property
+ * **Example:** Index a numeric metadata property
  * ```typescript
  * yield* Cloudflare.Vectorize.MetadataIndex("PriceMetaIndex", {
  *   indexName: index.indexName,
@@ -84,6 +81,10 @@ export type MetadataIndex = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/vectorize/reference/metadata-filtering/
+ *
+ * @resource
+ * @product Vectorize
+ * @category AI
  */
 export const MetadataIndex = Resource<MetadataIndex>(
   "Cloudflare.VectorizeMetadataIndex",

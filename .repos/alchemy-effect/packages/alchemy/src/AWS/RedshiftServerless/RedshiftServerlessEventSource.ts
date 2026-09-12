@@ -64,8 +64,8 @@ export interface RedshiftServerlessEventSourceProps extends EventRouteProps {
  * host. Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Redshift Serverless Events
- * @example React to Data Warehouse Events
+ * ### Consuming Redshift Serverless Events
+ * **Example:** React to Data Warehouse Events
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

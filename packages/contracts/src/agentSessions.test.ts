@@ -1,6 +1,7 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAgentSessionImportWindowMs } from "./agentSessions.ts";
+import { AgentSessionScanResult, resolveAgentSessionImportWindowMs } from "./agentSessions.ts";
 
 describe("resolveAgentSessionImportWindowMs", () => {
   it("resolves 30d to 30 days in ms", () => {
@@ -17,5 +18,37 @@ describe("resolveAgentSessionImportWindowMs", () => {
 
   it("resolves all to null (no cutoff)", () => {
     expect(resolveAgentSessionImportWindowMs("all")).toBeNull();
+  });
+});
+
+const decodeScanResult = Schema.decodeUnknownSync(AgentSessionScanResult);
+
+const candidate = {
+  path: "/projects/repo",
+  title: "repo",
+  sources: ["codex"],
+  threadCount: 3,
+  lastActiveAt: "2026-08-20T12:00:00.000Z",
+  alreadyImported: false,
+} as const;
+
+describe("AgentSessionScanResult", () => {
+  it("decodes candidates from servers that predate the git scan", () => {
+    const result = decodeScanResult({
+      candidates: [candidate],
+      scannedAt: "2026-08-22T12:00:00.000Z",
+    });
+
+    expect(result.candidates[0]?.git).toBeUndefined();
+  });
+
+  it("preserves reported git identity", () => {
+    const git = { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" };
+    const result = decodeScanResult({
+      candidates: [{ ...candidate, git }],
+      scannedAt: "2026-08-22T12:00:00.000Z",
+    });
+
+    expect(result.candidates[0]?.git).toEqual(git);
   });
 });

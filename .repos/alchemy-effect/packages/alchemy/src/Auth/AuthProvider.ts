@@ -40,13 +40,10 @@ const LOCKED_METHODS = new Set(["read", "login", "logout", "configure"]);
 const INTERACTIVE_METHODS = new Set(["login", "configure"]);
 const interactiveMutex = Semaphore.makeUnsafe(1);
 
-export class AuthError extends Schema.TaggedErrorClass<AuthError>()(
-  "AuthError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 export class AuthProviders extends Context.Service<
   AuthProviders,
@@ -66,6 +63,15 @@ export interface ConfigureContext {
    * `{ method: "env" }`) so unattended runs work.
    */
   readonly ci: boolean;
+
+  /**
+   * Optional human-readable explanation of WHY credentials are being
+   * demanded right now — e.g. which resources in a dev plan require the
+   * real cloud (see `Auth/Demand.ts`). Interactive `configure`
+   * implementations should display it before their first prompt so the
+   * user knows what triggered the flow.
+   */
+  readonly reason?: string;
 }
 
 export interface AuthProviderImpl<
@@ -175,7 +181,13 @@ export const AuthProvider =
                   if (LOCKED_METHODS.has(methodName)) {
                     // First positional arg is always `profileName`.
                     const profileName = args[0] as string;
-                    eff = withLock(`${profileName}-${name}`, eff);
+                    eff = withLock(`${profileName}-${name}`, eff, {
+                      label: `${name}.${methodName} (profile '${profileName}')`,
+                      // `login`/`configure` legitimately block on the user
+                      // (browser OAuth, `aws sso login`), and a periodic
+                      // notice would trample the prompt they are answering.
+                      watchdog: !INTERACTIVE_METHODS.has(methodName),
+                    });
                   }
                   if (INTERACTIVE_METHODS.has(methodName)) {
                     eff = Semaphore.withPermits(interactiveMutex, 1)(eff);

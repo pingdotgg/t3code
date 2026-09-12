@@ -1,6 +1,8 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  CheckpointRef,
   EnvironmentId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -10,6 +12,9 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AsyncResult } from "effect/unstable/reactivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentThreadDetails } from "../state/threads";
 
 import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
@@ -32,6 +37,7 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -42,18 +48,31 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
+  shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
+  restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  threadShellHasStarted,
   resolveDraftHeroState,
+  isPaintOnlyThreadTimeline,
+  peekHeldThreadTimeline,
+  peekRememberedThreadTimeline,
+  rememberReadyThreadTimeline,
+  resetHeldThreadTimeline,
+  resolveThreadSwitchTimeline,
+  threadKeysShareEnvironment,
+  timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -67,6 +86,8 @@ import {
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   toolGroupConsumesUpwardNavigation,
+  waitForRevertedMessage,
+  prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
 
 describe("agent browser close confirmation", () => {
@@ -113,7 +134,7 @@ describe("floating browser preview", () => {
     const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-1"));
     const panels = useRightPanelStore.getState();
     const revision = panels.getUserActionRevision(ref);
-    usePreviewMiniPlayerStore.getState().open(ref, "agent-tab");
+    usePreviewMiniPlayerStore.getState().open(ref, { kind: "browser", tabId: "agent-tab" });
     panels.reconcileBrowserSurfaces(ref, ["agent-tab"]);
     const intent = selectThreadPreviewMiniPlayer(
       usePreviewMiniPlayerStore.getState().byThreadKey,
@@ -122,7 +143,7 @@ describe("floating browser preview", () => {
     const isFloating = () =>
       shouldRenderPreviewMiniPlayer(
         selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, ref)
-          ?.tabId ?? null,
+          ?.source ?? null,
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
       );
 
@@ -139,22 +160,61 @@ describe("floating browser preview", () => {
   });
 
   it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    const tab = { kind: "browser", tabId: "tab-1" } as const;
     expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:one",
         kind: "preview",
         resourceId: "tab-1",
       }),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer("tab-1", {
+      shouldRenderPreviewMiniPlayer(tab, {
         id: "browser:two",
         kind: "preview",
         resourceId: "tab-2",
       }),
     ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(tab, { id: "diff", kind: "diff" })).toBe(true);
+  });
+
+  it("only hides a floating device while that device is rendered in the panel", () => {
+    const pixel = {
+      kind: "device",
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    const target = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      platform: "android",
+      name: "Pixel",
+    } as const;
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5580",
+        kind: "device",
+        target,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "device:nucbox:emulator-5554",
+        kind: "device",
+        target: { ...target, deviceId: "emulator-5554" },
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer(pixel, { id: "device", kind: "device" })).toBe(true);
+    expect(
+      shouldRenderPreviewMiniPlayer(pixel, {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "emulator-5580",
+      }),
+    ).toBe(true);
   });
 });
 
@@ -188,7 +248,7 @@ describe("proactive panels", () => {
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)).toEqual(
       oldPr,
     );
-    expect(shouldOpenProactivePullRequest(loaded.targetKey, "owner/repo:2")).toBe(false);
+    expect(shouldOpenProactivePullRequest(loaded.targetKey, "owner/repo:2")).toBe(true);
     expect(
       shouldOpenProactiveTurnDiff({
         previousRunningTurnId: loaded.runningTurnId,
@@ -196,7 +256,10 @@ describe("proactive panels", () => {
         settledTurnId: turnId,
         turnCompleted: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(panels.openProactive(ref, { id: "diff", kind: "diff" }, loaded.userActionRevision)).toBe(
+      false,
+    );
   });
 
   it.each(["idle", "loading", "observed"] as const)(
@@ -243,8 +306,9 @@ describe("proactive panels", () => {
     },
   );
 
-  it("opens a pull request only after a newly observed link appears", () => {
-    expect(shouldOpenProactivePullRequest(undefined, "project:repo:42")).toBe(false);
+  it("opens an existing pull request on entry and follows newly observed links", () => {
+    expect(shouldOpenProactivePullRequest(undefined, "project:repo:42")).toBe(true);
+    expect(shouldOpenProactivePullRequest(undefined, null)).toBe(false);
     expect(shouldOpenProactivePullRequest(null, "project:repo:42")).toBe(true);
     expect(shouldOpenProactivePullRequest("project:repo:42", "project:repo:42")).toBe(false);
     expect(shouldOpenProactivePullRequest("project:repo:42", null)).toBe(false);
@@ -284,7 +348,7 @@ describe("proactive panels", () => {
     ).toBe(false);
   });
 
-  it("opens the diff only when the observed running turn settles", () => {
+  it("opens a completed diff on entry or when the observed running turn settles", () => {
     const turnId = TurnId.make("turn-1");
     expect(
       shouldOpenProactiveTurnDiff({
@@ -293,7 +357,7 @@ describe("proactive panels", () => {
         settledTurnId: turnId,
         turnCompleted: true,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       shouldOpenProactiveTurnDiff({
         previousRunningTurnId: turnId,
@@ -556,6 +620,179 @@ describe("draft hero submission transition", () => {
   });
 });
 
+describe("resolveThreadSwitchTimeline", () => {
+  afterEach(() => {
+    resetHeldThreadTimeline();
+  });
+
+  const held = { threadKey: "env-1:thread-a", entries: ["a1", "a2"] };
+
+  it("keeps the previous thread's entries while the next thread is loading", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("shows the new thread once its detail is ready", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["b1"],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: ["b1"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not invent a timeline on the first open of a thread", () => {
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+        lastReady: null,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("keeps the held thread workspace cwd with the snapshot", () => {
+    rememberReadyThreadTimeline({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+    expect(peekHeldThreadTimeline<string[]>()).toEqual({
+      ...held,
+      markdownCwd: "/repo/a",
+      workspaceRoot: "/repo/a",
+    });
+  });
+
+  it("survives a ChatView remount by remembering the last ready timeline", () => {
+    rememberReadyThreadTimeline(held);
+    expect(peekHeldThreadTimeline<string[]>()).toEqual(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("paints a remembered destination instead of the last-viewed thread", () => {
+    rememberReadyThreadTimeline(held);
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["b1", "b2"] });
+    expect(peekRememberedThreadTimeline<string[]>("env-1:thread-a")).toEqual(["a1", "a2"]);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("prefers live entries over a remembered snapshot", () => {
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-b",
+        nextEntries: ["fresh-b"],
+      }),
+    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("does not keep a remembered snapshot on a resolved empty thread", () => {
+    rememberReadyThreadTimeline(held);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: false,
+        activeThreadKey: "env-1:thread-a",
+        nextEntries: [],
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
+  });
+
+  it("does not hold another environment's timeline across a jump", () => {
+    expect(threadKeysShareEnvironment("env-1:thread-a", "env-2:thread-b")).toBe(false);
+    expect(
+      resolveThreadSwitchTimeline({
+        loading: true,
+        activeThreadKey: "env-2:thread-b",
+        nextEntries: [],
+        lastReady: held,
+      }),
+    ).toEqual({ entries: [], displayThreadKey: "env-2:thread-b" });
+  });
+
+  it("treats a foreign held timeline as paint-only", () => {
+    expect(isPaintOnlyThreadTimeline("env-1:thread-a", "env-1:thread-b")).toBe(true);
+    expect(isPaintOnlyThreadTimeline("env-1:thread-b", "env-1:thread-b")).toBe(false);
+  });
+
+  it("does not remember a timeline that still has handoff blob previews", () => {
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "blob:handoff",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(true);
+    expect(
+      timelineHasEphemeralPreviewUrls([
+        {
+          kind: "message",
+          message: {
+            id: MessageId.make("preview-message"),
+            role: "user",
+            text: "Preview",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-09-10T12:00:00.000Z",
+            updatedAt: "2026-09-10T12:00:00.000Z",
+            attachments: [
+              {
+                type: "image",
+                id: "preview",
+                name: "preview.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+                previewUrl: "https://cdn.example/a.png",
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe(false);
+  });
+});
+
 describe("shouldReleaseTimelineAnchorForToolActivity", () => {
   const activeTurnId = TurnId.make("active-turn");
   const anchorMessageId = MessageId.make("anchored-message");
@@ -717,6 +954,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     proposedPlans: [],
     activities: [],
     checkpoints: [],
+    pullRequests: [],
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -834,6 +1072,7 @@ describe("buildLoadingThreadFromShell", () => {
       snoozedUntil: null,
       snoozedAt: null,
       session: null,
+      pullRequests: [],
       latestUserMessageAt: now,
       hasPendingApprovals: false,
       hasPendingUserInput: false,
@@ -904,6 +1143,20 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+
+  it("omits a turn id when a running session has not projected its active turn yet", () => {
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: null,
+          },
+        }),
+      ),
+    ).toEqual({ threadId });
   });
 });
 
@@ -1265,10 +1518,45 @@ describe("resolveComposerInteractionMode", () => {
   });
 });
 
+describe("buildRunningThreadTurnInterruptInput", () => {
+  it("targets only the active turn of a running thread", () => {
+    const activeTurnId = TurnId.make("turn-running");
+    const runningThread = makeThread({
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId,
+      },
+    });
+
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "running")).toEqual({
+      threadId,
+      turnId: activeTurnId,
+    });
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "ready")).toBeNull();
+    expect(
+      buildRunningThreadTurnInterruptInput(makeThread({ session: readySession }), "ready"),
+    ).toBeNull();
+    expect(buildRunningThreadTurnInterruptInput(null, "disconnected")).toBeNull();
+  });
+
+  it("targets a running thread before its active turn has been projected", () => {
+    const runningThread = makeThread({
+      session: {
+        ...readySession,
+        status: "running",
+        activeTurnId: null,
+      },
+    });
+
+    expect(buildRunningThreadTurnInterruptInput(runningThread, "running")).toEqual({ threadId });
+  });
+});
+
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
-      prompt: "\uFFFC",
+      prompt: "[Terminal 1 line 4](t3-context://v1/terminal/ctx-expired)",
       imageCount: 0,
       terminalContexts: [
         {
@@ -1292,7 +1580,7 @@ describe("deriveComposerSendState", () => {
 
   it("keeps text sendable while excluding expired terminal pills", () => {
     const state = deriveComposerSendState({
-      prompt: `yoo \uFFFC waddup`,
+      prompt: "yoo [Terminal 1 line 4](t3-context://v1/terminal/ctx-expired) waddup",
       imageCount: 0,
       terminalContexts: [
         {
@@ -1859,5 +2147,300 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         latestTurnStartFailureId: "turn-start-failure-new",
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldRefocusComposerOnWindowFocus", () => {
+  function element(
+    tagName: string,
+    options?: { editable?: boolean; role?: string; within?: string },
+  ) {
+    return {
+      tagName,
+      isContentEditable: options?.editable ?? false,
+      getAttribute: (name: string) => (name === "role" ? (options?.role ?? null) : null),
+      closest: (selector: string) =>
+        options?.within !== undefined && selector.includes(options.within) ? ({} as Element) : null,
+    };
+  }
+
+  it("refocuses when nothing or the body holds focus", () => {
+    expect(shouldRefocusComposerOnWindowFocus(null)).toBe(true);
+    expect(shouldRefocusComposerOnWindowFocus(element("BODY"))).toBe(true);
+  });
+
+  it("refocuses away from a plain button, such as a pull request tab", () => {
+    expect(shouldRefocusComposerOnWindowFocus(element("BUTTON"))).toBe(true);
+  });
+
+  it("leaves other text fields alone", () => {
+    expect(shouldRefocusComposerOnWindowFocus(element("INPUT"))).toBe(false);
+    expect(shouldRefocusComposerOnWindowFocus(element("TEXTAREA"))).toBe(false);
+    expect(shouldRefocusComposerOnWindowFocus(element("DIV", { editable: true }))).toBe(false);
+    expect(shouldRefocusComposerOnWindowFocus(element("DIV", { role: "textbox" }))).toBe(false);
+  });
+
+  it("leaves a focused terminal alone in the drawer and the right panel", () => {
+    expect(
+      shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "data-terminal-owner" })),
+    ).toBe(false);
+  });
+
+  it("leaves focus inside a dialog or popup alone", () => {
+    expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "dialog" }))).toBe(false);
+    expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "-popup" }))).toBe(false);
+  });
+});
+
+describe("checkout Git memory", () => {
+  it("answers from the last status seen for the same checkout", () => {
+    rememberCheckoutIsRepo(environmentId, "/repo/plain-folder", false);
+    expect(recallCheckoutIsRepo(environmentId, "/repo/plain-folder")).toBe(false);
+    rememberCheckoutIsRepo(environmentId, "/repo/plain-folder", true);
+    expect(recallCheckoutIsRepo(environmentId, "/repo/plain-folder")).toBe(true);
+  });
+
+  it("does not answer for a checkout it has not seen", () => {
+    expect(recallCheckoutIsRepo(environmentId, "/repo/never-opened")).toBeUndefined();
+    expect(recallCheckoutIsRepo(environmentId, null)).toBeUndefined();
+  });
+
+  it("keeps environments apart", () => {
+    rememberCheckoutIsRepo(environmentId, "/repo/shared-path", false);
+    expect(
+      recallCheckoutIsRepo(EnvironmentId.make("env-other"), "/repo/shared-path"),
+    ).toBeUndefined();
+  });
+
+  it("does not confuse an environment id containing the separator with a path", () => {
+    rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
+    expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
+  });
+});
+
+describe("threadShellHasStarted", () => {
+  it("counts a thread that has a user message but no latest turn", () => {
+    expect(
+      threadShellHasStarted({ latestTurn: null, latestUserMessageAt: now, session: null }),
+    ).toBe(true);
+  });
+
+  it("counts a thread with a live session and nothing else", () => {
+    expect(
+      threadShellHasStarted({
+        latestTurn: null,
+        latestUserMessageAt: null,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("does not count a thread that never sent anything", () => {
+    expect(
+      threadShellHasStarted({ latestTurn: null, latestUserMessageAt: null, session: null }),
+    ).toBe(false);
+    expect(threadShellHasStarted(null)).toBe(false);
+  });
+});
+
+describe("rewind draft recovery", () => {
+  const message = {
+    id: MessageId.make("rewound-message"),
+    role: "user" as const,
+    text: "edit this question",
+    turnId: TurnId.make("rewound-turn"),
+    createdAt: now,
+    updatedAt: now,
+    streaming: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("waits past command acceptance until the exact message disappears", async () => {
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    let accepted = false;
+    const result = waitForRevertedMessage({ environmentId, threadId }, message.id, 0, async () => {
+      accepted = true;
+    });
+    let completed = false;
+    void result.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(accepted).toBe(true);
+    expect(completed).toBe(false);
+    appAtomRegistry.set(
+      atom,
+      makeThread({
+        messages: [],
+        latestTurn: completedTurn,
+        checkpoints: [
+          {
+            turnId: completedTurn.turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: now,
+          },
+        ],
+      }),
+    );
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    appAtomRegistry.set(atom, makeThread({ messages: [] }));
+    await result;
+  });
+
+  it("rejects a new provider rewind failure without restoring a draft", async () => {
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const result = waitForRevertedMessage({ environmentId, threadId }, message.id, 0, async () => {
+      appAtomRegistry.set(
+        atom,
+        makeThread({
+          messages: [message],
+          activities: [
+            {
+              id: EventId.make("rewind-failed"),
+              kind: "checkpoint.revert.failed",
+              tone: "error",
+              summary: "Checkpoint revert failed",
+              payload: { detail: "Native history unavailable", turnCount: 0 },
+              turnId: null,
+              createdAt: now,
+            },
+          ],
+        }),
+      );
+    });
+    await expect(result).rejects.toThrow("Native history unavailable");
+  });
+
+  it("bounds waits when a provider never finishes", async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const atom = Atom.make<Thread | null>(makeThread({ messages: [message] }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(atom);
+    const result = waitForRevertedMessage(
+      { environmentId, threadId },
+      message.id,
+      0,
+      async () => {},
+      20,
+    );
+    const timeoutIndex = setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 20);
+    const rewindTimeout = setTimeoutSpy.mock.results[timeoutIndex]?.value;
+    expect(rewindTimeout).toBeDefined();
+    const rejection = expect(result).rejects.toThrow("Timed out waiting");
+    await vi.advanceTimersByTimeAsync(20);
+    await rejection;
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(rewindTimeout);
+  });
+
+  it("copies attachment bytes before rewind into a fresh file", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("original bytes"));
+    vi.stubGlobal("fetch", fetchMock);
+    const files = await prepareRevertedMessageAttachments({
+      message: {
+        ...message,
+        attachments: [
+          {
+            type: "file",
+            id: "old-attachment",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 14,
+          },
+        ],
+      },
+      environmentId,
+      httpBaseUrl: "https://server.test",
+      createAssetUrl: async () =>
+        AsyncResult.success({ relativeUrl: "/asset/signed", expiresAt: Date.now() + 60_000 }),
+    });
+    expect(files[0]).toBeInstanceOf(File);
+    expect(files[0]?.name).toBe("notes.txt");
+    expect(await files[0]?.text()).toBe("original bytes");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://server.test/asset/signed");
+  });
+});
+
+describe("restorePlanFollowUpComposer", () => {
+  it("writes back every field a cleared plan follow-up composer held", () => {
+    const snapshot = {
+      prompt: "Follow up on the plan",
+      terminalContexts: [
+        {
+          id: "terminal-1",
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-09-11T00:00:00.000Z",
+          terminalId: "main",
+          terminalLabel: "Main",
+          lineStart: 1,
+          lineEnd: 2,
+          text: "output",
+        },
+      ],
+      reviewComments: [
+        {
+          id: "review-1",
+          sectionId: "file:a.ts",
+          sectionTitle: "File comment",
+          filePath: "a.ts",
+          startIndex: 0,
+          endIndex: 0,
+          rangeLabel: "L1",
+          text: "look here",
+          diff: "",
+        },
+      ],
+      previewAnnotations: [],
+    };
+    const writePrompt = vi.fn();
+    const writeTerminalContexts = vi.fn();
+    const writeReviewComments = vi.fn();
+    const writePreviewAnnotations = vi.fn();
+    const resetCursor = vi.fn();
+
+    restorePlanFollowUpComposer({
+      snapshot,
+      writePrompt,
+      writeTerminalContexts,
+      writeReviewComments,
+      writePreviewAnnotations,
+      resetCursor,
+    });
+
+    expect(writePrompt).toHaveBeenCalledTimes(1);
+    expect(writePrompt).toHaveBeenCalledWith("Follow up on the plan");
+    expect(writeTerminalContexts).toHaveBeenCalledTimes(1);
+    expect(writeTerminalContexts).toHaveBeenCalledWith(snapshot.terminalContexts);
+    expect(writeReviewComments).toHaveBeenCalledTimes(1);
+    expect(writeReviewComments).toHaveBeenCalledWith(snapshot.reviewComments);
+    expect(writePreviewAnnotations).toHaveBeenCalledTimes(1);
+    expect(writePreviewAnnotations).toHaveBeenCalledWith(snapshot.previewAnnotations);
+    expect(resetCursor).toHaveBeenCalledTimes(1);
+    expect(resetCursor).toHaveBeenCalledWith({
+      cursor: expect.any(Number),
+      prompt: "Follow up on the plan",
+      detectTrigger: true,
+    });
   });
 });

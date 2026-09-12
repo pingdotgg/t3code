@@ -55,6 +55,18 @@ export type AgentSessionScanInput = typeof AgentSessionScanInput.Type;
  * T3 Code project. `alreadyImported` marks candidates that already have an
  * active project rooted at the same path.
  */
+/**
+ * Git identity of a candidate directory, read from `.git/config` without
+ * spawning git. `remoteKey` is the normalized origin URL, shared by every
+ * clone of the same repository so the client can group them. `repository`
+ * is the GitHub `owner/name` when the origin is on GitHub.
+ */
+export const AgentSessionProjectGit = Schema.Struct({
+  remoteKey: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+});
+export type AgentSessionProjectGit = typeof AgentSessionProjectGit.Type;
+
 export const AgentSessionProjectCandidate = Schema.Struct({
   path: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
@@ -63,6 +75,12 @@ export const AgentSessionProjectCandidate = Schema.Struct({
   threadCount: NonNegativeInt,
   lastActiveAt: Schema.NullOr(IsoDateTime),
   alreadyImported: Schema.Boolean,
+  /**
+   * `null` when the directory is not the root of a git repository. Missing on
+   * servers that predate the git scan, where the client cannot tell repositories
+   * from plain folders and should treat every candidate as a standalone project.
+   */
+  git: Schema.optionalKey(Schema.NullOr(AgentSessionProjectGit)),
 });
 export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.Type;
 
@@ -80,7 +98,7 @@ export const AgentSessionImportInput = Schema.Struct({
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
-export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorClass<AgentSessionImportProjectNotFoundError>()(
+export class AgentSessionImportProjectNotFoundError extends Schema.TaggedError<AgentSessionImportProjectNotFoundError>()(
   "AgentSessionImportProjectNotFoundError",
   { projectId: ProjectId },
 ) {
@@ -89,7 +107,7 @@ export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorCl
   }
 }
 
-export class AgentSessionImportProjectChangedError extends Schema.TaggedErrorClass<AgentSessionImportProjectChangedError>()(
+export class AgentSessionImportProjectChangedError extends Schema.TaggedError<AgentSessionImportProjectChangedError>()(
   "AgentSessionImportProjectChangedError",
   { projectId: ProjectId },
 ) {
@@ -105,7 +123,7 @@ export const AgentSessionImportResult = Schema.Struct({
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
-export class AgentSessionScanError extends Schema.TaggedErrorClass<AgentSessionScanError>()(
+export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {
     operation: Schema.Literals(["read-settings", "read-projects"]),

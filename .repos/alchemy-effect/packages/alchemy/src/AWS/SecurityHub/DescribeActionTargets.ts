@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.DescribeActionTargetsHttp)`.
- * @binding
- * @section Custom Actions, Automation Rules & Aggregation
- * @example List Custom Actions
+ * ### Custom Actions, Automation Rules & Aggregation
+ * **Example:** List Custom Actions
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeActionTargets = yield* AWS.SecurityHub.DescribeActionTargets();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { ActionTargets } = yield* describeActionTargets();
  * ```
+ *
+ * @binding
  */
 export interface DescribeActionTargets extends Binding.Service<
   DescribeActionTargets,

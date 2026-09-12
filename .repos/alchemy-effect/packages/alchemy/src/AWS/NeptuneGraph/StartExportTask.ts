@@ -9,9 +9,8 @@ import type { Graph } from "./Graph.ts";
  *
  * Exports the bound graph's data to Amazon S3 (the graph must be `AVAILABLE`). The request passes Neptune Analytics a data-access role, so the grant includes `iam:PassRole` conditioned to `neptune-graph.amazonaws.com`. Poll progress with {@link GetExportTask}. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.StartExportTaskHttp)`.
- * @binding
- * @section Importing and Exporting Data
- * @example Export a graph to S3 as Parquet
+ * ### Importing and Exporting Data
+ * **Example:** Export a graph to S3 as Parquet
  * ```typescript
  * const startExport = yield* NeptuneGraph.StartExportTask(graph);
  *
@@ -22,6 +21,8 @@ import type { Graph } from "./Graph.ts";
  *   roleArn: exportRole.roleArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartExportTask extends Binding.Service<
   StartExportTask,

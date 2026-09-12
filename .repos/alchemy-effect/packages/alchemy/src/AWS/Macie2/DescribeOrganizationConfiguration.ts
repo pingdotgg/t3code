@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.DescribeOrganizationConfigurationHttp)`.
- * @binding
- * @section Organization & Members
- * @example Read the Organization Configuration
+ * ### Organization & Members
+ * **Example:** Read the Organization Configuration
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeOrganizationConfiguration = yield* AWS.Macie2.DescribeOrganizationConfiguration();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { autoEnable } = yield* describeOrganizationConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganizationConfiguration extends Binding.Service<
   DescribeOrganizationConfiguration,

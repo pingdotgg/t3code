@@ -28,7 +28,7 @@ const TypeId = "~effect/http/Cookies"
 /**
  * Returns `true` when a value is a `Cookies` collection.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isCookies = (u: unknown): u is Cookies => Predicate.hasProperty(u, TypeId)
@@ -419,13 +419,17 @@ export const empty: Cookies = fromIterable([])
 /**
  * Returns `true` when the `Cookies` collection contains no cookies.
  *
- * @category refinements
+ * @category predicates
  * @since 4.0.0
  */
 export const isEmpty = (self: Cookies): boolean => Record.isEmptyRecord(self.cookies)
 
 // oxlint-disable-next-line no-control-regex
 const fieldContentRegExp = /^[\u0009\u0020-\u007e\u0080-\u00ff]+$/
+const cookieNameRegExp = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+// oxlint-disable-next-line no-control-regex
+const cookieDomainRegExp = /^[\u0009\u0020-\u003a\u003c-\u007e\u0080-\u00ff]+$/
+const cookiePathRegExp = /^[\u0020-\u003a\u003c-\u007e]+$/
 
 const CookieProto = {
   [CookieTypeId]: CookieTypeId,
@@ -455,26 +459,10 @@ export function makeCookie(
   value: string,
   options?: Cookie["options"] | undefined
 ): Result.Result<Cookie, CookiesError> {
-  if (!fieldContentRegExp.test(name)) {
-    return Result.fail(CookiesError.fromReason("InvalidCookieName"))
-  }
   const encodedValue = encodeURIComponent(value)
-  if (encodedValue && !fieldContentRegExp.test(encodedValue)) {
-    return Result.fail(CookiesError.fromReason("InvalidCookieValue"))
-  }
-
-  if (options !== undefined) {
-    if (options.domain !== undefined && !fieldContentRegExp.test(options.domain)) {
-      return Result.fail(CookiesError.fromReason("InvalidCookieDomain"))
-    }
-
-    if (options.path !== undefined && !fieldContentRegExp.test(options.path)) {
-      return Result.fail(CookiesError.fromReason("InvalidCookiePath"))
-    }
-
-    if (options.maxAge !== undefined && !Duration.isFinite(Duration.fromInputUnsafe(options.maxAge))) {
-      return Result.fail(CookiesError.fromReason("CookieInfinityMaxAge"))
-    }
+  const error = validateCookie(name, encodedValue, options)
+  if (error !== undefined) {
+    return Result.fail(error)
   }
 
   return Result.succeed(Object.assign(Object.create(CookieProto), {
@@ -483,6 +471,28 @@ export function makeCookie(
     valueEncoded: encodedValue,
     options
   }))
+}
+
+function validateCookie(
+  name: string,
+  encodedValue: string,
+  options: Cookie["options"] | undefined
+): CookiesError | undefined {
+  if (!cookieNameRegExp.test(name)) {
+    return CookiesError.fromReason("InvalidCookieName")
+  }
+  if (encodedValue && !fieldContentRegExp.test(encodedValue)) {
+    return CookiesError.fromReason("InvalidCookieValue")
+  }
+  if (options?.domain !== undefined && !cookieDomainRegExp.test(options.domain)) {
+    return CookiesError.fromReason("InvalidCookieDomain")
+  }
+  if (options?.path !== undefined && !cookiePathRegExp.test(options.path)) {
+    return CookiesError.fromReason("InvalidCookiePath")
+  }
+  if (options?.maxAge !== undefined && !Duration.isFinite(Duration.fromInputUnsafe(options.maxAge))) {
+    return CookiesError.fromReason("CookieInfinityMaxAge")
+  }
 }
 
 /**
@@ -779,6 +789,10 @@ export const setAllUnsafe: {
  * @since 4.0.0
  */
 export function serializeCookie(self: Cookie): string {
+  const error = validateCookie(self.name, self.valueEncoded, self.options)
+  if (error !== undefined) {
+    throw error
+  }
   let str = self.name + "=" + self.valueEncoded
 
   if (self.options === undefined) {

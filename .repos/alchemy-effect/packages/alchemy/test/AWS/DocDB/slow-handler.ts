@@ -52,7 +52,7 @@ export class DocDBSlowTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DocDBSlowTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
     build: { external: MONGODB_OPTIONAL_DEPS },
   },

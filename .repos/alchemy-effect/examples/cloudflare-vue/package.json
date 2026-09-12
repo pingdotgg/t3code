@@ -8,24 +8,27 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy"
+    "destroy": "alchemy destroy",
+    "test": "bun test"
   },
   "dependencies": {
     "vue": "beta",
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "catalog:frontend",
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24.12.0",
     "@vitejs/plugin-vue": "^6.0.5",
     "@vue/tsconfig": "^0.9.1",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
     "npm-run-all2": "^8.0.4",
     "oxfmt": "^0.42.0",
-    "typescript": "~6.0.0",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
     "vite": "^8.0.3",
     "vite-plugin-vue-devtools": "^8.1.1",
-    "alchemy": "workspace:*",
-    "effect": "catalog:",
     "vue-tsc": "^3.2.6"
   },
   "engines": {

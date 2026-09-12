@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads the status of one in-progress or completed maintenance action started with `StartDomainMaintenance`. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.GetDomainMaintenanceStatusHttp)`.
- * @binding
- * @section Domain Maintenance
- * @example Check a Maintenance Action
+ * ### Domain Maintenance
+ * **Example:** Check a Maintenance Action
  * ```typescript
  * const getDomainMaintenanceStatus = yield* OpenSearch.GetDomainMaintenanceStatus();
  *
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.Status → "COMPLETED"
  * ```
+ *
+ * @binding
  */
 export interface GetDomainMaintenanceStatus extends Binding.Service<
   GetDomainMaintenanceStatus,

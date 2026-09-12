@@ -10,7 +10,7 @@ export interface ProviderSnapshotSettings<Settings> {
   readonly enableProviderUpdateChecks: boolean;
 }
 
-export function makeProviderSnapshotSettings<Settings>(
+function makeProviderSnapshotSettings<Settings>(
   provider: Settings,
   settings: ServerSettings,
 ): ProviderSnapshotSettings<Settings> {

@@ -54,15 +54,15 @@ export interface FindingAggregator extends Resource<
  * per account, so this is a singleton: adopting a pre-existing aggregator
  * that Alchemy did not create requires `--adopt`.
  *
- * @section Aggregating Findings Across Regions
- * @example Aggregate from All Regions
+ * ### Aggregating Findings Across Regions
+ * **Example:** Aggregate from All Regions
  * ```typescript
  * const aggregator = yield* AWS.SecurityHub.FindingAggregator("Aggregator", {
  *   regionLinkingMode: "ALL_REGIONS",
  * });
  * ```
  *
- * @example Aggregate from Specific Regions
+ * **Example:** Aggregate from Specific Regions
  * ```typescript
  * const aggregator = yield* AWS.SecurityHub.FindingAggregator("Aggregator", {
  *   regionLinkingMode: "SPECIFIED_REGIONS",

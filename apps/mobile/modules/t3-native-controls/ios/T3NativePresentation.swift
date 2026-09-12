@@ -39,6 +39,52 @@ final class T3PresentationSourceView: ExpoView {
   }
 }
 
+/// Sizes the containing React Native modal without replacing UIKit's sheet interaction.
+final class T3ContextSheetSizeView: ExpoView {
+  var contentHeight: CGFloat = 0 {
+    didSet { updateSheet() }
+  }
+  private weak var configuredSheet: UISheetPresentationController?
+  private var appliedHeight: CGFloat = 0
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // The modal's presentation controller is attached after the content view.
+    DispatchQueue.main.async { [weak self] in self?.updateSheet() }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    updateSheet()
+  }
+
+  private func updateSheet() {
+    guard window != nil, contentHeight > 0 else { return }
+    var responder: UIResponder? = self
+    while let current = responder {
+      if let controller = current as? UIViewController,
+         controller.presentingViewController != nil,
+         let sheet = controller.sheetPresentationController {
+        guard configuredSheet !== sheet || abs(appliedHeight - contentHeight) > 1 else { return }
+        configuredSheet = sheet
+        appliedHeight = contentHeight
+        let height = contentHeight
+        let identifier = UISheetPresentationController.Detent.Identifier("t3-context-content")
+        sheet.animateChanges {
+          sheet.detents = [.custom(identifier: identifier) { context in
+            min(height, context.maximumDetentValue * 0.92)
+          }]
+          sheet.selectedDetentIdentifier = identifier
+          sheet.prefersGrabberVisible = true
+          sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+        }
+        return
+      }
+      responder = current.next
+    }
+  }
+}
+
 func presentFileShare(
   url: URL,
   title: String,
@@ -67,9 +113,13 @@ func presentFileShare(
   activity.overrideUserInterfaceStyle = source?.traitCollection.userInterfaceStyle
     ?? presenter.traitCollection.userInterfaceStyle
   activity.completionWithItemsHandler = { _, _, _, _ in promise.resolve(nil) }
-  activity.modalPresentationStyle = .popover
-  activity.popoverPresentationController?.sourceView = origin
-  activity.popoverPresentationController?.sourceRect = source?.bounds
-    ?? CGRect(x: origin.bounds.midX, y: origin.bounds.maxY, width: 0, height: 0)
+  if presenter.traitCollection.userInterfaceIdiom == .pad {
+    activity.popoverPresentationController?.sourceView = origin
+    activity.popoverPresentationController?.sourceRect = source?.bounds
+      ?? CGRect(x: origin.bounds.midX, y: origin.bounds.midY, width: 1, height: 1)
+  } else {
+    // Let UIKit adapt the remote share scene to the phone, not an anchored popover.
+    activity.modalPresentationStyle = .automatic
+  }
   presenter.present(activity, animated: true)
 }

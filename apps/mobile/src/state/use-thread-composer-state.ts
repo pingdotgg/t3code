@@ -20,6 +20,9 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
+import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -33,12 +36,17 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
+import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { appAtomRegistry } from "../state/atom-registry";
+import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   appendComposerDraftAttachments,
   appendComposerDraftText,
+  insertComposerDraftContext,
   clearComposerDraftContent,
   composerDraftsAtom,
+  composerContextImportsAtom,
   ensureComposerDraftsLoaded,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
@@ -67,13 +75,22 @@ export function appendReviewCommentToDraft(input: {
   readonly attachments?: ReadonlyArray<DraftComposerImageAttachment>;
 }): void {
   const threadKey = scopedThreadKey(input.environmentId, input.threadId);
-  const existing = appAtomRegistry.get(composerDraftsAtom)[threadKey]?.text ?? "";
-  const separator = existing.trim().length > 0 && !existing.endsWith("\n") ? "\n\n" : "";
-  setComposerDraftText(threadKey, `${existing}${separator}${input.text}`);
+  const upgraded = upgradeLegacyContextMessage(input.text);
+  if (
+    !insertComposerDraftContext(
+      threadKey,
+      reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
+    )
+  ) {
+    Alert.alert("Too many context items", "Remove some context from the draft and try again.");
+    return;
+  }
   if (input.attachments && input.attachments.length > 0) {
     // Capped: a review comment is new content, not a send-failure restore, so
     // it must not push the draft over the send limit. Overflow is released.
-    const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments);
+    const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments, {
+      appendReference: true,
+    });
     if (rejectedCount > 0) {
       setPendingConnectionError(
         `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
@@ -99,9 +116,14 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState() {
-  const { selectedThread: selectedThreadShell, selectedEnvironmentRuntime } = useThreadSelection();
+  const {
+    selectedThread: selectedThreadShell,
+    selectedThreadCreation,
+    selectedEnvironmentRuntime,
+  } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
+  const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
@@ -118,8 +140,15 @@ export function useThreadComposerState() {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
+  // The creation entry is the thread itself (rendered as the first message),
+  // not a follow-up waiting behind it.
   const selectedThreadQueuedMessages = useMemo(
-    () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
+    () =>
+      selectedThreadKey
+        ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
+            (message) => message.creation === undefined,
+          )
+        : [],
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
   const feedbackSubmissions = useMemo(
@@ -138,16 +167,52 @@ export function useThreadComposerState() {
   );
   const selectedThreadMessages = selectedThreadDetail?.messages;
   const selectedThreadActivities = selectedThreadDetail?.activities;
-  const selectedThreadFeed = useMemo(
-    () =>
-      selectedThreadMessages && selectedThreadActivities
+  // A thread whose creation has not delivered its turn yet: the prompt only
+  // exists in the outbox, so it is appended to whatever the server has. The
+  // detail is usually present but empty during a worktree checkout, so this
+  // cannot be an either/or with the loaded messages.
+  const pendingCreationMessage = selectedThreadCreation?.message ?? null;
+  const selectedThreadFeed = useMemo(() => {
+    const loadedMessages = selectedThreadMessages ?? [];
+    const feed =
+      (selectedThreadMessages && selectedThreadActivities) || pendingCreationMessage !== null
         ? buildThreadFeed({
-            messages: selectedThreadMessages,
-            activities: selectedThreadActivities,
+            messages:
+              pendingCreationMessage !== null &&
+              !loadedMessages.some((message) => message.id === pendingCreationMessage.messageId)
+                ? [...loadedMessages, pendingThreadCreationMessage(pendingCreationMessage)]
+                : loadedMessages,
+            activities: selectedThreadActivities ?? [],
           })
-        : [],
-    [selectedThreadActivities, selectedThreadMessages],
-  );
+        : [];
+    const pendingAcknowledgments = acknowledgedMessages.filter(
+      (message) =>
+        scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&
+        !selectedThreadQueuedMessages.some((queued) => queued.messageId === message.messageId),
+    );
+    if (pendingAcknowledgments.length === 0) return feed;
+    return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
+      entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
+    );
+  }, [
+    selectedThreadActivities,
+    selectedThreadMessages,
+    pendingCreationMessage,
+    selectedThreadKey,
+    selectedThreadQueuedMessages,
+    acknowledgedMessages,
+  ]);
+  useEffect(() => {
+    const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
+    if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
+      appAtomRegistry.set(
+        acknowledgedThreadMessagesAtom,
+        appAtomRegistry
+          .get(acknowledgedThreadMessagesAtom)
+          .filter((message) => !echoedIds.has(message.messageId)),
+      );
+    }
+  }, [acknowledgedMessages, selectedThreadMessages]);
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
@@ -237,9 +302,17 @@ export function useThreadComposerState() {
     if (!selectedThreadShell) {
       return null;
     }
+    // The server has not created this thread yet. Queuing a follow-up against
+    // its id would strand the message: if the creation is rejected the thread
+    // never appears and the drain drops the orphan. The composer disables its
+    // send button too; this guard also covers the editor's submit key.
+    if (selectedThreadCreation !== null) {
+      return null;
+    }
 
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
+    if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
     const thread = selectedThreadDetail ?? selectedThreadShell;
     const text = draft.text.trim();
     const attachments = draft.attachments;
@@ -265,6 +338,12 @@ export function useThreadComposerState() {
         "Too many attachments",
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
       );
+      return null;
+    }
+
+    const contextBlockReason = composerContextSendBlockReason(draft.context);
+    if (contextBlockReason) {
+      Alert.alert("Too much context", contextBlockReason);
       return null;
     }
 
@@ -339,6 +418,7 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
+      context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
@@ -360,7 +440,11 @@ export function useThreadComposerState() {
         // append: the merge path slots existing attachments first and truncates
         // at the send limit, which would silently drop this message's images if
         // the user attached new ones while the write was in flight.
-        void mergeComposerDraftContent(threadKey, { text, attachments: [] });
+        void mergeComposerDraftContent(threadKey, {
+          text,
+          context: draft.context,
+          attachments: [],
+        });
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
         setPendingConnectionError(
           error instanceof Error ? error.message : "Failed to save the queued message.",
@@ -371,6 +455,7 @@ export function useThreadComposerState() {
   }, [
     selectedEnvironmentRuntime?.connectionState,
     selectedEnvironmentRuntime?.serverConfig,
+    selectedThreadCreation,
     selectedThreadDetail,
     selectedThreadShell,
     uploadThreadFeedback,
@@ -402,7 +487,9 @@ export function useThreadComposerState() {
           ? capabilities.fileAttachments?.maxUploadBytes
           : undefined,
     });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments);
+    const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments, {
+      appendReference: true,
+    });
     const problems = [
       ...(result.error ? [result.error] : []),
       ...(rejectedCount > 0
@@ -432,7 +519,9 @@ export function useThreadComposerState() {
       existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
       maxBytes,
     });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.files);
+    const rejectedCount = appendComposerDraftAttachments(threadKey, result.files, {
+      appendReference: true,
+    });
     // The picker error and the live-cap rejection can both happen in one
     // pick; report both in a single alert.
     const problems = [
@@ -455,7 +544,9 @@ export function useThreadComposerState() {
     const result = await pasteComposerClipboard({
       existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
     });
-    const rejectedPasteCount = appendComposerDraftAttachments(threadKey, result.images);
+    const rejectedPasteCount = appendComposerDraftAttachments(threadKey, result.images, {
+      appendReference: true,
+    });
     if (result.text) {
       appendComposerDraftText(threadKey, result.text);
     }
@@ -481,7 +572,7 @@ export function useThreadComposerState() {
           existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
         });
         if (images.length > 0) {
-          appendComposerDraftAttachments(threadKey, images);
+          appendComposerDraftAttachments(threadKey, images, { appendReference: true });
         }
       } catch (error) {
         console.error("[native paste] error converting images", {
@@ -558,6 +649,8 @@ export function useThreadComposerState() {
     dismissFeedback,
     selectedThreadFeed,
     selectedThreadQueueCount,
+    selectedThreadQueuedMessages,
+    dispatchingQueuedMessageId,
     activeWorkStartedAt,
     isCompacting,
     draftMessage,

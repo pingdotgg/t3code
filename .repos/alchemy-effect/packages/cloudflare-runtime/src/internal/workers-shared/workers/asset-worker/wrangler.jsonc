@@ -1,0 +1,169 @@
+// Alchemy modifications are licensed under Apache-2.0.
+// This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+/*
+  Configuration file for the Asset Worker
+
+  Please note that wrangler has a dependency on this file, and will
+  attempt to read it as part of setting up a new Miniflare instance
+  in developemnt mode. We should ensure that any configuration changes
+  to this file are persisted in wrangler as well, when necessary.
+  (see packages/wrangler/src/dev/miniflare.ts -> buildMiniflareOptions())
+*/
+{
+  "name": "asset-worker",
+  "account_id": "0f1b8aa119a907021f659042f95ea9ba",
+  "workers_dev": false,
+  "main": "src/worker.ts",
+  "compatibility_date": "2024-07-31",
+  // nodejs_compat required when using @cloudflare/vitest-pool-workers
+  // enable_ctx_exports enables ctx.exports loopback for the AssetWorkerInner
+  "compatibility_flags": ["nodejs_compat", "enable_ctx_exports"],
+  "unsafe": {
+    "metadata": {
+      "build_options": {
+        "stable_id": "cloudflare/cf_asset_worker",
+        "networks": ["cf", "jdc"],
+      },
+    },
+    "bindings": [
+      {
+        "name": "CONFIG",
+        "type": "param",
+        "param": "assetConfig",
+      },
+      {
+        "name": "ASSETS_MANIFEST",
+        "type": "param",
+        "param": "assetManifest",
+        "data_ref": true,
+      },
+      {
+        "name": "ASSETS_KV_NAMESPACE",
+        "type": "internal_assets",
+      },
+      {
+        "name": "workers-asset-worker",
+        "type": "internal_capability_grants",
+      },
+      {
+        "name": "ACCOUNT_COHORT_QUERIER",
+        "type": "service",
+        "service": "account-services-production",
+        "entrypoint": "AccountCohortQuerier",
+        "cross_account_grant": "workers-asset-worker",
+      },
+    ],
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+  },
+  "version_metadata": {
+    "binding": "VERSION_METADATA",
+  },
+  "env": {
+    "staging": {
+      "name": "asset-worker-staging",
+      // enable_version_api is set per-environment (not top-level) because
+      // the local workerd in vitest-pool-workers does not support it yet.
+      "compatibility_flags": [
+        "nodejs_compat",
+        "enable_ctx_exports",
+        "enable_version_api",
+      ],
+      "unsafe": {
+        "metadata": {
+          "build_options": {
+            "stable_id": "cloudflare/cf_asset_worker",
+            "networks": ["cf", "jdc"],
+          },
+        },
+        "bindings": [
+          {
+            "name": "CONFIG",
+            "type": "param",
+            "param": "assetConfig",
+          },
+          {
+            "name": "ASSETS_MANIFEST",
+            "type": "param",
+            "param": "assetManifest",
+            "data_ref": true,
+          },
+          {
+            "name": "ASSETS_KV_NAMESPACE",
+            "type": "internal_assets",
+          },
+          {
+            "name": "workers-asset-worker-staging",
+            "type": "internal_capability_grants",
+          },
+          {
+            "name": "ACCOUNT_COHORT_QUERIER",
+            "type": "service",
+            "service": "account-services-staging",
+            "entrypoint": "AccountCohortQuerier",
+            "cross_account_grant": "workers-asset-worker-staging",
+          },
+        ],
+      },
+      "vars": {
+        "ENVIRONMENT": "staging",
+      },
+      "version_metadata": {
+        "binding": "VERSION_METADATA",
+      },
+    },
+    "fed-prod": {
+      "name": "asset-worker-fed-prod",
+      "account_id": "fca6c231dc1d1780777997c5bce5a5e3", // workers assets
+      "compatibility_flags": [
+        "nodejs_compat",
+        "enable_ctx_exports",
+        "enable_version_api",
+      ],
+      "vars": {
+        "ENVIRONMENT": "fed-prod",
+      },
+      "version_metadata": {
+        "binding": "VERSION_METADATA",
+      },
+      "compliance_region": "fedramp_high",
+      "unsafe": {
+        "metadata": {
+          "build_options": {
+            "stable_id": "cloudflare/cf_asset_worker",
+            "networks": ["cf"],
+          },
+        },
+        "bindings": [
+          {
+            "name": "CONFIG",
+            "type": "param",
+            "param": "assetConfig",
+          },
+          {
+            "name": "ASSETS_MANIFEST",
+            "type": "param",
+            "param": "assetManifest",
+            "data_ref": true,
+          },
+          {
+            "name": "ASSETS_KV_NAMESPACE",
+            "type": "internal_assets",
+          },
+          {
+            "name": "workers-asset-worker",
+            "type": "internal_capability_grants",
+          },
+          {
+            "name": "ACCOUNT_COHORT_QUERIER",
+            "type": "service",
+            "service": "account-services-production",
+            "entrypoint": "AccountCohortQuerier",
+            "cross_account_grant": "workers-asset-worker",
+          },
+        ],
+      },
+    },
+  },
+}

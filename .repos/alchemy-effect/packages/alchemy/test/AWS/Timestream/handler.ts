@@ -16,7 +16,7 @@ export class TimestreamTestFunction extends Lambda.Function<Lambda.Function>()(
 export default TimestreamTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

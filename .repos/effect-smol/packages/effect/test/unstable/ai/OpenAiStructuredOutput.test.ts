@@ -654,7 +654,7 @@ describe("toCodecOpenAI", () => {
       "required": ["name"],
       "additionalProperties": false,
       "$defs": {
-        "PersonJsonEncoding": {
+        "PersonEncoded": {
           "type": "object",
           "properties": {
             "name": { "type": "string" }
@@ -799,7 +799,7 @@ describe("toCodecOpenAI", () => {
       const result = toCodecOpenAI(Schema.Struct({ value: schema }))
       await new TestSchema.Asserts(result.codec).decoding().fail(
         { value: [{ 0: "a", 1: 1 }, { 0: "a", 1: 2 }] },
-        `Expected a value with at least 2 entries, got {"a":2}
+        `Expected a value with at least 2 entries
   at ["value"]`
       )
     })

@@ -7,14 +7,15 @@ import type { Project } from "./Project.ts";
  * Runtime binding for `codebuild:ListBuildsForProject` — lists the bound
  * project's build ids, newest first. Page with `nextToken`; resolve ids to
  * statuses with {@link BatchGetBuilds}.
- * @binding
- * @section Listing Builds
- * @example List Recent Builds
+ * ### Listing Builds
+ * **Example:** List Recent Builds
  * ```typescript
  * const listBuilds = yield* AWS.CodeBuild.ListBuildsForProject(project);
  *
  * const { ids } = yield* listBuilds();
  * ```
+ *
+ * @binding
  */
 export interface ListBuildsForProject extends Binding.Service<
   ListBuildsForProject,

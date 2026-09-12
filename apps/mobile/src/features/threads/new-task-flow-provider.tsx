@@ -13,10 +13,12 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import {
   isDefaultThreadEnvModeSettled,
@@ -53,6 +55,7 @@ import {
   retargetNewTaskDraft,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
+  setComposerDraftContext,
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -96,6 +99,7 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -189,7 +193,13 @@ type NewTaskFlowContextValue = {
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
   readonly cancelEditingPendingTask: () => void;
-  readonly buildPendingTaskMessage: (metadata: TurnCommandMetadata) => QueuedThreadMessage | null;
+  readonly buildPendingTaskMessage: (
+    metadata: TurnCommandMetadata,
+    options?: {
+      /** The live checkout, recorded as a local task's branch when it sends now. */
+      readonly currentCheckoutBranch?: string | null;
+    },
+  ) => QueuedThreadMessage | null;
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
@@ -421,17 +431,32 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
+  // Environment settings with the project's overrides applied; the
+  // aggregate's own legacy fields still count until the server folds them.
+  const projectSettings = useMemo(
+    () =>
+      resolveProjectSettings(
+        selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+        selectedProject?.id ?? null,
+        selectedProject,
+      ),
+    [selectedEnvironmentServerConfig?.settings, selectedProject],
+  );
+  const projectThreadEnvMode =
+    projectSettings.sources.defaultThreadEnvMode === "project"
+      ? projectSettings.settings.defaultThreadEnvMode
+      : undefined;
   const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectSetting: projectThreadEnvMode,
     projectFile: t3ProjectFileDefaultMode,
-    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
+    globalDefault: projectSettings.settings.defaultThreadEnvMode,
   });
   // While unsettled the resolved default is provisional. Nothing may write
   // it into the draft during that window (the auto-branch effect does), or
   // the frozen interim value beats the t3.json default once it loads.
   const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
     explicitMode: selectedProjectDraft.workspaceSelection?.mode,
-    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectSetting: projectThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
@@ -442,10 +467,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
-    draftStartFromOrigin ??
-    selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
-    true;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+    draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin;
+  const defaultRuntimeMode = editingPendingTask
+    ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
+    : projectSettings.settings.defaultRuntimeMode;
+  const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -456,9 +482,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    selectedProject?.defaultModelSelection ??
-      selectedEnvironmentServerConfig?.settings.defaultModelSelection ??
-      null,
+    projectSettings.settings.defaultModelSelection,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
@@ -580,7 +604,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!selectedProjectDraftKey) {
         return 0;
       }
-      return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments);
+      return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments, {
+        appendReference: true,
+      });
     },
     [selectedProjectDraftKey],
   );
@@ -891,6 +917,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
       setComposerDraftText(draftKey, message.text);
+      setComposerDraftContext(draftKey, message.context);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,
@@ -916,7 +943,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, []);
 
   const buildPendingTaskMessage = useCallback(
-    (metadata: TurnCommandMetadata): QueuedThreadMessage | null => {
+    (
+      metadata: TurnCommandMetadata,
+      options?: { readonly currentCheckoutBranch?: string | null },
+    ): QueuedThreadMessage | null => {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
@@ -954,8 +984,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         commandId: CommandId.make(metadata.commandId),
         text,
         attachments: draft.attachments,
+        context: draft.context,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,
@@ -970,11 +1001,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          // Only an explicit picker choice, never the current checkout: a
-          // queued local task drains days later against whatever is checked
-          // out then, so recording a queue-time guess would pin a stale label
-          // to a thread that ran somewhere else.
-          branch: workspaceSelection?.branch ?? null,
+          // An explicit picker choice wins. Otherwise only a task sending now
+          // records the current checkout: a queued local task drains days
+          // later against whatever is checked out then, so a queue-time
+          // guess would pin a stale label to a thread that ran somewhere else.
+          branch: resolveProjectThreadCreationBranch({
+            workspaceMode: mode,
+            selectedBranch: workspaceSelection?.branch ?? null,
+            currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+          }),
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
@@ -987,6 +1022,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       };
     },
     [
+      defaultRuntimeMode,
       editingPendingProject,
       editingPendingTask,
       selectedEnvironmentServerConfig,

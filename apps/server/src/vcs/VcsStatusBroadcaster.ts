@@ -22,7 +22,7 @@ import type {
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -160,7 +160,7 @@ export const autoPullPolicyLayer = Layer.effect(
           const project = yield* snapshots.getActiveProjectByWorkspaceRoot(cwd);
           if (project._tag === "None") return false;
           const settings = yield* serverSettings.getSettings;
-          return resolveProjectAutoPull(settings, project.value.id, project.value.autoPull);
+          return resolveProjectSettings(settings, project.value.id).settings.defaultAutoPull;
         },
         Effect.orElseSucceed(() => false),
       ),
@@ -217,6 +217,7 @@ const normalizeCwd = (cwd: string) =>
     Effect.orElseSucceed(() => cwd),
   );
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;

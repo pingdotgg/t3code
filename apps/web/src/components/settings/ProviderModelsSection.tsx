@@ -96,6 +96,21 @@ export function groupModelsForDisplay<
   ];
 }
 
+export function nextHiddenModelsForBulkToggle(
+  models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "isCustom">>,
+  hiddenModels: ReadonlyArray<string>,
+): string[] {
+  const builtInSlugs = models.filter((model) => !model.isCustom).map((model) => model.slug);
+  const builtInSlugSet = new Set(builtInSlugs);
+  const allBuiltInModelsHidden = builtInSlugs.every((slug) => hiddenModels.includes(slug));
+
+  if (allBuiltInModelsHidden) {
+    return hiddenModels.filter((slug) => !builtInSlugSet.has(slug));
+  }
+
+  return [...new Set([...hiddenModels, ...builtInSlugs])];
+}
+
 interface ProviderModelsSectionProps {
   /** Identifier used to namespace input ids within the DOM. */
   readonly instanceId: ProviderInstanceId;
@@ -181,6 +196,8 @@ export function ProviderModelsSection({
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
   ).length;
   const builtInModels = useMemo(() => models.filter((model) => !model.isCustom), [models]);
+  const allBuiltInModelsHidden =
+    builtInModels.length > 0 && builtInModels.every((model) => hiddenModelSet.has(model.slug));
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
   const isFiltering = showFilter && normalizedFilter.length > 0;
@@ -497,16 +514,44 @@ export function ProviderModelsSection({
             onChange={(event) => setFilter(event.target.value)}
             placeholder="Filter models"
             size="sm"
-            className="w-56"
+            className="w-56 max-w-full"
             spellCheck={false}
             aria-label="Filter models"
           />
         ) : null}
-        <span className="text-xs text-muted-foreground">
-          {models.length} model{models.length === 1 ? "" : "s"}
-          {favoriteCount > 0 ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}` : ""}
-          {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          {builtInModels.length > 0 ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost-muted"
+              onClick={() =>
+                onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
+              }
+            >
+              {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
+            </Button>
+          ) : null}
+          <span className="text-xs text-muted-foreground">
+            {models.length} model{models.length === 1 ? "" : "s"}
+            {favoriteCount > 0
+              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
+              : ""}
+            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+          </span>
+        </div>
+        {driverKind !== "antigravity" && !isAdding ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            className="ml-auto"
+            onClick={() => setIsAdding(true)}
+          >
+            <PlusIcon className="size-3" />
+            Add custom model
+          </Button>
+        ) : null}
       </div>
       <div
         ref={listRef}
@@ -586,18 +631,7 @@ export function ProviderModelsSection({
             </Button>
           </div>
         </div>
-      ) : (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost-muted"
-          className="mt-2 -ml-2"
-          onClick={() => setIsAdding(true)}
-        >
-          <PlusIcon className="size-3" />
-          Add custom model
-        </Button>
-      )}
+      ) : null}
 
       {driverKind !== "antigravity" && error ? (
         <p className="mt-2 text-xs text-destructive">{error}</p>

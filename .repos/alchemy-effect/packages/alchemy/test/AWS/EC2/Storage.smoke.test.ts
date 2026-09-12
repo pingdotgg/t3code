@@ -36,7 +36,7 @@ test.provider(
     Effect.gen(function* () {
       yield* stack.destroy();
 
-      const imageId = (yield* amazonLinux2023()) ?? "ami-00000000000000000";
+      const imageId = amazonLinux2023();
 
       const deployed = yield* stack.deploy(
         Effect.gen(function* () {

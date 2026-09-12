@@ -11,6 +11,7 @@ import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanel
 import { useProject } from "../state/entities";
 import { pullRequestEnvironment } from "../state/pullRequests";
 import { useEnvironmentQuery } from "../state/query";
+import { useSupportsMultiplePullRequests } from "./useSupportsMultiplePullRequests";
 
 export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
   const surface = useRightPanelStore((state) =>
@@ -20,6 +21,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
   const environmentId = reference?.environmentId
     ? EnvironmentId.make(reference.environmentId)
     : threadRef?.environmentId;
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId ?? null);
   const project = useProject(
     reference && environmentId
       ? scopeProjectRef(environmentId, ProjectId.make(reference.projectId))
@@ -31,6 +33,9 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
           environmentId,
           input: {
             projectId: ProjectId.make(reference.projectId),
+            ...(supportsMultiplePullRequests && reference.host !== undefined
+              ? { host: reference.host }
+              : {}),
             repository: reference.repository,
             number: reference.number,
           },
@@ -50,6 +55,7 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
   );
   return reference
     ? (resolveDisplayedPullRequestDetail({ live: detail, cached: cachedDetail, reference })?.url ??
+        reference.url ??
         gitHubPullRequestBrowserUrl(
           project?.repositoryIdentity,
           reference.repository,

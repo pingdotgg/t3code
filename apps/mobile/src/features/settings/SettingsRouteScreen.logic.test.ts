@@ -7,10 +7,10 @@ import {
 } from "./SettingsRouteScreen.logic";
 
 describe("resolveAgentAwarenessPlatformPresentation", () => {
-  it("explains that agent awareness settings are unavailable on Android", () => {
+  it("supports agent awareness settings on Android", () => {
     expect(resolveAgentAwarenessPlatformPresentation("android")).toEqual({
-      supported: false,
-      subtitle: "iOS only",
+      supported: true,
+      subtitle: undefined,
     });
   });
 

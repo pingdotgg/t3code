@@ -39,6 +39,16 @@ export const TypeId = "~effect/http/HttpIncomingMessage"
 export const isHttpIncomingMessage = (u: unknown): u is HttpIncomingMessage => hasProperty(u, TypeId)
 
 /**
+ * Options for parsing an incoming HTTP message body as JSON.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export interface JsonOptions {
+  readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined
+}
+
+/**
  * Common model for incoming HTTP messages, with headers, remote address, and effectful body accessors.
  *
  * @category models
@@ -61,12 +71,21 @@ export interface HttpIncomingMessage<E = unknown> extends Inspectable.Inspectabl
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyJson = <S extends Schema.Constraint>(schema: S, options?: ParseOptions | undefined) => {
+export const schemaBodyJson = <S extends Schema.Constraint>(
+  schema: S,
+  options?: (ParseOptions & JsonOptions) | undefined
+) => {
   const decode = Schema.decodeEffect(Schema.toCodecJson(schema))
+  const decodeJson = options?.reviver === undefined
+    ? undefined
+    : Schema.decodeEffect(Schema.fromJsonString(Schema.toCodecJson(schema), options))
   return <E>(
     self: HttpIncomingMessage<E>
   ): Effect.Effect<S["Type"], E | Schema.SchemaError, S["DecodingServices"]> =>
-    Effect.flatMap(self.json, (u) => decode(u, options))
+    decodeJson === undefined
+      ? Effect.flatMap(self.json, (u) => decode(u, options))
+      : Effect.flatMap(self.text, (body) =>
+        body === "" ? Effect.flatMap(self.json, (u) => decode(u, options)) : decodeJson(body, options))
 }
 
 /**

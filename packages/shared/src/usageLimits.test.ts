@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type LimitAccount,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -433,6 +434,55 @@ describe("pools", () => {
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
+  it("redeems through the hub when it holds a credit, even with a fresher native read", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [{ ...window, usedPercent: 40 }],
+        resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
+      },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [{ ...window, usedPercent: 55 }],
+                      resetCredits: { availableCount: 2, nextCreditId: "hub-credit" },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    // Only the hub path clears the routing cooldown it holds for this account.
+    expect(account?.redeem).toEqual({
+      environmentId: "env-a",
+      input: { sourceId: "hub", accountId: "claude-same@example.com.json", creditId: "hub-credit" },
+    });
+    // The fresher native balance is still the one shown.
+    expect(account?.limits.resetCredits?.availableCount).toBe(3);
+  });
+
   it("redeems on the environment whose snapshot supplied the credits on show", () => {
     const stale = provider({
       auth: { status: "authenticated", email: "same@example.com" },
@@ -728,9 +778,100 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    // Segments read left to right as "who refills next", matching the reset list.
+    // Session resets determine the account order for every row.
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+  });
+});
+
+describe("pooled account columns", () => {
+  const weekly = {
+    ...window,
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    windowDurationMins: 7 * 24 * 60,
+  } as const;
+  const account = (key: string, windows: LimitAccount["limits"]["windows"]): LimitAccount => ({
+    key,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    displayName: key,
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: "Hub",
+    redeem: null,
+    limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
+  });
+  const keys = (pool: ReturnType<typeof collectLimitPools>[number]) =>
+    pool.windows.map((row) =>
+      row.columns.map((member) => (member.window ? member.account.key : null)),
+    );
+
+  it("keeps session columns across rows with opposite reset and usage orders", () => {
+    const accounts = [
+      account("a", [
+        { ...weekly, usedPercent: 80, resetsAt: "2026-09-05T12:00:00.000Z" },
+        { ...window, usedPercent: 10, resetsAt: "2026-09-03T15:00:00.000Z" },
+      ]),
+      account("b", [
+        { ...weekly, usedPercent: 20, resetsAt: "2026-09-06T12:00:00.000Z" },
+        { ...window, usedPercent: 90, resetsAt: "2026-09-03T13:00:00.000Z" },
+      ]),
+    ];
+    const [pool] = collectLimitPools(accounts, now);
+    expect(pool!.accounts.map((account) => account.key)).toEqual(["b", "a"]);
+    expect(keys(pool!)).toEqual([
+      ["b", "a"],
+      ["b", "a"],
+    ]);
+    expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(50);
+    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it("preserves gaps without counting missing windows toward pooled quota", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [window]),
+        account("b", [
+          { ...window, resetsAt: "2026-09-03T15:00:00.000Z" },
+          { ...weekly, usedPercent: 80 },
+        ]),
+        account("c", [weekly]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([
+      ["a", "b", null],
+      [null, "b", "c"],
+    ]);
+    expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(40);
+    expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
+  });
+
+  it("falls back to weekly resets when no account reports a session", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [{ ...weekly, resetsAt: "2026-09-06T12:00:00.000Z" }]),
+        account("b", [{ ...weekly, resetsAt: "2026-09-05T12:00:00.000Z" }]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([["b", "a"]]);
+  });
+
+  it("sorts unknown resets last and breaks ties consistently", () => {
+    const accounts = [
+      account("z", [{ ...window, resetsAt: undefined }]),
+      account("b", [window]),
+      account("a", [window]),
+      account("y", [{ ...window, resetsAt: "invalid" }]),
+    ];
+    expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
+    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
   });
 });
 
@@ -837,6 +978,46 @@ describe("/usage-limits", () => {
       accountId: "oss",
       creditId: "oss-credit",
     });
+  });
+
+  it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
+    const fresher = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
+      },
+      auth: { status: "authenticated", email: "same@example.com" },
+    });
+    const stale = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt: limits.checkedAt,
+        accounts: [
+          {
+            id: "duplicate",
+            driver: fresher.driver,
+            email: "SAME@example.com",
+            usageLimits: {
+              ...limits,
+              resetCredits: { availableCount: 2, nextCreditId: "hub-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(fresher.instanceId, [fresher], stale, now);
+    // Only redeeming through the hub clears the routing cooldown it holds for
+    // this account, so the hub wins the path even with a staler balance.
+    expect(report?.accounts[0]?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "duplicate",
+      creditId: "hub-credit",
+    });
+    // The fresher native balance is still the one shown.
+    expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
 
   it("keeps accounts and custom instances separate, filtering by driver", () => {

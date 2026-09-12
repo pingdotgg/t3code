@@ -338,7 +338,7 @@ interface OpenCodeSessionContext {
   readonly client: OpencodeClient;
   readonly server: OpenCodeServerConnection;
   readonly directory: string;
-  readonly openCodeSessionId: string;
+  openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
@@ -2827,19 +2827,22 @@ export function makeOpenCodeAdapter(
               // The runtime binds the server's lifetime to the Scope.Scope
               // we provide below — closing `sessionScope` kills the child
               // process automatically. No manual `server.close()` needed.
+              const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 directory,
                 serverUrl,
                 ...(serverPassword ? { serverPassword } : {}),
-                ...(options?.environment ? { environment: options.environment } : {}),
+                environment: McpProviderSession.withAgentDeviceEnvironment(
+                  options?.environment ?? process.env,
+                  mcpSession,
+                ),
               });
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
-              const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({
@@ -3809,14 +3812,89 @@ export function makeOpenCodeAdapter(
         const targetIndex = Math.max(0, snapshot.turns.length - numTurns);
         const target = snapshot.turns[targetIndex];
         if (target) {
-          yield* runOpenCodeSdk("session.revert", () =>
-            context.client.session.revert({
+          const messages = yield* runOpenCodeSdk("session.messages", () =>
+            context.client.session.messages({ sessionID: context.openCodeSessionId }),
+          ).pipe(Effect.mapError(toRequestError));
+          const entries = messages.data ?? [];
+          const targetMessageIndex = entries.findIndex((entry) => entry.info.id === target.id);
+          if (targetMessageIndex < 0) {
+            return yield* toRequestError(
+              new OpenCodeRuntimeError({
+                operation: "session.fork",
+                detail: "The OpenCode rewind boundary is no longer available.",
+              }),
+            );
+          }
+          const firstRemovedMessage =
+            entries
+              .slice(0, targetMessageIndex + 1)
+              .findLast((entry) => entry.info.role === "user") ?? entries[targetMessageIndex]!;
+          // Native revert also rewrites workspace files. Fork only the retained
+          // conversation so T3 alone decides whether filesystem changes survive.
+          const fork = yield* runOpenCodeSdk("session.fork", () =>
+            context.client.session.fork({
               sessionID: context.openCodeSessionId,
-              messageID: target.id,
+              messageID: firstRemovedMessage.info.id,
+              directory: context.directory,
             }),
           ).pipe(Effect.mapError(toRequestError));
-          // Native revert can move the boundary to the preceding user message.
-          return yield* readThread(threadId);
+          if (!fork.data) {
+            return yield* toRequestError(
+              new OpenCodeRuntimeError({
+                operation: "session.fork",
+                detail: "OpenCode session.fork returned no session payload.",
+              }),
+            );
+          }
+          const forkedSessionId = fork.data.id;
+          const forkMessages = yield* runOpenCodeSdk("session.messages", () =>
+            context.client.session.messages({ sessionID: forkedSessionId }),
+          ).pipe(Effect.mapError(toRequestError));
+          if (forkMessages.data?.length !== entries.indexOf(firstRemovedMessage)) {
+            return yield* toRequestError(
+              new OpenCodeRuntimeError({
+                operation: "session.fork",
+                detail: "OpenCode did not preserve the requested rewind boundary.",
+              }),
+            );
+          }
+          yield* runOpenCodeSdk("session.update", () =>
+            context.client.session.update({
+              sessionID: forkedSessionId,
+              permission: buildOpenCodePermissionRules(context.session.runtimeMode),
+            }),
+          ).pipe(Effect.mapError(toRequestError));
+          yield* clearPendingOpenCodeRequests(context, { type: "session.fork" });
+          context.openCodeSessionId = forkedSessionId;
+          context.relatedSessionIds.clear();
+          context.relatedSessionIds.add(forkedSessionId);
+          context.messageRoleById.clear();
+          context.textPartsByMessageId.clear();
+          context.turnTokenUsage = undefined;
+          context.activeTurnId = undefined;
+          context.interruptedTurnId = undefined;
+          context.reconcileIdleStatus = false;
+          context.awaitingBusyAfterInterruption = false;
+          context.pendingIdleReconciliation = undefined;
+          context.session = {
+            ...context.session,
+            resumeCursor: { schemaVersion: OPENCODE_RESUME_VERSION, sessionId: forkedSessionId },
+            updatedAt: yield* nowIso,
+          };
+          yield* emit({
+            ...(yield* buildEventBase({ threadId })),
+            type: "thread.started",
+            payload: { providerThreadId: forkedSessionId },
+          });
+          return {
+            threadId,
+            turns: forkMessages.data
+              .filter((entry) => entry.info.role === "assistant")
+              .map((entry) => ({
+                id: TurnId.make(entry.info.id),
+                items: [entry.info, ...entry.parts],
+              })),
+          };
         }
 
         return snapshot;

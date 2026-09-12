@@ -70,7 +70,7 @@ describe("mobile themes", () => {
     expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f2f2f7");
     expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#0a0a0a");
     expect(readDefaultMobileThemeVariables("light")["--color-user-bubble-skill-foreground"]).toBe(
-      "#f0abfc",
+      "#2563eb",
     );
   });
 
@@ -153,7 +153,7 @@ describe("mobile themes", () => {
 
   it("maps semantic palette roles onto every mobile color variable", () => {
     const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
-    expect(Object.keys(variables)).toHaveLength(68);
+    expect(Object.keys(variables)).toHaveLength(75);
     expect(variables["--color-sheet-solid"]).toBe(
       themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
     );
@@ -217,5 +217,52 @@ describe("mobile themes", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  // The default palette lives in global.css rather than BUILT_IN_THEMES, so the loops above
+  // never reached it; it kept an unreadable hardcoded bubble until this covered it.
+  it("keeps the default user bubble readable in both appearances", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = readDefaultMobileThemeVariables(appearance);
+      const bubble = variables["--color-user-bubble"];
+      expect(
+        contrastRatio(variables["--color-user-bubble-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(variables["--color-user-bubble-skill-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(variables["--color-user-bubble-skill-foreground"]).not.toBe(
+        variables["--color-user-bubble-foreground"],
+      );
+      const fenceSurface = compositeOver(variables["--color-md-user-fence-bg"], bubble);
+      expect(fenceSurface).not.toBe(bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-fence-text"], fenceSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+      const codeSurface = compositeOver(variables["--color-md-user-code-bg"], bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-code-text"], codeSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe("flattenThemeColor", () => {
+  it("composites a translucent border over its surface", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    // `--color-border` in the dark theme, over the surface a chip sits on. Native chip drawing
+    // parses opaque hex only, so this has to resolve before it crosses the bridge.
+    expect(flattenThemeColor("rgba(255, 255, 255, 0.06)", "#171717")).toBe("#252525");
+    expect(flattenThemeColor("rgba(0, 0, 0, 0.08)", "#ffffff")).toBe("#ebebeb");
+  });
+
+  it("leaves an already opaque colour alone", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("#171717", "#ffffff")).toBe("#171717");
+  });
+
+  it("treats a colour with no alpha as fully opaque", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("rgb(255, 0, 0)", "#000000")).toBe("#ff0000");
   });
 });

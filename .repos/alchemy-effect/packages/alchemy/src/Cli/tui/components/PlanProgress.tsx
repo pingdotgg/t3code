@@ -15,6 +15,8 @@ import {
   type FlattenedItem,
   type ActionVerb,
 } from "../../NamespaceTree.ts";
+import { formatModeNote } from "../../ModeTag.ts";
+import type { ProviderMode } from "../../../ProviderMode.ts";
 
 interface ProgressEventSource {
   subscribe(listener: (event: ApplyEvent) => void): () => void;
@@ -52,6 +54,10 @@ export type ProgressRow =
       action: CRUD["action"];
       /** For `noop` resources, persisted state status to show instead of `pending`. */
       persistedApplyStatus?: "created" | "updated";
+      /** Resolved provider mode; `undefined` for mode-agnostic providers. */
+      providerMode?: ProviderMode;
+      /** On mode-switch replacements, the old generation's stamped mode. */
+      fromProviderMode?: ProviderMode;
     }
   | {
       key: string;
@@ -108,6 +114,8 @@ export const buildProgressRows = (plan: Plan): ProgressRow[] => {
         depth: item.depth,
         resourceType: item.resourceType ?? "unknown",
         action: item.action as CRUD["action"],
+        providerMode: item.providerMode,
+        fromProviderMode: item.fromProviderMode,
         persistedApplyStatus:
           item.action === "noop"
             ? (() => {
@@ -313,6 +321,11 @@ export function PlanProgress(props: PlanProgressProps): JSX.Element {
         const displayStatus = getDisplayStatus(row, task.status);
         const color = statusColor(displayStatus);
         const icon = statusIcon(task.status, spinner);
+        const modeNote = formatModeNote({
+          mode: row.providerMode,
+          priorMode: row.fromProviderMode,
+          defaultMode: plan.defaultMode,
+        });
 
         return (
           <Box key={row.key} flexDirection="column">
@@ -323,6 +336,7 @@ export function PlanProgress(props: PlanProgressProps): JSX.Element {
               </Box>
               <Text bold>{task.id}</Text>
               <Text dimColor> ({task.type})</Text>
+              {modeNote ? <Text dimColor> ({modeNote})</Text> : null}
               <Text color={color}> {displayStatus}</Text>
             </Box>
             {task.message ? (

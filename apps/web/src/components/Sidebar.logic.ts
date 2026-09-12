@@ -1,3 +1,4 @@
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
@@ -875,31 +876,30 @@ export { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/s
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 /**
- * Search the already-ordered sidebar thread collection by title only.
+ * Search the already-ordered sidebar thread collection by title or linked PR.
  * Keeping the input order means lifecycle ordering (active, snoozed, settled)
  * remains stable while the user narrows the list.
  */
-export function searchSidebarThreadsByTitle<T extends { readonly title: string }>(
-  threads: readonly T[],
-  query: string,
-): T[] {
+export function searchSidebarThreads<
+  T extends { readonly title: string } & Parameters<typeof threadPullRequestSearchTerms>[0],
+>(threads: readonly T[], query: string): T[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return [];
-  return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
+  return threads.filter((thread) =>
+    [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
+      term.toLowerCase().includes(normalizedQuery),
+    ),
+  );
 }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
-  activeScopeKey: string | null;
   query: string;
   matches: (item: TItem, query: string) => boolean;
 }): readonly TItem[] {
-  const projectItems = input.items.filter((item) => item.value !== "all");
   const query = input.query.trim();
-  if (query.length > 0) {
-    return projectItems.filter((item) => input.matches(item, query));
-  }
-  return input.activeScopeKey === null ? projectItems : input.items;
+  if (query.length === 0) return input.items;
+  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
 }
 
 export interface SidebarProjectScopeMenuState {

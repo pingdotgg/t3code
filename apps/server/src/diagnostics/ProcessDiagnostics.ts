@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 
-export class ProcessSignalFailed extends Schema.TaggedErrorClass<ProcessSignalFailed>()(
+export class ProcessSignalFailed extends Schema.TaggedError<ProcessSignalFailed>()(
   "ProcessSignalFailed",
   {
     pid: Schema.Number,
@@ -54,6 +54,7 @@ function canSignalCategory(category: ResourceTelemetryProcessCategory): boolean 
   );
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("makeProcessDiagnostics")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
   const refreshedTelemetry = telemetry.refresh.pipe(Effect.catch(() => telemetry.latest));

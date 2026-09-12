@@ -18,15 +18,16 @@ export interface PutActionsRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.PutActionsHttp)`.
  *
- * @binding
- * @section Incremental Imports
- * @example Upsert an Action
+ * ### Incremental Imports
+ * **Example:** Upsert an Action
  * ```typescript
  * // init
  * const putActions = yield* Personalize.PutActions(actionsDataset);
  *
  * yield* putActions({ actions: [{ actionId: "action-1" }] });
  * ```
+ *
+ * @binding
  */
 export interface PutActions extends Binding.Service<
   PutActions,
