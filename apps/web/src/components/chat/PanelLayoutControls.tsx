@@ -1,4 +1,5 @@
 import {
+  ArrowRightIcon,
   Columns2Icon,
   FolderIcon,
   Globe2Icon,
@@ -35,6 +36,8 @@ interface PanelLayoutControlsProps {
     readonly hasProjectDefault: boolean;
     readonly currentLayout: PaneTree;
     readonly projectTitle: string;
+    readonly savedGlobalLayout: PaneTree | null;
+    readonly savedProjectLayout: PaneTree | null;
     readonly onSaveGlobal: () => void;
     readonly onSaveProject: () => void;
     readonly onClearGlobal: () => void;
@@ -85,19 +88,53 @@ function WorkspaceLayoutMiniature({ tree }: { readonly tree: PaneTree }) {
   );
 }
 
+function WorkspaceLayoutPreviewFrame({
+  label,
+  tree,
+}: {
+  readonly label?: string;
+  readonly tree: PaneTree;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      {label ? (
+        <div className="truncate text-[10px] font-medium text-muted-foreground">{label}</div>
+      ) : null}
+      <div
+        aria-hidden
+        className="h-28 rounded-lg bg-muted/45 p-1.5 shadow-[inset_0_0_0_1px_--theme(--color-foreground/8%)] dark:shadow-[inset_0_0_0_1px_--theme(--color-white/8%)]"
+      >
+        <WorkspaceLayoutMiniature tree={tree} />
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceDefaultPreview({
   kind,
   projectTitle,
+  savedGlobalLayout,
+  savedProjectLayout,
   tree,
 }: {
   readonly kind: "global" | "project";
   readonly projectTitle: string;
+  readonly savedGlobalLayout: PaneTree | null;
+  readonly savedProjectLayout: PaneTree | null;
   readonly tree: PaneTree;
 }) {
   const global = kind === "global";
   const Icon = global ? Globe2Icon : FolderIcon;
+  const previousLayout = global ? savedGlobalLayout : (savedProjectLayout ?? savedGlobalLayout);
+  const previousLabel = global
+    ? "Current global"
+    : savedProjectLayout
+      ? "Current project"
+      : "Inherited global";
   return (
-    <div className="flex w-64 flex-col gap-2.5 p-1.5 text-left">
+    <div
+      className={`${previousLayout ? "w-[30rem]" : "w-64"} flex flex-col gap-2.5 p-1.5 text-left`}
+    >
       <div className="flex items-start gap-2">
         <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
@@ -111,17 +148,15 @@ function WorkspaceDefaultPreview({
           </p>
         </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-          Layout to save
+      {previousLayout ? (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+          <WorkspaceLayoutPreviewFrame label={previousLabel} tree={previousLayout} />
+          <ArrowRightIcon className="mt-4 size-3.5 shrink-0 text-muted-foreground" />
+          <WorkspaceLayoutPreviewFrame label={global ? "New global" : "New project"} tree={tree} />
         </div>
-        <div
-          aria-hidden
-          className="h-28 rounded-lg bg-muted/45 p-1.5 shadow-[inset_0_0_0_1px_--theme(--color-foreground/8%)] dark:shadow-[inset_0_0_0_1px_--theme(--color-white/8%)]"
-        >
-          <WorkspaceLayoutMiniature tree={tree} />
-        </div>
-      </div>
+      ) : (
+        <WorkspaceLayoutPreviewFrame tree={tree} />
+      )}
       <p className="text-[10px] text-muted-foreground">Existing threads won’t change.</p>
     </div>
   );
@@ -253,6 +288,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           <MenuPopup align="end" className="min-w-56">
             <Tooltip>
               <TooltipTrigger
+                delay={0}
                 render={
                   <MenuItem onClick={workspaceDefaults.onSaveGlobal}>
                     Save as global default
@@ -269,12 +305,15 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 <WorkspaceDefaultPreview
                   kind="global"
                   projectTitle={workspaceDefaults.projectTitle}
+                  savedGlobalLayout={workspaceDefaults.savedGlobalLayout}
+                  savedProjectLayout={workspaceDefaults.savedProjectLayout}
                   tree={workspaceDefaults.currentLayout}
                 />
               </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
+                delay={0}
                 render={
                   <MenuItem onClick={workspaceDefaults.onSaveProject}>
                     Save for this project
@@ -291,6 +330,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 <WorkspaceDefaultPreview
                   kind="project"
                   projectTitle={workspaceDefaults.projectTitle}
+                  savedGlobalLayout={workspaceDefaults.savedGlobalLayout}
+                  savedProjectLayout={workspaceDefaults.savedProjectLayout}
                   tree={workspaceDefaults.currentLayout}
                 />
               </TooltipPopup>

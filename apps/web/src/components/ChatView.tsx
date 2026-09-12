@@ -8274,6 +8274,8 @@ export default function ChatView(props: ChatViewProps) {
               hasProjectDefault: projectWorkspaceDefault !== null,
               currentLayout: currentWorkspaceDefault.layout.paneTree,
               projectTitle: activeProject?.title ?? "This project",
+              savedGlobalLayout: globalWorkspaceDefault?.layout.paneTree ?? null,
+              savedProjectLayout: projectWorkspaceDefault?.layout.paneTree ?? null,
               onSaveGlobal: saveGlobalWorkspaceDefault,
               onSaveProject: saveProjectWorkspaceDefault,
               onClearGlobal: clearGlobalWorkspaceDefault,
