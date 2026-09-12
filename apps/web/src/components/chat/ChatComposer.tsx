@@ -3561,6 +3561,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ) : null}
                     </>
                   ) : null}
+                  <div
+                    className={cn("contents", speechPresentation.showsConfirm && "[&>*]:-order-1")}
+                  >
                   <ComposerFooterPrimaryActions
                     showActions={speechPresentation.showsSend || phase === "running"}
                     compact={isComposerPrimaryActionsCompact}
@@ -3620,6 +3623,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
+                  </div>
                   {speechInput.available ? (
                     <ComposerSpeechRecordingPill
                       state={speechInput.state}
