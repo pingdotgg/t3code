@@ -32,6 +32,7 @@ import {
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useDesktopPreviewBaseUrl } from "~/state/desktopPreviewBaseUrl";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -124,6 +125,7 @@ export function PreviewView({
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
+  const desktopPreviewBaseUrl = useDesktopPreviewBaseUrl(threadRef.environmentId);
   const environmentHostname = environmentHttpBaseUrl
     ? new URL(environmentHttpBaseUrl).hostname
     : null;
@@ -226,7 +228,11 @@ export function PreviewView({
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
+        const resolved = resolveDiscoveredServerUrl(
+          threadRef.environmentId,
+          next,
+          desktopPreviewBaseUrl,
+        );
         if (await navigateToResolvedUrl(resolved)) {
           recordVisitForThread(threadRef, next);
         }
@@ -234,7 +240,7 @@ export function PreviewView({
         // Server-side `failed` event renders the unreachable view.
       }
     },
-    [navigateToResolvedUrl, threadRef],
+    [desktopPreviewBaseUrl, navigateToResolvedUrl, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
@@ -790,6 +796,7 @@ export function PreviewView({
             threadRef={threadRef}
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
+            preferredBaseUrl={desktopPreviewBaseUrl}
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
