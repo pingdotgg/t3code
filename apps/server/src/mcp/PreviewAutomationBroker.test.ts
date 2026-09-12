@@ -15,6 +15,8 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
@@ -311,7 +313,7 @@ it.effect("announces a live replacement stream before delivering requests", () =
       yield* Effect.yieldNow;
 
       const result = yield* broker.invoke<string>({ scope, operation: "status", input: {} });
-      yield* Fiber.await(consumer);
+      yield* Fiber.join(consumer);
 
       expect(receivedTypes).toEqual(["connected", "request"]);
       expect(result).toBe("ready");
@@ -1180,7 +1182,11 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
       expect(yield* Fiber.join(other)).toMatchObject({
         _tag: "PreviewAutomationClientDisconnectedError",
       });
-      yield* Fiber.await(consumer);
+      const consumerExit = yield* Fiber.await(consumer);
+      expect(Exit.isFailure(consumerExit)).toBe(true);
+      if (Exit.isFailure(consumerExit)) {
+        expect(Cause.hasInterruptsOnly(consumerExit.cause)).toBe(true);
+      }
 
       // Late traffic from the evicted connection cannot restore its assignment.
       yield* broker.respond({
