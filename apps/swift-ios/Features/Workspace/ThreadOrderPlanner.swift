@@ -99,43 +99,55 @@ enum ThreadOrderPlanner {
         }
     }
 
-    /// `planReorder` specialized for the Move up / Move down menu actions:
-    /// swap the moved thread with its displayed neighbor. Nil when the move
-    /// falls off either end of the section. Same single-write-per-move
-    /// semantics as a web drag.
-    static func planMove(
-        orderedIDs: [String],
-        keysByID: [String: String?],
-        movedID: String,
-        direction: FeatureThreadMoveDirection
-    ) -> [FeatureThreadOrderAssignment]? {
-        guard let from = orderedIDs.firstIndex(of: movedID) else { return nil }
-        let to = direction == .up ? from - 1 : from + 1
-        guard to >= 0, to < orderedIDs.count else { return nil }
-        var newOrder = orderedIDs
-        newOrder.remove(at: from)
-        newOrder.insert(movedID, at: to)
-        return planReorder(orderedIDs: newOrder, keysByID: keysByID, movedID: movedID)
-    }
-
-    /// Keeps every visible row as an anchor but only offers plans whose key
-    /// writes are supported — the same rule React Native applies to Move up /
-    /// Move down, so menu availability and execution share one plan. Rows in
-    /// environments outside `connectedEnvironmentIDs` stay anchors but are
-    /// never written: their last-known keys are stale, and a write would go
-    /// to a dead client.
-    static func movePlanner(
+    /// Planner for a drag drop: `ordered` is the section's displayed order
+    /// after the drop (same input web passes to `planPinnedReorder`).
+    /// `all` keeps hidden rows' keys reserved. Every visible row anchors its
+    /// position but a plan exists only when the moved row — and every row a
+    /// spread rewrite would touch — can be written: reorder-capable and in
+    /// `connectedEnvironmentIDs`. Rows on disconnected servers keep their
+    /// stale keys as anchors and are never written, so a spread rewrite
+    /// cannot half-land on a dead client.
+    static func planDrop(
         ordered: [FeatureThread],
         all: [FeatureThread],
         section: FeatureThreadOrderSection,
-        connectedEnvironmentIDs: Set<String>
-    ) -> (FeatureThread, FeatureThreadMoveDirection) -> [FeatureThreadOrderAssignment]? {
-        let orderedIDs = ordered.map(\.id)
+        connectedEnvironmentIDs: Set<String>,
+        movedID: String
+    ) -> [FeatureThreadOrderAssignment]? {
+        let writableIDs = writableIDs(
+            in: ordered,
+            section: section,
+            connectedEnvironmentIDs: connectedEnvironmentIDs
+        )
+        guard writableIDs.contains(movedID) else { return nil }
+        let assignments = planReorder(
+            orderedIDs: ordered.map(\.id),
+            keysByID: keysByID(all, section: section),
+            movedID: movedID
+        )
+        guard !assignments.isEmpty,
+              assignments.allSatisfy({ writableIDs.contains($0.threadID) })
+        else { return nil }
+        return assignments
+    }
+
+    private static func keysByID(
+        _ all: [FeatureThread],
+        section: FeatureThreadOrderSection
+    ) -> [String: String?] {
         var keysByID: [String: String?] = [:]
         for thread in all {
             keysByID[thread.id] = section == .pinned ? thread.pinOrderKey : thread.activeOrderKey
         }
-        let writableIDs = Set(
+        return keysByID
+    }
+
+    private static func writableIDs(
+        in ordered: [FeatureThread],
+        section: FeatureThreadOrderSection,
+        connectedEnvironmentIDs: Set<String>
+    ) -> Set<String> {
+        Set(
             ordered
                 .filter {
                     isWritable($0, section: section)
@@ -143,19 +155,6 @@ enum ThreadOrderPlanner {
                 }
                 .map(\.id)
         )
-        return { thread, direction in
-            guard writableIDs.contains(thread.id),
-                  let assignments = planMove(
-                      orderedIDs: orderedIDs,
-                      keysByID: keysByID,
-                      movedID: thread.id,
-                      direction: direction
-                  ),
-                  !assignments.isEmpty,
-                  assignments.allSatisfy({ writableIDs.contains($0.threadID) })
-            else { return nil }
-            return assignments
-        }
     }
 
     private static func isValidKey(_ key: String) -> Bool {
@@ -193,18 +192,5 @@ enum ThreadOrderPlanner {
         // into, or we extend a (never producing a trailing minimum digit).
         if b.count > 1 { return String(b.first!) }
         return String(digits[digitA]) + midpoint(String(a.dropFirst()), "")
-    }
-}
-
-/// Move up / Move down availability for one thread row. A present value means
-/// the row's environment supports reordering its section; each direction
-/// stays enabled only while a plan exists for it.
-public struct FeatureThreadMoveOptions: Equatable, Sendable {
-    public let canMoveUp: Bool
-    public let canMoveDown: Bool
-
-    public init(canMoveUp: Bool, canMoveDown: Bool) {
-        self.canMoveUp = canMoveUp
-        self.canMoveDown = canMoveDown
     }
 }
