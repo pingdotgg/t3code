@@ -194,6 +194,51 @@ describe("foldSubagentActivities", () => {
     expect(agent.status).toBe("running");
   });
 
+  it("a start row stamped running reopens a settled agent as a new run", () => {
+    // Claude's resume sweep settles a background subagent with a synthetic
+    // "stopped"; SendMessage then re-registers the same task id and the
+    // server stamps that start row "running".
+    const rows = [
+      activity("task.started", { taskId: "resume-1", taskType: "local_agent" }),
+      activity(
+        "task.completed",
+        { taskId: "resume-1", status: "stopped", summary: "No completion record was found" },
+        "2026-08-01T11:00:00.000Z",
+      ),
+      activity(
+        "task.started",
+        { taskId: "resume-1", taskType: "local_agent", status: "running" },
+        "2026-08-01T11:01:00.000Z",
+      ),
+      activity(
+        "task.progress",
+        { taskId: "resume-1", summary: "Running gates", typedUsage: { totalTokens: 500 } },
+        "2026-08-01T11:02:00.000Z",
+      ),
+    ];
+    const live = fold(rows)[0]!;
+    expect(live.status).toBe("running");
+    expect(live.activationCount).toBe(2);
+    expect(live.result).toBeNull();
+    expect(live.completedAt).toBeNull();
+    expect(live.startedAt).toBe("2026-08-01T11:01:00.000Z");
+    expect(live.progress).toBe("Running gates");
+
+    // The next terminal row settles the new run instead of leaving the row
+    // pinned to the stale stop.
+    const settled = fold([
+      ...rows,
+      activity(
+        "task.completed",
+        { taskId: "resume-1", status: "completed", summary: "done" },
+        "2026-08-01T12:00:00.000Z",
+      ),
+    ])[0]!;
+    expect(settled.status).toBe("completed");
+    expect(settled.result).toBe("done");
+    expect(settled.completedAt).toBe("2026-08-01T12:00:00.000Z");
+  });
+
   it("idle is nonterminal: an idle agent resumes without losing identity", () => {
     const agents = fold([
       activity("task.started", { taskId: "codex-child-1", title: "Marlow", role: "explorer" }),
