@@ -2017,16 +2017,20 @@ export default function ChatView(props: ChatViewProps) {
   // stamped at the turn's completion time — not now/updatedAt — so it clears
   // exactly the completion the user is looking at: a wake or completion that
   // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // timestamp backwards). A thread with no completed turn yet is stamped at
+  // its creation time: an unstamped thread reads as "read", which would hide
+  // the first completion when it lands in the background. createdAt predates
+  // every completion and wake, so it never clears one.
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    if (!serverThread?.id) return;
+    const visitedAt = serverThread.latestTurn?.completedAt ?? serverThread.createdAt;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      visitedAt,
     );
   }, [
     markThreadVisited,
+    serverThread?.createdAt,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,

@@ -337,6 +337,20 @@ describe("hasUnseenCompletion", () => {
     ).toBe(true);
   });
 
+  it("flags a first completion when the visit was stamped at thread creation", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: makeLatestTurn(),
+        lastVisitedAt: "2026-03-09T09:00:00.000Z",
+        session: null,
+      }),
+    ).toBe(true);
+  });
+
   it("treats a missing client visit marker as read", () => {
     expect(
       hasUnseenCompletion({
