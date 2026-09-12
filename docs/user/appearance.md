@@ -23,8 +23,11 @@ without replaying its transitions.
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code
-theme. The theme editor's color picker lets you select an area of the app to find the color to
-change. Export your theme as JSON to share it.
+theme. Import accepts theme `.json` files and VS Code theme extensions as `.vsix` packages, so a
+theme you bought or built yourself installs without a registry. Every color theme in a package
+installs together, and importing the same package again offers to update it in place. The theme
+editor's color picker lets you select an area of the app to find the color to change. Export your
+theme as JSON to share it.
 
 ## Environment themes
 

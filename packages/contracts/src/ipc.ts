@@ -601,6 +601,13 @@ export const PickFolderOptionsSchema = Schema.Struct({
   targetEnvironmentId: Schema.optionalKey(Schema.String),
 });
 
+/** Loose theme JSON is a few KB; anything past this is not a theme file. */
+export const THEME_FILE_MAX_BYTES = 256 * 1024;
+
+/** Extension packages ship icons and screenshots. The same cap applies to a
+ *  package picked from disk and to one downloaded from Open VSX. */
+export const THEME_PACKAGE_MAX_BYTES = 20 * 1024 * 1024;
+
 /**
  * A file returned by the desktop theme-file picker. Oversized files carry an
  * empty text so the renderer can reject them by size without the main
@@ -610,12 +617,20 @@ export interface PickedThemeFile {
   name: string;
   size: number;
   text: string;
+  /**
+   * Base64 contents, sent only for binary packages such as `.vsix`. `text` is
+   * empty for those, so the renderer reads whichever field the file kind
+   * needs. The IPC result is schema-encoded before it crosses the bridge, and
+   * a string is the plainest wire form for binary there.
+   */
+  contentBase64?: string;
 }
 
 export const PickedThemeFileSchema = Schema.Struct({
   name: Schema.String,
   size: Schema.Number,
   text: Schema.String,
+  contentBase64: Schema.optional(Schema.String),
 });
 
 export interface DesktopWslDistro {
