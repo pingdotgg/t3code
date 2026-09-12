@@ -115,6 +115,36 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+export const ServerProviderMcpStatus = Schema.Literals([
+  "connected",
+  "disabled",
+  "failed",
+  "needs_auth",
+  "needs_client_registration",
+  "unknown",
+]);
+export type ServerProviderMcpStatus = typeof ServerProviderMcpStatus.Type;
+
+export const ServerProviderMcp = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  status: ServerProviderMcpStatus,
+  error: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderMcp = typeof ServerProviderMcp.Type;
+
+export const ServerProviderLsp = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  root: Schema.optional(TrimmedNonEmptyString),
+  status: TrimmedNonEmptyString,
+});
+export type ServerProviderLsp = typeof ServerProviderLsp.Type;
+
+export const ServerProviderPlugin = Schema.Struct({
+  name: TrimmedNonEmptyString,
+});
+export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
+
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
@@ -230,6 +260,12 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // OpenCode-only inventory (MCP/LSP/plugin lists). Optional for back-compat:
+  // older producers omit them and consumers treat absence as "unknown/empty".
+  // New `checkOpenCodeProviderStatus` outputs set them explicitly.
+  mcps: Schema.optionalKey(Schema.Array(ServerProviderMcp)),
+  lsps: Schema.optionalKey(Schema.Array(ServerProviderLsp)),
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),

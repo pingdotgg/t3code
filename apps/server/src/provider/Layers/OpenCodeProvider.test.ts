@@ -156,6 +156,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
   },
   loadOpenCodeSkills: () => Effect.succeed([]),
+  loadOpenCodeMcps: () => Effect.succeed([]),
+  loadOpenCodeLsps: () => Effect.succeed([]),
+  loadOpenCodePlugins: () => Effect.succeed([]),
   loadSkillsFromCli: () => Effect.succeed([]),
 };
 
@@ -361,6 +364,53 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
           },
         ],
       );
+    }),
+  );
+
+  it.effect("includes OpenCode MCP, LSP, and plugin inventory in the provider snapshot", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  name: "GPT-5.4",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+        mcps: [
+          { name: "exa", status: "connected" },
+          { name: "broken-mcp", status: "failed", error: "spawn ENOENT" },
+          { name: "", status: "connected" },
+        ],
+        lsps: [
+          { id: "typescript", name: "TypeScript", root: "/repo", status: "connected" },
+          { id: "", name: "", status: "connected" },
+        ],
+        plugins: [{ name: "opencode-wakatime" }, { name: " " }],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.deepEqual(snapshot.mcps, [
+        { name: "broken-mcp", status: "failed", error: "spawn ENOENT" },
+        { name: "exa", status: "connected" },
+      ]);
+      NodeAssert.deepEqual(snapshot.lsps, [
+        { id: "typescript", name: "TypeScript", root: "/repo", status: "connected" },
+      ]);
+      NodeAssert.deepEqual(snapshot.plugins, [{ name: "opencode-wakatime" }]);
     }),
   );
 
