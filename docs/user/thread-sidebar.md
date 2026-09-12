@@ -1,5 +1,16 @@
 # Working with threads
 
+## Custom thread layouts
+
+In **Settings → General → Thread list layout**, choose Standard, Compact, or
+**New layout…**. Drag sample details into the preview to choose their order, row,
+and alignment. Drag a placed detail back to Available details to hide it.
+
+Edits save automatically. Editing Standard or Compact creates a separate custom
+layout; the built-ins stay available. Duplicate a layout to try a variation, and
+use **Preview my threads** to see it across your actual sidebar before returning
+to Settings. Named layouts and the selection are saved on this client.
+
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 

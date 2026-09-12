@@ -211,6 +211,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
+    id: "compact-thread-list",
+    title: "Thread list layout",
+    searchTerms: ["standard compact custom rows saved layouts preview my threads"],
+    to: "/settings/general",
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

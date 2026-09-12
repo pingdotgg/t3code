@@ -21,6 +21,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
+  DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
@@ -157,6 +158,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { ThreadRowLayoutSettings } from "./ThreadRowLayoutSettings";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -531,6 +533,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.sidebarCompactThreadRows ||
+      settings.sidebarThreadRowLayoutMode !== "standard" ||
+      settings.sidebarSavedThreadLayouts.length > 0 ||
+      settings.sidebarActiveThreadLayoutId !== null ||
+      JSON.stringify(settings.sidebarThreadRowLayout) !==
+        JSON.stringify(DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT)
+        ? ["Thread list layout"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
@@ -631,6 +641,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
+      settings.sidebarCompactThreadRows,
+      settings.sidebarThreadRowLayoutMode,
+      settings.sidebarThreadRowLayout,
+      settings.sidebarSavedThreadLayouts,
+      settings.sidebarActiveThreadLayoutId,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -706,6 +721,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      sidebarCompactThreadRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows,
+      sidebarThreadRowLayoutMode: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowLayoutMode,
+      sidebarThreadRowLayout: DEFAULT_UNIFIED_SETTINGS.sidebarThreadRowLayout,
+      sidebarSavedThreadLayouts: DEFAULT_UNIFIED_SETTINGS.sidebarSavedThreadLayouts,
+      sidebarActiveThreadLayoutId: DEFAULT_UNIFIED_SETTINGS.sidebarActiveThreadLayoutId,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
@@ -2154,6 +2174,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <ThreadRowLayoutSettings settings={settings} onChange={updateSettings} />
 
         {supportsAutoSettlement ? (
           <>
