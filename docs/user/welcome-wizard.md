@@ -43,12 +43,15 @@ to include older projects or change the selection.
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.
 
-Imported projects include Codex and Claude conversations active within the last
-30 days. You can continue those conversations in T3 Code.
+Imported projects include your Codex and Claude conversations. They arrive as
+settled threads, and you can continue them in T3 Code.
 
-Conversation import is best effort. T3 Code keeps the first user prompt and the
-newest remaining visible user and assistant messages, with 200 messages total.
-It omits tool activity and attachments. For Codex, it omits generated setup
+How far back the import reaches follows the **History to import** setting,
+which covers all history by default. See
+[Import agent history](thread-sidebar.md#import-agent-history).
+
+Conversation import is best effort. T3 Code keeps the visible user and
+assistant messages. It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so T3 Code does not remove user text. It reads one conversation at

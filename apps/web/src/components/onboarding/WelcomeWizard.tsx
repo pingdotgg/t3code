@@ -1011,8 +1011,9 @@ function AgentInstallTerminal({
 /**
  * One-decision import (4B): a summary line with Import recent / Choose /
  * Skip. The default imports only projects touched in the last 30 days;
- * Choose expands a checklist including older ones. Imported projects also
- * receive Codex and Claude threads active within the last 30 days.
+ * Choose expands a checklist including older ones. How far back the
+ * conversations themselves reach follows the environment's history window
+ * setting, so this step does not restate a fixed number of days.
  */
 function ImportStep({
   mode,
@@ -1366,6 +1367,10 @@ function ImportStep({
           </p>
         ) : null}
       </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Conversations from Claude Code and Codex come across as settled threads you can continue.
+        Change how far back the import reaches in Settings.
+      </p>
       {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
         <Button
