@@ -200,7 +200,9 @@ function probeCli(input: {
           kind: input.spec.kind,
           label: input.spec.label,
           executable: input.spec.executable,
-          status: "missing" as const,
+          // A response deadline is not evidence that the executable is absent.
+          status:
+            cause._tag === "VcsProcessTimeoutError" ? ("available" as const) : ("missing" as const),
           version: Option.none<string>(),
           installHint: input.spec.installHint,
           detail: detailFromCause(cause),
@@ -239,10 +241,15 @@ export function probeSourceControlProvider(input: {
     cwd: input.cwd,
   }).pipe(
     Effect.flatMap((item) => {
-      if (item.status !== "available") {
+      if (item.status !== "available" || Option.isSome(item.detail)) {
         return Effect.succeed({
           ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
+          auth: unknownAuth(
+            Option.getOrElse(
+              item.detail,
+              () => "Hosting integration command was not found on the server PATH.",
+            ),
+          ),
         } satisfies SourceControlProviderDiscoveryItem);
       }
 
