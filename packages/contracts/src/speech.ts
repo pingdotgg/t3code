@@ -20,6 +20,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   accuracy: Schema.Finite,
   speed: Schema.Finite,
   recommended: Schema.Boolean,
+  supportsStreaming: Schema.Boolean,
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
@@ -48,6 +49,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     modelId: SpeechModelId,
     model: Schema.String,
     size: Schema.Finite,
+    supportsStreaming: Schema.Boolean,
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
@@ -56,3 +58,28 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
   text: Schema.String,
 });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
+
+export const SPEECH_STREAM_PATH = "/api/voice/stream";
+export const SPEECH_SAMPLE_RATE = 16_000;
+export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
+export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5;
+
+export const SpeechStreamCommand = Schema.Struct({ type: Schema.Literal("finish") });
+
+export const SpeechStreamText = Schema.Struct({
+  committed: Schema.String,
+  tentative: Schema.String,
+});
+export type SpeechStreamText = typeof SpeechStreamText.Type;
+
+export const SpeechStreamEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("ready") }),
+  Schema.Struct({
+    type: Schema.Literal("update"),
+    revision: Schema.Int,
+    text: Schema.NullOr(SpeechStreamText),
+  }),
+  Schema.Struct({ type: Schema.Literal("finished"), text: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
+]);
+export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;

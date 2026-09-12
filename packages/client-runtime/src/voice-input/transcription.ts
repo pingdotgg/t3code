@@ -9,7 +9,14 @@ export type PreparedVoiceTranscription = {
 };
 
 export type VoiceTranscriber = {
-  readonly prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedVoiceTranscription>;
+  readonly prepare: (
+    options: VoiceTranscriptionOptions,
+  ) => Promise<PreparedVoiceTranscription | PreparedStreamingVoiceTranscription>;
+};
+
+export type PreparedStreamingVoiceTranscription = {
+  readonly locale: string;
+  readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
 };
 
 export type VoiceTranscriptionErrorCode =

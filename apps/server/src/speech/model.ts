@@ -120,9 +120,38 @@ export type SpeechModel = {
   readonly accuracy: number;
   readonly speed: number;
   readonly recommended: boolean;
+  readonly supportsStreaming: boolean;
 };
 
 export const SPEECH_MODELS = [
+  {
+    id: "handy-computer/moonshine-streaming-tiny-gguf",
+    revision: "85ddff612fa3a2cf40b2f745abcfa90ef82f293b",
+    name: "Moonshine Streaming Tiny",
+    description: "Live English transcription for lower-powered machines.",
+    filename: "moonshine-streaming-tiny-Q8_0.gguf",
+    size: 50_462_816,
+    sha256: "930e4622ad3a24158b91406c30c977fa6a26b34cb32d6ac3e57cfb23383a869e",
+    languages: ["en"],
+    accuracy: 74,
+    speed: 100,
+    recommended: false,
+    supportsStreaming: true,
+  },
+  {
+    id: "handy-computer/moonshine-streaming-small-gguf",
+    revision: "41444173ed8210852a883e046fadcfba3e7bfbae",
+    name: "Moonshine Streaming Small",
+    description: "Fast, accurate live English transcription.",
+    filename: "moonshine-streaming-small-Q8_0.gguf",
+    size: 198_506_848,
+    sha256: "d03670f69629b649085d0f44a63d97668b4119117cc9611a4e4ad94341713dfc",
+    languages: ["en"],
+    accuracy: 84,
+    speed: 95,
+    recommended: false,
+    supportsStreaming: true,
+  },
   {
     id: "handy-computer/canary-180m-flash-gguf",
     revision: "b147f9dc52b59f0998e410540a84727bd86457fd",
@@ -135,6 +164,7 @@ export const SPEECH_MODELS = [
     accuracy: 88,
     speed: 98,
     recommended: true,
+    supportsStreaming: false,
   },
   {
     id: "handy-computer/parakeet-unified-en-0.6b-gguf",
@@ -148,6 +178,7 @@ export const SPEECH_MODELS = [
     accuracy: 90,
     speed: 79,
     recommended: true,
+    supportsStreaming: true,
   },
   {
     id: "handy-computer/moonshine-tiny-gguf",
@@ -161,6 +192,7 @@ export const SPEECH_MODELS = [
     accuracy: 74,
     speed: 100,
     recommended: false,
+    supportsStreaming: false,
   },
   {
     id: "handy-computer/whisper-tiny-gguf",
@@ -174,6 +206,7 @@ export const SPEECH_MODELS = [
     accuracy: 61,
     speed: 100,
     recommended: false,
+    supportsStreaming: false,
   },
   {
     id: "handy-computer/whisper-base-gguf",
@@ -187,6 +220,7 @@ export const SPEECH_MODELS = [
     accuracy: 71,
     speed: 99,
     recommended: false,
+    supportsStreaming: false,
   },
 ] as const satisfies readonly SpeechModel[];
 

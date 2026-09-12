@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import { SPEECH_STREAM_MAX_CHUNK_BYTES } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -29,7 +31,7 @@ export class SpeechInvalidAudioError extends Schema.TaggedError<SpeechInvalidAud
   { byteLength: Schema.Number, message: Schema.String },
 ) {}
 
-export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
+export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): Float32Array {
   if (
     pcmBytes.byteLength === 0 ||
     pcmBytes.byteLength > MAX_SPEECH_BYTES ||
@@ -51,7 +53,9 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
     }
     energy += sample * sample;
   }
-  return Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS ? new Float32Array() : pcm;
+  return !preserveSilence && Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS
+    ? new Float32Array()
+    : pcm;
 }
 
 export class SpeechOperationError extends Schema.TaggedError<SpeechOperationError>()(
@@ -104,12 +108,13 @@ const isSpeechError = Schema.is(
   ]),
 );
 
-type LoadedModel = {
-  readonly transcribe: (
-    pcm: Float32Array,
-    options: { readonly timestamps: "none"; readonly language?: string },
-  ) => Promise<{ readonly text: string }>;
-  readonly dispose: () => Promise<void>;
+type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
+
+export type SpeechStream = {
+  readonly feed: (
+    pcm: Uint8Array,
+  ) => Effect.Effect<Awaited<ReturnType<LoadedModel["feed"]>>, SpeechError>;
+  readonly finish: Effect.Effect<string, SpeechError>;
 };
 
 export class SpeechService extends Context.Service<
@@ -128,6 +133,7 @@ export class SpeechService extends Context.Service<
       modelId: string,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
+    readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
 >()("t3/speech/SpeechService") {}
@@ -175,7 +181,7 @@ export const make = Effect.gen(function* () {
     return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
   };
 
-  const download = async (modelId: string) => {
+  const download = async (modelId: string, signal = lifetime.signal) => {
     const definition = getSpeechModel(modelId);
     if (!definition) throw new SpeechModelNotFoundError({ modelId });
     if (downloading && downloading.modelId !== modelId)
@@ -183,7 +189,8 @@ export const make = Effect.gen(function* () {
     const controller = new AbortController();
     downloading = { modelId, downloaded: 0, verifying: false, controller };
     const abort = () => controller.abort();
-    lifetime.signal.addEventListener("abort", abort, { once: true });
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
     try {
       const modelPath = await downloadSpeechModel(
         modelDirectory,
@@ -199,12 +206,12 @@ export const make = Effect.gen(function* () {
       if (controller.signal.aborted) throw new SpeechDownloadCancelledError({ modelId });
       throw error;
     } finally {
-      lifetime.signal.removeEventListener("abort", abort);
+      signal.removeEventListener("abort", abort);
       if (downloading?.modelId === modelId) downloading = undefined;
     }
   };
 
-  const loadModel = async () => {
+  const loadModel = async (signal = lifetime.signal) => {
     const definition = await selectedModel();
     if (model && loadedModelId === definition.id) return model;
     if (model) {
@@ -214,9 +221,9 @@ export const make = Effect.gen(function* () {
     }
     const pending =
       loading ??
-      download(definition.id)
+      download(definition.id, signal)
         .then(async (modelPath) => {
-          const loaded = await loadNativeSpeechModel(modelPath, lifetime.signal);
+          const loaded = await loadNativeSpeechModel(modelPath, signal);
           if (closing) {
             await loaded.dispose();
             throw new SpeechBusyError({ operation: "model preparation" });
@@ -270,6 +277,7 @@ export const make = Effect.gen(function* () {
       modelId: definition.id,
       model: definition.name,
       size: definition.size,
+      supportsStreaming: definition.supportsStreaming,
     };
   };
 
@@ -289,6 +297,7 @@ export const make = Effect.gen(function* () {
             accuracy: definition.accuracy,
             speed: definition.speed,
             recommended: definition.recommended,
+            supportsStreaming: definition.supportsStreaming,
             active: selected.id === definition.id,
             state: operation
               ? operation.verifying
@@ -305,6 +314,75 @@ export const make = Effect.gen(function* () {
   };
 
   return SpeechService.of({
+    startStream: Effect.gen(function* () {
+      const operation = "streaming transcription";
+      if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
+      if (unsupportedReason)
+        return yield* new SpeechUnsupportedPlatformError({ platform, architecture });
+      const released = Promise.withResolvers<void>();
+      activeOperation = released.promise;
+      activeTranscriptions += 1;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([controller.signal, lifetime.signal]);
+      let finished = false;
+      let loaded: LoadedModel | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          // Cancellation can arrive inside native compute. Kill the owned process before releasing the lease.
+          if (!finished) {
+            controller.abort();
+            await loading?.catch(() => undefined);
+            await (loaded ?? model)?.dispose();
+            model = undefined;
+            loadedModelId = undefined;
+          }
+          activeTranscriptions -= 1;
+          if (activeOperation === released.promise) activeOperation = undefined;
+          released.resolve();
+        }),
+      );
+      loaded = yield* attempt(operation, async () => {
+        const prepared = await loadModel(signal);
+        if (!prepared.supportsStreaming)
+          throw new Error("The selected model does not support streaming.");
+        await prepared.begin();
+        return prepared;
+      });
+      const streamModel = loaded;
+      let byteLength = 0;
+      let busy = false;
+      const run = <A>(work: () => Promise<A>) =>
+        attempt(operation, async () => {
+          if (busy || finished || signal.aborted) throw new Error("Speech stream is not ready.");
+          busy = true;
+          try {
+            return await work();
+          } finally {
+            busy = false;
+          }
+        });
+      return {
+        feed: (bytes: Uint8Array) =>
+          run(async () => {
+            if (
+              bytes.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES ||
+              byteLength + bytes.byteLength > MAX_SPEECH_BYTES
+            )
+              throw new SpeechInvalidAudioError({
+                byteLength: bytes.byteLength,
+                message: "Speech stream audio limit exceeded.",
+              });
+            const pcm = decodeSpeechPcm(bytes, true);
+            byteLength += bytes.byteLength;
+            return streamModel.feed(pcm);
+          }),
+        finish: run(async () => {
+          const text = await streamModel.finish();
+          finished = true;
+          return text.trim();
+        }),
+      };
+    }),
     status: attempt("status", currentStatus),
     models: attempt("model listing", listModels),
     downloadModel: (modelId) =>

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -58,6 +59,26 @@ export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.status(),
     run: ({ client, headers }) => client.voice.status({ headers }),
   });
+
+export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
+  let endpoint = prepared.httpBaseUrl;
+  return request({
+    prepared,
+    method: "POST",
+    path: (baseUrl) => {
+      endpoint = baseUrl;
+      return makeEnvironmentHttpApiUrlBuilder(baseUrl).auth.webSocketTicket();
+    },
+    run: ({ client, headers }) => client.auth.webSocketTicket({ headers }),
+  }).pipe(
+    Effect.map(({ ticket }) => {
+      const url = new URL(SPEECH_STREAM_PATH, endpoint);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("wsTicket", ticket);
+      return url.toString();
+    }),
+  );
+};
 
 export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
   request({
