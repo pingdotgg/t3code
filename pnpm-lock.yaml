@@ -495,18 +495,12 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.260
         version: 0.3.260(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@effect/platform-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
       '@effect/platform-node':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
-      '@effect/sql-sqlite-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@ff-labs/fff-node':
         specifier: 0.9.4
         version: 0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)
@@ -535,6 +529,12 @@ importers:
         specifier: ^3.4.0
         version: 3.4.0
     devDependencies:
+      '@effect/platform-bun':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
+      '@effect/sql-sqlite-bun':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@effect/vitest':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
