@@ -306,6 +306,12 @@ public struct WorkspaceView: View {
                 onPin: { thread, pinned in
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
+                onMove: { thread, direction in
+                    Task { await model.moveThread(thread.id, direction: direction) }
+                },
+                onMoveOptions: { thread in
+                    model.moveOptions(for: thread)
+                },
                 onDelete: { thread in
                     deletingThread = thread
                 },

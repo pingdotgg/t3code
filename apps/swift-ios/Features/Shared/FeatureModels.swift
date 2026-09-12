@@ -287,9 +287,14 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var snoozedUntil: Date?
     public var snoozedAt: Date?
     public var pinnedAt: Date?
+    /// Fractional index inside the pinned block; nil when the thread was
+    /// pinned by a client or server that predates `thread.pin.reorder`.
+    public var pinOrderKey: String?
     public var supportsSettlement: Bool?
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
+    public var supportsPinReorder: Bool?
+    public var supportsActiveReorder: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsPullRequestLinking: Bool?
     /// True while the server is generating a new title. Derived from the wire
@@ -332,9 +337,12 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         snoozedUntil: Date? = nil,
         snoozedAt: Date? = nil,
         pinnedAt: Date? = nil,
+        pinOrderKey: String? = nil,
         supportsSettlement: Bool? = nil,
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
+        supportsPinReorder: Bool? = nil,
+        supportsActiveReorder: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsPullRequestLinking: Bool? = nil,
         isRegeneratingTitle: Bool = false,
@@ -374,9 +382,12 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.snoozedUntil = snoozedUntil
         self.snoozedAt = snoozedAt
         self.pinnedAt = pinnedAt
+        self.pinOrderKey = pinOrderKey
         self.supportsSettlement = supportsSettlement
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
+        self.supportsPinReorder = supportsPinReorder
+        self.supportsActiveReorder = supportsActiveReorder
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsPullRequestLinking = supportsPullRequestLinking
         self.isRegeneratingTitle = isRegeneratingTitle
@@ -406,6 +417,33 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         snoozedUntil != nil || supportsSnooze == true
     }
 
+}
+
+/// The thread-list section a context-menu move arranges. Pinned threads write
+/// `pinOrderKey`; active threads write `activeOrderKey`.
+public enum FeatureThreadOrderSection: String, Sendable, Equatable {
+    case pinned
+    case active
+}
+
+public enum FeatureThreadMoveDirection: String, Sendable, Equatable {
+    case up
+    case down
+}
+
+/// One `orderKey` write needed to realize a move. A move between keyed
+/// neighbors produces a single assignment on the moved thread; a move next to
+/// keyless threads rewrites the whole section (see ThreadOrderPlanner).
+public struct FeatureThreadOrderAssignment: Sendable, Equatable {
+    /// Feature-scoped thread id (`FeatureScopedID.thread`), so assignments can
+    /// span environments.
+    public let threadID: String
+    public let orderKey: String
+
+    public init(threadID: String, orderKey: String) {
+        self.threadID = threadID
+        self.orderKey = orderKey
+    }
 }
 
 public enum FeatureMessageRole: String, Sendable, Codable {

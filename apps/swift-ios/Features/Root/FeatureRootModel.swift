@@ -553,6 +553,31 @@ public final class FeatureRootModel {
         }
     }
 
+    /// Move up / Move down availability for a thread row, planned on demand
+    /// against the canonical section (every connected environment). Nil when
+    /// the row's environment predates reordering.
+    public func moveOptions(for thread: FeatureThread) -> FeatureThreadMoveOptions? {
+        DailyUXSidebarIndex.moveOptions(for: thread, in: snapshot.threads, now: .now)
+    }
+
+    public func moveThread(_ id: String, direction: FeatureThreadMoveDirection) async {
+        let environment = currentEnvironmentIdentity
+        await perform {
+            let assignments = try await client.moveThread(id: id, direction: direction)
+            guard currentEnvironmentIdentity == environment else { return }
+            let section: FeatureThreadOrderSection = snapshot.threads
+                .first(where: { $0.id == id })?.pinnedAt != nil ? .pinned : .active
+            for assignment in assignments {
+                mutateThread(id: assignment.threadID) {
+                    switch section {
+                    case .pinned: $0.pinOrderKey = assignment.orderKey
+                    case .active: $0.activeOrderKey = assignment.orderKey
+                    }
+                }
+            }
+        }
+    }
+
     func updatePullRequest(
         _ pullRequest: HomeThreadPullRequestPresentation?,
         threadID: String,

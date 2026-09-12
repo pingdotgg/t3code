@@ -173,6 +173,56 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
     }
 
+    func testReorderCommandsMatchOrchestrationContract() {
+        let pinWithKey = OrchestrationCommands.pin(
+            threadID: "thread-1",
+            pinned: true,
+            orderKey: "mn",
+            commandID: "command-pin-keyed"
+        )
+        XCTAssertEqual(pinWithKey["type"]?.stringValue, "thread.pin")
+        XCTAssertEqual(pinWithKey["threadId"]?.stringValue, "thread-1")
+        XCTAssertEqual(pinWithKey["orderKey"]?.stringValue, "mn")
+        XCTAssertEqual(pinWithKey["commandId"]?.stringValue, "command-pin-keyed")
+
+        // An unpin never carries a key.
+        let unpin = OrchestrationCommands.pin(
+            threadID: "thread-1",
+            pinned: false,
+            orderKey: "mn",
+            commandID: "command-unpin"
+        )
+        XCTAssertEqual(unpin["type"]?.stringValue, "thread.unpin")
+        XCTAssertNil(unpin["orderKey"])
+
+        XCTAssertEqual(
+            OrchestrationCommands.reorderPinned(
+                threadID: "thread-1",
+                orderKey: "mn",
+                commandID: "command-reorder-pin"
+            ),
+            .object([
+                "type": .string("thread.pin.reorder"),
+                "commandId": .string("command-reorder-pin"),
+                "threadId": .string("thread-1"),
+                "orderKey": .string("mn"),
+            ])
+        )
+        XCTAssertEqual(
+            OrchestrationCommands.reorderActive(
+                threadID: "thread-2",
+                orderKey: "bd",
+                commandID: "command-reorder-active"
+            ),
+            .object([
+                "type": .string("thread.active.reorder"),
+                "commandId": .string("command-reorder-active"),
+                "threadId": .string("thread-2"),
+                "orderKey": .string("bd"),
+            ])
+        )
+    }
+
     func testRegenerateTitleCommandMatchesOrchestrationContract() {
         let command = OrchestrationCommands.regenerateTitle(
             threadID: "thread-1",

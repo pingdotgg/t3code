@@ -69,6 +69,14 @@ public protocol FeatureClient: AnyObject {
     func setThreadSettled(id: String, settled: Bool) async throws
     func setThreadSnoozed(id: String, until: Date?) async throws
     func setThreadPinned(id: String, pinned: Bool) async throws
+    /// Executes a Move up / Move down on the thread's list section. Returns
+    /// the order-key assignments the server confirmed; an empty result means
+    /// the move was unavailable (capability or section edge).
+    @discardableResult
+    func moveThread(
+        id: String,
+        direction: FeatureThreadMoveDirection
+    ) async throws -> [FeatureThreadOrderAssignment]
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws
     func deleteThread(id: String) async throws
@@ -468,6 +476,10 @@ public extension FeatureClient {
     func setThreadSettled(id: String, settled: Bool) async throws {}
     func setThreadSnoozed(id: String, until: Date?) async throws {}
     func setThreadPinned(id: String, pinned: Bool) async throws {}
+    func moveThread(
+        id: String,
+        direction: FeatureThreadMoveDirection
+    ) async throws -> [FeatureThreadOrderAssignment] { [] }
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {}
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws {}
     func loadReviewFileContents(

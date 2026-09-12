@@ -81,6 +81,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var latestServerConfig: ServerConfigSnapshot?
     private var serverConfigsByEnvironmentID: [String: ServerConfigSnapshot] = [:]
     private var latestSnapshot: FeatureSnapshot?
+    /// One reorder at a time: a second move planned from the same keys would
+    /// land a conflicting write (React Native holds a pending order for this).
+    private var threadMoveInFlight = false
     private var activeThreadID: String?
     private var activeThreadEnvironmentID: String?
     private var latestDetails: [String: FeatureThreadDetail] = [:]
@@ -1765,8 +1768,88 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func setThreadPinned(id: String, pinned: Bool) async throws {
         let route = try threadRoute(for: id)
-        _ = try await route.client.pin(threadID: route.wireID, pinned: pinned)
+        // Same placement as web and React Native: a fresh pin takes the top of
+        // the arranged run. Servers that predate reordering get the bare pin
+        // (keyless, sorted by creation order below keyed threads).
+        var orderKey: String? = nil
+        if pinned, cachedThread(id: route.uiID)?.supportsPinReorder == true {
+            let firstKey = latestSnapshot?.threads
+                .filter { $0.pinnedAt != nil }
+                .compactMap(\.pinOrderKey)
+                .min()
+            orderKey = ThreadOrderPlanner.orderKeyBetween(before: nil, after: firstKey)
+        }
+        _ = try await route.client.pin(threadID: route.wireID, pinned: pinned, orderKey: orderKey)
         try? await refresh(client: route.client)
+    }
+
+    /// Executes a Move up / Move down from the thread context menu. Plans the
+    /// move against the canonical ordered section across every connected
+    /// environment (a spread rewrite can write keys on neighbors hosted by
+    /// other servers), then refreshes each environment it touched. Returns the
+    /// assignments the server confirmed so the caller can patch local state if
+    /// a refresh fell behind.
+    @discardableResult
+    func moveThread(
+        id: String,
+        direction: FeatureThreadMoveDirection
+    ) async throws -> [FeatureThreadOrderAssignment] {
+        guard !threadMoveInFlight else { return [] }
+        guard let snapshot = latestSnapshot,
+              let thread = snapshot.threads.first(where: { $0.id == id }) else {
+            throw NativeFeatureClientError.threadNotFound
+        }
+        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
+        let planner = ThreadOrderPlanner.movePlanner(
+            ordered: DailyUXSidebarIndex.orderedSection(
+                snapshot.threads,
+                section: section,
+                now: .now
+            ),
+            all: snapshot.threads,
+            section: section
+        )
+        guard let assignments = planner(thread, direction), !assignments.isEmpty else {
+            return []
+        }
+
+        threadMoveInFlight = true
+        defer { threadMoveInFlight = false }
+
+        var confirmed: [FeatureThreadOrderAssignment] = []
+        var touchedEnvironmentIDs = Set<String>()
+        var firstError: Error?
+        for assignment in assignments {
+            do {
+                let route = try threadRoute(for: assignment.threadID)
+                switch section {
+                case .pinned:
+                    _ = try await route.client.reorderPinnedThread(
+                        threadID: route.wireID,
+                        orderKey: assignment.orderKey
+                    )
+                case .active:
+                    _ = try await route.client.reorderActiveThread(
+                        threadID: route.wireID,
+                        orderKey: assignment.orderKey
+                    )
+                }
+                confirmed.append(assignment)
+                touchedEnvironmentIDs.insert(route.environmentID)
+            } catch {
+                // Confirmed writes stand: a later environment rejecting its
+                // write leaves the earlier arrangement in place.
+                firstError = error
+                break
+            }
+        }
+        for environmentID in touchedEnvironmentIDs {
+            if let client = environmentClients[environmentID] {
+                try? await refresh(client: client)
+            }
+        }
+        if let firstError { throw firstError }
+        return confirmed
     }
 
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {
@@ -3238,6 +3321,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            pinOrderKey: thread.pinOrderKey,
             session: thread.session,
             latestUserMessageAt: thread.latestUserMessageAt,
             hasPendingApprovals: thread.hasPendingApprovals,
@@ -5277,9 +5361,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),
+            pinOrderKey: thread.pinOrderKey,
             supportsSettlement: environment.descriptor?.capabilities.threadSettlement,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
+            supportsPinReorder: environment.descriptor?.capabilities.threadPinReorder,
+            supportsActiveReorder: environment.descriptor?.capabilities.threadActiveReorder,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             isRegeneratingTitle: thread.titleRegeneration != nil,
@@ -5362,9 +5449,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: thread.snoozedUntil.map(parseDate),
             snoozedAt: thread.snoozedAt.map(parseDate),
             pinnedAt: thread.pinnedAt.map(parseDate),
+            pinOrderKey: thread.pinOrderKey,
             supportsSettlement: environment.descriptor?.capabilities.threadSettlement,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
+            supportsPinReorder: environment.descriptor?.capabilities.threadPinReorder,
+            supportsActiveReorder: environment.descriptor?.capabilities.threadActiveReorder,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             isRegeneratingTitle: thread.titleRegeneration != nil,
@@ -5674,6 +5764,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snoozedUntil: loaded.snoozedUntil,
             snoozedAt: loaded.snoozedAt,
             pinnedAt: loaded.pinnedAt,
+            pinOrderKey: loaded.pinOrderKey,
             titleRegeneration: loaded.titleRegeneration,
             deletedAt: loaded.deletedAt,
             messages: prependByID(older.messages, loaded.messages),
@@ -6139,6 +6230,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         thread.settledAt = shell.settledAt.flatMap(parseValidDate)
         thread.unsettledAt = shell.unsettledAt.flatMap(parseValidDate)
         thread.activeOrderKey = shell.activeOrderKey
+        thread.pinOrderKey = shell.pinOrderKey
         thread.linkedPullRequest = shell.linkedPullRequest
         thread.branchPullRequest = shell.branchPullRequest
         thread.settlementFacts = settlementFacts(
@@ -7138,6 +7230,12 @@ enum NativeThreadDetailReducer {
             result = reduceUnsettled(payload: payload, thread: thread)
         case "thread.meta-updated":
             result = reduceMetadata(payload: payload, occurredAt: occurredAt, thread: thread)
+        case "thread.pin-reordered":
+            result = reducePinReordered(
+                payload: payload,
+                occurredAt: occurredAt,
+                thread: thread
+            )
         case "thread.message-sent":
             result = reduceMessage(
                 payload: payload,
@@ -7269,6 +7367,23 @@ enum NativeThreadDetailReducer {
                 updated.activeOrderKey = order
             }
         }
+        return .updated(updated)
+    }
+
+    private static func reducePinReordered(
+        payload: JSONValue,
+        occurredAt: String,
+        thread: OrchestrationThread
+    ) -> NativeThreadDetailReductionResult {
+        guard let orderKey = payload["orderKey"]?.stringValue,
+              !orderKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .refresh
+        }
+        var updated = replacing(
+            thread,
+            updatedAt: payload["updatedAt"]?.stringValue ?? occurredAt
+        )
+        updated.pinOrderKey = orderKey
         return .updated(updated)
     }
 
@@ -7529,6 +7644,7 @@ enum NativeThreadDetailReducer {
             snoozedUntil: thread.snoozedUntil,
             snoozedAt: thread.snoozedAt,
             pinnedAt: thread.pinnedAt,
+            pinOrderKey: thread.pinOrderKey,
             titleRegeneration: thread.titleRegeneration,
             deletedAt: thread.deletedAt,
             messages: messages ?? thread.messages,

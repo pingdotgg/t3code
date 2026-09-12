@@ -720,32 +720,9 @@ struct DailyUXSidebarIndex {
         }
         let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
 
-        pinned = available
-            .filter {
-                $0.pinnedAt != nil
-                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
-            }
-            .sorted(by: Self.creationOrder)
+        pinned = Self.orderedSection(visible, section: .pinned, now: now)
 
-        active = available
-            .filter {
-                $0.pinnedAt == nil
-                    && !($0.supportsSettlement == true && $0.isEffectivelySettled())
-            }
-            .sorted { lhs, rhs in
-                switch (lhs.activeOrderKey, rhs.activeOrderKey) {
-                case (.none, .some): return true
-                case (.some, .none): return false
-                case let (.some(left), .some(right)):
-                    return left == right ? Self.activeIdentityOrder(lhs, rhs) : left < right
-                case (.none, .none): break
-                }
-                let leftAnchor = max(lhs.createdAt, lhs.unsettledAt ?? lhs.createdAt)
-                let rightAnchor = max(rhs.createdAt, rhs.unsettledAt ?? rhs.createdAt)
-                return leftAnchor == rightAnchor
-                    ? Self.activeIdentityOrder(lhs, rhs)
-                    : leftAnchor > rightAnchor
-            }
+        active = Self.orderedSection(visible, section: .active, now: now)
 
         snoozed = visible
             .filter { $0.isEffectivelySnoozed(at: now) }
@@ -777,14 +754,88 @@ struct DailyUXSidebarIndex {
         )
     }
 
-    private static func creationOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
-        }
-        return lhs.id < rhs.id
+    /// Move up / Move down availability for one row, planned against the
+    /// canonical section (every environment, before project filtering and
+    /// search). Nil when the thread's environment predates reordering.
+    /// Built on demand when a context menu opens — the same per-row check
+    /// React Native runs — rather than once per row per index rebuild.
+    static func moveOptions(
+        for thread: FeatureThread,
+        in threads: [FeatureThread],
+        now: Date
+    ) -> FeatureThreadMoveOptions? {
+        let section: FeatureThreadOrderSection = thread.pinnedAt != nil ? .pinned : .active
+        guard ThreadOrderPlanner.isWritable(thread, section: section) else { return nil }
+        let planner = ThreadOrderPlanner.movePlanner(
+            ordered: orderedSection(threads, section: section, now: now),
+            all: threads,
+            section: section
+        )
+        return FeatureThreadMoveOptions(
+            canMoveUp: planner(thread, .up) != nil,
+            canMoveDown: planner(thread, .down) != nil
+        )
     }
 
-    private static func activeIdentityOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
+    /// The pinned or active list in display order, independent of project
+    /// filtering and search — the same canonical section React Native plans
+    /// `thread.pin.reorder` / `thread.active.reorder` against, so a menu move
+    /// means the same thing no matter which rows are on screen.
+    static func orderedSection(
+        _ threads: [FeatureThread],
+        section: FeatureThreadOrderSection,
+        now: Date
+    ) -> [FeatureThread] {
+        threads
+            .filter { thread in
+                !thread.isArchived
+                    && !thread.isEffectivelySnoozed(at: now)
+                    && !(thread.supportsSettlement == true && thread.isEffectivelySettled())
+                    && (thread.pinnedAt != nil) == (section == .pinned)
+            }
+            .sorted(by: section == .pinned ? pinnedOrder : activeOrder)
+    }
+
+    /// Keyed rows hold their user-arranged order first; threads pinned by
+    /// clients that predate reordering keep static creation order below them
+    /// (`sortPinnedThreadsByOrderKey` in client-runtime).
+    private static func pinnedOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
+        switch (lhs.pinOrderKey, rhs.pinOrderKey) {
+        case let (.some(left), .some(right)):
+            return left == right ? identityOrder(lhs, rhs) : left < right
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            return lhs.createdAt == rhs.createdAt
+                ? identityOrder(lhs, rhs)
+                : lhs.createdAt > rhs.createdAt
+        }
+    }
+
+    /// New and reopened threads lead the active list. Arranged threads follow
+    /// their saved keys; activity leaves both groups in place
+    /// (`sortActiveThreadsByOrderKey` in client-runtime).
+    private static func activeOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
+        switch (lhs.activeOrderKey, rhs.activeOrderKey) {
+        case (.none, .some): return true
+        case (.some, .none): return false
+        case let (.some(left), .some(right)):
+            return left == right ? identityOrder(lhs, rhs) : left < right
+        case (.none, .none): break
+        }
+        let leftAnchor = max(lhs.createdAt, lhs.unsettledAt ?? lhs.createdAt)
+        let rightAnchor = max(rhs.createdAt, rhs.unsettledAt ?? rhs.createdAt)
+        return leftAnchor == rightAnchor
+            ? identityOrder(lhs, rhs)
+            : leftAnchor > rightAnchor
+    }
+
+    /// Wire id first, then environment: thread ids are only unique within an
+    /// environment, and merged sections need both parts or two clients could
+    /// render equal-key threads in stream-arrival order.
+    private static func identityOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
         let leftID = lhs.wireID ?? lhs.id
         let rightID = rhs.wireID ?? rhs.id
         if leftID != rightID { return leftID < rightID }

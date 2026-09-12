@@ -27,6 +27,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
+    let onMove: (FeatureThread, FeatureThreadMoveDirection) -> Void
+    let onMoveOptions: (FeatureThread) -> FeatureThreadMoveOptions?
     let onDelete: (FeatureThread) -> Void
     let onPullRequestChange: (String, String, HomeThreadPullRequestPresentation?) -> Void
 
@@ -713,6 +715,28 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             var statusActions: [UIMenuElement] = []
             if !isArchived {
+                // Planned against the canonical section when the menu opens;
+                // nil means the row's environment predates reordering, and a
+                // false direction means the move has no valid plan (edge of
+                // the section or an unwritable neighbor).
+                if let moveOptions = parent.onMoveOptions(thread) {
+                    for direction in [FeatureThreadMoveDirection.up, .down] {
+                        let enabled = direction == .up
+                            ? moveOptions.canMoveUp
+                            : moveOptions.canMoveDown
+                        statusActions.append(
+                            UIAction(
+                                title: direction == .up ? "Move up" : "Move down",
+                                image: UIImage(
+                                    systemName: direction == .up ? "arrow.up" : "arrow.down"
+                                ),
+                                attributes: enabled ? [] : .disabled
+                            ) { [weak self] _ in
+                                self?.parent.onMove(thread, direction)
+                            }
+                        )
+                    }
+                }
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
                     statusActions.append(

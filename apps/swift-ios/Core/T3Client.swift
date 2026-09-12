@@ -902,8 +902,34 @@ public actor T3Client {
     }
 
     @discardableResult
-    public func pin(threadID: String, pinned: Bool) async throws -> DispatchResult {
-        try await dispatch(OrchestrationCommands.pin(threadID: threadID, pinned: pinned))
+    public func pin(
+        threadID: String,
+        pinned: Bool,
+        orderKey: String? = nil
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.pin(threadID: threadID, pinned: pinned, orderKey: orderKey)
+        )
+    }
+
+    @discardableResult
+    public func reorderPinnedThread(
+        threadID: String,
+        orderKey: String
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.reorderPinned(threadID: threadID, orderKey: orderKey)
+        )
+    }
+
+    @discardableResult
+    public func reorderActiveThread(
+        threadID: String,
+        orderKey: String
+    ) async throws -> DispatchResult {
+        try await dispatch(
+            OrchestrationCommands.reorderActive(threadID: threadID, orderKey: orderKey)
+        )
     }
 
     @discardableResult
@@ -2307,13 +2333,56 @@ public enum OrchestrationCommands {
     public static func pin(
         threadID: String,
         pinned: Bool,
+        orderKey: String? = nil,
         commandID: String = UUID().uuidString
     ) -> JSONValue {
-        basic(
-            type: pinned ? "thread.pin" : "thread.unpin",
-            threadID: threadID,
-            commandID: commandID
-        )
+        guard pinned, let orderKey else {
+            return basic(
+                type: pinned ? "thread.pin" : "thread.unpin",
+                threadID: threadID,
+                commandID: commandID
+            )
+        }
+        return .object([
+            "type": .string("thread.pin"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "orderKey": .string(orderKey),
+        ])
+    }
+
+    /// Fractional-index reorder: pinned threads sort by `pinOrderKey`, so a
+    /// move writes one key on one thread (see `thread.pin.reorder` in
+    /// packages/contracts). `thread.active.reorder` does the same for the
+    /// active section's `activeOrderKey`.
+    public static func reorderPinned(
+        threadID: String,
+        orderKey: String,
+        commandID: String = UUID().uuidString
+    ) -> JSONValue {
+        reorder(type: "thread.pin.reorder", threadID: threadID, orderKey: orderKey, commandID: commandID)
+    }
+
+    public static func reorderActive(
+        threadID: String,
+        orderKey: String,
+        commandID: String = UUID().uuidString
+    ) -> JSONValue {
+        reorder(type: "thread.active.reorder", threadID: threadID, orderKey: orderKey, commandID: commandID)
+    }
+
+    private static func reorder(
+        type: String,
+        threadID: String,
+        orderKey: String,
+        commandID: String
+    ) -> JSONValue {
+        .object([
+            "type": .string(type),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "orderKey": .string(orderKey),
+        ])
     }
 
     public static func setRuntimeMode(
