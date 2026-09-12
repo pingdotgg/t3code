@@ -2671,6 +2671,7 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
+  const totalProcessedTokens = activeContextWindow?.totalProcessedTokens ?? null;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -8839,7 +8840,7 @@ export default function ChatView(props: ChatViewProps) {
               >
                 <div
                   data-chat-composer-stack="true"
-                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl"
+                  className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl [--chat-composer-drawer-inset:1.375rem]"
                 >
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full z-0">
@@ -9049,6 +9050,18 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </div>
                     </ComposerSurface.Shell>
+                    {totalProcessedTokens !== null && totalProcessedTokens > 0 && (
+                      <div
+                        className={cn(
+                          "mt-0.5 bg-background text-right text-[11px] leading-4 text-muted-foreground tabular-nums",
+                          showComposerContextStrip
+                            ? "mx-(--chat-composer-drawer-inset) px-3.5"
+                            : "mx-px px-3 sm:px-4",
+                        )}
+                      >
+                        {formatContextWindowTokens(totalProcessedTokens)} tokens
+                      </div>
+                    )}
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
