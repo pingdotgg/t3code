@@ -106,6 +106,12 @@ export function cliArchiveFileName(version: string, platform: BuildPlatform, arc
   return `${cliArchiveStem(version, platform, arch)}.${platform === "win" ? "zip" : "tar.gz"}`;
 }
 
+/** The bsdtar Windows ships in System32; resolves regardless of which tar is first on PATH. */
+export function windowsSystemTar(): string {
+  const systemRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+  return `${systemRoot}\\System32\\tar.exe`;
+}
+
 const runCommand = Effect.fn("runCommand")(function* (
   command: ChildProcess.Command,
   label: string,
@@ -502,9 +508,11 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   );
   yield* fs.remove(archivePath, { force: true });
   if (input.platform === "win") {
-    // bsdtar ships with Windows 10+ and writes zip natively.
+    // Windows ships bsdtar, which writes zip natively. Name it by path: under
+    // the Git Bash shell CI uses, a bare `tar` is GNU tar, which neither
+    // writes zip nor accepts a drive-letter path.
     yield* runCommand(
-      ChildProcess.make("tar", ["-a", "-c", "-f", archivePath, "-C", stageRoot, stem]),
+      ChildProcess.make(windowsSystemTar(), ["-a", "-c", "-f", archivePath, "-C", stageRoot, stem]),
       "tar (zip)",
     );
   } else {

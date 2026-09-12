@@ -22,6 +22,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { windowsSystemTar } from "./build-cli-archive.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
@@ -74,8 +75,11 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-smoke-" });
 
+  // On Windows the archive is a zip and the Git Bash `tar` on PATH is GNU
+  // tar; use the bsdtar Windows ships, which reads both formats.
+  const tar = platform === "win32" ? windowsSystemTar() : "tar";
   const extract = yield* spawner
-    .spawn(ChildProcess.make("tar", ["-xf", input.archive, "-C", scratch]))
+    .spawn(ChildProcess.make(tar, ["-xf", input.archive, "-C", scratch]))
     .pipe(Effect.flatMap((child) => child.exitCode));
   if (Number(extract) !== 0) {
     return yield* new CliArchiveSmokeError({
