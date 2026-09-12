@@ -142,7 +142,6 @@ export interface ProviderAdapterShape<TError> {
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
-  /** Native Codex Goal operations. Absent for providers that do not support them. */
   readonly codexGoal?: {
     readonly get: (threadId: ThreadId) => Effect.Effect<CodexGoal | null, TError>;
     readonly set: (input: CodexGoalSetInput) => Effect.Effect<CodexGoal, TError>;
