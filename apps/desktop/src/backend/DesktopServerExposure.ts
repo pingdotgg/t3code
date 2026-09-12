@@ -43,6 +43,9 @@ interface DesktopAdvertisedEndpointInput {
   readonly port: number;
   readonly exposure: ResolvedDesktopServerExposure;
   readonly customHttpsEndpointUrls?: readonly string[];
+  readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
+  /** An explicit host override pins the advertisement; alternatives are then noise. */
+  readonly advertisedHostOverride?: string | null;
 }
 
 const DESKTOP_CORE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
@@ -69,6 +72,50 @@ const isUsableLanIpv4Address = (address: string): boolean =>
   !address.startsWith("169.254.") &&
   !isTailscaleIpv4Address(address);
 
+/**
+ * Interface name patterns that are container/VM/tunnel bridges rather than a
+ * physical adapter the phone would share a LAN with. Never advertised unless
+ * nothing else exists.
+ */
+const VIRTUAL_INTERFACE_NAME_PATTERN =
+  /^(?:docker\d*|br-[0-9a-f]+|virbr\d*|veth\w*|vmnet\d*|vEthernet[\s\w()]*|wg\d*|utun\d*|tun\d+|lo)$/iu;
+
+export const isVirtualLanInterfaceName = (name: string): boolean =>
+  VIRTUAL_INTERFACE_NAME_PATTERN.test(name);
+
+export interface LanInterfaceCandidate {
+  readonly name: string;
+  readonly address: string;
+  readonly virtual: boolean;
+}
+
+/**
+ * One candidate per interface: the first usable IPv4 address on it, ordered
+ * physical interfaces before virtual ones.
+ */
+export const enumerateLanInterfaces = (
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): ReadonlyArray<LanInterfaceCandidate> => {
+  const physical: LanInterfaceCandidate[] = [];
+  const virtual: LanInterfaceCandidate[] = [];
+  for (const [name, interfaceAddresses] of Object.entries(networkInterfaces)) {
+    if (!interfaceAddresses) continue;
+    for (const address of interfaceAddresses) {
+      if (!address || address.internal) continue;
+      if (address.family !== "IPv4") continue;
+      if (!isUsableLanIpv4Address(address.address)) continue;
+      const candidate = {
+        name,
+        address: address.address,
+        virtual: isVirtualLanInterfaceName(name),
+      };
+      (candidate.virtual ? virtual : physical).push(candidate);
+      break;
+    }
+  }
+  return [...physical, ...virtual];
+};
+
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
     return new URL(value).protocol === "https:";
@@ -80,24 +127,31 @@ const isHttpsEndpointUrl = (value: string): boolean => {
 const resolveLanAdvertisedHost = (
   networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
   explicitHost: string | undefined,
+  preferredInterfaceName: string | null | undefined,
 ): string | null => {
   const normalizedExplicitHost = normalizeOptionalHost(explicitHost);
   if (normalizedExplicitHost) {
     return normalizedExplicitHost;
   }
 
-  for (const interfaceAddresses of Object.values(networkInterfaces)) {
-    if (!interfaceAddresses) continue;
+  const candidates = enumerateLanInterfaces(networkInterfaces);
+  if (candidates.length === 0) return null;
 
-    for (const address of interfaceAddresses) {
-      if (address.internal) continue;
-      if (address.family !== "IPv4") continue;
-      if (!isUsableLanIpv4Address(address.address)) continue;
-      return address.address;
+  if (preferredInterfaceName) {
+    const preferred = candidates.find((candidate) => candidate.name === preferredInterfaceName);
+    // A stored preference whose interface no longer exists (or lost its
+    // address) falls through to automatic selection instead of advertising a
+    // dead host.
+    if (preferred) {
+      return preferred.address;
     }
   }
 
-  return null;
+  const fallback = candidates.find((candidate) => !candidate.virtual);
+  // A machine whose only usable addresses sit on container/VM bridges has no
+  // reachable LAN host; returning null downgrades to loopback instead of
+  // advertising an address no other device can reach.
+  return fallback ? fallback.address : null;
 };
 
 const resolveDesktopServerExposure = (input: {
@@ -105,6 +159,7 @@ const resolveDesktopServerExposure = (input: {
   readonly port: number;
   readonly networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly advertisedHostOverride?: string;
+  readonly preferredLanInterfaceName?: string | null;
 }): ResolvedDesktopServerExposure => {
   const localHttpUrl = `http://${DESKTOP_LOOPBACK_HOST}:${input.port}`;
   const localWsUrl = `ws://${DESKTOP_LOOPBACK_HOST}:${input.port}`;
@@ -123,6 +178,7 @@ const resolveDesktopServerExposure = (input: {
   const advertisedHost = resolveLanAdvertisedHost(
     input.networkInterfaces,
     input.advertisedHostOverride,
+    input.preferredLanInterfaceName,
   );
 
   return {
@@ -168,6 +224,19 @@ const resolveDesktopCoreAdvertisedEndpoints = (
   ];
 
   if (input.exposure.endpointUrl) {
+    const lanCandidates = enumerateLanInterfaces(input.networkInterfaces ?? {}).filter(
+      (candidate) => !candidate.virtual,
+    );
+    const advertisedHost = input.exposure.advertisedHost;
+    const advertisedInterfaceName =
+      lanCandidates.find((candidate) => candidate.address === advertisedHost)?.name ?? null;
+    const alternativeInterfaces = input.advertisedHostOverride
+      ? []
+      : lanCandidates.filter((candidate) => candidate.address !== advertisedHost);
+    // The resolved (preferred or automatic) host keeps the classic single
+    // "Local network" endpoint and stays the default. On multi-homed machines
+    // each other physical interface gets its own endpoint so the pairing
+    // picker can pick the right one.
     endpoints.push(
       createDesktopEndpoint({
         id: `desktop-lan:${input.exposure.endpointUrl}`,
@@ -176,9 +245,24 @@ const resolveDesktopCoreAdvertisedEndpoints = (
         reachability: "lan",
         status: "available",
         isDefault: true,
+        ...(advertisedInterfaceName ? { interfaceName: advertisedInterfaceName } : {}),
         description: "Reachable from devices on the same network.",
       }),
     );
+    for (const candidate of alternativeInterfaces) {
+      const url = `http://${candidate.address}:${input.port}`;
+      endpoints.push(
+        createDesktopEndpoint({
+          id: `desktop-lan:${candidate.name}:${url}`,
+          label: `Local network — ${candidate.name} (${candidate.address})`,
+          httpBaseUrl: url,
+          reachability: "lan",
+          status: "available",
+          interfaceName: candidate.name,
+          description: "Alternative network interface on this machine.",
+        }),
+      );
+    }
   }
 
   for (const customEndpointUrl of input.customHttpsEndpointUrls ?? []) {
@@ -247,10 +331,22 @@ export const DesktopServerExposureSetModeError = Schema.Union([
 ]);
 export type DesktopServerExposureSetModeError = typeof DesktopServerExposureSetModeError.Type;
 
+export class DesktopServerExposurePreferencePersistenceError extends Schema.TaggedError<DesktopServerExposurePreferencePersistenceError>()(
+  "DesktopServerExposurePreferencePersistenceError",
+  {
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return "Failed to persist the preferred LAN interface.";
+  }
+}
+
 export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopServerExposurePreferencePersistenceError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 
@@ -278,6 +374,12 @@ export class DesktopServerExposure extends Context.Service<
     readonly setMode: (
       mode: DesktopServerExposureMode,
     ) => Effect.Effect<DesktopServerExposureChange, DesktopServerExposureSetModeError>;
+    readonly setPreferredLanInterfaceName: (input: {
+      readonly name: string | null;
+    }) => Effect.Effect<
+      DesktopServerExposureChange,
+      DesktopServerExposurePreferencePersistenceError
+    >;
     readonly setTailscaleServeEnabled: (input: {
       readonly enabled: boolean;
       readonly port?: number;
@@ -296,6 +398,7 @@ interface RuntimeState {
   readonly httpBaseUrl: URL;
   readonly endpointUrl: Option.Option<string>;
   readonly advertisedHost: Option.Option<string>;
+  readonly preferredLanInterfaceName: string | null;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
 }
@@ -321,6 +424,7 @@ const toContractState = (state: RuntimeState): DesktopServerExposureState => ({
   mode: state.mode,
   endpointUrl: Option.getOrNull(state.endpointUrl),
   advertisedHost: Option.getOrNull(state.advertisedHost),
+  preferredLanInterfaceName: state.preferredLanInterfaceName,
   tailscaleServeEnabled: state.tailscaleServeEnabled,
   tailscaleServePort: state.tailscaleServePort,
 });
@@ -358,6 +462,7 @@ function runtimeStateFromResolvedExposure(input: {
     httpBaseUrl: new URL(input.exposure.localHttpUrl),
     endpointUrl: Option.fromNullishOr(input.exposure.endpointUrl),
     advertisedHost: Option.fromNullishOr(input.exposure.advertisedHost),
+    preferredLanInterfaceName: input.settings.preferredLanInterfaceName,
     tailscaleServeEnabled: input.settings.tailscaleServeEnabled,
     tailscaleServePort: input.settings.tailscaleServePort,
   };
@@ -376,6 +481,7 @@ function resolveRuntimeState(input: {
     port: input.port,
     networkInterfaces: input.networkInterfaces,
     ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
+    preferredLanInterfaceName: input.settings.preferredLanInterfaceName,
   });
   const unavailable =
     input.requestedMode === "network-accessible" &&
@@ -529,13 +635,68 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const setPreferredLanInterfaceName = Effect.fn(
+    "desktop.serverExposure.setPreferredLanInterfaceName",
+  )(function* (input: { readonly name: string | null }) {
+    yield* Effect.annotateCurrentSpan({ name: input.name });
+    const previous = yield* Ref.get(stateRef);
+    const result = yield* desktopSettings
+      .setPreferredLanInterfaceName(input.name)
+      .pipe(
+        Effect.mapError((cause) => new DesktopServerExposurePreferencePersistenceError({ cause })),
+      );
+    // Re-resolve against live interfaces: a preference for an interface that
+    // no longer exists falls back to automatic instead of advertising a dead
+    // host. The bind host and port are unchanged, so no relaunch is needed.
+    const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const resolved = resolveRuntimeState({
+      requestedMode: previous.requestedMode,
+      settings: result.settings,
+      port: previous.port,
+      networkInterfaces: currentNetworkInterfaces,
+      advertisedHostOverride: config.desktopLanHostOverride,
+    });
+    yield* Ref.set(stateRef, resolved.state);
+    return {
+      state: toContractState(resolved.state),
+      requiresRelaunch: requiresBackendRelaunch(previous, resolved.state),
+    };
+  });
+
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    // Re-resolve the LAN host against live interfaces: the persisted state
+    // was resolved at bootstrap (or at the last settings change), so a
+    // preferred interface that vanished or changed address afterwards must
+    // not keep advertising a dead pairing URL.
+    const advertisedHostOverride = Option.getOrUndefined(config.desktopLanHostOverride);
+    const exposure =
+      state.mode === "network-accessible"
+        ? resolveDesktopServerExposure({
+            mode: state.mode,
+            port: state.port,
+            networkInterfaces: currentNetworkInterfaces,
+            ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
+            preferredLanInterfaceName: (yield* desktopSettings.get).preferredLanInterfaceName,
+          })
+        : toResolvedExposure(state);
+    if (
+      exposure.endpointUrl !== Option.getOrNull(state.endpointUrl) ||
+      exposure.advertisedHost !== Option.getOrNull(state.advertisedHost)
+    ) {
+      yield* Ref.set(stateRef, {
+        ...state,
+        endpointUrl: Option.fromNullishOr(exposure.endpointUrl),
+        advertisedHost: Option.fromNullishOr(exposure.advertisedHost),
+      });
+    }
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
-      exposure: toResolvedExposure(state),
+      exposure,
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
+      networkInterfaces: currentNetworkInterfaces,
+      advertisedHostOverride: Option.getOrNull(config.desktopLanHostOverride),
     });
 
     // Don't spawn the Tailscale CLI when the user hasn't opted into any
@@ -563,6 +724,7 @@ export const make = Effect.gen(function* () {
     backendConfig,
     configureFromSettings,
     setMode,
+    setPreferredLanInterfaceName,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
   });

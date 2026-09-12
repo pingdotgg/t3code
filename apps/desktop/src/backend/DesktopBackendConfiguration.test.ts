@@ -45,6 +45,7 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
+  setPreferredLanInterfaceName: () => Effect.die("unexpected preferred LAN interface change"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
