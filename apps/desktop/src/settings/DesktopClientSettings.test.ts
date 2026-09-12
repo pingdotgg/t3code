@@ -67,6 +67,8 @@ const clientSettings: ClientSettings = {
   pullRequestMergeMethodOverrides: {},
   timestampFormat: "24-hour",
   wordWrap: true,
+  copyOnSelect: false,
+  copyOnSelectToast: true,
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));

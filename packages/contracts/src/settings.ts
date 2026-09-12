@@ -457,6 +457,22 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Herdr-style copy-on-select: releasing a mouse drag or double-click
+   * copies the selection to the clipboard. Matches Herdr's
+   * `ui.copy_on_select`, but opt-in rather than default-on: automatically
+   * writing to the clipboard changes everyday behavior, so existing users
+   * keep the current explicit-copy flow until they enable this in
+   * Settings → General. The terminal pane and the chat timeline both
+   * honor it.
+   */
+  copyOnSelect: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Shows the "copied to clipboard" toast after an automatic copy.
+   * Matches Herdr's `ui.toast.clipboard.enabled` (default true); turning
+   * it off keeps the copy but stays silent.
+   */
+  copyOnSelectToast: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1492,5 +1508,7 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  copyOnSelect: Schema.optionalKey(Schema.Boolean),
+  copyOnSelectToast: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

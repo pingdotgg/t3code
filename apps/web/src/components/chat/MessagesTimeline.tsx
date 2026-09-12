@@ -147,6 +147,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
+import { useCopyOnSelect } from "../../hooks/useCopyOnSelect";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   AssistantCitationSource,
@@ -642,6 +643,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  // Herdr-style copy-on-select for chat text; the cite toolbar keeps working
+  // alongside it (a selection both copies and offers Cite).
+  useCopyOnSelect(timelineViewportElement);
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
