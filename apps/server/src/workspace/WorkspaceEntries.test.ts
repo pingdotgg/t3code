@@ -572,8 +572,36 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }
         expect(byPath.get("src/dense.ts")).toBe(100);
         expect(byPath.get("src/other.ts")).toBe(1);
+        expect(result.truncated).toBe(true);
       }),
     );
+
+    for (const { lines, limit, expectedCount, truncated } of [
+      { lines: 100, limit: 500, expectedCount: 100, truncated: false },
+      { lines: 101, limit: 500, expectedCount: 100, truncated: true },
+      { lines: 2, limit: 1, expectedCount: 1, truncated: true },
+      { lines: 2, limit: 2, expectedCount: 2, truncated: false },
+    ]) {
+      it.effect(`reports completeness for ${lines} matching lines with limit ${limit}`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-boundary-" });
+          yield* writeTextFile(cwd, "matches.txt", "needle\n".repeat(lines));
+
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const result = yield* workspaceEntries.searchContents({
+            cwd,
+            query: "needle",
+            limit,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex: false,
+          });
+
+          expect(result.matches).toHaveLength(expectedCount);
+          expect(result.truncated).toBe(truncated);
+        }),
+      );
+    }
 
     it.effect("preserves regex escapes during case-insensitive searches", () =>
       Effect.gen(function* () {
