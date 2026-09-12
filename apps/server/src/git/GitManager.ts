@@ -114,6 +114,17 @@ export class GitManager extends Context.Service<
       input: { readonly cwd: string; readonly branch: string },
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
+    /**
+     * Whether this branch has moved off `pullRequest`'s head commit, which is
+     * why `branchPullRequest` reports nothing for it. Lets link discovery tell
+     * a terminal match rejected for that reason from one that was never found,
+     * so it does not restore the very reference the branch outgrew.
+     */
+    readonly branchSupersededPullRequest: (input: {
+      readonly cwd: string;
+      readonly branch: string;
+      readonly pullRequest: { readonly number: number; readonly url: string };
+    }) => Effect.Effect<boolean, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -143,6 +154,7 @@ const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 // exponentially via prLookupFailureTtl, so throttling pressure still drops
 // under 429s instead of amplifying it.
 const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
+const REMOTE_REF_PREFIX = "refs/remotes/";
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
@@ -185,6 +197,7 @@ interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   closedAt?: string | null;
   mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
+  headRefOid?: string | null;
 }
 
 const pullRequestUpdatedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInput(
@@ -449,6 +462,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     ...(summary.headRepositoryOwnerLogin !== undefined
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
+    ...(summary.headRefOid !== undefined ? { headRefOid: summary.headRefOid } : {}),
   };
 }
 
@@ -1055,6 +1069,107 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+
+  /**
+   * Whether `refName` is the remote-tracking ref for `headBranch`. With a known
+   * remote that is one exact name; without one, any single remote segment in
+   * front of the branch qualifies, which is what the `*` pattern asked for.
+   */
+  const isRemoteTrackingRefFor = (
+    refName: string,
+    headBranch: string,
+    remoteName: string | null,
+  ) => {
+    if (remoteName !== null) {
+      return refName === `${REMOTE_REF_PREFIX}${remoteName}/${headBranch}`;
+    }
+    if (!refName.startsWith(REMOTE_REF_PREFIX)) {
+      return false;
+    }
+    const withoutPrefix = refName.slice(REMOTE_REF_PREFIX.length);
+    const remoteSegmentEnd = withoutPrefix.indexOf("/");
+    return remoteSegmentEnd > 0 && withoutPrefix.slice(remoteSegmentEnd + 1) === headBranch;
+  };
+
+  /**
+   * The commit this branch currently points at: its local ref where it has one,
+   * otherwise the remote-tracking ref a change request would have been opened
+   * from. `null` when neither resolves, which is the deleted-branch case.
+   *
+   * The local ref wins because that is where a thread's work lands. A branch
+   * committed to but not yet pushed has still moved on from a merged change
+   * request, even while the remote-tracking ref sits at the old head.
+   *
+   * `for-each-ref` matches a pattern literally *or* up to a slash, so
+   * `refs/heads/feature/foo` also reports `refs/heads/feature/foo/child`. Every
+   * row is matched back against the ref it has to be, which rules those
+   * siblings out.
+   */
+  const readBranchTipOid = Effect.fn("readBranchTipOid")(function* (
+    cwd: string,
+    headContext: Pick<BranchHeadContext, "headBranch" | "localBranch" | "remoteName">,
+  ) {
+    const localRefs: string[] = [];
+    appendUnique(localRefs, `refs/heads/${headContext.localBranch}`);
+    appendUnique(localRefs, `refs/heads/${headContext.headBranch}`);
+    const remotePattern =
+      headContext.remoteName === null
+        ? `${REMOTE_REF_PREFIX}*/${headContext.headBranch}`
+        : `${REMOTE_REF_PREFIX}${headContext.remoteName}/${headContext.headBranch}`;
+    const result = yield* gitCore.execute({
+      operation: "GitManager.readBranchTipOid",
+      cwd,
+      args: ["for-each-ref", "--format=%(refname)%00%(objectname)", ...localRefs, remotePattern],
+      timeoutMs: 5_000,
+    });
+    const oidByRefName = new Map<string, string>();
+    for (const line of result.stdout.split("\n")) {
+      const [refName = "", objectName = ""] = line.trim().split("\u0000");
+      if (refName.length > 0 && objectName.length > 0) {
+        oidByRefName.set(refName, objectName);
+      }
+    }
+    for (const localRef of localRefs) {
+      const oid = oidByRefName.get(localRef);
+      if (oid !== undefined) {
+        return oid;
+      }
+    }
+    for (const [refName, oid] of oidByRefName) {
+      if (isRemoteTrackingRefFor(refName, headContext.headBranch, headContext.remoteName)) {
+        return oid;
+      }
+    }
+    return null;
+  });
+
+  /**
+   * Whether the branch has moved off the commit a terminal change request was
+   * opened from. A merged or closed change request describes the branch as it
+   * stood at that commit; a branch pointing somewhere else was reused for later
+   * work, so the change request is history rather than this branch's context.
+   * Comparing commits rather than dates keeps squash and rebase merges working,
+   * since the recorded head commit is the branch's own, not the base's.
+   *
+   * `false` whenever the answer is not knowable — a forge that reports no head
+   * commit, no ref left to compare, or a failed git call — so losing the
+   * comparison can never drop a badge that is otherwise correct.
+   */
+  const branchMovedPastChangeRequest = Effect.fn("branchMovedPastChangeRequest")(function* (
+    cwd: string,
+    headContext: Pick<BranchHeadContext, "headBranch" | "localBranch" | "remoteName">,
+    pullRequest: PullRequestInfo,
+  ) {
+    const headRefOid = pullRequest.headRefOid?.trim().toLowerCase() ?? "";
+    if (headRefOid.length === 0 || headContext.headBranch.length === 0) {
+      return false;
+    }
+    return yield* Effect.gen(function* () {
+      const tipOid = yield* readBranchTipOid(cwd, headContext);
+      return tipOid !== null && tipOid.toLowerCase() !== headRefOid;
+    }).pipe(Effect.orElseSucceed(() => false));
+  });
+
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
@@ -1075,7 +1190,7 @@ export const make = Effect.gen(function* () {
       return Effect.gen(function* () {
         const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, superseded: null };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1084,10 +1199,25 @@ export const make = Effect.gen(function* () {
           details.upstreamRef === null &&
           (yield* isUnpublishedBranch(cwd, headContext))
         ) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, superseded: null };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        // A long-lived branch reused after its release merged (`develop` into
+        // `main`, then developed on) has moved off that change request's head
+        // commit, and every later thread on the branch would otherwise inherit
+        // the same historical number. Open change requests still follow their
+        // branch, so only terminal ones are checked.
+        if (
+          latest !== null &&
+          latest.state !== "open" &&
+          (yield* branchMovedPastChangeRequest(cwd, headContext, latest))
+        ) {
+          // Kept, not discarded: discovery has to tell a match rejected here
+          // from one that was never found, or it restores this very change
+          // request as a thread's saved historical reference.
+          return { latest: null, headContext, superseded: latest };
+        }
+        return { latest, headContext, superseded: null };
       });
     },
     {
@@ -2075,9 +2205,16 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
-    "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
+  /**
+   * The cached lookup for a saved branch, with the default branch the cache key
+   * was built from. `null` when the repository has no remote, so no change
+   * request can exist. Shared so the superseded query reads exactly the entry
+   * the badge lookup reads, without a second round of git work.
+   */
+  const resolveBranchLookup = Effect.fn("resolveBranchLookup")(function* (
+    { cwd, branch }: { readonly cwd: string; readonly branch: string },
+    options?: { readonly refresh?: boolean },
+  ) {
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const remotes = yield* gitCore.execute({
       operation: "GitManager.branchPullRequest.remotes",
@@ -2210,6 +2347,15 @@ export const make = Effect.gen(function* () {
         });
       }
     }
+    return { cached, defaultBranch };
+  });
+
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
+    "branchPullRequest",
+  )(function* ({ cwd, branch }, options) {
+    const resolved = yield* resolveBranchLookup({ cwd, branch }, options);
+    if (resolved === null) return null;
+    const { cached, defaultBranch } = resolved;
     const { latest } = cached;
     if (latest === null) return null;
     if (
@@ -2228,6 +2374,23 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+
+  /**
+   * Whether `branch` has moved off `pullRequest`'s head commit, which is why
+   * the badge lookup reports nothing for it. Reads the entry that lookup
+   * already cached, so asking costs no extra git or host work.
+   */
+  const branchSupersededPullRequest: GitManager["Service"]["branchSupersededPullRequest"] =
+    Effect.fn("branchSupersededPullRequest")(function* ({ cwd, branch, pullRequest }) {
+      const resolved = yield* resolveBranchLookup({ cwd, branch });
+      const superseded = resolved?.cached.superseded ?? null;
+      if (superseded === null || superseded.number !== pullRequest.number) {
+        return false;
+      }
+      // Numbers repeat across repositories, so the URLs have to agree before
+      // this counts as the same change request.
+      return pullRequestRepositoryKey(superseded.url) === pullRequestRepositoryKey(pullRequest.url);
+    });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
   )(function* (cwd) {
@@ -2776,6 +2939,7 @@ export const make = Effect.gen(function* () {
     remoteStatus,
     status,
     branchPullRequest,
+    branchSupersededPullRequest,
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,

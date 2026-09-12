@@ -130,6 +130,7 @@ const project = {
 const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options: {
   readonly threads: ReadonlyArray<OrchestrationThreadShell>;
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
+  readonly branchSupersededPullRequest?: GitManager["Service"]["branchSupersededPullRequest"];
   readonly summary?: PullRequestService["Service"]["summary"];
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
@@ -163,6 +164,8 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
         ]).pipe(
           Effect.andThen(options.branchPullRequest?.(input, readOptions) ?? Effect.succeed(null)),
         ),
+      branchSupersededPullRequest: (input) =>
+        options.branchSupersededPullRequest?.(input) ?? Effect.succeed(false),
     }),
     Layer.mock(PullRequestService)({
       summary: (input, readOptions) =>
@@ -439,6 +442,45 @@ describe("ThreadPullRequestReactor", () => {
             null,
           ]);
           expect(snapshot.threads[3]?.linkedPullRequest).toEqual(reference(3));
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("clears a saved reference the branch outgrew and keeps the rest of its history", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeHarness({
+          threads: [
+            // Created after the release merged, while `develop` still sat on
+            // that change request's head, so discovery attached it. The first
+            // turn then advanced the branch, and the lookup now rejects the
+            // match — restoring it here is what left the stale badge behind.
+            thread("outgrown", { branch: "develop", branchPullRequest: reference(3) }),
+            // Same shared checkout, but this reference is not the one the
+            // branch outgrew, so its historical badge still stands.
+            thread("historical", { branch: "develop", branchPullRequest: reference(9) }),
+            // An explicit link survives regardless of what the branch did.
+            thread("linked", {
+              branch: "develop",
+              branchPullRequest: reference(3),
+              linkedPullRequest: reference(7),
+            }),
+          ],
+          branchPullRequest: () => Effect.succeed(null),
+          branchSupersededPullRequest: ({ pullRequest }) =>
+            Effect.succeed(pullRequest.number === 3),
+          summary: (input) => Effect.succeed(summary(input, "merged")),
+        });
+        yield* Effect.gen(function* () {
+          yield* fixture.start();
+          const snapshot = yield* Ref.get(fixture.snapshots);
+          expect(snapshot.threads.map((current) => current.branchPullRequest)).toEqual([
+            null,
+            reference(9),
+            null,
+          ]);
+          expect(snapshot.threads[2]?.linkedPullRequest).toEqual(reference(7));
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
