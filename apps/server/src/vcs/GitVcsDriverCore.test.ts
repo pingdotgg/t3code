@@ -1794,6 +1794,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    it.effect.each(["\n", "\r\n"])(
+      "ensureRemote reads remote output with %j line endings",
+      (ending) =>
+        Effect.gen(function* () {
+          const url = "/repos/local remote.git";
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              assert.ok(ChildProcess.isStandardCommand(command));
+              if (command.args.includes("rev-parse")) return makeNonRepositoryHandle();
+              assert.deepEqual(command.args.slice(-2), ["remote", "-v"]);
+              return makeSuccessfulHandle(
+                `origin\t${url} (fetch)${ending}origin\t${url} (push)${ending}`,
+              );
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(ServerConfigLayer),
+          );
+          assert.equal(
+            yield* driver.ensureRemote({ cwd: "/repo", preferredName: "fork", url }),
+            "origin",
+          );
+        }),
+    );
+
     it.effect("ensureRemote preserves local remote URLs containing spaces", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
