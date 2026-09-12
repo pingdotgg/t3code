@@ -1,4 +1,4 @@
-import type { SendUserTurnOptions } from "@muse-code/sdk";
+import { MspError, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MuseSettings,
   ProviderDriverKind,
@@ -36,7 +36,10 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
-import { resolveMuseReasoningEffort } from "../../provider/museModelCatalog.ts";
+import {
+  museModelCapabilities,
+  resolveMuseReasoningEffort,
+} from "../../provider/museModelCatalog.ts";
 import {
   MuseApproval,
   MuseCompactResult,
@@ -94,6 +97,16 @@ import { museItemStatus, museToolPresentation } from "./MuseItemPresentation.ts"
 
 export const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const defaultMuseSettings = Schema.decodeSync(MuseSettings)({});
+const effectiveModelCatalogSchema = Schema.Struct({
+  providerId: Schema.String,
+  models: Schema.Array(
+    Schema.Struct({
+      modelId: Schema.String,
+      providerId: Schema.String,
+      isActive: Schema.Boolean,
+    }),
+  ),
+});
 
 export const MuseProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "native" },
@@ -587,6 +600,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
+        yield* Queue.end(events);
       });
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const turn = active;
@@ -898,6 +912,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           case "approval/updated":
             if (
               method === "approval/updated" &&
+              ![...turn.autoApprovals].some((key) => key.startsWith(`${params.approvalId}:`)) &&
               ![...pending.values()].some(
                 (entry) =>
                   entry.native.type === "approval" &&
@@ -1215,6 +1230,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       const register = Effect.fnUntraced(function* (
         args: ProviderAdapterV2EnsureThreadInput,
         fresh = false,
+        expectedForkModel?: string,
       ) {
         if (broken || closed)
           return yield* protocolError("Muse host is unavailable; reopen the session");
@@ -1238,6 +1254,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         )
           return thread;
         if (thread) return yield* protocolError("Open a new host to attach another Muse session");
+        let missingNativeSession = false;
         return yield* Effect.gen(function* () {
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
           const result = yield* request(
@@ -1250,7 +1267,16 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                   providerId: "meta",
                   approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
                 },
-          ).pipe(Effect.flatMap((value) => decode(MuseSessionResult, value)));
+          ).pipe(
+            Effect.catch((error) => {
+              missingNativeSession =
+                requestedId !== undefined &&
+                error.payload instanceof MspError &&
+                (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
+              return Effect.fail(error);
+            }),
+            Effect.flatMap((value) => decode(MuseSessionResult, value)),
+          );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
           yield* loadHistory(result);
@@ -1272,6 +1298,29 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
             });
+          let effectiveModel = args.modelSelection.model;
+          if (requestedId) {
+            // Saved metadata can name the base model while Contributor remains
+            // effective. Reapplying that metadata can change the native route
+            // and invalidate opaque reasoning history after a fork.
+            const catalog = yield* request("model/list", {}, false).pipe(
+              Effect.flatMap((value) => decode(effectiveModelCatalogSchema, value)),
+            );
+            const selected = catalog.models.filter((model) => model.isActive);
+            if (
+              catalog.providerId !== "meta" ||
+              selected.length !== 1 ||
+              selected[0]!.providerId !== "meta"
+            )
+              return yield* protocolError(
+                "Muse did not identify one effective Meta model for the resumed session",
+              );
+            effectiveModel = selected[0]!.modelId;
+          }
+          if (expectedForkModel && effectiveModel !== expectedForkModel)
+            return yield* protocolError(
+              `Muse's native fork changed the effective model from ${expectedForkModel} to ${effectiveModel}; use a context handoff or a new thread.`,
+            );
           const createdAt = yield* DateTime.now;
           thread = existing
             ? {
@@ -1302,14 +1351,18 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                 createdAt,
                 updatedAt: createdAt,
               };
-          session = { ...session, model: result.session.modelId ?? args.modelSelection.model };
+          session = { ...session, model: effectiveModel };
           yield* emit({
             type: "provider_thread.updated",
             driver: MUSE_PROVIDER,
             providerThread: thread,
           });
           return thread;
-        }).pipe(Effect.onError((cause) => eventPermit.withPermits(1)(failHost(cause))));
+        }).pipe(
+          Effect.onError((cause) =>
+            missingNativeSession ? Effect.void : eventPermit.withPermits(1)(failHost(cause)),
+          ),
+        );
       });
       const prompt = Effect.fnUntraced(function* (message: ProviderAdapterV2TurnMessage) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
@@ -1350,7 +1403,8 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         const catalog = options.modelCatalog ? yield* options.modelCatalog : [];
         const selected = getModelSelectionStringOptionValue(selection, "reasoningEffort");
         const effort = resolveMuseReasoningEffort(
-          catalog.find((model) => model.slug === selection.model)?.capabilities,
+          catalog.find((model) => model.slug === selection.model)?.capabilities ??
+            museModelCapabilities(selection.model),
           selected ?? "max",
         );
         if (effort && !["low", "medium", "high", "xhigh", "max"].includes(effort))
@@ -1595,27 +1649,51 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         current: OrchestrationV2ProviderThread,
         result: typeof MuseSessionResult.Type,
       ) {
-        // Forking may retain source and destination leases. A fresh scoped host
-        // releases both before adopting the durable destination under T3's identity.
-        hostEpoch++;
-        yield* Effect.tryPromise(() => host.close()).pipe(
-          Effect.mapError((cause) => protocolError("Cannot release Muse fork source", cause)),
+        const source = thread;
+        const expectedModel = session.model ?? input.modelSelection.model;
+        return yield* Effect.gen(function* () {
+          // Forking may retain source and destination leases. A fresh scoped host
+          // releases both before adopting the durable destination under T3's identity.
+          hostEpoch++;
+          yield* Effect.tryPromise(() => host.close()).pipe(
+            Effect.mapError((cause) => protocolError("Cannot release Muse fork source", cause)),
+          );
+          if (current.id !== thread?.id || current.appThreadId !== thread.appThreadId) {
+            providerTurns.clear();
+            messages.clear();
+            historyTerminals.clear();
+            observedChildren.clear();
+          }
+          yield* launchHost();
+          thread = undefined;
+          nativeSessionId = undefined;
+          return yield* register(
+            {
+              threadId: current.appThreadId ?? input.threadId,
+              modelSelection: {
+                ...input.modelSelection,
+                model: session.model ?? input.modelSelection.model,
+              },
+              runtimePolicy: input.runtimePolicy,
+              existingProviderThread: {
+                ...current,
+                nativeThreadRef: nativeRef(result.session.sessionId),
+              },
+            },
+            false,
+            expectedModel,
+          );
+        }).pipe(
+          Effect.onError((cause) =>
+            eventPermit.withPermits(1)(
+              Effect.gen(function* () {
+                thread ??= source ?? current;
+                yield* updateThread({ status: "error" });
+                yield* failHost(cause);
+              }),
+            ),
+          ),
         );
-        thread = undefined;
-        nativeSessionId = undefined;
-        yield* launchHost();
-        return yield* register({
-          threadId: current.appThreadId ?? input.threadId,
-          modelSelection: {
-            ...input.modelSelection,
-            model: session.model ?? input.modelSelection.model,
-          },
-          runtimePolicy: input.runtimePolicy,
-          existingProviderThread: {
-            ...current,
-            nativeThreadRef: nativeRef(result.session.sessionId),
-          },
-        });
       });
       const runtime: ProviderAdapterV2SessionRuntime = {
         instanceId: options.instanceId,
@@ -1708,12 +1786,19 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
               return yield* protocolError("This Muse turn is no longer active");
             turn.interruptRequested = true;
             if (turn.compact) {
-              hostEpoch++;
-              broken = true;
-              yield* Effect.tryPromise(() => host.close()).pipe(
-                Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
+              yield* eventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (active !== turn) return;
+                  hostEpoch++;
+                  yield* Effect.tryPromise(() => host.close()).pipe(
+                    Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
+                    Effect.onError(failHost),
+                  );
+                  broken = true;
+                  yield* finish(turn, "interrupted", undefined, "broken");
+                  yield* Queue.end(events);
+                }),
               );
-              yield* eventPermit.withPermits(1)(finish(turn, "interrupted", undefined, "broken"));
               return;
             }
             yield* request("turn/interrupt", { turnId: turn.nativeId });
@@ -1830,40 +1915,53 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                 result,
               );
             } else {
-              hostEpoch++;
-              yield* Effect.tryPromise(() => host.close()).pipe(
-                Effect.mapError((cause) =>
-                  protocolError("Cannot release Muse rollback source", cause),
+              adopted = yield* Effect.gen(function* () {
+                hostEpoch++;
+                yield* Effect.tryPromise(() => host.close()).pipe(
+                  Effect.mapError((cause) =>
+                    protocolError("Cannot release Muse rollback source", cause),
+                  ),
+                );
+                yield* launchHost();
+                thread = undefined;
+                nativeSessionId = undefined;
+                const fresh = yield* register(
+                  {
+                    threadId: source.appThreadId ?? input.threadId,
+                    modelSelection: {
+                      ...input.modelSelection,
+                      model: session.model ?? input.modelSelection.model,
+                    },
+                    runtimePolicy: input.runtimePolicy,
+                    existingProviderThread: {
+                      ...source,
+                      nativeThreadRef: null,
+                      nativeConversationHeadRef: null,
+                    },
+                  },
+                  true,
+                );
+                const restarted: OrchestrationV2ProviderThread = {
+                  ...source,
+                  nativeThreadRef: fresh.nativeThreadRef,
+                  nativeConversationHeadRef: null,
+                  providerSessionId: input.providerSessionId,
+                  status: "idle",
+                  updatedAt: fresh.updatedAt,
+                };
+                thread = restarted;
+                return restarted;
+              }).pipe(
+                Effect.onError((cause) =>
+                  eventPermit.withPermits(1)(
+                    Effect.gen(function* () {
+                      thread ??= source;
+                      yield* updateThread({ status: "error" });
+                      yield* failHost(cause);
+                    }),
+                  ),
                 ),
               );
-              thread = undefined;
-              nativeSessionId = undefined;
-              yield* launchHost();
-              const fresh = yield* register(
-                {
-                  threadId: source.appThreadId ?? input.threadId,
-                  modelSelection: {
-                    ...input.modelSelection,
-                    model: session.model ?? input.modelSelection.model,
-                  },
-                  runtimePolicy: input.runtimePolicy,
-                  existingProviderThread: {
-                    ...source,
-                    nativeThreadRef: null,
-                    nativeConversationHeadRef: null,
-                  },
-                },
-                true,
-              );
-              adopted = {
-                ...source,
-                nativeThreadRef: fresh.nativeThreadRef,
-                nativeConversationHeadRef: null,
-                providerSessionId: input.providerSessionId,
-                status: "idle",
-                updatedAt: fresh.updatedAt,
-              };
-              thread = adopted;
             }
             for (const [id, turn] of providerTurns)
               if (!target || turn.ordinal > target.ordinal) providerTurns.delete(id);

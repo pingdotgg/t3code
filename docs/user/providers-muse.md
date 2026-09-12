@@ -47,6 +47,11 @@ T3 Code does not automatically connect its browser, pull request, or
 orchestration tools to Muse. Switching providers can pass conversation context
 as a handoff; it does not transfer the other provider's native tools or sessions.
 
+Muse Code 1.1.1 can change a Contributor session to the base model when creating
+a native fork. T3 refuses a fork or checkpoint rewind when the effective model
+changes, because switching it back can make Muse's saved reasoning unreadable.
+Use a new thread or a context handoff when this happens.
+
 Install Muse and sign in on the host; in-app installation and sign-in are not
 available. Updates can run from **Settings > Providers** when T3 Code recognizes
 the installer; otherwise update Muse on that host manually.
