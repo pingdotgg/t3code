@@ -15,6 +15,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadBootstrap } from "../orchestration/Services/ThreadBootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -59,6 +60,19 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
         getThreadShellById: () => Effect.succeed(Option.none()),
       }),
       Layer.mock(OrchestrationEngineService)({}),
+      NodeServices.layer,
+    ),
+  ),
+);
+
+const ThreadsTestLayer = McpHttpServer.ThreadsToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery)({
+        getThreadShellById: () => Effect.succeed(Option.none()),
+      }),
+      Layer.mock(ThreadBootstrap)({}),
       NodeServices.layer,
     ),
   ),
@@ -398,6 +412,27 @@ it.effect(
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
       ]);
     }).pipe(Effect.provide(PullRequestsTestLayer)),
+);
+
+it.effect("registers the threads toolkit and surfaces a missing capability as a tool error", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const startTool = server.tools.find(({ tool }) => tool.name === "t3_thread_start");
+    expect(startTool?.tool.annotations?.destructiveHint).toBe(false);
+    expect(startTool?.tool.annotations?.openWorldHint).toBe(false);
+    expect(startTool?.tool.description).toContain("NEW top-level T3 Code thread");
+
+    const denied = yield* server
+      .callTool({ name: "t3_thread_start", arguments: { prompt: "Continue the migration." } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(denied.isError).toBe(true);
+    expect(denied.content).toEqual([
+      { type: "text", text: "MCP credential does not grant the threads capability." },
+    ]);
+  }).pipe(Effect.provide(ThreadsTestLayer)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
