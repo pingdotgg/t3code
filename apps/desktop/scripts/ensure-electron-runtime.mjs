@@ -116,6 +116,55 @@ function runChecked(command, args) {
   );
 }
 
+/**
+ * Extract the downloaded Electron zip. `python3` (with its one-liner) is the
+ * original path, but Windows machines commonly lack it (the Microsoft Store
+ * alias), so win32 falls back to bsdtar's `tar -xf` and then PowerShell's
+ * `Expand-Archive`. The destination directory must already exist.
+ */
+function extractElectronZip(zipPath, destDir) {
+  const candidates = [
+    {
+      command: "python3",
+      args: [
+        "-c",
+        "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
+        zipPath,
+        destDir,
+      ],
+    },
+  ];
+  if (hostPlatform === "win32") {
+    candidates.push({ command: "tar", args: ["-xf", zipPath, "-C", destDir] });
+    candidates.push({
+      command: "powershell",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Expand-Archive -LiteralPath '${zipPath.replaceAll("'", "''")}' -DestinationPath '${destDir.replaceAll("'", "''")}' -Force`,
+      ],
+    });
+  }
+
+  const failures = [];
+  for (const candidate of candidates) {
+    const result = NodeChildProcess.spawnSync(candidate.command, candidate.args, {
+      encoding: "utf8",
+      stdio: "inherit",
+    });
+    if (result.status === 0) {
+      return;
+    }
+    failures.push(`${candidate.command} failed with exit code ${result.status ?? "unknown"}`);
+  }
+
+  throw new Error(
+    `Electron zip extraction failed. Tried: ${failures.join("; ")}. ` +
+      "Install Python 3 and retry, or extract the zip manually.",
+  );
+}
+
 function installElectronRuntime(electronDir, version) {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
   const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
@@ -127,15 +176,12 @@ function installElectronRuntime(electronDir, version) {
       "-o",
       zipPath,
     ]);
+    const distDir = NodePath.join(electronDir, "dist");
+    NodeFS.mkdirSync(distDir, { recursive: true });
     if (hostPlatform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
+      runChecked("ditto", ["-x", "-k", zipPath, distDir]);
     } else {
-      runChecked("python3", [
-        "-c",
-        "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
-        zipPath,
-        NodePath.join(electronDir, "dist"),
-      ]);
+      extractElectronZip(zipPath, distDir);
     }
   } finally {
     NodeFS.rmSync(tempDir, { recursive: true, force: true });

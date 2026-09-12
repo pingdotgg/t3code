@@ -93,6 +93,16 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+Command Code runs one headless `-p` subprocess per turn ([CommandCodeAdapter](../../apps/server/src/provider/Layers/CommandCodeAdapter.ts)).
+Its print mode never shows interactive prompts: file writes and shell commands are hard-blocked
+unless the CLI is launched with `--yolo`, and `--permission-mode auto-accept` does **not** unlock
+them — so the driver's auto-accept mode maps to `--yolo`, and "standard" runs fail-closed with
+read-only tools. Resolve the binary as `command-code`, never bare `cmd` (cmd.exe wins on
+Windows). Streamed assistant text is buffered by the engine and revealed at message boundaries by
+default. Item ids emitted by the adapter must be unique per turn: ingestion derives the persisted
+assistant message id from the event's item id, and a reused id appends a new turn's text onto the
+previous turn's message.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)
