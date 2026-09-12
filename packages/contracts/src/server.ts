@@ -76,6 +76,13 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /** Lets clients configure a Fusion pairing without parsing its display label or native ID. */
+  fusion: Schema.optional(
+    Schema.Struct({
+      lead: Schema.Struct({ id: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
+      sidekick: Schema.Struct({ id: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
+    }),
+  ),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;

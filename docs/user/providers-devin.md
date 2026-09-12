@@ -6,6 +6,8 @@ If `devin` launches Devin Desktop, set **Binary path** to the actual CLI executa
 
 Available models load from `devin models list --format json` when provider status refreshes, before you start a chat. Refresh **Settings → Providers** after changing your Devin subscription. Choose a model family, then set its thinking level and, where available, Fast mode or context window. Workspace commands load when the session opens.
 
+For [Fusion](https://docs.devin.ai/cli/fusion), use Devin CLI 3000.10.20 or newer with a paid plan, then refresh provider status. On web and desktop, choose **Fusion** in the model picker, select a lead and sidekick, then choose **Use Fusion**. Set the lead's thinking level and Fast mode with the composer controls. Mobile lists the available pairings directly. Switch to a regular model to leave Fusion in the same thread.
+
 Select a model from your account's catalog. Saved threads resume their Devin session, and model changes apply within the same thread. A temporary refresh failure keeps the last available model list; signing out clears it.
 
 T3 forwards permission requests and supports Plan mode, cancellation, images, file attachments, and `/compact`. Auto mode uses Devin's Smart mode when available and asks for approval otherwise. Conversation rewind is not supported by Devin ACP.

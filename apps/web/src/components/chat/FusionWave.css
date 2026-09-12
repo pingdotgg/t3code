@@ -1,0 +1,23 @@
+.fusion-wave-packets {
+  animation: fusion-wave-flow 5s linear infinite;
+}
+
+.fusion-wave[data-paused="true"] .fusion-wave-packets {
+  animation-play-state: paused;
+}
+
+@keyframes fusion-wave-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fusion-wave-packets {
+    animation: none;
+    opacity: 0.3;
+  }
+}

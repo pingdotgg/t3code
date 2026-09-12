@@ -252,3 +252,82 @@ it("keeps the remaining thinking level selectable after an account catalog contr
     options: [{ id: "high", label: "High" }],
   });
 });
+
+const fusionCatalog = {
+  families: [
+    ...catalog.families,
+    {
+      slug: "fusion",
+      family_label: "Fusion",
+      variants: catalog.families[2]!.variants.flatMap((lead) =>
+        catalog.families[0]!.variants.map((sidekick) => ({
+          model_uid: `fusion-${lead.model_uid}-sidekick-${sidekick.model_uid}`,
+          label: `Fusion (${lead.label} + ${sidekick.label})`,
+        })),
+      ),
+    },
+  ],
+};
+
+it("groups Fusion by lead and sidekick and resolves every thinking and speed combination", () => {
+  const models = devinModels(fusionCatalog).filter((model) => model.slug.startsWith("fusion/"));
+  expect(models.map((model) => model.name)).toEqual([
+    "Fusion (Claude Opus 5 + SWE-2 High)",
+    "Fusion (Claude Opus 5 + SWE-2 Medium)",
+    "Fusion (Claude Opus 5 + SWE-2 Max)",
+  ]);
+  const resolved = models.flatMap((model) =>
+    ["medium", "high"].flatMap((effort) =>
+      [false, true].map((fastMode) =>
+        resolveDevinModel(fusionCatalog, {
+          model: model.slug,
+          options: [
+            { id: "reasoningEffort", value: effort },
+            { id: "fastMode", value: fastMode },
+          ],
+        }),
+      ),
+    ),
+  );
+  expect(resolved.toSorted()).toEqual(
+    fusionCatalog.families
+      .at(-1)
+      ?.variants.map((v) => v.model_uid)
+      .toSorted(),
+  );
+  const first = models[0]!;
+  expect(first.fusion).toEqual({
+    lead: { id: "claude-opus-5", name: "Claude Opus 5" },
+    sidekick: { id: "swe-2-high", name: "SWE-2 High" },
+  });
+  expect(first.capabilities?.optionDescriptors).toEqual([
+    {
+      id: "reasoningEffort",
+      label: "Thinking level",
+      type: "select",
+      currentValue: "medium",
+      options: [
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+      ],
+    },
+    { id: "fastMode", label: "Fast mode", type: "boolean", currentValue: false },
+  ]);
+  expect(
+    resolveDevinModel(fusionCatalog, {
+      model: first.slug,
+      options: [{ id: "reasoningEffort", value: "max" }],
+    }),
+  ).toBeUndefined();
+  for (const native of fusionCatalog.families.at(-1)!.variants)
+    expect(resolveDevinModel(fusionCatalog, { model: native.model_uid })).toBe(native.model_uid);
+});
+
+it("preserves unfamiliar Fusion pairings as exact model choices", () => {
+  const variant = { model_uid: "fusion-future", label: "Fusion (Future Lead + Future Sidekick)" };
+  const future = { families: [{ slug: "fusion", family_label: "Fusion", variants: [variant] }] };
+  expect(devinModels(future).map((model) => [model.slug, model.name])).toEqual([
+    [variant.model_uid, variant.label],
+  ]);
+  expect(resolveDevinModel(future, { model: variant.model_uid })).toBe(variant.model_uid);
+});

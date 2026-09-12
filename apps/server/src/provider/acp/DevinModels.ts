@@ -26,6 +26,7 @@ export const DevinModelCatalog = Schema.fromJsonString(
 type Catalog = typeof DevinModelCatalog.Type;
 type Family = Catalog["families"][number];
 type Variant = Family["variants"][number];
+type SelectableFamily = Family & Pick<ServerProviderModel, "fusion">;
 
 const THINKING_LEVEL_ORDER = [
   "none",
@@ -76,8 +77,55 @@ function familyVariants(family: Family) {
   return combinations.size === variants.length && optionCount === variants.length ? variants : [];
 }
 
+/** Split Fusion by known lead family and exact sidekick; retain the CLI's native IDs. */
+function selectableFamilies(catalog: Catalog): ReadonlyArray<SelectableFamily> {
+  const variantsByLabel = new Map(
+    catalog.families.flatMap((family) =>
+      family.slug === "fusion"
+        ? []
+        : family.variants.map((variant) => [variant.label, { family, variant }] as const),
+    ),
+  );
+  return catalog.families.flatMap((family) => {
+    if (family.slug !== "fusion") return [family];
+    const groups = new Map<string, SelectableFamily>();
+    const unfamiliar: Variant[] = [];
+    for (const variant of family.variants) {
+      const pairing = /^Fusion \((.+) \+ (.+)\)$/.exec(variant.label);
+      const leadLabel = pairing?.[1];
+      const sidekickLabel = pairing?.[2];
+      const lead = leadLabel ? variantsByLabel.get(leadLabel)?.family : undefined;
+      const sidekick = sidekickLabel ? variantsByLabel.get(sidekickLabel)?.variant : undefined;
+      if (!leadLabel || !lead || !sidekick || !leadLabel.startsWith(lead.family_label)) {
+        unfamiliar.push(variant);
+        continue;
+      }
+      const slug = `fusion/${lead.slug}/${sidekick.model_uid}`;
+      const label = `Fusion (${lead.family_label} + ${sidekick.label})`;
+      const group = groups.get(slug);
+      const groupedVariant = {
+        ...variant,
+        label: `${label}${leadLabel.slice(lead.family_label.length)}`,
+      };
+      groups.set(slug, {
+        slug,
+        family_label: label,
+        fusion: {
+          lead: { id: lead.slug, name: lead.family_label },
+          sidekick: { id: sidekick.model_uid, name: sidekick.label },
+        },
+        variants: [...(group?.variants ?? []), groupedVariant],
+      });
+    }
+    return [
+      ...groups.values(),
+      ...(unfamiliar.length ? [{ ...family, variants: unfamiliar }] : []),
+    ];
+  });
+}
+
 export function devinModels(catalog: Catalog): ServerProviderModel[] {
-  return catalog.families.flatMap((family): ServerProviderModel[] => {
+  return selectableFamilies(catalog).flatMap((family): ServerProviderModel[] => {
     const variants = familyVariants(family);
     if (variants.length !== family.variants.length) {
       return family.variants.map((variant) => ({
@@ -123,16 +171,17 @@ export function devinModels(catalog: Catalog): ServerProviderModel[] {
         currentValue: first.contextWindow,
         options: contexts.map((id) => ({ id, label: id === "1m" ? "1M" : "Standard" })),
       });
+    const model: ServerProviderModel = {
+      slug: family.slug,
+      name: family.family_label,
+      isCustom: false,
+      isDefault: false,
+      capabilities: { optionDescriptors: descriptors },
+    };
+    const withAliases = family.aliases ? { ...model, aliases: family.aliases } : model;
+    const withFusion = family.fusion ? { ...withAliases, fusion: family.fusion } : withAliases;
     return [
-      {
-        slug: family.slug,
-        name: family.family_label,
-        ...(family.aliases ? { aliases: family.aliases } : {}),
-        isCustom: false,
-        isDefault: false,
-        ...(variants.some((variant) => variant.is_new) ? { badge: "new" } : {}),
-        capabilities: { optionDescriptors: descriptors },
-      },
+      variants.some((variant) => variant.is_new) ? { ...withFusion, badge: "new" } : withFusion,
     ];
   });
 }
@@ -142,7 +191,7 @@ export function resolveDevinModel(
   catalog: Catalog,
   selection: Pick<ModelSelection, "model" | "options">,
 ) {
-  const family = catalog.families.find(
+  const family = selectableFamilies(catalog).find(
     (family) => family.slug === selection.model || family.aliases?.includes(selection.model),
   );
   // Exact native IDs (including custom models) remain valid for existing sessions.

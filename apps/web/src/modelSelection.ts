@@ -79,6 +79,7 @@ function readInstanceCustomModels(
 }
 
 export interface AppModelOption {
+  fusion?: ServerProvider["models"][number]["fusion"];
   slug: string;
   name: string;
   shortName?: string;
@@ -119,6 +120,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
     isCustom: model.isCustom,
   };
   if (model.shortName) option.shortName = model.shortName;
+  if (model.fusion) option.fusion = model.fusion;
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.aliases) option.aliases = model.aliases;
   if (model.badge) option.badge = model.badge;
