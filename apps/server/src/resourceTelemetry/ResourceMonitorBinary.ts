@@ -193,30 +193,51 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     });
   }
 
-  const candidates = [...overrideCandidates, ...bundledCandidates];
+  const candidates = [
+    ...overrideCandidates.map((path) => ({ path, owned: false })),
+    ...bundledCandidates.map((path) => ({ path, owned: true })),
+  ];
 
   const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
     for (const candidate of candidates) {
-      const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+      const exists = yield* fileSystem
+        .exists(candidate.path)
+        .pipe(Effect.orElseSucceed(() => false));
       if (!exists) continue;
 
       if (platform !== "win32") {
-        const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
+        const stat = yield* fileSystem.stat(candidate.path).pipe(Effect.option);
         if (Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
+          // npm only preserves the executable bit for files listed in
+          // package.json's `bin` field, so our bundled sidecars land on disk
+          // as 0644 no matter what CI chmods before publish. We own these
+          // paths, so repair the bit instead of leaving telemetry disabled
+          // forever. A user-supplied override path is left alone: staying
+          // fail-closed there prevents chmod'ing an arbitrary file we didn't
+          // build.
+          if (candidate.owned) {
+            const repaired = yield* fileSystem.chmod(candidate.path, stat.value.mode | 0o111).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (repaired) {
+              return candidate.path;
+            }
+          }
           return yield* new ResourceMonitorBinaryNotExecutable({
-            path: candidate,
+            path: candidate.path,
             mode: stat.value.mode,
           });
         }
       }
 
-      return candidate;
+      return candidate.path;
     }
 
     return yield* new ResourceMonitorBinaryNotFound({
       platform,
       architecture,
-      candidates,
+      candidates: candidates.map((candidate) => candidate.path),
     });
   });
 
