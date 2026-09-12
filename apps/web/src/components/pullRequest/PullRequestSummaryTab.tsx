@@ -26,6 +26,7 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
@@ -373,6 +374,12 @@ function CommentComposer({
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
         onChange={(event) => setBody(event.target.value)}
+        onKeyDown={(event) => {
+          if (isCommentSubmitShortcut(event, body, submitting !== null || actionPending)) {
+            event.preventDefault();
+            void submit("comment");
+          }
+        }}
       />
       <div className="flex justify-end gap-2">
         {followUpAction === null ? null : (
