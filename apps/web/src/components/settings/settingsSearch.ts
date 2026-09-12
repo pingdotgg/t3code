@@ -109,6 +109,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new thread project provider reasoning effort"],
   },
   {
+    id: "default-permissions",
+    title: "Permissions",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: [
+      "new thread default runtime mode supervised approvals auto accept edits full access",
+    ],
+  },
+  {
     id: "color-scheme",
     title: "Color scheme",
     to: "/settings/appearance",

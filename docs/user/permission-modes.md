@@ -3,8 +3,10 @@
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
 composer; it applies to that thread.
 
-New threads start in **Full access** unless you choose another mode before sending. A thread
-created from another thread inherits its mode.
+Set the default for new threads in **Settings → General → New threads → Permissions**.
+Projects can override the environment default. New threads use this setting rather than the
+mode of the thread you were viewing. The initial default is **Full access**; existing threads
+and modes you choose in a draft keep their permissions.
 
 | Mode                  | Behavior                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------- |
