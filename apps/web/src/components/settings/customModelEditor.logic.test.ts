@@ -225,13 +225,9 @@ describe("customModelEditor.logic", () => {
     const descriptor = definition.capabilities?.optionDescriptors?.[0];
 
     expect(descriptor).toMatchObject({ id: "reasoningEffort", currentValue: "max" });
-    expect(descriptor?.options?.map((choice) => choice.id)).toEqual([
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
+    expect(
+      descriptor?.type === "select" ? descriptor.options.map((choice) => choice.id) : [],
+    ).toEqual(["low", "medium", "high", "xhigh", "max"]);
     expect(
       draftFromDefinition(definition).descriptors[0]?.choices.filter((choice) => choice.isDefault),
     ).toMatchObject([{ id: "max" }]);
