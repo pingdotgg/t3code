@@ -2157,16 +2157,24 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       runtimeMock.state.sessionStatus = "busy";
       const busy = promiseWithResolvers<unknown>();
       const childSession = promiseWithResolvers<unknown>();
+      const childIdle = promiseWithResolvers<unknown>();
       const idle = promiseWithResolvers<unknown>();
-      runtimeMock.state.subscribedEvents = [busy.promise, childSession.promise, idle.promise];
+      runtimeMock.state.subscribedEvents = [
+        busy.promise,
+        childSession.promise,
+        childIdle.promise,
+        idle.promise,
+      ];
 
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter(
           (event) =>
             event.threadId === threadId &&
-            (event.type === "task.started" || event.type === "turn.completed"),
+            (event.type === "task.started" ||
+              event.type === "task.completed" ||
+              event.type === "turn.completed"),
         ),
-        Stream.take(2),
+        Stream.take(3),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -2206,6 +2214,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
       yield* Effect.promise(() => requestOpened.promise);
       yield* Effect.yieldNow;
+      childIdle.resolve({
+        id: "evt-child-ancestry-idle",
+        type: "session.status",
+        properties: { sessionID: "ses_child", status: { type: "idle" } },
+      });
+      yield* Effect.yieldNow;
       runtimeMock.state.sessionStatus = "idle";
       idle.resolve({
         id: "evt-child-ancestry-idle",
@@ -2219,9 +2233,9 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
       NodeAssert.deepEqual(
         events.map((event) => event.type),
-        ["task.started", "turn.completed"],
+        ["task.started", "task.completed", "turn.completed"],
       );
-      const completed = events[1];
+      const completed = events[2];
       if (completed?.type === "turn.completed") {
         NodeAssert.deepEqual(completed.payload.tokenUsage, {
           usageStatus: "unavailable",

@@ -329,7 +329,8 @@ function isOpenCodeChildSessionEvent(event: OpenCodeSubscribedEvent): boolean {
   return (
     event.type === "session.created" ||
     event.type === "session.updated" ||
-    event.type === "session.deleted"
+    event.type === "session.deleted" ||
+    event.type === "session.status"
   );
 }
 
@@ -2311,7 +2312,11 @@ export function makeOpenCodeAdapter(
         !context.relatedSessionIds.has(payloadSessionId) &&
         (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event))
       ) {
-        if (isOpenCodeChildSessionEvent(event)) {
+        if (
+          event.type === "session.created" ||
+          event.type === "session.updated" ||
+          event.type === "session.deleted"
+        ) {
           yield* scheduleChildSessionRelationRetry(context, event);
           return;
         } else if (event.type === "permission.asked") {
@@ -2725,6 +2730,27 @@ export function makeOpenCodeAdapter(
         }
 
         case "session.status": {
+          if (!isParentEvent) {
+            if (event.properties.status.type === "idle") {
+              const sessionId = event.properties.sessionID;
+              yield* emit({
+                ...(yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  itemId: sessionId,
+                  raw: event,
+                })),
+                type: "task.completed",
+                payload: {
+                  taskId: sessionId,
+                  taskType: "local_agent",
+                  status: "completed",
+                  summary: "Completed",
+                },
+              });
+            }
+            break;
+          }
           if (event.properties.status.type === "busy" || event.properties.status.type === "retry") {
             if (turnId === undefined) {
               break;
