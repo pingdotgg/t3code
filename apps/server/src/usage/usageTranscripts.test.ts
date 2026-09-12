@@ -51,6 +51,7 @@ describe("parseClaudeLine", () => {
       reasoningTokens: 0,
     });
     expect(record?.dedupeKey).toBe("msg_1:");
+    expect(record?.cwd).toBe("/home/theo/project");
   });
 
   it("gives every content block of one message the same dedupe key", () => {
@@ -73,7 +74,11 @@ describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
     type: "session_meta",
     timestamp: "2026-08-01T05:17:41.289Z",
-    payload: { type: "session_meta", id: "019fbbc1-b12c-7360-a685-28c181f0025f" },
+    payload: {
+      type: "session_meta",
+      id: "019fbbc1-b12c-7360-a685-28c181f0025f",
+      cwd: "/home/theo/project",
+    },
   });
   const turnContext = JSON.stringify({
     type: "turn_context",
@@ -107,10 +112,32 @@ describe("parseCodexLine", () => {
     expect(record?.provider).toBe("codex");
     expect(record?.model).toBe("gpt-5.6-sol");
     expect(record?.sessionId).toBe("019fbbc1-b12c-7360-a685-28c181f0025f");
+    expect(record?.cwd).toBe("/home/theo/project");
     // Codex reports input_tokens inclusive of the cached portion.
     expect(record?.totals.uncachedInputTokens).toBe(19239 - 11008);
     expect(record?.totals.cachedInputTokens).toBe(11008);
     expect(record?.totals.reasoningTokens).toBe(116);
+  });
+
+  it("attributes resumed usage to the latest turn working directory", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(sessionMeta, state);
+    parseCodexLine(
+      JSON.stringify({
+        type: "turn_context",
+        timestamp: "2026-08-01T05:17:42.694Z",
+        payload: {
+          type: "turn_context",
+          model: "gpt-5.6-sol",
+          cwd: "/home/theo/next-project",
+        },
+      }),
+      state,
+    );
+
+    const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
+
+    expect(record?.cwd).toBe("/home/theo/next-project");
   });
 
   it("skips a repeated token_count so deltas are not double counted", () => {

@@ -16,6 +16,7 @@ export async function refreshUsage({
   presentations,
   environmentIds,
   input,
+  refreshToken,
 }: {
   registry: AtomRegistry.AtomRegistry;
   server: Pick<
@@ -25,8 +26,9 @@ export async function refreshUsage({
   presentations: Pick<ReturnType<typeof createEnvironmentPresentationAtoms>, "presentationAtom">;
   environmentIds: readonly EnvironmentId[];
   input: UsageSummaryInput;
+  refreshToken: string;
 }): Promise<void> {
-  await Promise.all(
+  const results = await Promise.allSettled(
     environmentIds.map(async (environmentId) => {
       const query = server.usageSummary({ environmentId, input });
       const presentation = presentations.presentationAtom(environmentId);
@@ -49,13 +51,31 @@ export async function refreshUsage({
         // Invalidate even on failure so reconnects cannot reuse the old summary.
         registry.refresh(query);
         if (sessionUnavailable || controller.signal.aborted) return;
-        await executeAtomQuery(registry, query, {
+        // The token bypasses the source cache, then the ordinary window query
+        // publishes that completed snapshot to every subscribed client view.
+        const scanned = await executeAtomQuery(
+          registry,
+          server.usageSummary({
+            environmentId,
+            input: { ...input, refreshToken },
+          }),
+          { reportFailure: false, signal: controller.signal, refresh: true },
+        );
+        if (controller.signal.aborted) return;
+        if (scanned._tag === "Failure") throw squashAtomCommandFailure(scanned);
+        const published = await executeAtomQuery(registry, query, {
           reportFailure: false,
           signal: controller.signal,
+          refresh: true,
         });
+        if (!controller.signal.aborted && published._tag === "Failure") {
+          throw squashAtomCommandFailure(published);
+        }
       } finally {
         unsubscribe();
       }
     }),
   );
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
 }
