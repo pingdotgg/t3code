@@ -5,6 +5,7 @@ import {
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
+  normalizePairingCode,
   resolveRemotePairingTarget,
 } from "./remote.ts";
 
@@ -198,6 +199,29 @@ describe("remote", () => {
         host: "remote.example.com",
       }),
     );
+  });
+
+  it("repairs a hand-typed pairing code whatever spacing or case it arrived in", () => {
+    for (const typed of ["abcd2345efgh", "ABCD-2345-EFGH", "abcd 2345 efgh", " AbCd-2345 EfGh "]) {
+      expect(normalizePairingCode(typed.trim())).toBe("ABCD2345EFGH");
+    }
+  });
+
+  it("does not normalize a token that came out of a pairing URL", () => {
+    // Hosted tokens are issued elsewhere, are not drawn from the uppercase
+    // pairing alphabet, and reach resolveRemotePairingTarget through the same
+    // pairingCode field - so the normalizer must stay out of this path.
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl: "https://remote.example.com/pair#token=MiXeD-case_token",
+      }).credential,
+    ).toBe("MiXeD-case_token");
+    expect(
+      resolveRemotePairingTarget({
+        host: "https://remote.example.com",
+        pairingCode: "MiXeD-case_token",
+      }).credential,
+    ).toBe("MiXeD-case_token");
   });
 
   it("preserves URL parsing causes with their input source", () => {
