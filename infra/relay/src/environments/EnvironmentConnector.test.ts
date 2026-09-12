@@ -25,7 +25,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -783,6 +788,93 @@ describe("EnvironmentConnector", () => {
         expect(result.cause.toString()).toContain("EnvironmentMintResponseInvalid");
       }
     }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect(
+    "reports an invalid response, not a request failure, when the environment rejects a mint request",
+    () => {
+      const execute = (request: HttpClientRequest.HttpClientRequest) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              {
+                _tag: "EnvironmentHttpInternalServerError",
+                message: "Could not issue cloud connection credential.",
+              },
+              { status: 500 },
+            ),
+          ),
+        );
+
+      return Effect.gen(function* () {
+        const connector = yield* EnvironmentConnector.EnvironmentConnector;
+        const result = yield* Effect.result(
+          connector.connect({
+            userId: "user_123",
+            environmentId: "env-connector-test",
+            clientProofKeyThumbprint: "client-proof-key-thumbprint",
+          }),
+        );
+
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          // Before the fix, any failed mint request — including a well-typed
+          // error the environment actually returned — collapsed into
+          // EnvironmentMintRequestFailed ("endpoint_request_failed"), telling
+          // the client the endpoint was unreachable when it had, in fact,
+          // answered.
+          expect(result.failure._tag).toBe("EnvironmentMintResponseInvalid");
+          // The underlying environment response must not be discarded: it's
+          // the only way to see why the mint request was actually rejected.
+          expect(result.failure).toMatchObject({
+            _tag: "EnvironmentMintResponseInvalid",
+            cause: expect.objectContaining({
+              _tag: "EnvironmentHttpInternalServerError",
+              message: "Could not issue cloud connection credential.",
+            }),
+          });
+        }
+      }).pipe(Effect.provide(connectorTestLayer(execute)));
+    },
+  );
+
+  it.effect("reports a request failure when the managed endpoint is truly unreachable", () => {
+    const failingHttpClient = HttpClient.make((request) =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            request,
+            cause: new Error("connect ECONNREFUSED"),
+          }),
+        }),
+      ),
+    );
+    const layer = EnvironmentConnector.layer.pipe(
+      Layer.provide(NodeCryptoLayer.layer),
+      Layer.provide(Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeLinks())),
+      Layer.provide(
+        Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+      ),
+      Layer.provide(RelayConfiguration.layer(settings)),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, failingHttpClient)),
+    );
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* Effect.exit(
+        connector.connect({
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          clientProofKeyThumbprint: "client-proof-key-thumbprint",
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.cause.toString()).toContain("EnvironmentMintRequestFailed");
+      }
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("times out hung managed endpoint mint requests", () => {
