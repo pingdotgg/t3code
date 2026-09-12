@@ -81,6 +81,7 @@ import {
   previewAutomationEditingCommandExpression,
 } from "./PreviewKeyboard.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
+import { prepareNativeScreenshotSurface } from "./NativeScreenshotSurface.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -128,18 +129,18 @@ const MAX_INTERACTIVE_ELEMENTS = 200;
  * not content, so cap them where they are read.
  */
 const MAX_INTERACTIVE_ELEMENT_NAME_LENGTH = 200;
-const MAX_SCREENSHOT_WIDTH = 1280;
 /** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
- * Cold guests can reject capturePage with UnknownVizError or never settle it.
+ * Chromium can reject cold screenshot captures or leave them pending.
  * Bound each attempt so snapshots release control even when Chromium stalls.
  */
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const CAPTURE_SURFACE_PREP_TIMEOUT_MS = 3_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -661,6 +662,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
+  const screenshotSurfaceSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
   // Tab recording uses `setDisplayMediaRequestHandler` because Electron's legacy
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
@@ -683,7 +685,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   const attemptPromise = <A>(
     errorContext: PreviewOperationContext,
-    evaluate: () => PromiseLike<A>,
+    evaluate: (signal: AbortSignal) => PromiseLike<A>,
   ) =>
     Effect.tryPromise({
       try: evaluate,
@@ -725,6 +727,52 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
   });
+  const captureScreenshotWithRetry = Effect.fn("PreviewManager.captureScreenshotWithRetry")(
+    function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
+      yield* ensureControlSession(wc);
+      return yield* screenshotSurfaceSemaphore.withPermit(
+        Effect.gen(function* () {
+          const surface = yield* attemptPromise(
+            {
+              ...errorContext,
+              operation: `${errorContext.operation}.prepareSurface`,
+            },
+            (signal) => prepareNativeScreenshotSurface(tabId, wc, signal),
+          ).pipe(
+            Effect.timeout(CAPTURE_SURFACE_PREP_TIMEOUT_MS),
+            Effect.catch((error) =>
+              Effect.logDebug("Native screenshot surface preparation failed.", {
+                error,
+                tabId,
+                webContentsId: wc.id,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+          const capture = capturePageWithRetry(errorContext, tabId, wc);
+          if (!surface) return yield* capture;
+          return yield* capture.pipe(Effect.ensuring(Effect.promise(surface.restore)));
+        }),
+      );
+    },
+  );
+  const captureScreenshotWithFallback = Effect.fn("PreviewManager.captureScreenshotWithFallback")(
+    function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
+      const capturePageContext = {
+        ...errorContext,
+        operation: "captureScreenshot.capturePage",
+      };
+      return yield* captureScreenshotWithRetry(errorContext, tabId, wc).pipe(
+        Effect.catchTags({
+          // A user can keep DevTools open while saving a screenshot. In that
+          // case debugger-independent capturePage remains the safe fallback.
+          PreviewAutomationDevToolsOpenError: () =>
+            capturePageWithRetry(capturePageContext, tabId, wc),
+          PreviewAutomationDebuggerAttachedError: () =>
+            capturePageWithRetry(capturePageContext, tabId, wc),
+        }),
+      );
+    },
+  );
   const currentIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const currentMillis = Clock.currentTimeMillis;
   const encodeJson = (errorContext: PreviewOperationContext, value: unknown) =>
@@ -2754,9 +2802,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      capturePageWithRetry(
+      captureScreenshotWithFallback(
         {
-          operation: "captureScreenshot.capturePage",
+          operation: "captureScreenshot.captureNative",
           tabId,
           webContentsId: wc.id,
         },
@@ -3618,9 +3666,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         })()`,
         true,
       );
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
+      const [accessibility, image, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
-        capturePageWithRetry(
+        captureScreenshotWithRetry(
           {
             operation: "automationSnapshot.capturePage",
             tabId,
@@ -3632,11 +3680,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
       const size = image.getSize();
       const browserDiagnostics = diagnostics.get(wc.id);
       return {
