@@ -657,10 +657,13 @@ function deriveTurnFolds(input: {
       if (!isCompaction && index > terminalEntryIndex && !isSingleTrailingActivity) {
         continue;
       }
-      // Agent-spawn CTA rows never fold: workflows outlive their launching
-      // turn (dynamic spawns, background execution), and folding the CTA
-      // when the turn settles makes a still-running fleet invisible.
-      if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+      // Agent-spawn CTA rows and running background shells never fold: both
+      // outlive their launching turn, and folding them when the turn settles
+      // makes a still-running fleet or shell invisible.
+      if (
+        entry.kind === "work" &&
+        (entry.entry.agentSpawn !== undefined || entry.entry.backgroundTaskRunning === true)
+      ) {
         continue;
       }
       hiddenEntryIds.add(entry.id);
@@ -907,11 +910,17 @@ export function deriveMessagesTimelineRows(input: {
     input.isWorking &&
     index >= activeTurnHeaderIndex &&
     (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
-  const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+  const workEntryIsInActiveTurnRun = (entry: WorkLogEntry) =>
     input.isWorking &&
     unsettledTurnId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
     entry.turnId === unsettledTurnId;
+  // A background shell keeps its live row after its turn settles, the same
+  // row an in-progress tool gets during the active turn. Only the latter
+  // stands in for the thinking indicator: an older shell says nothing about
+  // whether the current turn is making progress.
+  const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+    entry.backgroundTaskRunning === true || workEntryIsInActiveTurnRun(entry);
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
   for (let index = input.timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
     const entry = input.timelineEntries[index]!;
@@ -1094,7 +1103,7 @@ export function deriveMessagesTimelineRows(input: {
             expanded,
             active: true,
           });
-          hasActivityRow = true;
+          hasActivityRow ||= activeInProgressToolEntries.some(workEntryIsInActiveTurnRun);
           if (expanded) {
             nextRows.push(
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),

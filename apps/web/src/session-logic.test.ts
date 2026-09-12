@@ -2277,6 +2277,138 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
   });
 });
 
+describe("background shells", () => {
+  // Claude's Bash tool returns as soon as a shell is backgrounded, so the
+  // tool rows settle immediately while the task rows carry the real state.
+  const shellStarted = makeActivity({
+    id: "shell-start",
+    createdAt: "2026-02-23T00:00:01.000Z",
+    turnId: "turn-1",
+    kind: "task.started",
+    summary: "local_bash task started",
+    tone: "info",
+    payload: { taskId: "sh-1", taskType: "local_bash", toolUseId: "call-1", title: "Watch CI" },
+  });
+  const toolRows = (runInBackground: boolean) => [
+    makeActivity({
+      id: "shell-tool-progress",
+      createdAt: "2026-02-23T00:00:02.000Z",
+      turnId: "turn-1",
+      kind: "tool.updated",
+      summary: "Command run",
+      payload: {
+        itemType: "command_execution",
+        toolCallId: "call-1",
+        status: "inProgress",
+        data: { command: "sleep 600" },
+      },
+    }),
+    makeActivity({
+      id: "shell-tool-complete",
+      createdAt: "2026-02-23T00:00:03.000Z",
+      turnId: "turn-1",
+      kind: "tool.completed",
+      summary: "Command run",
+      payload: {
+        itemType: "command_execution",
+        toolCallId: "call-1",
+        status: "completed",
+        data: {
+          toolName: "Bash",
+          command: "sleep 600",
+          ...(runInBackground ? { runInBackground: true } : {}),
+        },
+      },
+    }),
+  ];
+  const shellCompleted = (status: string) =>
+    makeActivity({
+      id: "shell-complete",
+      createdAt: "2026-02-23T00:10:00.000Z",
+      kind: "task.completed",
+      summary: "Task completed",
+      tone: "info",
+      payload: {
+        taskId: "sh-1",
+        taskType: "local_bash",
+        toolUseId: "call-1",
+        status,
+        summary: `Background command "Watch CI" ${status}`,
+      },
+    });
+
+  it("keeps a run_in_background shell's tool row in progress until its task ends", () => {
+    const entries = deriveWorkLogEntries([shellStarted, ...toolRows(true)]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "shell-tool-complete",
+      command: "sleep 600",
+      toolLifecycleStatus: "inProgress",
+      backgroundTaskRunning: true,
+    });
+  });
+
+  it("settles the tool row from the task's terminal status, even after the turn ended", () => {
+    const entries = deriveWorkLogEntries([
+      shellStarted,
+      ...toolRows(true),
+      shellCompleted("failed"),
+    ]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id: "shell-tool-complete", toolLifecycleStatus: "failed" });
+    expect(entries[0]?.backgroundTaskRunning).toBeUndefined();
+  });
+
+  it("holds a foreground shell moved to the background at its timeout", () => {
+    const backgrounded = makeActivity({
+      id: "shell-backgrounded",
+      createdAt: "2026-02-23T00:00:04.000Z",
+      turnId: "turn-1",
+      kind: "task.updated",
+      summary: "Task updated",
+      tone: "info",
+      payload: {
+        taskId: "sh-1",
+        taskType: "local_bash",
+        toolUseId: "call-1",
+        isBackgrounded: true,
+      },
+    });
+    const entries = deriveWorkLogEntries([shellStarted, ...toolRows(false), backgrounded]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      toolLifecycleStatus: "inProgress",
+      backgroundTaskRunning: true,
+    });
+  });
+
+  it("settles a killed shell from its terminal task.updated status", () => {
+    const killed = makeActivity({
+      id: "shell-killed",
+      createdAt: "2026-02-23T00:05:00.000Z",
+      kind: "task.updated",
+      summary: "Task updated",
+      tone: "info",
+      payload: { taskId: "sh-1", taskType: "local_bash", toolUseId: "call-1", status: "cancelled" },
+    });
+    const entries = deriveWorkLogEntries([shellStarted, ...toolRows(true), killed]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.toolLifecycleStatus).toBe("stopped");
+    expect(entries[0]?.backgroundTaskRunning).toBeUndefined();
+  });
+
+  it("leaves foreground shells alone", () => {
+    const entries = deriveWorkLogEntries([
+      shellStarted,
+      ...toolRows(false),
+      shellCompleted("completed"),
+    ]);
+    expect(entries.map((entry) => entry.id)).toEqual(["shell-tool-complete", "shell-complete"]);
+    expect(entries[0]?.toolLifecycleStatus).toBe("completed");
+    expect(entries[0]?.backgroundTaskRunning).toBeUndefined();
+  });
+});
+
 describe("rerun workflows", () => {
   it("turn-less direct spawns do not collapse into one global batch", () => {
     // Rows that lost their turn id (defensive path) group per task, so two

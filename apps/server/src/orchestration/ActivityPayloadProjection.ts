@@ -461,6 +461,13 @@ export function projectActivityPayload(
   if (command !== undefined) {
     projectedData.command = command;
   }
+  // Claude's Bash `run_in_background` launch flag. The raw input does not
+  // survive slimming, and the web client needs it to hold the tool row open
+  // until the launched shell's task rows settle. Re-read the projected key
+  // too: snapshots are projected again on the way out.
+  if (asRecord(data.input)?.run_in_background === true || data.runInBackground === true) {
+    projectedData.runInBackground = true;
+  }
   const imagePath = projectViewedImagePath(data);
   if (imagePath) {
     projectedData.imagePath = imagePath;

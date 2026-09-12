@@ -168,6 +168,28 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("keeps the Claude run_in_background launch flag", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        toolCallId: "claude-call-bg",
+        data: {
+          toolName: "Bash",
+          input: { command: "sleep 600", run_in_background: true },
+          result: { type: "tool_result", content: "Command running in background with ID: b1" },
+        },
+      }),
+    );
+    expect(projected.payload).toMatchObject({
+      data: { command: "sleep 600", runInBackground: true },
+    });
+    expect(JSON.stringify(projected.payload)).not.toContain('"input"');
+    // Thread snapshots are projected twice before they reach a client.
+    expect(projectActivityPayload(projected).payload).toMatchObject({
+      data: { runInBackground: true },
+    });
+  });
+
   it("keeps full Claude Read image paths through repeated projection", () => {
     const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
     const projected = projectActivityPayload(

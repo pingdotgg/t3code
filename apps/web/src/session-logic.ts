@@ -83,6 +83,13 @@ export interface WorkLogEntry {
   /** Agent role (subagent_type) for labeled timeline rows. */
   agentRole?: string;
   /**
+   * The tool call launched a background shell (`run_in_background`, or moved
+   * to the background at its timeout) that is still running. The row stays in
+   * progress after the tool call returns and after its turn settles, until
+   * the task's terminal row arrives.
+   */
+  backgroundTaskRunning?: boolean;
+  /**
    * Present on agent-spawn CTA rows: one per workflow run or per-turn batch
    * of direct spawns. The row renders as a call-to-action ("Kicked off N
    * subagents") whose live status is derived from the agent panel model at
@@ -409,6 +416,102 @@ function isAgentTaskStartedActivity(activity: OrchestrationThreadActivity): bool
   return !isBackgroundTaskActivity(payload);
 }
 
+/**
+ * Status the launching tool row should show for each background shell, keyed
+ * by tool call id. Only shells that outlive their tool call count: a
+ * `run_in_background` launch (the server projects the flag as
+ * `data.runInBackground`) or a foreground command moved to the background at
+ * its timeout (task.updated `isBackgrounded`). Every
+ * Claude shell emits task rows, but foreground ones settle before the tool
+ * result arrives and are left alone. Order-independent: the terminal row wins
+ * whenever it is present, so a late or out-of-order delivery cannot reopen a
+ * finished shell.
+ */
+function deriveBackgroundShellStatusByToolCallId(
+  ordered: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyMap<string, WorkLogToolLifecycleStatus> {
+  const toolRowCallIds = new Set<string>();
+  const backgroundToolCallIds = new Set<string>();
+  const startedToolCallIds = new Set<string>();
+  const terminalStatusByToolCallId = new Map<string, WorkLogToolLifecycleStatus>();
+  for (const activity of ordered) {
+    const payload = asRecord(activity.payload);
+    if (!payload) continue;
+    switch (activity.kind) {
+      case "tool.updated":
+      case "tool.completed": {
+        const toolCallId = extractToolCallId(payload);
+        if (!toolCallId) break;
+        toolRowCallIds.add(toolCallId);
+        if (asRecord(payload.data)?.runInBackground === true) {
+          backgroundToolCallIds.add(toolCallId);
+        }
+        break;
+      }
+      case "task.started":
+      case "task.updated":
+      case "task.completed": {
+        if (!isBackgroundTaskActivity(payload)) break;
+        const toolCallId = asTrimmedString(payload.toolUseId);
+        if (!toolCallId) break;
+        if (activity.kind === "task.started") {
+          startedToolCallIds.add(toolCallId);
+          break;
+        }
+        if (activity.kind === "task.updated" && payload.isBackgrounded === true) {
+          backgroundToolCallIds.add(toolCallId);
+        }
+        // A killed shell ends with a terminal task.updated and no
+        // task.completed, so status patches settle the row too.
+        const terminalStatus = backgroundShellTerminalStatus(payload.status);
+        if (activity.kind === "task.completed" || terminalStatus !== undefined) {
+          terminalStatusByToolCallId.set(toolCallId, terminalStatus ?? "completed");
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  const statusByToolCallId = new Map<string, WorkLogToolLifecycleStatus>();
+  for (const toolCallId of backgroundToolCallIds) {
+    if (!toolRowCallIds.has(toolCallId)) continue;
+    const terminalStatus = terminalStatusByToolCallId.get(toolCallId);
+    if (terminalStatus !== undefined) {
+      statusByToolCallId.set(toolCallId, terminalStatus);
+    } else if (startedToolCallIds.has(toolCallId)) {
+      statusByToolCallId.set(toolCallId, "inProgress");
+    }
+  }
+  return statusByToolCallId;
+}
+
+/** Terminal task `status` (RuntimeTaskStatus) → the tool row vocabulary; undefined while live. */
+function backgroundShellTerminalStatus(status: unknown): WorkLogToolLifecycleStatus | undefined {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+    case "interrupted":
+    case "stopped":
+      return "stopped";
+    default:
+      return undefined;
+  }
+}
+
+/** True for a background shell's task.completed row that folds into its tool row. */
+function isFoldedBackgroundShellCompletion(
+  activity: OrchestrationThreadActivity,
+  statusByToolCallId: ReadonlyMap<string, WorkLogToolLifecycleStatus>,
+): boolean {
+  if (activity.kind !== "task.completed") return false;
+  const toolCallId = asTrimmedString(asRecord(activity.payload)?.toolUseId);
+  return toolCallId ? statusByToolCallId.has(toolCallId) : false;
+}
+
 function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -452,10 +555,14 @@ export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  const backgroundShellStatusByToolCallId = deriveBackgroundShellStatusByToolCallId(ordered);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
+    // A background shell's completion lands on its tool row instead of
+    // rendering as a separate "Background command ... completed" row.
+    if (isFoldedBackgroundShellCompletion(activity, backgroundShellStatusByToolCallId)) continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
     // under later synthetic turns and must not start new batches). They
@@ -471,7 +578,22 @@ export function deriveWorkLogEntries(
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
-  return collapseDerivedWorkLogEntries(entries);
+  const collapsed = collapseDerivedWorkLogEntries(entries);
+  if (backgroundShellStatusByToolCallId.size === 0) return collapsed;
+  // The Bash tool call returns as soon as the shell is backgrounded, so its
+  // own lifecycle says "completed" while the process still runs. The task
+  // rows carry the real state; apply it after collapse so it also covers a
+  // row merged from tool.updated + tool.completed.
+  return collapsed.map((entry) => {
+    const status =
+      entry.toolCallId === undefined
+        ? undefined
+        : backgroundShellStatusByToolCallId.get(entry.toolCallId);
+    if (status === undefined) return entry;
+    return status === "inProgress"
+      ? { ...entry, toolLifecycleStatus: status, backgroundTaskRunning: true }
+      : { ...entry, toolLifecycleStatus: status };
+  });
 }
 
 /** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
