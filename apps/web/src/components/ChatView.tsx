@@ -388,7 +388,6 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildRunningThreadTurnInterruptInput,
-  buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -1475,6 +1474,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -5844,45 +5846,46 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
   // the turn; once it settles, the composer stop button is gone, so this
-  // banner is the only visible stop affordance. Stop routes through the
-  // stop-everything interrupt: it kills every live background task before
-  // interrupting, and works by session, so no active turn is needed.
+  // banner is the only visible stop affordance. Stop ends the provider session,
+  // which tears down its background work and emits the liveness update.
   const activeBackgroundLiveness =
-    !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
-  const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
+    !isWorking && activeThread && activeThreadShell?.session?.status !== "stopped"
+      ? (activeThreadShell?.backgroundLiveness ?? null)
+      : null;
+  const [stoppingBackgroundWorkThreadId, setStoppingBackgroundWorkThreadId] =
+    useState<ThreadId | null>(null);
+  const isStoppingBackgroundWork = activeThread?.id === stoppingBackgroundWorkThreadId;
   useEffect(() => {
-    // "Stopping..." holds until the liveness clears; the interrupt command
-    // returning only means the request was accepted.
+    // The provider session stop is the hard boundary. Keep "Stopping..."
+    // visible until the existing liveness signal reports that it has cleared.
     if (activeBackgroundLiveness === null) {
-      setIsStoppingBackgroundWork(false);
+      setStoppingBackgroundWorkThreadId(null);
     }
   }, [activeBackgroundLiveness]);
   useEffect(() => {
     // Per-thread state: switching threads while A's stop is pending must not
     // disable B's Stop button (review finding).
-    setIsStoppingBackgroundWork(false);
+    setStoppingBackgroundWorkThreadId(null);
   }, [activeThreadId]);
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
-    setIsStoppingBackgroundWork(true);
-    const result = await interruptThreadTurn({
+    const threadId = activeThread.id;
+    setStoppingBackgroundWorkThreadId(threadId);
+    const result = await stopThreadSession({
       environmentId,
-      input: buildThreadTurnInterruptInput(activeThread),
+      input: { threadId },
     });
     if (result._tag === "Failure") {
-      // Every failure clears the pending state — an interrupted command
-      // never reached the server, so liveness would hold "Stopping..."
-      // forever. Only real failures toast.
-      setIsStoppingBackgroundWork(false);
+      setStoppingBackgroundWorkThreadId((current) => (current === threadId ? null : current));
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
-          activeThread.id,
+          threadId,
           error instanceof Error ? error.message : "Failed to stop background work.",
         );
       }
     }
-  }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  }, [activeThread, environmentId, setThreadError, stopThreadSession]);
   const backgroundLivenessBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (activeBackgroundLiveness === null || !activeThread) {
       return null;
