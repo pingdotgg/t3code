@@ -3314,7 +3314,7 @@ describe("ClaudeAdapterLive", () => {
       const firstTurnSettled = yield* Deferred.make<void>();
       const completedFiber = yield* adapter.streamEvents.pipe(
         Stream.tap((event) =>
-          event.type === "session.state.changed" && event.payload.reason === "api_retry:1/2"
+          event.type === "session.state.changed" && event.payload.reason === "session_state:idle"
             ? Deferred.succeed(firstTurnSettled, undefined).pipe(Effect.asVoid)
             : Effect.void,
         ),
@@ -3365,12 +3365,8 @@ describe("ClaudeAdapterLive", () => {
       } as unknown as SDKMessage);
       harness.query.emit({
         type: "system",
-        subtype: "api_retry",
-        attempt: 1,
-        max_retries: 2,
-        retry_delay_ms: 1,
-        error_status: 502,
-        error: { type: "api_error" },
+        subtype: "session_state_changed",
+        state: "idle",
         session_id: "sdk-session-consecutive-usage",
         uuid: "consecutive-usage-barrier",
       } as unknown as SDKMessage);
@@ -4121,6 +4117,13 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
+      // status/api_retry heartbeats only report while a turn owns them, so
+      // the whole batch runs inside one.
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
 
       // Undeclared wire-only roster snapshot + every typed UX-internal
       // subtype and top-level type consumed silently: none may surface as
@@ -4330,7 +4333,7 @@ describe("ClaudeAdapterLive", () => {
           if (
             receipt &&
             event.type === "session.state.changed" &&
-            event.payload.reason === "api_retry:1/1"
+            event.payload.reason === "session_state:idle"
           ) {
             yield* Deferred.succeed(receipt, undefined);
           }
@@ -4338,15 +4341,12 @@ describe("ClaudeAdapterLive", () => {
       ).pipe(Effect.forkChild);
       const drainSdkMessages = Effect.gen(function* () {
         receipt = yield* Deferred.make<void>();
-        // The heartbeat follows queued SDK messages without adding a warning.
+        // Session-state notifications still report between turns, so this
+        // receipt drains queued SDK messages even after a turn's result.
         query.emit({
           type: "system",
-          subtype: "api_retry",
-          attempt: 1,
-          max_retries: 1,
-          retry_delay_ms: 0,
-          error_status: 429,
-          error: { type: "rate_limit_error" },
+          subtype: "session_state_changed",
+          state: "idle",
           session_id: "sdk-session-limit",
           uuid: "usage-limit-drain",
         } as unknown as SDKMessage);
@@ -4837,6 +4837,89 @@ describe("ClaudeAdapterLive", () => {
         1,
       );
       runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("drops status and api_retry heartbeats that arrive with no turn to own them", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "session.exited",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/compact",
+        attachments: [],
+      });
+
+      // The sequence a /compact produces when compaction outlives its turn:
+      // an in-turn compacting status, the turn's result, then the
+      // post-compaction status clear and a transport retry landing on a
+      // thread whose turn already completed. Both heartbeats map to busy
+      // states that only a turn can clear, so reporting either would leave
+      // the session at running with no active turn forever.
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "sdk-session-1",
+        uuid: "status-compacting",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        num_turns: 0,
+        session_id: "sdk-session-1",
+        uuid: "compact-result",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "status",
+        status: null,
+        compact_result: "success",
+        session_id: "sdk-session-1",
+        uuid: "status-clear",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "api_retry",
+        attempt: 3,
+        max_retries: 10,
+        retry_delay_ms: 1000,
+        error_status: 502,
+        error: { type: "api_error" },
+        session_id: "sdk-session-1",
+        uuid: "post-turn-retry",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const heartbeats = runtimeEvents
+        .filter((event) => event.type === "session.state.changed")
+        .map((event) =>
+          event.type === "session.state.changed"
+            ? `${event.payload.state}:${event.payload.reason ?? ""}`
+            : "",
+        )
+        .filter((entry) => entry.includes(":status:") || entry.includes(":api_retry:"));
+      // Only the in-turn compacting heartbeat reports; the post-turn pair is
+      // dropped, leaving the turn completion's ready state in charge.
+      assert.deepEqual(heartbeats, ["waiting:status:compacting"]);
+      const turnCompleted = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(turnCompleted?.type, "turn.completed");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
