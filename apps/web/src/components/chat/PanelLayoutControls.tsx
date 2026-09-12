@@ -1,5 +1,7 @@
 import {
   Columns2Icon,
+  FolderIcon,
+  Globe2Icon,
   LayoutTemplateIcon,
   Maximize2Icon,
   Minimize2Icon,
@@ -8,6 +10,7 @@ import {
 } from "lucide-react";
 import { memo } from "react";
 
+import { calculatePaneTreeLayout, type PaneTree } from "../../splitPaneTree";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Toggle } from "../ui/toggle";
@@ -30,6 +33,8 @@ interface PanelLayoutControlsProps {
   workspaceDefaults?: {
     readonly hasGlobalDefault: boolean;
     readonly hasProjectDefault: boolean;
+    readonly currentLayout: PaneTree;
+    readonly projectTitle: string;
     readonly onSaveGlobal: () => void;
     readonly onSaveProject: () => void;
     readonly onClearGlobal: () => void;
@@ -39,6 +44,87 @@ interface PanelLayoutControlsProps {
   liveAgentCount: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
+}
+
+function WorkspaceLayoutMiniature({ tree }: { readonly tree: PaneTree }) {
+  const layout = calculatePaneTreeLayout(tree.root);
+  return (
+    <div className="relative size-full">
+      {layout.groups.map(({ bounds, group }) => (
+        <div
+          key={group.id}
+          className="absolute p-0.5"
+          style={{
+            top: `${bounds.top * 100}%`,
+            left: `${bounds.left * 100}%`,
+            width: `${(bounds.right - bounds.left) * 100}%`,
+            height: `${(bounds.bottom - bounds.top) * 100}%`,
+          }}
+        >
+          <div className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md bg-background shadow-[0_0_0_1px_--theme(--color-foreground/10%),0_1px_2px_--theme(--color-black/5%)] dark:shadow-[0_0_0_1px_--theme(--color-white/10%)]">
+            <div className="flex h-3 shrink-0 items-center gap-0.5 bg-muted/70 px-1">
+              {group.tabIds.slice(0, 3).map((tabId) => (
+                <span
+                  key={tabId}
+                  className={
+                    tabId === group.activeTabId
+                      ? "h-1 w-3 rounded-full bg-foreground/45"
+                      : "size-1 rounded-full bg-foreground/18"
+                  }
+                />
+              ))}
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col justify-center gap-1 px-2">
+              <span className="h-1 w-3/4 rounded-full bg-foreground/10" />
+              <span className="h-1 w-1/2 rounded-full bg-foreground/7" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WorkspaceDefaultPreview({
+  kind,
+  projectTitle,
+  tree,
+}: {
+  readonly kind: "global" | "project";
+  readonly projectTitle: string;
+  readonly tree: PaneTree;
+}) {
+  const global = kind === "global";
+  const Icon = global ? Globe2Icon : FolderIcon;
+  return (
+    <div className="flex w-64 flex-col gap-2.5 p-1.5 text-left">
+      <div className="flex items-start gap-2">
+        <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-foreground">
+            {global ? "Global workspace default" : `Project default · ${projectTitle}`}
+          </div>
+          <p className="mt-0.5 text-pretty text-[11px] leading-4 text-muted-foreground">
+            {global
+              ? "Used for every new thread unless that project has its own default."
+              : "Used for every new thread in this project and overrides the global default."}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <div className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+          Layout to save
+        </div>
+        <div
+          aria-hidden
+          className="h-28 rounded-lg bg-muted/45 p-1.5 shadow-[inset_0_0_0_1px_--theme(--color-foreground/8%)] dark:shadow-[inset_0_0_0_1px_--theme(--color-white/8%)]"
+        >
+          <WorkspaceLayoutMiniature tree={tree} />
+        </div>
+      </div>
+      <p className="text-[10px] text-muted-foreground">Existing threads won’t change.</p>
+    </div>
+  );
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
@@ -165,8 +251,50 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             <TooltipPopup side="bottom">Workspace defaults</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end" className="min-w-56">
-            <MenuItem onClick={workspaceDefaults.onSaveGlobal}>Save as global default</MenuItem>
-            <MenuItem onClick={workspaceDefaults.onSaveProject}>Save for this project</MenuItem>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuItem onClick={workspaceDefaults.onSaveGlobal}>
+                    Save as global default
+                  </MenuItem>
+                }
+              />
+              <TooltipPopup
+                align="start"
+                side="left"
+                sideOffset={8}
+                variant="glass"
+                className="rounded-xl"
+              >
+                <WorkspaceDefaultPreview
+                  kind="global"
+                  projectTitle={workspaceDefaults.projectTitle}
+                  tree={workspaceDefaults.currentLayout}
+                />
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuItem onClick={workspaceDefaults.onSaveProject}>
+                    Save for this project
+                  </MenuItem>
+                }
+              />
+              <TooltipPopup
+                align="start"
+                side="left"
+                sideOffset={8}
+                variant="glass"
+                className="rounded-xl"
+              >
+                <WorkspaceDefaultPreview
+                  kind="project"
+                  projectTitle={workspaceDefaults.projectTitle}
+                  tree={workspaceDefaults.currentLayout}
+                />
+              </TooltipPopup>
+            </Tooltip>
             <MenuSeparator />
             <MenuItem
               onClick={workspaceDefaults.onClearProject}

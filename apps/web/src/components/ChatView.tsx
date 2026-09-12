@@ -2110,25 +2110,29 @@ export default function ChatView(props: ChatViewProps) {
   const projectWorkspaceDefault = useThreadWorkspaceDefaultStore((state) =>
     activeLogicalProjectKey ? (state.byProjectKey[activeLogicalProjectKey] ?? null) : null,
   );
+  const currentWorkspaceDefault = useMemo(
+    () => createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState),
+    [rightPanelState, threadWorkspaceLayout],
+  );
   const saveGlobalWorkspaceDefault = useCallback(() => {
-    const template = createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState);
-    useThreadWorkspaceDefaultStore.getState().saveGlobal(template);
+    useThreadWorkspaceDefaultStore.getState().saveGlobal(currentWorkspaceDefault);
     toastManager.add({
       type: "success",
       title: "Global workspace default saved",
-      description: `${describeThreadWorkspaceDefault(template)}. It will be copied into new threads without a project override.`,
+      description: `${describeThreadWorkspaceDefault(currentWorkspaceDefault)}. It will be copied into new threads without a project override.`,
     });
-  }, [rightPanelState, threadWorkspaceLayout]);
+  }, [currentWorkspaceDefault]);
   const saveProjectWorkspaceDefault = useCallback(() => {
     if (!activeLogicalProjectKey) return;
-    const template = createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState);
-    useThreadWorkspaceDefaultStore.getState().saveProject(activeLogicalProjectKey, template);
+    useThreadWorkspaceDefaultStore
+      .getState()
+      .saveProject(activeLogicalProjectKey, currentWorkspaceDefault);
     toastManager.add({
       type: "success",
       title: "Project workspace default saved",
-      description: `${describeThreadWorkspaceDefault(template)}. It will be copied into new threads for this project.`,
+      description: `${describeThreadWorkspaceDefault(currentWorkspaceDefault)}. It will be copied into new threads for this project.`,
     });
-  }, [activeLogicalProjectKey, rightPanelState, threadWorkspaceLayout]);
+  }, [activeLogicalProjectKey, currentWorkspaceDefault]);
   const clearGlobalWorkspaceDefault = useCallback(() => {
     useThreadWorkspaceDefaultStore.getState().clearGlobal();
     toastManager.add({ type: "success", title: "Global workspace default cleared" });
@@ -8268,6 +8272,8 @@ export default function ChatView(props: ChatViewProps) {
             workspaceDefaults: {
               hasGlobalDefault: globalWorkspaceDefault !== null,
               hasProjectDefault: projectWorkspaceDefault !== null,
+              currentLayout: currentWorkspaceDefault.layout.paneTree,
+              projectTitle: activeProject?.title ?? "This project",
               onSaveGlobal: saveGlobalWorkspaceDefault,
               onSaveProject: saveProjectWorkspaceDefault,
               onClearGlobal: clearGlobalWorkspaceDefault,
