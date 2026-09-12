@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -54,6 +55,7 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { probeCursorSkills } from "./CursorSkills.ts";
+import { makeCursorCommandCatalog } from "./CursorCommands.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
@@ -130,11 +132,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-      });
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const discoverModels = yield* makeCursorModelDiscovery(effectiveConfig, processEnv);
@@ -151,7 +148,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
+      const baseSnapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<CursorSettings>
+      >({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -188,6 +187,23 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
+      const commands = yield* makeCursorCommandCatalog(processEnv);
+      const snapshot = {
+        ...baseSnapshot,
+        getSnapshot: baseSnapshot.getSnapshot.pipe(Effect.flatMap(commands.withCommands)),
+        refresh: baseSnapshot.refresh.pipe(Effect.flatMap(commands.withCommands)),
+        streamChanges: Stream.merge(
+          baseSnapshot.streamChanges,
+          commands.streamChanges.pipe(Stream.mapEffect(() => baseSnapshot.getSnapshot)),
+        ).pipe(Stream.mapEffect(commands.withCommands)),
+      };
+      const adapter = yield* makeCursorAdapter(effectiveConfig, {
+        environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        instanceId,
+        onAvailableCommands: commands.onAvailableCommands,
+      });
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -199,22 +215,32 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot
-            : Effect.all([
-                snapshot.getSnapshot,
-                probeCursorSkills(cwd, processEnv).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail: `Failed to discover Cursor skills for '${cwd}'`,
-                        cause,
-                      }),
-                  ),
+            : probeCursorSkills(cwd, processEnv).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail: `Failed to discover Cursor skills for '${cwd}'`,
+                      cause,
+                    }),
                 ),
-              ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills }))),
+                Effect.flatMap((skills) =>
+                  Effect.gen(function* () {
+                    yield* commands.recordSkills(cwd, skills);
+                    const current = yield* snapshot.getSnapshot;
+                    return {
+                      ...current,
+                      slashCommands:
+                        current.workspaceSnapshots?.find((workspace) => workspace.cwd === cwd)
+                          ?.slashCommands ?? current.slashCommands,
+                      skills,
+                    };
+                  }),
+                ),
+              ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
