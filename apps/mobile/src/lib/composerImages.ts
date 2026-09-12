@@ -470,22 +470,24 @@ export async function pickComposerMedia(input: {
     }
 
     const name = asset.fileName?.trim() || "image";
-    let sourceBytes = asset.fileSize ?? null;
-    if (sourceBytes === null) {
-      try {
-        const { File } = await import("expo-file-system");
-        sourceBytes = new File(asset.uri).size;
-      } catch {
-        sourceBytes = null;
-      }
+    // The picker's reported size is a hint, not a measurement: Android content streams can
+    // deliver more bytes than they advertise. Only a size read from the file itself decides
+    // whether the original bytes are safe to load into JS.
+    let sourceBytes: number | null = null;
+    try {
+      const { File } = await import("expo-file-system");
+      sourceBytes = new File(asset.uri).size;
+    } catch {
+      sourceBytes = null;
     }
     // Originals the provider can read and that fit the cap pass through byte for byte so
     // transparency and animation survive. Everything else (HEIC/HEIF, oversized JPEGs,
-    // unknown sizes) is rendered to a bounded JPEG off the JS thread.
+    // unmeasurable sources) is rendered to a bounded JPEG off the JS thread.
     const originalMimeType =
       mimeType !== undefined &&
       isProviderSendTurnSupportedImageMimeType(mimeType) &&
       sourceBytes !== null &&
+      sourceBytes > 0 &&
       sourceBytes <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
         ? mimeType
         : null;
