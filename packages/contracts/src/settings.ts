@@ -272,6 +272,9 @@ export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
+export const DEFAULT_PULL_REQUEST_REVIEW_INSTRUCTIONS =
+  "Review this pull request as a careful senior engineer. Focus on correctness, missed edge cases, security issues, and tests that should exist but do not. Call out anything risky or worth a second look before approving.";
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -457,6 +460,15 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * The instructions the "Review this PR" pull-request action hands the agent, alongside the
+   * pull request's own context chip. Client-local rather than server-authoritative: a pull
+   * request can belong to any environment this browser talks to, and the checklist is the
+   * reader's own preference, not a property of whichever server happens to host that PR.
+   */
+  pullRequestReviewInstructions: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUEST_REVIEW_INSTRUCTIONS)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1492,5 +1504,6 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  pullRequestReviewInstructions: Schema.optionalKey(TrimmedString),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

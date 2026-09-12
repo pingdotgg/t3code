@@ -601,6 +601,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
+    id: "pull-request-review-instructions",
+    title: "Pull request review checklist",
+    to: "/settings/source-control",
+    searchTerms: ["review this pr agent checklist prompt instructions"],
+    primaryOnly: true,
+  },
+  {
     id: "environment-icon",
     title: "Environment icon",
     to: "/settings/connections",
