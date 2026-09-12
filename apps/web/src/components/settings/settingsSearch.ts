@@ -272,6 +272,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "composer-send-key",
+    title: "Send prompt with",
+    to: "/settings/general",
+    searchTerms: [
+      "enter cmd command ctrl control return submit accidental keyboard shortcut composer",
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

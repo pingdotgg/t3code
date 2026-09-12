@@ -166,6 +166,13 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
   none: "None",
 };
 
+const MOD_KEY_LABEL = isMacPlatform(navigator.platform) ? "Cmd" : "Ctrl";
+
+const COMPOSER_SEND_KEY_LABELS = {
+  enter: "Enter",
+  "mod-enter": `${MOD_KEY_LABEL}+Enter`,
+} as const;
+
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
@@ -546,6 +553,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
         ? ["Collapse composer on scroll"]
         : []),
+      ...(settings.composerSendKey !== DEFAULT_UNIFIED_SETTINGS.composerSendKey
+        ? ["Send prompt with"]
+        : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
@@ -605,6 +615,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
+      settings.composerSendKey,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -711,6 +722,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+      composerSendKey: DEFAULT_UNIFIED_SETTINGS.composerSendKey,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -2415,6 +2427,43 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Collapse composer on scroll"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("composer-send-key")}
+          description={`Set the prompt sending key to ${MOD_KEY_LABEL}+Enter to keep a stray Enter from sending an unfinished prompt.`}
+          resetAction={
+            settings.composerSendKey !== DEFAULT_UNIFIED_SETTINGS.composerSendKey ? (
+              <SettingResetButton
+                label="send prompt with"
+                onClick={() =>
+                  updateSettings({ composerSendKey: DEFAULT_UNIFIED_SETTINGS.composerSendKey })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.composerSendKey}
+              onValueChange={(value) => {
+                if (value === "enter" || value === "mod-enter") {
+                  updateSettings({ composerSendKey: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Send prompt with">
+                <SelectValue>{COMPOSER_SEND_KEY_LABELS[settings.composerSendKey]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="enter">
+                  {COMPOSER_SEND_KEY_LABELS.enter}
+                </SelectItem>
+                <SelectItem hideIndicator value="mod-enter">
+                  {COMPOSER_SEND_KEY_LABELS["mod-enter"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 
