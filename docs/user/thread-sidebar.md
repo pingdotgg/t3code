@@ -96,6 +96,33 @@ rules to connected environments that support shared settings. Offline environmen
 and older servers keep their previous values. Changing a rule does not reopen
 already settled threads.
 
+## Import agent history
+
+T3 Code brings your existing Claude Code and Codex conversations into the app.
+While automatic import is on, a computer imports its history when its server
+starts, when you sign in to Claude Code or Codex there, and when you widen the
+history window. Narrowing the window imports nothing new, and conversations you
+start later are picked up on the next import, so use **Import existing
+conversations now** when you want them sooner. T3 Code creates a project for
+each directory those conversations ran in, and reuses a project you already have
+when its directory matches.
+
+Imported conversations arrive as settled threads, so they stay out of your
+active list. Open one and continue it as usual when the agent still has that
+session on disk.
+
+Control this in **Settings → General → Projects & threads**:
+
+- **Import agent history automatically** turns the background import on or off.
+- **History to import** chooses how far back it reaches. All history is the
+  default; narrow it to the last 30 days, 90 days, or year if you only want
+  recent work.
+- **Import existing conversations now** runs an import straight away, whether or
+  not the automatic import is on.
+
+Turning the setting off stops future imports. It does not remove threads that
+already imported.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your

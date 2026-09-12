@@ -4,6 +4,7 @@ import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
+  buildImportHistoryActionItem,
   buildProjectActionItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -620,6 +621,49 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("buildImportHistoryActionItem", () => {
+  it("shows up in the actions group when searched by import", () => {
+    const item = buildImportHistoryActionItem({
+      icon: null,
+      runImport: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [{ value: "actions", label: "Actions", items: [item] }],
+      query: "import",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.value).toBe("actions");
+    expect(groups[0]?.items.map((entry) => entry.value)).toEqual(["action:import-agent-history"]);
+  });
+
+  it("keeps the palette open until the import action settles", async () => {
+    let finishImport: (() => void) | undefined;
+    const runImport = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishImport = resolve;
+        }),
+    );
+    const item = buildImportHistoryActionItem({ icon: null, runImport });
+    let importSettled = false;
+    const action = item.run().then(() => {
+      importSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(runImport).toHaveBeenCalledTimes(1);
+    expect(importSettled).toBe(false);
+
+    finishImport?.();
+    await action;
+    expect(importSettled).toBe(true);
   });
 });
 

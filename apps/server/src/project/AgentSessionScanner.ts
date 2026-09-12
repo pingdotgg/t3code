@@ -89,7 +89,6 @@ const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  * those payloads. Raw I/O and selected history have separate budgets.
  */
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
@@ -176,7 +175,7 @@ export type AgentSessionRecentThread =
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
-  | { readonly _tag: "Skipped" };
+  | { readonly _tag: "Skipped"; readonly reason: "budget" | "unreadable" };
 
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
@@ -192,6 +191,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      options?: { readonly windowMs: number | null },
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -373,7 +373,6 @@ function parseAgentSessionRecords(
       firstUserMessage = message;
     }
     messages.push(message);
-    if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
 
   const hasMatchingCodexEventInTurn = (text: string) => {
@@ -487,11 +486,8 @@ function parseAgentSessionRecords(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
-  const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
-  const retainedMessages = firstUserMessageRetained
-    ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+  const retainedMessages = visibleMessages;
   const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
 
   return {
@@ -813,6 +809,14 @@ export const make = Effect.gen(function* () {
    * Project history fields while reading, before allocating whole JSON records.
    * Check the file identity on both sides of the read. A selected-history budget
    * failure rejects the entire transcript before any imported messages persist.
+   *
+   * "BudgetExceeded" is reserved for transcripts a later pass could still
+   * import, so the caller can report them as remaining work rather than as a
+   * permanent failure. Only the shared record allowance qualifies, and only
+   * once this pass has spent part of it: a transcript that outgrows a whole
+   * fresh allowance, one over the per-transcript byte cap, and one whose
+   * selected history alone outgrows MAX_IMPORT_HISTORY_BYTES all fail
+   * identically on every later pass, so they read as "Unreadable".
    */
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
@@ -820,14 +824,17 @@ export const make = Effect.gen(function* () {
     recordLimit: number,
     source: AgentSessionSource,
   ) {
-    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    const unreadable = { _tag: "Unreadable" } as const;
+    const overRecordLimit =
+      recordLimit < MAX_IMPORT_RECORDS ? ({ _tag: "BudgetExceeded" } as const) : unreadable;
+    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return unreadable;
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
             if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
-              return null;
+              return unreadable;
             }
             const records: Array<DecodedTranscriptRecord> = [];
             let historyBytes = 0;
@@ -867,7 +874,7 @@ export const make = Effect.gen(function* () {
                 Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
               );
               if (Option.isNone(next)) {
-                return null;
+                return unreadable;
               }
 
               bytesRead += next.value.byteLength;
@@ -884,20 +891,23 @@ export const make = Effect.gen(function* () {
                 }
                 return true;
               });
-              if (!withinBudget) return null;
+              if (!withinBudget) return overRecordLimit;
             }
 
-            if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
+            if (recordStarted && !(yield* Effect.try(finishRecord))) return overRecordLimit;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, recordCount }
-              : null;
+              ? ({ _tag: "Snapshot", records, recordCount } as const)
+              : unreadable;
           }),
         ),
       ),
     ).pipe(
+      // Includes TranscriptJsonLimitError, which rejects a transcript whose own
+      // selected history or nesting depth is past its fixed cap. Nothing a later
+      // pass does changes that, so it stays "Unreadable".
       Effect.catch((cause) =>
         Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
-          Effect.as(null),
+          Effect.as(unreadable),
         ),
       ),
     );
@@ -1328,13 +1338,15 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    options?: { readonly windowMs: number | null },
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
+    const windowMs = options === undefined ? RECENT_THREAD_WINDOW_MS : options.windowMs;
+    const cutoffMs = windowMs === null ? null : nowMs - windowMs;
 
     const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
@@ -1352,8 +1364,8 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
-          transcript.mtimeMs > nowMs
+          transcript.mtimeMs > nowMs ||
+          (cutoffMs !== null && transcript.mtimeMs < cutoffMs)
         ) {
           continue;
         }
@@ -1389,11 +1401,11 @@ export const make = Effect.gen(function* () {
             completed === undefined &&
             (transcriptsRemaining === 0 || bytesRemaining === 0 || recordsRemaining === 0)
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "budget" });
           }
           const stats = yield* statOption(transcript.filePath);
           if (Option.isNone(stats) || stats.value.type !== "File") {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
           const identity = transcriptIdentity(transcript.filePath, stats.value);
           const completedSource = completed?.find(
@@ -1409,13 +1421,17 @@ export const make = Effect.gen(function* () {
               source: completedSource,
             });
           }
+          // A transcript over the per-transcript cap never fits, on this pass or
+          // any later one, so it is a permanent failure rather than remaining work.
+          if (identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
+          }
           if (
             transcriptsRemaining === 0 ||
             recordsRemaining === 0 ||
-            identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
             identity.size > bytesRemaining
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "budget" });
           }
           // Reserve the whole file even if its read or parse fails.
           transcriptsRemaining -= 1;
@@ -1426,8 +1442,11 @@ export const make = Effect.gen(function* () {
             recordsRemaining,
             candidate.source,
           );
-          if (snapshot === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          if (snapshot._tag !== "Snapshot") {
+            return Option.some<AgentSessionRecentThread>({
+              _tag: "Skipped",
+              reason: snapshot._tag === "BudgetExceeded" ? "budget" : "unreadable",
+            });
           }
           recordsRemaining -= snapshot.recordCount;
 
@@ -1438,14 +1457,14 @@ export const make = Effect.gen(function* () {
             if (snapshotCwd !== null) break;
           }
           if (snapshotCwd === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
           const expandedCwd = expandHomePath(snapshotCwd.trim());
           if (
             !path.isAbsolute(expandedCwd) ||
             (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
 
           const parsedThread = parseAgentSessionRecords(
@@ -1458,7 +1477,7 @@ export const make = Effect.gen(function* () {
             snapshot.records,
           );
           if (parsedThread === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
 
           const source: AgentSessionImportSource = {
@@ -1487,7 +1506,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    options,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, options));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

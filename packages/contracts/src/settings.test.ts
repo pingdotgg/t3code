@@ -501,6 +501,28 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ServerSettings agent session auto-import", () => {
+  it("defaults auto-import on with the full history window", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.agentSessionAutoImport).toBe(true);
+    expect(settings.agentSessionImportWindow).toBe("all");
+  });
+
+  it("accepts auto-import and window updates at the patch boundary", () => {
+    expect(
+      decodeServerSettingsPatch({
+        agentSessionAutoImport: false,
+        agentSessionImportWindow: "30d",
+      }),
+    ).toMatchObject({ agentSessionAutoImport: false, agentSessionImportWindow: "30d" });
+  });
+
+  it("rejects an unsupported import window", () => {
+    expect(() => decodeServerSettings({ agentSessionImportWindow: "7d" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ agentSessionImportWindow: "7d" })).toThrow();
+  });
+});
+
 describe("ClientSettings pull request merge methods", () => {
   it("defaults to no project overrides and accepts supported methods", () => {
     expect(decodeClientSettings({}).pullRequestMergeMethodOverrides).toEqual({});
@@ -517,6 +539,7 @@ describe("ClientSettings pull request merge methods", () => {
         pullRequestMergeMethodOverrides: { project: "fast-forward" },
       }),
     ).toThrow();
+
   });
 });
 

@@ -236,6 +236,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "import-agent-history",
+    title: "Import agent history automatically",
+    to: "/settings/general",
+    searchTerms: ["claude code codex conversations chats history import migrate existing"],
+  },
+  {
+    id: "agent-history-window",
+    title: "History to import",
+    to: "/settings/general",
+    targetId: "import-agent-history",
+    searchTerms: ["claude codex how far back window days year all history import"],
+  },
+  {
+    id: "import-agent-history-now",
+    title: "Import existing conversations now",
+    to: "/settings/general",
+    targetId: "import-agent-history",
+    searchTerms: ["claude codex import now manually existing conversations chats migrate bring in"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
