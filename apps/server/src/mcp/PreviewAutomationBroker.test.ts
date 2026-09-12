@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -310,7 +311,7 @@ it.effect("announces a live replacement stream before delivering requests", () =
       yield* Effect.yieldNow;
 
       const result = yield* broker.invoke<string>({ scope, operation: "status", input: {} });
-      yield* Fiber.join(consumer);
+      yield* Fiber.await(consumer);
 
       expect(receivedTypes).toEqual(["connected", "request"]);
       expect(result).toBe("ready");
@@ -1102,6 +1103,131 @@ it.effect("accepts responses only from the host that received the request", () =
 
       const result = yield* broker.invoke<string>({ scope, operation: "status", input: {} });
       expect(result).toBe("owner");
+    }),
+  ),
+);
+
+it.effect("evicts an unanswered host and lets later calls use a healthy runtime", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<string>();
+      const received = yield* Deferred.make<RoutedRequest>();
+      const otherReceived = yield* Deferred.make<void>();
+      const otherCompleted = yield* Deferred.make<void>();
+      const oldTab = PreviewTabId.make("tab-on-frozen-host");
+      const events = yield* broker.connect(makeHost());
+      const consumer = yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, event.connectionId);
+        const request = { ...event.request, connectionId: event.connectionId };
+        if (request.operation === "open") {
+          return broker.respond({
+            clientId: "client-1",
+            connectionId: event.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { tabId: oldTab },
+          });
+        }
+        return request.operation === "snapshot"
+          ? Deferred.succeed(received, request)
+          : Deferred.succeed(otherReceived, undefined);
+      }).pipe(Effect.forkScoped);
+      const connectionId = yield* Deferred.await(connected);
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+
+      const healthyConnected = yield* Deferred.make<void>();
+      const healthyRequests: RoutedRequest[] = [];
+      const healthy = yield* broker.connect(makeHost({ clientId: "healthy" }));
+      yield* Stream.runForEach(healthy, (event) => {
+        if (event.type === "connected") return Deferred.succeed(healthyConnected, undefined);
+        healthyRequests.push({ ...event.request, connectionId: event.connectionId });
+        return broker.respond({
+          clientId: "healthy",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: "healthy",
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(healthyConnected);
+
+      const timedOut = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "snapshot",
+          input: {},
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const lateRequest = yield* Deferred.await(received);
+      const other = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "evaluate",
+          input: {},
+          timeoutMs: 10_000,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.tap(() => Deferred.succeed(otherCompleted, undefined)),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(otherReceived);
+      yield* TestClock.adjust(1_000);
+      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(yield* Deferred.isDone(otherCompleted)).toBe(true);
+      expect(yield* Fiber.join(other)).toMatchObject({
+        _tag: "PreviewAutomationClientDisconnectedError",
+      });
+      yield* Fiber.await(consumer);
+
+      // Late traffic from the evicted connection cannot restore its assignment.
+      yield* broker.respond({
+        clientId: "client-1",
+        connectionId,
+        requestId: lateRequest.requestId,
+        ok: true,
+        result: { tabId: oldTab },
+      });
+      yield* broker.focusHost({
+        clientId: "client-1",
+        connectionId,
+        environmentId: scope.environmentId,
+        focused: true,
+      });
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("healthy");
+      expect(healthyRequests).toHaveLength(1);
+      expect(healthyRequests[0]?.tabId).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("keeps a host that responds with an operation timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ...(event.request.operation === "waitFor"
+            ? {
+                ok: false,
+                error: { _tag: "PreviewAutomationTimeoutError", message: "Selector timed out" },
+              }
+            : { ok: true, result: "responsive" }),
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      expect(
+        yield* broker.invoke<void>({ scope, operation: "waitFor", input: {} }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
     }),
   ),
 );
