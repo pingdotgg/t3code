@@ -357,10 +357,30 @@ const signWindowsExecutable = Effect.fn("signWindowsExecutable")(function* (
     yield* Effect.log("[cli-archive] Windows signing disabled (missing Azure Trusted Signing).");
     return;
   }
+  // Node's --build-sea injects the blob into a copy of node.exe by rebuilding
+  // its resource section, but unlike its Mach-O path it leaves the original
+  // Authenticode entry in place. The certificate table then points at bytes
+  // that moved, and signtool refuses the image with 0x800700C1 ("not a valid
+  // Win32 application") until that stale signature is removed. The Trusted
+  // Signing module ships a Windows SDK signtool; `signtool remove /s` strips
+  // the security directory so the fresh signature lands on a clean PE.
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const stripScript = [
+    "$ErrorActionPreference = 'Stop';",
+    "$signtool = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'TrustedSigning') -Recurse -Filter signtool.exe |",
+    "  Where-Object { $_.FullName -match '\\\\x64\\\\signtool\\.exe$' } | Select-Object -First 1 -ExpandProperty FullName;",
+    "if (-not $signtool) { $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source };",
+    "if (-not $signtool) { throw 'signtool.exe not found; run the Trusted Signing preparation step first.' };",
+    `& $signtool remove /s ${quote(executablePath)};`,
+    'if ($LASTEXITCODE -ne 0) { throw "signtool remove failed with exit code $LASTEXITCODE" }',
+  ].join(" ");
+  yield* runCommand(
+    ChildProcess.make("pwsh", ["-NoProfile", "-NonInteractive", "-Command", stripScript]),
+    "signtool remove t3.exe",
+  );
   // Mirrors electron-builder's invocation for the installer: every value
   // single-quoted, the file path in Windows form. `$ErrorActionPreference`
   // makes a signing failure inside the cmdlet surface as a non-zero exit.
-  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
   const script = [
     "$ErrorActionPreference = 'Stop';",
     "Invoke-TrustedSigning",
