@@ -127,12 +127,81 @@ export function pullRequestCheckoutCommand(
   }
 }
 
-/** Activity changes only when the same host resource reports a newer revision. */
+/**
+ * Activity changes only when the same host resource reports a newer revision. Compared as
+ * instants rather than text, so one revision written `Z` and `.000Z` (or with an offset) is
+ * not a change; unparseable text falls back to the text, like the service's own compare.
+ */
 export function shouldRefreshPullRequestActivity(
   previous: { readonly key: string; readonly updatedAt: string } | null,
   next: { readonly key: string; readonly updatedAt: string },
 ): boolean {
-  return previous !== null && previous.key === next.key && previous.updatedAt !== next.updatedAt;
+  if (previous === null || previous.key !== next.key) return false;
+  const prevAt = Date.parse(previous.updatedAt);
+  const nextAt = Date.parse(next.updatedAt);
+  if (Number.isNaN(prevAt) || Number.isNaN(nextAt)) return previous.updatedAt !== next.updatedAt;
+  return prevAt !== nextAt;
+}
+
+/** The newest conversation instant an activity read carries, or null where it carries none. */
+export function newestPullRequestActivityAt(
+  activity: {
+    readonly comments: ReadonlyArray<{ readonly createdAt: string }>;
+    readonly commits: ReadonlyArray<{ readonly committedDate: string }>;
+    readonly reviewThreads: ReadonlyArray<{
+      readonly comments: ReadonlyArray<{ readonly createdAt: string }>;
+    }>;
+  } | null,
+): string | null {
+  if (activity === null) return null;
+  let newest: string | null = null;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  const consider = (iso: string) => {
+    const at = Date.parse(iso);
+    if (Number.isNaN(at) || at <= newestAt) return;
+    newest = iso;
+    newestAt = at;
+  };
+  for (const comment of activity.comments) consider(comment.createdAt);
+  for (const commit of activity.commits) consider(commit.committedDate);
+  for (const thread of activity.reviewThreads)
+    for (const comment of thread.comments) consider(comment.createdAt);
+  return newest;
+}
+
+/**
+ * Whether a mount activity read that resolved before the first live detail predates it.
+ * False where either side carries no parseable instant — nothing can then be said to be
+ * stale, so the mount walk stands and the dedup holds.
+ */
+export function isPullRequestActivityStale(
+  activity: Parameters<typeof newestPullRequestActivityAt>[0],
+  liveUpdatedAt: string,
+): boolean {
+  const newest = newestPullRequestActivityAt(activity);
+  if (newest === null) return false;
+  const newestAt = Date.parse(newest);
+  const liveAt = Date.parse(liveUpdatedAt);
+  if (Number.isNaN(newestAt) || Number.isNaN(liveAt)) return false;
+  return newestAt < liveAt;
+}
+
+/**
+ * Whether a shared list/sidebar summary observed a newer revision than the activity
+ * baseline. Directional on purpose: an older observed summary is not a reason to walk
+ * again, which is what a plain inequality would say. Unparseable text is not newer,
+ * following newestPullRequestSummary's instant ordering.
+ */
+export function isPullRequestSharedSummaryNewer(
+  previous: { readonly key: string; readonly updatedAt: string } | null,
+  key: string,
+  sharedUpdatedAt: string | null,
+): boolean {
+  if (previous === null || sharedUpdatedAt === null || previous.key !== key) return false;
+  const prevAt = Date.parse(previous.updatedAt);
+  const sharedAt = Date.parse(sharedUpdatedAt);
+  if (Number.isNaN(prevAt) || Number.isNaN(sharedAt)) return false;
+  return sharedAt > prevAt;
 }
 /** Appends fetched pages without replacing fresher comments already in the activity response. */
 export function mergePullRequestThreadComments<T extends { readonly id: string }>(

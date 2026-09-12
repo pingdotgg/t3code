@@ -144,6 +144,8 @@ import {
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
+  isPullRequestActivityStale,
+  isPullRequestSharedSummaryNewer,
   shouldRefreshPullRequestActivity,
   stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
@@ -780,16 +782,63 @@ export function PullRequestDetailPanel({
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
+  const sharedSeenRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
+    null,
+  );
+  // Live baseline stays on the live detail read alone, never the cached snapshot: seeding
+  // from the snapshot makes the first live arrival look like a change and fires a second
+  // walk while the mount walk is still in flight. The mount walk is the coverage for the
+  // live revision it raced with; where that read carries an older conversation (parallel
+  // fire, independent TTLs) its newest instant predates live and it walks again, and a PR
+  // switch re-runs that staleness check under the new key. A shared summary newer than
+  // live is the other trigger, remembered separately so the next run sees the same shared
+  // instant as already seen rather than as a live change (which re-fired). Accepted: a
+  // metadata-only revision (e.g. label bump) still walks once, and a mount cache resolving
+  // late with stale content waits for the next live/shared change or a manual refresh.
+  const liveDetailUpdatedAt = detailQuery.data?.updatedAt ?? null;
+  const sharedSummaryUpdatedAt = sharedSummary?.updatedAt ?? null;
+  const mountActivity = activityQuery.data;
   useEffect(() => {
-    if (!coreDetail) return;
-    const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
-    if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
+    if (liveDetailUpdatedAt === null) return;
+    const next = { key: tabScopeKey, updatedAt: liveDetailUpdatedAt };
+    const previous = activityRevision.current;
+    const previousShared = sharedSeenRevision.current;
+    const isNewScope = previous === null || previous.key !== tabScopeKey;
+    if (isNewScope) {
+      if (
+        isPullRequestActivityStale(mountActivity, liveDetailUpdatedAt) ||
+        isPullRequestSharedSummaryNewer(next, tabScopeKey, sharedSummaryUpdatedAt)
+      ) {
+        activityQuery.refresh();
+        setRefreshToken((token) => token + 1);
+      }
+    } else if (
+      shouldRefreshPullRequestActivity(previous, next) ||
+      (isPullRequestSharedSummaryNewer(previous, tabScopeKey, sharedSummaryUpdatedAt) &&
+        (previousShared === null ||
+          previousShared.key !== tabScopeKey ||
+          isPullRequestSharedSummaryNewer(previousShared, tabScopeKey, sharedSummaryUpdatedAt)))
+    ) {
       activityQuery.refresh();
       setRefreshToken((token) => token + 1);
     }
+    // Baseline stays on live: advancing past it to the shared instant made the next run
+    // read live as older-than-baseline (a text/instant inequality either way) and walk again.
     activityRevision.current = next;
-  }, [activityQuery.refresh, coreDetail, tabScopeKey]);
-  // Reuse activity and diff until core detail reports a changed revision. Keyed by
+    sharedSeenRevision.current =
+      sharedSummaryUpdatedAt !== null
+        ? { key: tabScopeKey, updatedAt: sharedSummaryUpdatedAt }
+        : isNewScope
+          ? null
+          : previousShared;
+  }, [
+    activityQuery.refresh,
+    liveDetailUpdatedAt,
+    mountActivity,
+    sharedSummaryUpdatedAt,
+    tabScopeKey,
+  ]);
+  // Reuse activity and diff until live detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
   useLiveRefresh(

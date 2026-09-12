@@ -43,6 +43,9 @@ import {
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
+  isPullRequestActivityStale,
+  isPullRequestSharedSummaryNewer,
+  newestPullRequestActivityAt,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
@@ -132,6 +135,223 @@ describe("pull request activity refresh", () => {
         updatedAt: "2026-08-13T13:01:00Z",
       }),
     ).toBe(false);
+  });
+
+  it("counts one activity fetch when live detail arrives with a fixed updatedAt", () => {
+    // Cold open with live-only revision tracking: the mount walk is the one fetch, and the
+    // first live arrival baselines rather than refreshing. A stale cached snapshot must never
+    // seed the revision — seeding T_old then seeing live T_new is what double-fired.
+    let revision: { readonly key: string; readonly updatedAt: string } | null = null;
+    let refreshes = 0;
+    const seen = (updatedAt: string) => {
+      const next = { ...first, updatedAt };
+      if (shouldRefreshPullRequestActivity(revision, next)) refreshes += 1;
+      revision = next;
+    };
+
+    seen("2026-08-13T13:00:00Z");
+    seen("2026-08-13T13:00:00Z");
+    expect(refreshes).toBe(0);
+
+    seen("2026-08-13T13:01:00Z");
+    expect(refreshes).toBe(1);
+  });
+
+  it("treats one instant written two ways as no change, and falls back on unparseable text", () => {
+    // Same instant, different text: Z, millis, and offset must not re-walk.
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        ...first,
+        updatedAt: "2026-08-13T13:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshPullRequestActivity(first, {
+        ...first,
+        updatedAt: "2026-08-13T15:00:00+02:00",
+      }),
+    ).toBe(false);
+    // Nothing parseable to order by, so the text decides.
+    expect(
+      shouldRefreshPullRequestActivity(
+        { ...first, updatedAt: "not a date" },
+        { ...first, updatedAt: "not a date" },
+      ),
+    ).toBe(false);
+    expect(
+      shouldRefreshPullRequestActivity(
+        { ...first, updatedAt: "not a date" },
+        { ...first, updatedAt: "still not a date" },
+      ),
+    ).toBe(true);
+  });
+
+  it("stale-seed-then-live baselines under live-only wiring, where seeding double-fired", () => {
+    // Effect-level wiring: the panel keys the baseline by tab scope (environment + PR) and
+    // never seeds it from the cached snapshot. The old wiring seeded T_old, so live T_new
+    // read as a change and walked a second time while the mount walk was still in flight.
+    const staleSeed = { ...first, updatedAt: "2026-08-13T12:59:00Z" };
+    const live = { ...first, updatedAt: "2026-08-13T13:00:00Z" };
+    // Old: seeded from core detail (snapshot), live arrival refreshes.
+    expect(shouldRefreshPullRequestActivity(staleSeed, live)).toBe(true);
+    // New: first live arrival baselines (null -> no refresh), repeat stays quiet.
+    let revision: typeof live | null = null;
+    let refreshes = 0;
+    for (const next of [live, live]) {
+      if (shouldRefreshPullRequestActivity(revision, next)) refreshes += 1;
+      revision = next;
+    }
+    expect(refreshes).toBe(0);
+    expect(revision).toEqual(live);
+  });
+
+  it("baselines a pull-request switch without refreshing", () => {
+    const pr7 = { ...first, updatedAt: "2026-08-13T13:01:00Z" };
+    expect(
+      shouldRefreshPullRequestActivity(pr7, {
+        key: "project:acme/web#8",
+        updatedAt: "2026-08-13T13:01:00Z",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshPullRequestActivity(pr7, {
+        key: "project:acme/web#8",
+        updatedAt: "2026-08-13T13:05:00Z",
+      }),
+    ).toBe(false);
+    expect(isPullRequestSharedSummaryNewer(pr7, "project:acme/web#8", pr7.updatedAt)).toBe(false);
+  });
+
+  it("re-walks first live only when the mounted activity predates it", () => {
+    const liveAt = "2026-08-13T13:00:00Z";
+    const stale = {
+      comments: [
+        {
+          id: "c1",
+          kind: "issue-comment" as const,
+          author: null,
+          body: "old",
+          createdAt: "2026-08-13T12:00:00Z",
+          url: null,
+          path: null,
+          reviewState: null,
+        },
+      ],
+      commentCount: 1,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: [],
+      reactions: [],
+    };
+    expect(newestPullRequestActivityAt(stale)).toBe("2026-08-13T12:00:00Z");
+    expect(isPullRequestActivityStale(stale, liveAt)).toBe(true);
+    // Fresh mount (same instant, millis spelling) and empty/unknown mounts stand.
+    expect(
+      isPullRequestActivityStale(
+        {
+          ...stale,
+          comments: [{ ...stale.comments[0]!, createdAt: "2026-08-13T13:00:00.000Z" }],
+        },
+        liveAt,
+      ),
+    ).toBe(false);
+    expect(
+      isPullRequestActivityStale({ comments: [], reviewThreads: [], commits: [] }, liveAt),
+    ).toBe(false);
+    expect(isPullRequestActivityStale(null, liveAt)).toBe(false);
+  });
+
+  it("takes a shared summary newer than the baseline, never an older one", () => {
+    expect(isPullRequestSharedSummaryNewer(first, first.key, "2026-08-13T13:01:00Z")).toBe(true);
+    expect(isPullRequestSharedSummaryNewer(first, first.key, first.updatedAt)).toBe(false);
+    expect(isPullRequestSharedSummaryNewer(first, first.key, "2026-08-13T12:59:00Z")).toBe(false);
+    expect(isPullRequestSharedSummaryNewer(null, first.key, "2026-08-13T13:01:00Z")).toBe(false);
+    expect(isPullRequestSharedSummaryNewer(first, "project:acme/web#8", first.updatedAt)).toBe(
+      false,
+    );
+  });
+
+  it("does not re-fire a shared-triggered walk while live stays put", () => {
+    // Helper-level sequencing for the panel effect (live baseline + shared-seen baseline,
+    // see PullRequestDetailPanel): the baseline stays on live, so a shared walk cannot read
+    // live as older-than-baseline next run. An activity arrival re-runs the effect with the
+    // same live/shared inputs, which is the repeated step below.
+    type Rev = { readonly key: string; readonly updatedAt: string } | null;
+    let liveBaseline: Rev = null;
+    let sharedSeen: Rev = null;
+    let refreshes = 0;
+    const step = (liveAt: string, sharedAt: string | null) => {
+      const key = first.key;
+      const next = { key, updatedAt: liveAt };
+      const isNewScope = liveBaseline === null || liveBaseline.key !== key;
+      if (isNewScope) {
+        if (isPullRequestSharedSummaryNewer(next, key, sharedAt)) refreshes += 1;
+      } else if (
+        shouldRefreshPullRequestActivity(liveBaseline, next) ||
+        (isPullRequestSharedSummaryNewer(liveBaseline, key, sharedAt) &&
+          (sharedSeen === null ||
+            sharedSeen.key !== key ||
+            isPullRequestSharedSummaryNewer(sharedSeen, key, sharedAt)))
+      ) {
+        refreshes += 1;
+      }
+      liveBaseline = next;
+      sharedSeen =
+        sharedAt !== null ? { key, updatedAt: sharedAt } : isNewScope ? null : sharedSeen;
+    };
+    const live = "2026-08-13T13:00:00Z";
+    step(live, "2026-08-13T13:01:00Z");
+    expect(refreshes).toBe(1);
+    step(live, "2026-08-13T13:01:00Z");
+    step(live, "2026-08-13T13:01:00Z");
+    expect(refreshes).toBe(1);
+    expect(liveBaseline).toEqual({ key: first.key, updatedAt: live });
+    step(live, "2026-08-13T13:02:00Z");
+    expect(refreshes).toBe(2);
+    step(live, "2026-08-13T13:02:00Z");
+    expect(refreshes).toBe(2);
+  });
+
+  it("walks on first mount when the shared summary is already newer than live", () => {
+    // Null-branch wiring: stale-mount OR shared-newer-than-incoming-live walks once. A null
+    // baseline never reports newer, so the check runs against the incoming live revision.
+    const next = { ...first };
+    const firstMountWalks = (sharedAt: string | null) =>
+      isPullRequestActivityStale(null, next.updatedAt) ||
+      isPullRequestSharedSummaryNewer(next, next.key, sharedAt);
+    expect(firstMountWalks("2026-08-13T13:01:00Z")).toBe(true);
+    expect(firstMountWalks(next.updatedAt)).toBe(false);
+    expect(firstMountWalks(null)).toBe(false);
+  });
+
+  it("re-baselines on pull-request switch and re-runs staleness under the new key", () => {
+    // Key mismatch is a new scope: steady-state helpers stay quiet, the panel baselines the
+    // new PR instead of refreshing, and the stale-mount check runs against the new live.
+    const live8 = "2026-08-13T13:05:00Z";
+    const key8 = "project:acme/web#8";
+    expect(shouldRefreshPullRequestActivity(first, { key: key8, updatedAt: live8 })).toBe(false);
+    expect(isPullRequestSharedSummaryNewer(first, key8, live8)).toBe(false);
+    const staleMount = {
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [
+        {
+          comments: [
+            {
+              id: "tc1",
+              author: null,
+              body: "old",
+              createdAt: "2026-08-13T12:00:00Z",
+              url: null,
+            },
+          ],
+        },
+      ],
+      commits: [],
+    };
+    expect(isPullRequestActivityStale(staleMount, live8)).toBe(true);
+    expect(isPullRequestActivityStale(null, live8)).toBe(false);
   });
 });
 describe("review thread comment pages", () => {
