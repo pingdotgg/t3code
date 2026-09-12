@@ -34,6 +34,20 @@ function hasSegmentSuffix(path: string, suffix: string): boolean {
   return posix === suffix || posix.endsWith(`/${suffix}`);
 }
 
+/**
+ * Whether a divergent index hit may override the literal chip path only after
+ * a disk check. The search index skips gitignored files, so its absence there
+ * is not proof a file does not exist: for slashed paths an index hit that
+ * names a different file must not hijack a real file at the literal path.
+ * Bare names keep the ranked-first hit with no disk check.
+ */
+export function needsLiteralWorkspaceFileCheck(
+  lookupPath: string,
+  match: string | null,
+): boolean {
+  return match !== null && match !== lookupPath && lookupPath.includes("/");
+}
+
 export function pickWorkspaceBasenameMatch(
   basename: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,

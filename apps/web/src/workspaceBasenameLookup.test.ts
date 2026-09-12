@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
+  needsLiteralWorkspaceFileCheck,
   pickWorkspaceBasenameMatch,
 } from "./workspaceBasenameLookup";
 
@@ -87,6 +88,33 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("needsLiteralWorkspaceFileCheck", () => {
+  it("checks the disk when a slashed hit names a different file than the chip", () => {
+    expect(
+      needsLiteralWorkspaceFileCheck("docs/GROUPS_PLAN.md", "BudgetLens/docs/GROUPS_PLAN.md"),
+    ).toBe(true);
+  });
+
+  it("skips the disk when the hit is the literal path", () => {
+    expect(
+      needsLiteralWorkspaceFileCheck(
+        "apps/web/src/components/ChatView.tsx",
+        "apps/web/src/components/ChatView.tsx",
+      ),
+    ).toBe(false);
+  });
+
+  it("skips the disk when there is no hit", () => {
+    expect(needsLiteralWorkspaceFileCheck("docs/plan.md", null)).toBe(false);
+  });
+
+  it("skips the disk for bare names, which keep the ranked-first hit", () => {
+    expect(needsLiteralWorkspaceFileCheck("ChatView.tsx", "apps/web/src/ChatView.tsx")).toBe(
+      false,
+    );
   });
 });
 

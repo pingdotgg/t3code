@@ -163,6 +163,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import {
   claimWorkspaceBasenameLookup,
+  needsLiteralWorkspaceFileCheck,
   normalizeWorkspaceLookupPath,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
@@ -2209,6 +2210,9 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
+  const readWorkspaceFile = useAtomQueryRunner(projectEnvironment.readFile, {
+    reportFailure: false,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -2437,6 +2441,20 @@ function useChatMarkdownState({
     },
     [createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
+  const literalWorkspaceFileExists = useCallback(
+    async (workspaceRelativePath: string) => {
+      if (!cwd || environmentId === null) return false;
+      const result = await readWorkspaceFile({
+        environmentId,
+        input: { cwd, relativePath: workspaceRelativePath },
+      });
+      // readFile reads from disk rather than the search index, so gitignored
+      // files still report present. Binary files fail the read and count as
+      // missing here; a stat RPC would close that gap.
+      return result._tag === "Success";
+    },
+    [cwd, environmentId, readWorkspaceFile],
+  );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
       const lookupPath = normalizeWorkspaceLookupPath(workspaceRelativePath);
@@ -2452,11 +2470,19 @@ function useChatMarkdownState({
           kind: "file",
         },
       });
-      return result._tag === "Success"
-        ? pickWorkspaceBasenameMatch(lookupPath, result.value.entries)
-        : null;
+      if (result._tag !== "Success") return null;
+      const match = pickWorkspaceBasenameMatch(lookupPath, result.value.entries);
+      if (
+        needsLiteralWorkspaceFileCheck(lookupPath, match) &&
+        (await literalWorkspaceFileExists(lookupPath))
+      ) {
+        // The literal chip path names a real file, so keep it instead of the
+        // indexed twin. Callers fall back to the literal path on null.
+        return null;
+      }
+      return match;
     },
-    [cwd, environmentId, searchProjectEntries],
+    [cwd, environmentId, literalWorkspaceFileExists, searchProjectEntries],
   );
   // Chip paths are relative to the agent's cwd, so every workspace open goes
   // through the index first. Absolute host paths open as-is.
