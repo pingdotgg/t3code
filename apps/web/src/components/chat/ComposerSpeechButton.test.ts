@@ -1,6 +1,16 @@
 import { expect, it } from "vite-plus/test";
 
-import { resolveSpeechPresentation } from "./ComposerSpeechButton";
+import { resolveSpeechPresentation, shouldShowComposerFooter } from "./ComposerSpeechButton";
+
+it.each(["preparing", "recording", "transcribing", "error"] as const)(
+  "keeps voice controls visible in a collapsed composer during %s",
+  (phase) => {
+    expect(shouldShowComposerFooter(true, false, phase)).toBe(true);
+  },
+);
+it("keeps the idle collapsed footer hidden", () => {
+  expect(shouldShowComposerFooter(true, false, "idle")).toBe(false);
+});
 
 it("maps voice input phases to composer actions", () => {
   expect(

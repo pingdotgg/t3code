@@ -5,22 +5,33 @@ import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { makeEnvironmentHttpApiClient, makeEnvironmentHttpApiUrlBuilder } from "../rpc/http.ts";
+import {
+  makeEnvironmentHttpApiGroupClient,
+  makeEnvironmentHttpApiUrlBuilder,
+} from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
 const VOICE_REQUEST_TIMEOUT_MS = 30 * 60_000;
-type EnvironmentApiClient = Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
+type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
+  ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
+>;
 
-const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(function* <A, E>(input: {
+const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(function* <
+  A,
+  E,
+  G extends "voice" | "auth",
+>(input: {
+  readonly group: G;
   readonly prepared: PreparedConnection;
   readonly method: "GET" | "POST" | "DELETE";
   readonly path: (baseUrl: string) => string;
   readonly run: (input: {
-    readonly client: EnvironmentApiClient;
+    readonly client: EnvironmentApiClient<G>;
     readonly headers: { readonly authorization?: string; readonly dpop?: string };
   }) => Effect.Effect<A, E>;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
+    group: input.group,
     prepared: input.prepared,
     signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
     remoteAuthorization: yield* Effect.serviceOption(
@@ -54,22 +65,24 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
 
 export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
   request({
+    group: "voice",
     prepared,
     method: "GET",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.status(),
-    run: ({ client, headers }) => client.voice.status({ headers }),
+    run: ({ client, headers }) => client.status({ headers }),
   });
 
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
   let endpoint = prepared.httpBaseUrl;
   return request({
+    group: "auth",
     prepared,
     method: "POST",
     path: (baseUrl) => {
       endpoint = baseUrl;
       return makeEnvironmentHttpApiUrlBuilder(baseUrl).auth.webSocketTicket();
     },
-    run: ({ client, headers }) => client.auth.webSocketTicket({ headers }),
+    run: ({ client, headers }) => client.webSocketTicket({ headers }),
   }).pipe(
     Effect.map(({ ticket }) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);
@@ -82,26 +95,29 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
 
 export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
   request({
+    group: "voice",
     prepared,
     method: "GET",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.models(),
-    run: ({ client, headers }) => client.voice.models({ headers }),
+    run: ({ client, headers }) => client.models({ headers }),
   });
 
 export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
+    group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.downloadModel(),
-    run: ({ client, headers }) => client.voice.downloadModel({ headers, payload: { modelId } }),
+    run: ({ client, headers }) => client.downloadModel({ headers, payload: { modelId } }),
   });
 
 export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
+    group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.selectModel(),
-    run: ({ client, headers }) => client.voice.selectModel({ headers, payload: { modelId } }),
+    run: ({ client, headers }) => client.selectModel({ headers, payload: { modelId } }),
   });
 
 export const cancelEnvironmentSpeechModelDownload = (
@@ -109,25 +125,27 @@ export const cancelEnvironmentSpeechModelDownload = (
   modelId: string,
 ) =>
   request({
+    group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.cancelModelDownload(),
-    run: ({ client, headers }) =>
-      client.voice.cancelModelDownload({ headers, payload: { modelId } }),
+    run: ({ client, headers }) => client.cancelModelDownload({ headers, payload: { modelId } }),
   });
 
 export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint8Array) =>
   request({
+    group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.transcribe(),
-    run: ({ client, headers }) => client.voice.transcribe({ headers, payload: pcm }),
+    run: ({ client, headers }) => client.transcribe({ headers, payload: pcm }),
   });
 
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
+    group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.removeModel(),
-    run: ({ client, headers }) => client.voice.removeModel({ headers, payload: { modelId } }),
+    run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
   });

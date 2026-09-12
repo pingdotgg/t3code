@@ -229,7 +229,7 @@ import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechRecordingPill, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechRecordingPill, ComposerSpeechStatus, shouldShowComposerFooter, resolveSpeechPresentation } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
@@ -3526,13 +3526,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             ) : null}
 
-            {isComposerCollapsedMobile ? null : (
+            {!shouldShowComposerFooter(
+              isComposerCollapsedMobile,
+              isComposerApprovalState,
+              speechInput.state.phase,
+            ) ? null : (
               <div
                 data-chat-composer-footer="true"
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
-                  showMobilePendingAnswerActions && "hidden sm:flex",
+                  showMobilePendingAnswerActions && speechInput.state.phase === "idle" && "hidden sm:flex",
                 )}
               >
                 {composerAttachButton ? <div className="me-2">{composerAttachButton}</div> : null}

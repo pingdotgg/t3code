@@ -176,7 +176,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     setStatus({ prepared, value: freshStatus });
-    if (!freshStatus.supported) return;
+    if (!freshStatus.supported || freshStatus.state === "transcribing") return;
     if (freshStatus.state === "missing-model") {
       const confirmed = await ensureLocalApi().dialogs.confirm(
         `Download ${freshStatus.model} (${Math.round(freshStatus.size / 1024 / 1024)} MB) to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.`,

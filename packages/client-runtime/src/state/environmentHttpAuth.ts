@@ -130,6 +130,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly group: Group;
   readonly requestInit?: RequestInit;
   readonly validateUrl?: (url: string) => Effect.Effect<void, RemoteEnvironmentRequestError>;
+  readonly group: Group;
   readonly request: (input: {
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
     readonly headers: EnvironmentHttpAuthHeaders;

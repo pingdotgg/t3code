@@ -9,6 +9,7 @@ import { DEFAULT_CLIENT_SETTINGS, type EnvironmentId } from "@t3tools/contracts"
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
+  busy: false,
   prepared: {} as PreparedConnection,
   preparedEnvironmentId: null as EnvironmentId | null,
   primaryEnvironmentId: "primary-environment" as EnvironmentId,
@@ -36,7 +37,11 @@ vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
   getEnvironmentSpeechStatus: () =>
-    Effect.succeed({ supported: true, state: "ready", model: "test" }),
+    Effect.succeed({
+      supported: true,
+      state: mocks.busy ? "transcribing" : "ready",
+      model: "test",
+    }),
 }));
 vi.mock("./browserVoiceInput", () => ({
   createBrowserVoiceInputPlatform: () => ({
@@ -91,9 +96,16 @@ async function mountProbe() {
 afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
+  mocks.busy = false;
   mocks.transcriptionEnvironmentId = null;
   mocks.preparedEnvironmentId = null;
   vi.unstubAllGlobals();
+});
+it("does not capture audio while the environment is transcribing", async () => {
+  await mountProbe();
+  mocks.busy = true;
+  await act(() => voice.start());
+  expect(voice.state.phase).toBe("idle");
 });
 it("uses the primary environment for transcription by default", async () => {
   await mountProbe();
