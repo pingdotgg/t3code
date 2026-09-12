@@ -88,8 +88,14 @@ If that Claude config directory has a cached Anthropic login, run `/logout` in a
 Claude Code session using that directory before starting the router setup. Cached
 login credentials can conflict with the router token.
 
-Verify requests in OpenRouter's activity dashboard. For model-role overrides and
-current compatibility requirements, use the
+Select the model you want in T3 Code. For an OpenRouter model outside the built-in
+list, type its full model ID into the model picker and select the custom entry.
+`ANTHROPIC_DEFAULT_*_MODEL` variables map Claude Code aliases such as `sonnet`; they
+do not replace the explicit model ID selected in T3 Code. Custom models may have
+fewer effort, thinking, or context controls than built-in models.
+
+Verify the model used in OpenRouter's activity dashboard. For current compatibility
+requirements, use the
 [OpenRouter Claude Code guide](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration).
 
 ## Other routers
