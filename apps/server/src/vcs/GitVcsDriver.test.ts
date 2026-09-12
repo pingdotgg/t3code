@@ -176,3 +176,67 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
+
+it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
+  const observedArgs: ReadonlyArray<string>[] = [];
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd: "/repo",
+      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
+    });
+
+    const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
+    const writes = observedArgs.filter((args) =>
+      writeCommands.some((command) => args.includes(command)),
+    );
+    assert.strictEqual(writes.length, 4);
+    for (const args of writes) {
+      const command = args.findIndex((arg) => writeCommands.includes(arg));
+      for (const setting of ["core.fsync=objects,reference", "core.fsyncMethod=fsync"]) {
+        const index = args.indexOf(setting);
+        assert.strictEqual(args[index - 1], "-c", args.join(" "));
+        assert.isBelow(index, command);
+      }
+    }
+    assert.deepStrictEqual(observedArgs.at(-1), [
+      "-C",
+      "/repo",
+      "-c",
+      "core.fsync=objects,reference",
+      "-c",
+      "core.fsyncMethod=fsync",
+      "update-ref",
+      "refs/t3/checkpoints/thread/turn/1",
+      "commit0000",
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.sync(() => {
+              observedArgs.push(input.args);
+              const stdout = input.args.includes("write-tree")
+                ? "tree0000\n"
+                : input.args.includes("commit-tree")
+                  ? "commit0000\n"
+                  : input.args.includes("--git-common-dir")
+                    ? ".git\n"
+                    : "";
+              return {
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
+            }),
+        }),
+      ),
+    ),
+  );
+});
