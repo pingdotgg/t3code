@@ -395,6 +395,18 @@ describe("shouldRecedeSidebarThread", () => {
     expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
     expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
   });
+
+  it.each([false, true])("keeps input-required threads prominent with unread=%s", (isUnread) => {
+    expect(
+      shouldRecedeSidebarThread({
+        status: "input",
+        isUnread,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {
