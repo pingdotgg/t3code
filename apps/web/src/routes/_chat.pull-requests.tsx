@@ -45,6 +45,7 @@ import {
 import {
   filterPullRequestsByInvolvement,
   findScopedProject,
+  buildPullRequestPartitionTargets,
   collectPullRequestListFacets,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
@@ -760,43 +761,53 @@ function PullRequestsRouteView() {
   // so no partitions are read for one. These are the same atoms the Authored and Reviewing tabs
   // ask for, so switching to either is answered from cache.
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
+  // The two reads below stay off the first-paint path. The feed renders from the single `all`
+  // read — grouped locally, or from the snapshot's held groups — and these follow once the
+  // reader engages (pointer or focus reaching the column, one gesture from the tabs) or the
+  // browser idles. A cold open therefore spends one host search to first paint instead of
+  // three, while a later tab switch still answers from a warmed cache.
+  // Cost window: a pre-arm tab switch pays one fetch per environment (the partitions were never
+  // warmed); post-arm the same switch is a cache hit on the atoms below, keyed like the tabs.
+  const [partitionsArmed, setPartitionsArmed] = useState(false);
+  const armPartitions = useCallback(() => setPartitionsArmed(true), []);
+  useEffect(() => {
+    if (!partitionsWanted || partitionsArmed || typeof window === "undefined") return;
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(armPartitions, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = window.setTimeout(armPartitions, 1500);
+    return () => window.clearTimeout(timer);
+  }, [armPartitions, partitionsWanted, partitionsArmed]);
   // Built together so the two reads share one memo, and in the same field order the feed's own
   // input uses: the atoms are keyed by their input, so the Authored tab then reads this answer.
-  const partitionTargets = useMemo(() => {
-    // The main list goes first. Besides putting the visible rows on screen sooner, it proves
-    // which repositories the host search indexes, so an empty partition does not trigger the
-    // expensive per-repository fallback. With no rows at all both partitions are already empty.
-    if (
-      !partitionsWanted ||
-      baselineQuery.data === null ||
-      baselineQuery.data.entries.length === 0
-    ) {
-      return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
-    }
-    const targetsFor = (involvement: PullRequestInvolvement) =>
-      environmentQueries.map(({ environmentId, projectIds }) => ({
-        environmentId,
-        input: {
-          state: search.state,
-          involvement,
-          limit: PAGE_SIZE,
-          ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
-          ...(projectIds ? { projectIds } : {}),
-          ...(search.host ? { host: search.host } : {}),
-          ...(menuFiltered ? { filters: menuFilters } : {}),
-        } satisfies PullRequestListInput,
-      }));
-    return { authored: targetsFor("authored"), reviewing: targetsFor("reviewing") };
-  }, [
-    menuFiltered,
-    menuFilters,
-    partitionsWanted,
-    baselineQuery.data,
-    environmentQueries,
-    scopedProjectId,
-    search.host,
-    search.state,
-  ]);
+  // Gating lives in `buildPullRequestPartitionTargets` (unit-tested): unarmed, unwanted, or
+  // with no baseline rows, both stay unread and the groups fall back to local grouping.
+  const partitionTargets = useMemo(
+    () =>
+      buildPullRequestPartitionTargets({
+        wanted: partitionsWanted,
+        armed: partitionsArmed,
+        hasBaselineRows: baselineQuery.data !== null && baselineQuery.data.entries.length > 0,
+        environments: environmentQueries,
+        state: search.state,
+        limit: PAGE_SIZE,
+        ...(scopedProjectId ? { scopedProjectId } : {}),
+        ...(search.host ? { host: search.host } : {}),
+        ...(menuFiltered ? { filters: menuFilters } : {}),
+      }),
+    [
+      menuFiltered,
+      menuFilters,
+      partitionsWanted,
+      partitionsArmed,
+      baselineQuery.data,
+      environmentQueries,
+      scopedProjectId,
+      search.host,
+      search.state,
+    ],
+  );
   const authoredQuery = usePullRequestList(partitionTargets.authored);
   const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
   // The header's refresh punches through the server's cache before re-reading; the error and
@@ -1807,6 +1818,7 @@ function PullRequestsRouteView() {
     host: search.host,
     hostMenuOptions,
     onInvolvement: (involvement: PullRequestInvolvement) => updateListScope({ involvement }),
+    onPartitionsIntent: armPartitions,
     onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
@@ -2202,6 +2214,7 @@ function PullRequestsColumn({
   host,
   hostMenuOptions,
   onInvolvement,
+  onPartitionsIntent,
   onState,
   onHost,
   searchInput,
@@ -2221,6 +2234,7 @@ function PullRequestsColumn({
   host: string | undefined;
   hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onInvolvement: (involvement: PullRequestInvolvement) => void;
+  onPartitionsIntent: () => void;
   onState: (state: PullRequestListState) => void;
   onHost: (host: string | undefined) => void;
   searchInput: ReactNode;
@@ -2290,7 +2304,15 @@ function PullRequestsColumn({
   return (
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
-    <div className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    // Reaching the column means its tabs and priority groups are one gesture away, so their
+    // deferred reads warm here rather than on first paint. The signal is deliberately broad
+    // (whole column): narrowing to the tab strip/scroll viewport is follow-up if profiling
+    // ever shows reason to narrow it.
+    <div
+      className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col bg-background"
+      onPointerEnter={onPartitionsIntent}
+      onFocusCapture={onPartitionsIntent}
+    >
       {/* A closed right panel leaves this column full-width, so the shared header
           reserves native window controls and hosts the controls strip itself: on
           desktop the header is a drag-region, and only a no-drag descendant wins
