@@ -231,6 +231,16 @@ export function VoiceSettingsPanel() {
   const primaryEnvironment = environments.find(
     (environment) => environment.environmentId === primaryEnvironmentId,
   );
+  const selectedEnvironmentLabel = selectedEnvironmentId
+    ? (environments.find((environment) => environment.environmentId === selectedEnvironmentId)
+        ?.label ?? "Selected environment (Unavailable)")
+    : primaryEnvironment
+      ? `${primaryEnvironment.label} (Primary)`
+      : "Primary environment";
+  const selectedMicrophoneLabel = selectedMicrophone
+    ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
+      "Selected microphone (Unavailable)")
+    : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
   const installed = models.filter((model) => model.state !== "downloadable");
   const available = models.filter((model) => model.state === "downloadable");
@@ -265,7 +275,7 @@ export function VoiceSettingsPanel() {
               }}
             >
               <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
-                <SelectValue />
+                <SelectValue>{selectedEnvironmentLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem value={PRIMARY_ENVIRONMENT}>
@@ -315,7 +325,9 @@ export function VoiceSettingsPanel() {
                 <SelectTrigger size="sm" aria-label="Microphone" className="min-w-0 flex-1">
                   <SelectValue
                     placeholder={loadingMicrophones ? "Finding microphones…" : "Microphone"}
-                  />
+                  >
+                    {selectedMicrophoneLabel}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
