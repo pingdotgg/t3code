@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -174,9 +175,13 @@ describe("t3 pair", () => {
           runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
         );
         // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON output is decoded as a presentation DTO.
-        const credentials = JSON.parse(listed) as ReadonlyArray<{ readonly label?: string }>;
+        const credentials = JSON.parse(listed) as ReadonlyArray<{
+          readonly label?: string;
+          readonly scopes: ReadonlyArray<string>;
+        }>;
         assert.equal(credentials.length, 1);
         assert.equal(credentials[0]?.label, "t3 pair");
+        assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),
@@ -194,6 +199,44 @@ describe("t3 pair", () => {
         off: () => undefined,
       }),
     ),
+  );
+
+  it.effect("mints a pairing grant with only the selected scopes", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-scopes-test-"));
+        yield* persistServerRuntimeState({
+          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        yield* captureStdout(
+          runCli([
+            "pair",
+            "--base-dir",
+            baseDir,
+            "--scope",
+            "orchestration:read",
+            "--scope",
+            "relay:read",
+            "--scope",
+            "orchestration:read",
+          ]),
+        );
+        const listed = yield* captureStdout(
+          runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+        );
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - CLI JSON is a presentation DTO.
+        const credentials = JSON.parse(listed) as ReadonlyArray<{
+          readonly scopes: ReadonlyArray<string>;
+        }>;
+        assert.lengthOf(credentials, 1);
+        assert.deepEqual(credentials[0]?.scopes, ["orchestration:read", "relay:read"]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("pairs through the recorded dev web URL for dev servers", () =>

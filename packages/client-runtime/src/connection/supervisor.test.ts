@@ -1301,7 +1301,6 @@ describe("EnvironmentSupervisor", () => {
             }),
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },
-              scopes: AuthStandardClientScopes,
             }),
           ),
         ),
