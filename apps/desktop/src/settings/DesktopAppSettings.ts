@@ -21,6 +21,12 @@ import {
   normalizeLinuxPasswordStorePreference,
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
+import {
+  DEFAULT_SHELL_ENVIRONMENT_HARVEST,
+  normalizeShellEnvironmentMode,
+  normalizeShellEnvironmentNames,
+  type ShellEnvironmentMode,
+} from "../shell/shellEnvironmentHarvest.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
@@ -29,6 +35,8 @@ export interface DesktopSettings {
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
+  readonly shellEnvironmentMode: ShellEnvironmentMode;
+  readonly shellEnvironmentNames: ReadonlyArray<string>;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
@@ -77,6 +85,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   mainWindowBounds: null,
   mainWindowMaximized: false,
   serverExposureMode: "local-only",
+  shellEnvironmentMode: DEFAULT_SHELL_ENVIRONMENT_HARVEST.mode,
+  shellEnvironmentNames: DEFAULT_SHELL_ENVIRONMENT_HARVEST.names,
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
@@ -98,6 +108,8 @@ const DesktopSettingsDocument = Schema.Struct({
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
+  shellEnvironmentMode: Schema.optionalKey(Schema.Unknown),
+  shellEnvironmentNames: Schema.optionalKey(Schema.Unknown),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
@@ -207,6 +219,7 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
+  platform: NodeJS.Platform,
 ): DesktopSettings {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
   const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
@@ -229,6 +242,8 @@ function normalizeDesktopSettingsDocument(
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
+    shellEnvironmentMode: normalizeShellEnvironmentMode(parsed.shellEnvironmentMode),
+    shellEnvironmentNames: normalizeShellEnvironmentNames(parsed.shellEnvironmentNames, platform),
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
     updateChannel: updateChannelConfiguredByUser
@@ -258,6 +273,12 @@ function toDesktopSettingsDocument(
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
+  }
+  if (settings.shellEnvironmentMode !== defaults.shellEnvironmentMode) {
+    document.shellEnvironmentMode = settings.shellEnvironmentMode;
+  }
+  if (settings.shellEnvironmentNames.length > 0) {
+    document.shellEnvironmentNames = settings.shellEnvironmentNames;
   }
   if (settings.tailscaleServeEnabled !== defaults.tailscaleServeEnabled) {
     document.tailscaleServeEnabled = settings.tailscaleServeEnabled;
@@ -378,6 +399,7 @@ function readSettings(
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
   appVersion: string,
+  platform: NodeJS.Platform,
 ): Effect.Effect<DesktopSettings> {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
 
@@ -388,7 +410,7 @@ function readSettings(
         onNone: () => Effect.succeed(defaultSettings),
         onSome: (raw) =>
           decodeDesktopSettingsJson(raw).pipe(
-            Effect.map((parsed) => normalizeDesktopSettingsDocument(parsed, appVersion)),
+            Effect.map((parsed) => normalizeDesktopSettingsDocument(parsed, appVersion, platform)),
             Effect.orElseSucceed(() => defaultSettings),
           ),
       }),
@@ -504,6 +526,7 @@ export const make = Effect.gen(function* () {
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
+        environment.platform,
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
