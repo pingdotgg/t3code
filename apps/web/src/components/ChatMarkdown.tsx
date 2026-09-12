@@ -152,6 +152,7 @@ import {
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { useMessageLinkMenu } from "./chat/useMessageLinkMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
@@ -1851,6 +1852,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   revealLabel,
   className,
 }: MarkdownFileLinkProps) {
+  const { show: showLinkMenu, menu: linkMenu } = useMessageLinkMenu();
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
       return;
@@ -2017,12 +2019,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   );
 
   const showFileContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-
+    async (position: { x: number; y: number }, trigger: HTMLElement) => {
       try {
-        const clicked = await api.contextMenu.show(
+        const clicked = await showLinkMenu(
           [
             ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
             ...(onOpen ? ([{ id: "open", label: openInEditorMenuLabel }] as const) : []),
@@ -2034,6 +2033,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             { id: "copy-full", label: "Copy full path" },
           ] as const,
           position,
+          trigger,
         );
 
         if (clicked === "preview-media") {
@@ -2067,6 +2067,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       }
     },
     [
+      showLinkMenu,
       displayPath,
       handleCopy,
       handleOpenInBrowser,
@@ -2086,14 +2087,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     (event: ReactMouseEvent<HTMLElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      const position =
-        event.clientX === 0 && event.clientY === 0
-          ? (() => {
-              const bounds = event.currentTarget.getBoundingClientRect();
-              return { x: bounds.left, y: bounds.bottom };
-            })()
-          : { x: event.clientX, y: event.clientY };
-      void showFileContextMenu(position);
+      void showFileContextMenu({ x: event.clientX, y: event.clientY }, event.currentTarget);
     },
     [showFileContextMenu],
   );
@@ -2115,66 +2109,69 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          hasPrimaryAction ? (
-            <a
-              href={href}
-              className={cn(
-                CHAT_FILE_TAG_CHIP_CLASS_NAME,
-                MARKDOWN_FILE_LINK_CLASS_NAME,
-                className,
-              )}
-              data-markdown-copy={copyMarkdown}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
-                  handleOpenInEditor();
-                  return;
-                }
-                if (useBrowserPrimaryAction) {
-                  handleOpenInBrowser();
-                  return;
-                }
-                handleOpenInFilePreview();
-              }}
-              onContextMenu={handleContextMenu}
-            >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
-            </a>
-          ) : (
-            <button
-              type="button"
-              aria-label={`File options for ${label}`}
-              aria-haspopup="menu"
-              className={cn(
-                CHAT_FILE_TAG_CHIP_CLASS_NAME,
-                MARKDOWN_FILE_LINK_CLASS_NAME,
-                "select-text",
-                className,
-              )}
-              data-markdown-copy={copyMarkdown}
-              onClick={handleContextMenu}
-              onContextMenu={handleContextMenu}
-            >
-              <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
-            </button>
-          )
-        }
-      />
-      <TooltipPopup
-        side="top"
-        className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
-      >
-        {/* The full path: the chip already shows the shortened form, and a link
+    <>
+      {linkMenu}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            hasPrimaryAction ? (
+              <a
+                href={href}
+                className={cn(
+                  CHAT_FILE_TAG_CHIP_CLASS_NAME,
+                  MARKDOWN_FILE_LINK_CLASS_NAME,
+                  className,
+                )}
+                data-markdown-copy={copyMarkdown}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (onOpen && shouldOpenMarkdownFileLinkInEditor(event)) {
+                    handleOpenInEditor();
+                    return;
+                  }
+                  if (useBrowserPrimaryAction) {
+                    handleOpenInBrowser();
+                    return;
+                  }
+                  handleOpenInFilePreview();
+                }}
+                onContextMenu={handleContextMenu}
+              >
+                <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              </a>
+            ) : (
+              <button
+                type="button"
+                aria-label={`File options for ${label}`}
+                aria-haspopup="menu"
+                className={cn(
+                  CHAT_FILE_TAG_CHIP_CLASS_NAME,
+                  MARKDOWN_FILE_LINK_CLASS_NAME,
+                  "select-text",
+                  className,
+                )}
+                data-markdown-copy={copyMarkdown}
+                onClick={handleContextMenu}
+                onContextMenu={handleContextMenu}
+              >
+                <FileTagChipContent path={iconPath} label={label} theme={theme} selectable />
+              </button>
+            )
+          }
+        />
+        <TooltipPopup
+          side="top"
+          className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
+        >
+          {/* The full path: the chip already shows the shortened form, and a link
             to the workspace root collapses to a bare label that repeats it. */}
-        <div className="overflow-x-auto whitespace-nowrap [scrollbar-color:color-mix(in_srgb,var(--contrast-border)_78%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-border)_78%,transparent)] [&::-webkit-scrollbar-track]:bg-transparent">
-          {targetPath}
-        </div>
-      </TooltipPopup>
-    </Tooltip>
+          <div className="overflow-x-auto whitespace-nowrap [scrollbar-color:color-mix(in_srgb,var(--contrast-border)_78%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-border)_78%,transparent)] [&::-webkit-scrollbar-track]:bg-transparent">
+            {targetPath}
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+    </>
   );
 }, areMarkdownFileLinkPropsEqual);
 
@@ -2762,6 +2759,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
+    const { show: showLinkMenu, menu: linkMenu } = useMessageLinkMenu();
     const {
       cwd,
       environmentId,
@@ -2919,6 +2917,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             event.stopPropagation();
             const api = readLocalApi();
             if (!api) return;
+            const trigger = event.currentTarget;
             const threadLinkAction =
               linkedThreadPullRequestFor(href) !== null
                 ? "unlink-from-thread"
@@ -2930,7 +2929,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
               canOpenInPreview,
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
-              showContextMenu: (items, position) => api.contextMenu.show(items, position),
+              showContextMenu: (items, position) => showLinkMenu(items, position, trigger),
               openInPreview: async (target) => {
                 const result = await openExternalLinkInPreview(target);
                 if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -2978,38 +2977,44 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       if (pullRequestPreviewTarget !== null) {
         return (
-          <PullRequestLinkPreview
-            link={link}
-            originalUrl={href}
-            target={pullRequestPreviewTarget}
-            confirmBeforeOpen={confirmBeforeOpen}
-            onOpenPullRequest={(targetUrl) =>
-              openChangeRequestLink(
-                {
-                  metaKey: false,
-                  ctrlKey: false,
-                  preventDefault: () => undefined,
-                  stopPropagation: () => undefined,
-                },
-                targetUrl,
-                undefined,
-                environmentId ?? undefined,
-              )
-            }
-            onOpenFallback={openDeferredMarkdownLink}
-          />
+          <>
+            {linkMenu}
+            <PullRequestLinkPreview
+              link={link}
+              originalUrl={href}
+              target={pullRequestPreviewTarget}
+              confirmBeforeOpen={confirmBeforeOpen}
+              onOpenPullRequest={(targetUrl) =>
+                openChangeRequestLink(
+                  {
+                    metaKey: false,
+                    ctrlKey: false,
+                    preventDefault: () => undefined,
+                    stopPropagation: () => undefined,
+                  },
+                  targetUrl,
+                  undefined,
+                  environmentId ?? undefined,
+                )
+              }
+              onOpenFallback={openDeferredMarkdownLink}
+            />
+          </>
         );
       }
       return (
-        <Tooltip>
-          <TooltipTrigger render={link} />
-          <TooltipPopup
-            side="top"
-            className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
-          >
-            {href}
-          </TooltipPopup>
-        </Tooltip>
+        <>
+          {linkMenu}
+          <Tooltip>
+            <TooltipTrigger render={link} />
+            <TooltipPopup
+              side="top"
+              className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
+            >
+              {href}
+            </TooltipPopup>
+          </Tooltip>
+        </>
       );
     }
 
