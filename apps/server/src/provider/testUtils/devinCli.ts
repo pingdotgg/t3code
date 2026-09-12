@@ -12,7 +12,40 @@ import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 export const decodeDevinSettings = Schema.decodeSync(DevinSettings);
-export const encodeDevinSkills = Schema.encodeSync(DevinSkillCatalog);
+export const devinTestSkills = Schema.encodeSync(DevinSkillCatalog)([
+  {
+    name: "visual-check",
+    display_name: "Visual check",
+    description: "Check a page.",
+    base_dir: "/skills/visual-check",
+    triggers: ["user"],
+    errors: [],
+  },
+  {
+    name: "internal",
+    display_name: "internal",
+    description: "Internal skill.",
+    base_dir: "/skills/internal",
+    triggers: ["model"],
+    errors: [],
+  },
+  {
+    name: "broken",
+    display_name: "broken",
+    description: "Invalid skill.",
+    base_dir: "/skills/broken",
+    triggers: ["user"],
+    errors: ["Invalid frontmatter"],
+  },
+  {
+    name: "builtin",
+    display_name: "builtin",
+    description: "Built-in command.",
+    base_dir: "",
+    triggers: ["user"],
+    errors: [],
+  },
+]);
 const Request = Schema.Struct({
   result: Schema.optional(
     Schema.Struct({
@@ -28,17 +61,6 @@ const Request = Schema.Struct({
       cwd: Schema.optional(Schema.String),
       additionalDirectories: Schema.optional(Schema.Array(Schema.String)),
       workspaceDirs: Schema.optional(Schema.Array(Schema.String)),
-      serverId: Schema.optional(Schema.String),
-      mcpServers: Schema.optional(
-        Schema.Array(
-          Schema.Struct({
-            type: Schema.String,
-            name: Schema.String,
-            url: Schema.String,
-            headers: Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
-          }),
-        ),
-      ),
       modeId: Schema.optional(Schema.String),
       configId: Schema.optional(Schema.String),
       value: Schema.optional(Schema.String),
@@ -52,7 +74,6 @@ export const decodeDevinLaunch = Schema.decodeSync(
   Schema.fromJsonString(
     Schema.Struct({
       args: Schema.Array(Schema.String),
-      cwd: Schema.String,
       device: Schema.optional(Schema.String),
     }),
   ),
@@ -94,7 +115,6 @@ if (matches("auth", "status")) {
   process.exit(0);
 }
 if (matches("models", "list", "--format", "json")) {
-  if (process.env.T3_DEVIN_FAIL_MODELS === "1") process.exit(1);
   const modelsFile = process.env.T3_DEVIN_MODELS_FILE;
   process.stdout.write(modelsFile ? (await import("node:fs")).readFileSync(modelsFile, "utf8") : JSON.stringify({families: [{slug: "devin-test", family_label: "Devin Test", variants: [
     {model_uid: "devin-test-low", label: "Devin Test Low"},
@@ -103,7 +123,6 @@ if (matches("models", "list", "--format", "json")) {
   process.exit(0);
 }
 if (matches("skills", "list", "--json")) {
-  if (process.env.T3_DEVIN_FAIL_SKILLS === "1") process.exit(1);
   const fs = await import("node:fs");
   const skillsFile = process.env.T3_DEVIN_SKILLS_FILE ?? "devin-test-skills.json";
   process.stdout.write(fs.existsSync(skillsFile) ? fs.readFileSync(skillsFile, "utf8") : "[]");

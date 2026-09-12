@@ -13,7 +13,7 @@ import { MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER } from "../ProviderDriver.ts";
 import {
   makeDevinCli as makeHarness,
   devinTestLayer as layer,
-  encodeDevinSkills,
+  devinTestSkills,
 } from "../testUtils/devinCli.ts";
 const threadId = ThreadId.make("devin-thread");
 const instanceId = ProviderInstanceId.make("devin-account");
@@ -43,6 +43,7 @@ it.effect("bounds workspace metadata and evicts commands with the oldest skills"
     if (!snapshotForCwd) throw new Error("Devin must expose workspace metadata.");
     yield* instance.snapshot.refresh;
     yield* instance.adapter.startSession({ threadId, cwd: h.root, runtimeMode: "full-access" });
+    expect((yield* instance.snapshot.getSnapshot).workspaceSnapshots).toEqual([]);
     expect(
       (yield* snapshotForCwd(h.root)).slashCommands.some((entry) => entry.name === "plan"),
     ).toBe(true);
@@ -71,26 +72,6 @@ it.effect("bounds workspace metadata and evicts commands with the oldest skills"
   }).pipe(Effect.provide(driverLayer)),
 );
 
-it.effect("keeps skills discoverable when ACP commands arrive before the workspace probe", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({ T3_DEVIN_AUTH_STATUS: "Logged in (via Devin)." });
-    const instance = yield* DevinDriver.create({
-      instanceId,
-      displayName: "Devin test account",
-      enabled: true,
-      config: h.settings,
-      environment: [],
-    });
-    yield* instance.snapshot.refresh;
-    yield* instance.adapter.startSession({ threadId, cwd: h.root, runtimeMode: "full-access" });
-    expect((yield* instance.snapshot.getSnapshot).workspaceSnapshots).toEqual([]);
-    if (!instance.snapshotForCwd) throw new Error("Devin must expose workspace metadata.");
-    const discovered = yield* instance.snapshotForCwd(h.root);
-    expect(discovered.slashCommands.some((command) => command.name === "plan")).toBe(true);
-    expect(discovered.workspaceSnapshots?.map((workspace) => workspace.cwd)).toEqual([h.root]);
-  }).pipe(Effect.provide(driverLayer)),
-);
-
 it.effect("refreshes account models and workspace skills and clears metadata after logout", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -105,7 +86,6 @@ it.effect("refreshes account models and workspace skills and clears metadata aft
     const h = yield* makeHarness({
       T3_ACP_DEVIN: "1",
       T3_ACP_DEVIN_STALE_MODELS: "1",
-      T3_DEVIN_AUTH_STATUS_FILE: statusFile,
       T3_DEVIN_MODELS_FILE: modelsFile,
     });
     const instance = yield* DevinDriver.create({
@@ -113,27 +93,33 @@ it.effect("refreshes account models and workspace skills and clears metadata aft
       displayName: "Devin test account",
       enabled: true,
       config: { ...h.settings, customModels: ["custom-devin-model"] },
-      environment: [],
+      environment: [
+        { name: "T3_DEVIN_AUTH_STATUS_FILE", value: statusFile, sensitive: false },
+        { name: "WINDSURF_API_KEY", value: "", sensitive: true },
+      ],
     });
     if (!instance.snapshotForCwd) throw new Error("Devin must expose workspace metadata.");
     const snapshot = yield* instance.snapshot.refresh;
     expect(snapshot.supportsTextGeneration).toBe(false);
     const skillsFile = path.join(h.root, "devin-test-skills.json");
-    yield* fs.writeFileString(
-      skillsFile,
-      encodeDevinSkills([
-        {
-          name: "visual-check",
-          description: "Check the browser.",
-          display_name: "Visual check",
-          base_dir: path.join(h.root, ".devin", "skills", "visual-check"),
-          triggers: ["user"],
-          errors: [],
-        },
-      ]),
-    );
+    yield* fs.writeFileString(skillsFile, devinTestSkills);
     const workspace = yield* instance.snapshotForCwd(h.root);
-    expect(workspace.skills.map((skill) => skill.name)).toEqual(["visual-check"]);
+    expect(workspace.skills).toEqual([
+      expect.objectContaining({ name: "broken", enabled: false }),
+      expect.objectContaining({ name: "internal", userInvocable: false }),
+      expect.objectContaining({
+        name: "visual-check",
+        displayName: "Visual check",
+        path: path.join("/skills/visual-check", "SKILL.md"),
+        enabled: true,
+        userInvocable: true,
+        userInvocationOnly: true,
+      }),
+    ]);
+    const other = yield* fs.makeTempDirectoryScoped({ prefix: "t3-devin-other-" });
+    expect((yield* instance.snapshotForCwd(other)).skills).toEqual([]);
+    expect(snapshot.auth.status).toBe("authenticated");
+    expect(snapshot.status).toBe("ready");
     expect(yield* fs.exists(h.launchLog)).toBe(false);
     expect(snapshot.models.map((model) => model.slug)).toEqual([
       "devin-test",
@@ -160,7 +146,13 @@ it.effect("refreshes account models and workspace skills and clears metadata aft
     yield* fs.writeFileString(modelsFile, "invalid response");
     const failedRefresh = yield* instance.snapshot.refresh;
     expect(failedRefresh.status).toBe("warning");
+    expect(failedRefresh.auth.status).toBe("authenticated");
+    expect(failedRefresh.message).toContain("Could not load Devin models");
     expect(failedRefresh.models).toEqual(snapshot.models);
+    yield* fs.writeFileString(skillsFile, "invalid response");
+    expect(yield* instance.snapshotForCwd(h.root).pipe(Effect.flip)).toMatchObject({
+      _tag: "ProviderDriverError",
+    });
     yield* fs.writeFileString(skillsFile, "[]");
     expect(
       (yield* instance.snapshot.refresh).workspaceSnapshots?.find((entry) => entry.cwd === h.root)

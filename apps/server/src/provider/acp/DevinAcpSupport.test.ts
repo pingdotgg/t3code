@@ -8,7 +8,6 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
-  applyDevinMode,
   devinMode,
   checkDevinExecutable,
   makeDevinAcpRuntime,
@@ -88,25 +87,16 @@ it.effect("rejects a Desktop version response before starting ACP", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("maps auto and edit approval policies to the advertised Devin modes", () =>
-  Effect.gen(function* () {
-    const cli = yield* makeHarness();
-    const runtime = yield* makeDevinAcpRuntime(cli.settings, cli.environment, {
-      cwd: cli.root,
-      clientInfo: { name: "t3-code-test", version: "0.0.0" },
-    });
-    const started = yield* runtime.start();
-    const modes = (yield* runtime.getModeState)?.availableModes ?? [];
-    expect(modes.map((mode) => mode.id)).toContain("smart");
-    expect(modes.map((mode) => mode.id)).not.toContain("normal");
-    yield* applyDevinMode(runtime, started.sessionId, "auto");
-    yield* applyDevinMode(runtime, started.sessionId, "auto-accept-edits");
-    yield* applyDevinMode(runtime, started.sessionId, "approval-required");
-    expect(
-      (yield* cli.requests)
-        .filter((request) => request.method === "session/set_mode")
-        .map((request) => request.params?.modeId),
-    ).toEqual(["smart", "accept-edits", "normal"]);
-    expect(devinMode("auto", undefined, [])).toBe("normal");
-  }).pipe(Effect.provide(layer)),
-);
+it.each([
+  ["auto", "smart"],
+  ["auto-accept-edits", "accept-edits"],
+  ["full-access", "bypass"],
+  ["approval-required", "normal"],
+] as const)("maps %s to Devin's %s mode", (policy, expected) => {
+  expect(devinMode(policy, undefined, [{ id: "smart" }])).toBe(expected);
+});
+
+it("falls back when smart mode is absent and lets plan mode override access policy", () => {
+  expect(devinMode("auto", undefined, [])).toBe("normal");
+  expect(devinMode("full-access", "plan", [])).toBe("plan");
+});

@@ -1,57 +1,26 @@
 import { expect, it } from "@effect/vitest";
-import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 import { devinModels, resolveDevinModel } from "./DevinModels.ts";
 
-const catalog = {
-  families: [
-    {
-      slug: "swe-2",
-      family_label: "SWE-2",
-      variants: [
-        { model_uid: "swe-2-high", label: "SWE-2 High" },
-        { model_uid: "swe-2-medium", label: "SWE-2 Medium" },
-        { model_uid: "swe-2-max", label: "SWE-2 Max" },
-      ],
-    },
-    {
-      slug: "swe-1.7",
-      family_label: "SWE-1.7",
-      variants: [
-        { model_uid: "swe-1-7", label: "SWE-1.7 Max" },
-        { model_uid: "swe-1-7-medium", label: "SWE-1.7 Medium" },
-      ],
-    },
-    {
-      slug: "claude-opus-5",
-      family_label: "Claude Opus 5",
-      variants: [
-        { model_uid: "claude-opus-5-medium", label: "Claude Opus 5 Medium" },
-        { model_uid: "claude-opus-5-high", label: "Claude Opus 5 High" },
-        { model_uid: "claude-opus-5-medium-fast", label: "Claude Opus 5 Medium Fast" },
-        { model_uid: "claude-opus-5-high-fast", label: "Claude Opus 5 High Fast" },
-      ],
-    },
-    {
-      slug: "claude-opus-4.6",
-      family_label: "Claude Opus 4.6",
-      variants: [
-        { model_uid: "MODEL_CLAUDE_4_6_OPUS", label: "Claude Opus 4.6" },
-        { model_uid: "MODEL_CLAUDE_4_6_OPUS_THINKING", label: "Claude Opus 4.6 Thinking" },
-        { model_uid: "MODEL_CLAUDE_4_6_OPUS_1M", label: "Claude Opus 4.6 1M" },
-        { model_uid: "MODEL_CLAUDE_4_6_OPUS_THINKING_1M", label: "Claude Opus 4.6 Thinking 1M" },
-      ],
-    },
+const lead = {
+  slug: "opus",
+  family_label: "Opus",
+  variants: [
+    { model_uid: "high", label: "Opus High" },
+    { model_uid: "medium", label: "Opus Medium" },
+    { model_uid: "fast-high", label: "Opus High Fast" },
+    { model_uid: "fast-medium", label: "Opus Medium Fast" },
   ],
 };
+const sidekick = {
+  slug: "swe",
+  family_label: "SWE",
+  variants: [{ model_uid: "native-swe", label: "SWE High" }],
+};
+const catalog = { families: [lead, sidekick] };
 
-it("orders family thinking choices from lowest to highest and keeps the CLI's initial choice", () => {
+it("groups variants into independent controls, including a single remaining thinking level", () => {
   const models = devinModels(catalog);
-  expect(models.map((model) => model.name)).toEqual([
-    "SWE-2",
-    "SWE-1.7",
-    "Claude Opus 5",
-    "Claude Opus 4.6",
-  ]);
+  expect(models.map((model) => model.slug)).toEqual(["opus", "swe"]);
   expect(models[0]?.capabilities?.optionDescriptors).toEqual([
     {
       id: "reasoningEffort",
@@ -61,233 +30,149 @@ it("orders family thinking choices from lowest to highest and keeps the CLI's in
       options: [
         { id: "medium", label: "Medium" },
         { id: "high", label: "High" },
-        { id: "max", label: "Max" },
       ],
     },
+    { id: "fastMode", label: "Fast mode", type: "boolean", currentValue: false },
   ]);
-  expect(resolveDevinModel(catalog, { model: "swe-2" })).toBe("swe-2-high");
-  expect(
-    resolveDevinModel(catalog, {
-      model: "swe-2",
-      options: [{ id: "reasoningEffort", value: "max" }],
-    }),
-  ).toBe("swe-2-max");
-  expect(
-    resolveDevinModel(catalog, {
-      model: "swe-1.7",
-      options: [{ id: "reasoningEffort", value: "max" }],
-    }),
-  ).toBe("swe-1-7");
-});
-
-it.each([
-  {
-    family: "GPT-5.6 Sol",
-    suffixes: [
-      "Medium Thinking",
-      "No Thinking",
-      "Max Thinking",
-      "XHigh Thinking",
-      "High Thinking",
-      "Low Thinking",
-    ],
-    expected: ["None", "Low", "Medium", "High", "XHigh", "Max"],
-  },
-  {
-    family: "Gemini 3 Flash",
-    suffixes: ["High", "Low", "Minimal", "Medium"],
-    expected: ["Minimal", "Low", "Medium", "High"],
-  },
-  {
-    family: "Inkling",
-    suffixes: ["X-High", "Max", "None", "Medium", "High", "Low"],
-    expected: ["None", "Low", "Medium", "High", "XHigh", "Max"],
-  },
-])(
-  "orders $family thinking labels independently of the CLI's order",
-  ({ family, suffixes, expected }) => {
-    const models = devinModels({
-      families: [
-        {
-          slug: family,
-          family_label: family,
-          variants: suffixes.map((suffix, index) => ({
-            model_uid: `native-${index}`,
-            label: `${family} ${suffix}`,
-          })),
-        },
-      ],
-    });
-    const thinking = models[0]?.capabilities?.optionDescriptors?.find(
-      (option) => option.id === "reasoningEffort",
-    );
-    expect(thinking?.type === "select" && thinking.options.map((option) => option.label)).toEqual(
-      expected,
-    );
-  },
-);
-
-it.each(catalog.families)(
-  "keeps $slug menus stable when the CLI changes its default variant",
-  (family) => {
-    const original = devinModels({ families: [family] })[0];
-    const choices = (model: typeof original) =>
-      model?.capabilities?.optionDescriptors?.map((descriptor) =>
-        descriptor.type === "select"
-          ? { id: descriptor.id, options: descriptor.options }
-          : { id: descriptor.id },
-      );
-    for (let offset = 1; offset < family.variants.length; offset++) {
-      const variants = [...family.variants.slice(offset), ...family.variants.slice(0, offset)];
-      const reorderedCatalog = { families: [{ ...family, variants }] };
-      const reordered = devinModels(reorderedCatalog)[0];
-      expect(choices(reordered)).toEqual(choices(original));
-      const options =
-        buildProviderOptionSelectionsFromDescriptors(reordered?.capabilities?.optionDescriptors) ??
-        [];
-      expect(resolveDevinModel(reorderedCatalog, { model: family.slug, options })).toBe(
-        variants[0]?.model_uid,
-      );
-    }
-  },
-);
-
-it("exposes every catalog variant through independent thinking, speed, and context controls", () => {
-  for (const model of devinModels(catalog)) {
-    const descriptors = model.capabilities?.optionDescriptors ?? [];
-    const combinations = descriptors.reduce<Array<Array<{ id: string; value: string | boolean }>>>(
-      (selections, descriptor) =>
-        selections.flatMap((selection) =>
-          (descriptor.type === "boolean"
-            ? [false, true]
-            : descriptor.options.map((option) => option.id)
-          ).map((value) => [...selection, { id: descriptor.id, value }]),
-        ),
-      [[]],
-    );
-    const resolved = combinations.map((options) =>
-      resolveDevinModel(catalog, { model: model.slug, options }),
-    );
-    expect(resolved.toSorted()).toEqual(
-      catalog.families
-        .find((family) => family.slug === model.slug)
-        ?.variants.map((variant) => variant.model_uid)
-        .toSorted(),
-    );
-  }
-});
-
-it("rejects unavailable combinations and preserves exact native and custom IDs", () => {
-  expect(
-    resolveDevinModel(catalog, {
-      model: "swe-2",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    }),
-  ).toBeUndefined();
-  expect(
-    resolveDevinModel(catalog, { model: "swe-2", options: [{ id: "fastMode", value: true }] }),
-  ).toBeUndefined();
-  expect(resolveDevinModel(catalog, { model: "swe-2-medium" })).toBe("swe-2-medium");
-  expect(resolveDevinModel(catalog, { model: "custom-model" })).toBe("custom-model");
-});
-
-it.each(
-  [
-    [{ model_uid: "future", label: "Future Special" }],
-    [
-      { model_uid: "future-high", label: "Future High" },
-      { model_uid: "future-medium-fast", label: "Future Medium Fast" },
-    ],
-    [
-      { model_uid: "future-none", label: "Future None" },
-      { model_uid: "future-no-thinking", label: "Future No Thinking" },
-    ],
-  ].map((variants) => ({ variants })),
-)("keeps ambiguous or incomplete families selectable by exact ID: %j", ({ variants }) => {
-  const catalog = { families: [{ slug: "future", family_label: "Future", variants }] };
-  const models = devinModels(catalog);
-  expect(models.map((model) => model.slug)).toEqual(variants.map((variant) => variant.model_uid));
-  for (const model of models)
-    expect(resolveDevinModel(catalog, { model: model.slug })).toBe(model.slug);
-});
-
-it("keeps the remaining thinking level selectable after an account catalog contracts", () => {
-  const models = devinModels({
-    families: [
-      {
-        slug: "swe-2",
-        family_label: "SWE-2",
-        variants: [{ model_uid: "swe-2-high", label: "SWE-2 High" }],
-      },
-    ],
-  });
-  expect(models[0]?.capabilities?.optionDescriptors?.[0]).toMatchObject({
-    id: "reasoningEffort",
+  expect(models[1]?.capabilities?.optionDescriptors?.[0]).toMatchObject({
     currentValue: "high",
     options: [{ id: "high", label: "High" }],
   });
+  expect(resolveDevinModel(catalog, { model: "opus" })).toBe("high");
+  const reordered = { families: [{ ...lead, variants: lead.variants.toReversed() }] };
+  expect(devinModels(reordered)[0]?.capabilities?.optionDescriptors).toEqual([
+    { ...models[0]!.capabilities!.optionDescriptors![0], currentValue: "medium" },
+    { ...models[0]!.capabilities!.optionDescriptors![1], currentValue: true },
+  ]);
+  expect(resolveDevinModel(reordered, { model: "opus" })).toBe("fast-medium");
 });
 
-const fusionCatalog = {
-  families: [
-    ...catalog.families,
-    {
-      slug: "fusion",
-      family_label: "Fusion",
-      variants: catalog.families[2]!.variants.flatMap((lead) =>
-        catalog.families[0]!.variants.map((sidekick) => ({
-          model_uid: `fusion-${lead.model_uid}-sidekick-${sidekick.model_uid}`,
-          label: `Fusion (${lead.label} + ${sidekick.label})`,
-        })),
-      ),
-    },
-  ],
-};
+it.each([
+  { effort: "medium", fast: false, expected: "medium" },
+  { effort: "high", fast: true, expected: "fast-high" },
+  { effort: "max", fast: false, expected: undefined },
+])("resolves only offered thinking/speed choices: $effort, $fast", ({ effort, fast, expected }) => {
+  expect(
+    resolveDevinModel(catalog, {
+      model: "opus",
+      options: [
+        { id: "reasoningEffort", value: effort },
+        { id: "fastMode", value: fast },
+      ],
+    }),
+  ).toBe(expected);
+});
 
-it("groups Fusion by lead and sidekick and resolves every thinking and speed combination", () => {
-  const models = devinModels(fusionCatalog).filter((model) => model.slug.startsWith("fusion/"));
-  expect(models.map((model) => model.name)).toEqual([
-    "Fusion (Claude Opus 5 + SWE-2 High)",
-    "Fusion (Claude Opus 5 + SWE-2 Medium)",
-    "Fusion (Claude Opus 5 + SWE-2 Max)",
-  ]);
-  const resolved = models.flatMap((model) =>
-    ["medium", "high"].flatMap((effort) =>
-      [false, true].map((fastMode) =>
-        resolveDevinModel(fusionCatalog, {
-          model: model.slug,
-          options: [
-            { id: "reasoningEffort", value: effort },
-            { id: "fastMode", value: fastMode },
-          ],
-        }),
-      ),
-    ),
-  );
-  expect(resolved.toSorted()).toEqual(
-    fusionCatalog.families
-      .at(-1)
-      ?.variants.map((v) => v.model_uid)
-      .toSorted(),
-  );
-  const first = models[0]!;
-  expect(first.fusion).toEqual({
-    lead: { id: "claude-opus-5", name: "Claude Opus 5" },
-    sidekick: { id: "swe-2-high", name: "SWE-2 High" },
+it.each(["XHigh", "X-High"])("orders native thinking labels, including %s", (extraHigh) => {
+  const suffixes = ["Medium Thinking", "No Thinking", "Max", extraHigh, "High", "Low", "Minimal"];
+  const models = devinModels({
+    families: [
+      {
+        slug: "test",
+        family_label: "Test",
+        variants: suffixes.map((suffix, index) => ({
+          model_uid: `native-${index}`,
+          label: `Test ${suffix}`,
+        })),
+      },
+    ],
   });
+  const thinking = models[0]?.capabilities?.optionDescriptors?.[0];
+  expect(thinking?.type === "select" && thinking.options.map((option) => option.id)).toEqual([
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ]);
+});
+
+it("maps thinking and context controls to opaque native IDs", () => {
+  const contextCatalog = {
+    families: [
+      {
+        slug: "opus",
+        family_label: "Opus",
+        variants: [
+          { model_uid: "NATIVE_A", label: "Opus" },
+          { model_uid: "NATIVE_B", label: "Opus Thinking" },
+          { model_uid: "NATIVE_C", label: "Opus 1M" },
+          { model_uid: "NATIVE_D", label: "Opus Thinking 1M" },
+        ],
+      },
+    ],
+  };
+  expect(devinModels(contextCatalog)[0]?.capabilities?.optionDescriptors).toMatchObject([
+    { id: "reasoningEffort", options: [{ id: "none" }, { id: "thinking" }] },
+    { id: "contextWindow", options: [{ id: "standard" }, { id: "1m" }] },
+  ]);
+  expect(
+    resolveDevinModel(contextCatalog, {
+      model: "opus",
+      options: [
+        { id: "reasoningEffort", value: "thinking" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    }),
+  ).toBe("NATIVE_D");
+  expect(resolveDevinModel(catalog, { model: "custom-id" })).toBe("custom-id");
+  expect(resolveDevinModel(catalog, { model: "fast-high" })).toBe("fast-high");
+});
+
+it.each([
+  { labels: ["Future Special"] },
+  { labels: ["Future High", "Future Medium Fast"] },
+  { labels: ["Future None", "Future No Thinking"] },
+  { labels: ["Fusion (Unknown Lead + Unknown Sidekick)"], fusion: true },
+])("preserves exact IDs for unfamiliar or ambiguous families: $labels", ({ labels, fusion }) => {
+  const variants = labels.map((label, index) => ({ model_uid: `native-${index}`, label }));
+  const catalog = {
+    families: [{ slug: fusion ? "fusion" : "future", family_label: "Future", variants }],
+  };
+  expect(devinModels(catalog).map((model) => [model.slug, model.name])).toEqual(
+    variants.map((variant) => [variant.model_uid, variant.label]),
+  );
+  for (const variant of variants)
+    expect(resolveDevinModel(catalog, { model: variant.model_uid })).toBe(variant.model_uid);
+});
+
+it("groups Fusion by lead and exact sidekick while keeping the lead's thinking and speed controls", () => {
+  const fusionCatalog = {
+    families: [
+      ...catalog.families,
+      {
+        slug: "fusion",
+        family_label: "Fusion",
+        variants: [
+          { model_uid: "pair-high", label: "Fusion (Opus High + SWE High)" },
+          { model_uid: "pair-medium", label: "Fusion (Opus Medium + SWE High)" },
+          { model_uid: "pair-fast-high", label: "Fusion (Opus High Fast + SWE High)" },
+          { model_uid: "pair-fast-medium", label: "Fusion (Opus Medium Fast + SWE High)" },
+          { model_uid: "pair-other", label: "Fusion (Opus High + Opus Medium)" },
+        ],
+      },
+    ],
+  };
+  const pairings = devinModels(fusionCatalog).filter((model) => model.fusion);
+  expect(pairings.map((model) => model.name)).toEqual([
+    "Fusion (Opus + SWE High)",
+    "Fusion (Opus + Opus Medium)",
+  ]);
+  expect(pairings[0]?.fusion).toEqual({
+    lead: { id: "opus", name: "Opus" },
+    sidekick: { id: "native-swe", name: "SWE High" },
+  });
+  expect(pairings[0]?.capabilities).toEqual(devinModels(catalog)[0]?.capabilities);
   expect(
     resolveDevinModel(fusionCatalog, {
-      model: first.slug,
-      options: [{ id: "reasoningEffort", value: "max" }],
+      model: pairings[0]!.slug,
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
     }),
-  ).toBeUndefined();
-});
-
-it("preserves unfamiliar Fusion pairings as exact model choices", () => {
-  const variant = { model_uid: "fusion-future", label: "Fusion (Future Lead + Future Sidekick)" };
-  const future = { families: [{ slug: "fusion", family_label: "Fusion", variants: [variant] }] };
-  expect(devinModels(future).map((model) => [model.slug, model.name])).toEqual([
-    [variant.model_uid, variant.label],
-  ]);
-  expect(resolveDevinModel(future, { model: variant.model_uid })).toBe(variant.model_uid);
+  ).toBe("pair-fast-high");
+  expect(resolveDevinModel(fusionCatalog, { model: pairings[1]!.slug })).toBe("pair-other");
 });

@@ -25,7 +25,7 @@ import {
   makeDevinCli,
   devinTestLayer as layer,
   decodeDevinLaunch as decodeLaunch,
-  encodeDevinSkills,
+  devinTestSkills,
 } from "../testUtils/devinCli.ts";
 
 const threadId = ThreadId.make("devin-thread");
@@ -54,6 +54,22 @@ const makeHarness = Effect.fn("makeDevinAdapterHarness")(function* (
     });
   return { ...cli, adapter, events, approval, start };
 });
+
+const registerT3Tools = Effect.acquireRelease(
+  Effect.sync(() =>
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("test-environment"),
+      threadId,
+      providerSessionId: "test-session",
+      providerInstanceId: instanceId,
+      endpoint: "http://127.0.0.1:1234/mcp",
+      authorizationHeader: "Bearer test-only",
+      capabilities: new Set(["preview", "device"]),
+      agentDeviceEnvironment: { T3_TEST_DEVICE: "available" },
+    }),
+  ),
+  () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+);
 
 it.effect("streams a turn and loads the saved ACP session ID without authenticating", () =>
   Effect.gen(function* () {
@@ -101,21 +117,7 @@ it.effect("connects T3 tools with isolated credentials and restores tool roots o
     const h = yield* makeHarness();
     const fs = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig;
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        McpProviderSession.setMcpProviderSession({
-          environmentId: EnvironmentId.make("test-environment"),
-          threadId,
-          providerSessionId: "test-session",
-          providerInstanceId: instanceId,
-          endpoint: "http://127.0.0.1:1234/mcp",
-          authorizationHeader: "Bearer test-only",
-          capabilities: new Set(["preview", "device"]),
-          agentDeviceEnvironment: { T3_TEST_DEVICE: "available" },
-        }),
-      ),
-      () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* registerT3Tools;
     const session = yield* h.start();
     const firstDirectory = (yield* h.requests).find((request) => request.method === "session/new")
       ?.params?.additionalDirectories?.[1];
@@ -181,20 +183,30 @@ it.effect("dispatches a graphical skill pick as a native command with its argume
     const h = yield* makeHarness();
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* fs.writeFileString(
-      path.join(h.root, "devin-test-skills.json"),
-      encodeDevinSkills([
-        {
-          name: "visual-check",
-          description: "Check a browser page.",
-          display_name: "Visual check",
-          base_dir: path.join(h.root, ".devin", "skills", "visual-check"),
-          triggers: ["user"],
-          errors: [],
-        },
-      ]),
-    );
+    const skillsFile = path.join(h.root, "devin-test-skills.json");
+    yield* fs.writeFileString(skillsFile, devinTestSkills);
     yield* h.start();
+    for (const [input, text] of [
+      ["$visual-check", "/visual-check"],
+      ["Please $visual-check inspect localhost", "/visual-check Please  inspect localhost"],
+      [
+        "$visual-check\nKeep $HOME and $20k unchanged",
+        "/visual-check Keep $HOME and $20k unchanged",
+      ],
+      ["$internal", "$internal"],
+      ["/visual-check", "/visual-check"],
+    ]) {
+      yield* h.adapter.sendTurn({ threadId, input });
+      expect(
+        (yield* h.requests).findLast((request) => request.method === "session/prompt")?.params
+          ?.prompt?.[0],
+      ).toEqual({ type: "text", text });
+    }
+    expect(
+      yield* h.adapter
+        .sendTurn({ threadId, input: "$visual-check $visual-check" })
+        .pipe(Effect.flip),
+    ).toMatchObject({ _tag: "ProviderAdapterRequestError" });
     const config = yield* ServerConfig;
     const attachmentId = "devin-thread-11111111-1111-4111-8111-111111111111";
     yield* h.adapter.sendTurn({
@@ -211,6 +223,12 @@ it.effect("dispatches a graphical skill pick as a native command with its argume
         text: `/visual-check inspect this Attached file: ${path.join(config.attachmentsDir, `${attachmentId}.txt`)}`,
       },
     ]);
+    yield* fs.writeFileString(skillsFile, "invalid response");
+    yield* h.adapter.sendTurn({ threadId, input: "Print $HOME" });
+    expect(
+      (yield* h.requests).findLast((request) => request.method === "session/prompt")?.params
+        ?.prompt?.[0],
+    ).toEqual({ type: "text", text: "Print $HOME" });
     expect(
       h.events.some(
         (event) => event.type === "turn.completed" && event.payload.state === "completed",
@@ -223,21 +241,7 @@ it.effect("cleans up MCP credentials when the tool server cannot connect", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness({ T3_ACP_DEVIN_MCP_STATUS: "auth_required" });
     const fs = yield* FileSystem.FileSystem;
-    yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        McpProviderSession.setMcpProviderSession({
-          environmentId: EnvironmentId.make("test-environment"),
-          threadId,
-          providerSessionId: "test-session",
-          providerInstanceId: instanceId,
-          endpoint: "http://127.0.0.1:1234/mcp",
-          authorizationHeader: "Bearer test-only",
-          capabilities: new Set(["preview"]),
-          agentDeviceEnvironment: {},
-        }),
-      ),
-      () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-    );
+    yield* registerT3Tools;
     const error = yield* h.start().pipe(Effect.flip);
     expect(error.message).toContain("Devin could not connect to T3 Code tools.");
     expect(yield* h.adapter.hasSession(threadId)).toBe(false);
@@ -315,7 +319,16 @@ it.effect("applies family thinking choices and enters and leaves plan mode", () 
         options: [{ id: "reasoningEffort", value: "high" }],
       },
     });
-    yield* h.adapter.sendTurn({ threadId, input: "Implement it", interactionMode: "default" });
+    yield* h.adapter.sendTurn({
+      threadId,
+      input: "Implement it",
+      interactionMode: "default",
+      modelSelection: { instanceId, model: "devin-test-low" },
+    });
+    expect((yield* h.adapter.listSessions())[0]?.model).toBe("devin-test-low");
+    expect(h.events.find((event) => event.type === "thread.token-usage.updated")?.payload).toEqual({
+      usage: { usedTokens: 1800, maxTokens: 200000 },
+    });
     const requests = yield* h.requests;
     expect(
       requests
@@ -324,7 +337,7 @@ it.effect("applies family thinking choices and enters and leaves plan mode", () 
             request.method === "session/set_config_option" && request.params?.configId === "model",
         )
         .map((request) => request.params?.value),
-    ).toEqual(["devin-test-high"]);
+    ).toEqual(["devin-test-high", "devin-test-low"]);
     expect(
       requests
         .filter((request) => request.method === "session/set_mode")
@@ -390,27 +403,6 @@ it.effect("cancels while waiting for permission and returns the session to ready
       ),
     ).toBe(true);
     expect((yield* h.adapter.listSessions())[0]?.status).toBe("ready");
-  }).pipe(Effect.provide(layer)),
-);
-
-it.effect("switches between explicit models and maps ACP usage updates", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({ T3_ACP_DEVIN: "1" });
-    yield* h.start("devin-test-high");
-    yield* h.adapter.sendTurn({
-      threadId,
-      input: "Use the low variant",
-      modelSelection: { instanceId, model: "devin-test-low" },
-    });
-    expect((yield* h.adapter.listSessions())[0]?.model).toBe("devin-test-low");
-    expect(h.events.find((event) => event.type === "thread.token-usage.updated")?.payload).toEqual({
-      usage: { usedTokens: 1800, maxTokens: 200000 },
-    });
-    expect(
-      (yield* h.requests)
-        .filter((request) => request.method === "session/set_config_option")
-        .map((request) => request.params?.value),
-    ).toEqual(["devin-test-high", "devin-test-low"]);
   }).pipe(Effect.provide(layer)),
 );
 
