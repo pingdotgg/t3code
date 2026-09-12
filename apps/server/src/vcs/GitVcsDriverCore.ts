@@ -306,9 +306,7 @@ function sanitizeRemoteName(value: string): string {
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
   for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const match = /^(\S+)\s+(.+)\s+\((fetch|push)\)$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (direction !== "fetch" || remoteName.length === 0 || remoteUrl.length === 0) {

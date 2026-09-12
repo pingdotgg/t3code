@@ -1800,7 +1800,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const path = yield* Path.Path;
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const existingUrl = path.join(cwd, "local remote (fetch).git");
+        const existingUrl = " local remote (fetch).git ";
         const newUrl = path.join(cwd, "another remote.git");
         yield* git(cwd, ["remote", "add", "origin", existingUrl]);
         yield* git(cwd, ["remote", "set-url", "--push", "origin", newUrl]);
@@ -1813,7 +1813,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           yield* driver.ensureRemote({ cwd, preferredName: "origin", url: newUrl }),
           "origin-1",
         );
-        assert.equal(yield* git(cwd, ["remote", "get-url", "origin"]), existingUrl);
+        assert.equal(
+          yield* git(cwd, ["config", "--null", "--get-regexp", "^remote\\.origin\\.url$"]),
+          `remote.origin.url\n${existingUrl}\0`,
+        );
         assert.equal(yield* git(cwd, ["remote", "get-url", "origin-1"]), newUrl);
         assert.equal(yield* git(cwd, ["remote", "get-url", "--push", "origin"]), newUrl);
       }),
