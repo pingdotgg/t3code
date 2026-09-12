@@ -2667,6 +2667,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
+    // Must be an explicit null, not left unset: with no publish config,
+    // electron-builder infers a GitHub publisher from an ambient GH_TOKEN /
+    // GITHUB_TOKEN, then fails to resolve owner/repo (the staged app has no
+    // .git and no package.json "repository") and hands its update-info builder
+    // a null config, which crashes with "Cannot read properties of null
+    // (reading 'channel')". `null` disables publishing and update metadata
+    // outright, which is what a local build wants, preview versions included.
+    // CI sets GITHUB_REPOSITORY and --mock-updates sets a generic server, so
+    // the branches below override this with a real publish config.
+    publish: null,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
