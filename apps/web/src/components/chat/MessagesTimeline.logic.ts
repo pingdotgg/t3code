@@ -20,6 +20,7 @@ import {
   formatDuration,
   inferCheckpointTurnCountByTurnId,
   isStreamingMessageTextUpdate,
+  isThinkingWorkEntry,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
@@ -920,6 +921,10 @@ export function deriveMessagesTimelineRows(input: {
       entry.kind !== "work" ||
       entry.entry.agentSpawn !== undefined ||
       entry.entry.sourceActivityKind === "context-compaction" ||
+      // Thinking rows stay standalone outside the live work group (see the
+      // grouping boundary below); collecting them here would hide them inside
+      // the collapsed `work-live` group while the turn runs.
+      isThinkingWorkEntry(entry.entry) ||
       entry.entry.tone === "error"
     ) {
       break;
@@ -1054,15 +1059,21 @@ export function deriveMessagesTimelineRows(input: {
         continue;
       }
       const groupedEntries = [timelineEntry.entry];
+      // Thinking rows stay visible outside collapsed tool groups: they break
+      // the run on both sides so a reasoning-narrated turn keeps its narrative
+      // without expanding dozens of tool calls.
+      const anchorIsThinking = isThinkingWorkEntry(timelineEntry.entry);
       let cursor = index + 1;
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
         if (
           !nextEntry ||
+          anchorIsThinking ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
+          isThinkingWorkEntry(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)

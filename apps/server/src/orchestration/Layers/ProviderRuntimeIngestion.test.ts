@@ -1322,7 +1322,9 @@ describe("ProviderRuntimeIngestion", () => {
     const harness = await createHarness();
     const initial = await harness.readModel();
 
-    for (const streamKind of ["reasoning_text", "command_output", "file_change_output"] as const) {
+    // Reasoning streams are persisted as thinking activities (tested below);
+    // tool-output streams stay ignored because tool rows already show them.
+    for (const streamKind of ["command_output", "file_change_output", "unknown"] as const) {
       harness.emit({
         type: "content.delta",
         eventId: asEventId(`evt-ignored-${streamKind}`),
@@ -1339,6 +1341,508 @@ describe("ProviderRuntimeIngestion", () => {
 
     await harness.drain();
     expect(await harness.readModel()).toEqual(initial);
+  });
+
+  it("persists reasoning deltas as thinking activities ordered before tool rows", async () => {
+    const harness = await createHarness();
+    const thoughtAt = "2026-01-01T00:00:00.000Z";
+    const toolAt = "2026-01-01T00:00:01.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reason-1"),
+      provider: ProviderDriverKind.make("antigravity"),
+      createdAt: thoughtAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-thinking"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Checking the ",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reason-2"),
+      provider: ProviderDriverKind.make("antigravity"),
+      createdAt: thoughtAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-thinking"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "checklist first.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-thinking-tool"),
+      provider: ProviderDriverKind.make("antigravity"),
+      createdAt: toolAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-thinking"),
+      itemId: asItemId("tool-1"),
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Ran command",
+        detail: "git status",
+      },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    );
+    const thinking = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking?.tone).toBe("info");
+    expect(thinking?.summary).toBe("Thinking");
+    expect(thinking?.turnId).toBe("turn-thinking");
+    expect(thinking?.createdAt).toBe(thoughtAt);
+    expect((thinking?.payload as Record<string, unknown> | undefined)?.detail).toBe(
+      "Checking the checklist first.",
+    );
+    const kinds = thread.activities.map(
+      (activity: ProviderRuntimeTestActivity) => activity.kind,
+    );
+    expect(kinds.indexOf("thinking")).toBeLessThan(kinds.indexOf("tool.completed"));
+  });
+
+  it("flushes buffered thinking when the turn completes", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-summary-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "ci, websearch",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-9-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-9"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "ready" &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+        ),
+    );
+    const thinking = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking).toHaveLength(1);
+    expect((thinking[0]?.payload as Record<string, unknown> | undefined)?.detail).toBe(
+      "ci, websearch",
+    );
+    expect(thinking[0]?.turnId).toBe("turn-9");
+  });
+
+  it("splits long thinking buffers across activities without losing text", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const longThought = "x".repeat(9_000);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-long-reason"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-long"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: longThought,
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-long-completed"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-long"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    );
+    const thinking = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking.length).toBeGreaterThan(1);
+    const thinkingText = (activity: ProviderRuntimeTestActivity): string => {
+      const detail = (activity.payload as Record<string, unknown> | undefined)?.detail;
+      return typeof detail === "string" ? detail : "";
+    };
+    expect(thinking.map(thinkingText).join("")).toBe(longThought);
+    for (const activity of thinking) {
+      expect(thinkingText(activity).length).toBeLessThanOrEqual(8_000);
+    }
+  });
+
+  it("skips whitespace-only thinking buffers", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-blank-reason"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-blank"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "   \n  ",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-blank-tool"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-blank"),
+      itemId: asItemId("tool-blank"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Tool call",
+      },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.completed",
+      ),
+    );
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    ).toBe(false);
+  });
+
+  it("spills oversized reasoning buffers into activities while buffering without losing text", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const longThought = "y".repeat(25_000);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-spill-reason"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-spill"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: longThought,
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-spill-completed"),
+      provider: ProviderDriverKind.make("opencode"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-spill"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    );
+    const thinking = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking.length).toBeGreaterThan(1);
+    const thinkingText = (activity: ProviderRuntimeTestActivity): string => {
+      const detail = (activity.payload as Record<string, unknown> | undefined)?.detail;
+      return typeof detail === "string" ? detail : "";
+    };
+    expect(thinking.map(thinkingText).join("")).toBe(longThought);
+    for (const activity of thinking) {
+      expect(Array.from(thinkingText(activity)).length).toBeLessThanOrEqual(8_000);
+    }
+  });
+
+  it("keeps astral characters whole when splitting thinking buffers", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    // 7,999 BMP chars put the astral char exactly on the 8,000th UTF-16 unit
+    // boundary of the first activity; a UTF-16 split would halve its pair.
+    const astralBoundaryThought = `${"a".repeat(7_999)}𝄞${"b".repeat(2_000)}`;
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-astral-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-astral"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: astralBoundaryThought,
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-astral-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-astral"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    );
+    const thinking = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking.length).toBeGreaterThan(1);
+    const details = thinking.map((activity) => {
+      const detail = (activity.payload as Record<string, unknown> | undefined)?.detail;
+      return typeof detail === "string" ? detail : "";
+    });
+    expect(details.join("")).toBe(astralBoundaryThought);
+    for (const detail of details) {
+      // No lone surrogates: every chunk decodes to whole code points.
+      expect(Array.from(detail).join("")).toBe(detail);
+      expect(Array.from(detail).length).toBeLessThanOrEqual(8_000);
+    }
+  });
+
+  it("scopes reasoning deltas without a turn id to the active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const turnId = asTurnId("turn-scoped");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-scoped-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-unscoped-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Reasoning without a turn id.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-scoped-tool"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("tool-scoped"),
+      payload: {
+        itemType: "dynamic_tool_call",
+        status: "completed",
+        title: "Tool call",
+      },
+    });
+
+    await harness.drain();
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    );
+    const thinking = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking?.turnId).toBe(turnId);
+    expect((thinking?.payload as Record<string, unknown> | undefined)?.detail).toBe(
+      "Reasoning without a turn id.",
+    );
+  });
+
+  it("flushes buffered thinking for every stranded turn when the session exits", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const oldTurnId = asTurnId("turn-steered-over");
+    const newTurnId = asTurnId("turn-from-steer");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    // Reasoning buffered before any turn exists lands on the thread's
+    // "no-turn" key; steering strands a second buffer under the superseded
+    // turn; session exit must flush both along with the active turn's.
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-no-turn-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "preamble",
+      },
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-steered-over-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: oldTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === oldTurnId,
+    );
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-steered-over-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: oldTurnId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "superseded thinking",
+      },
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-steer-away"),
+        threadId,
+        message: {
+          messageId: asMessageId("msg-steer-away"),
+          role: "user",
+          text: "do it differently",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt,
+      updatedAt: createdAt,
+      activeTurnId: newTurnId,
+    });
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-steer-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: newTurnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === newTurnId,
+    );
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-steer-reason"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: newTurnId,
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "active turn thinking",
+      },
+    });
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-stranded"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId,
+    });
+    await harness.drain();
+
+    const thread = await waitForThread(harness.readModel, (entry) => {
+      const thinkingCount = entry.activities.filter(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ).length;
+      return thinkingCount >= 3;
+    });
+    const thinking = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+    );
+    expect(thinking).toHaveLength(3);
+    const byDetail = (detail: string) =>
+      thinking.find(
+        (activity) => (activity.payload as Record<string, unknown> | undefined)?.detail === detail,
+      );
+    expect(byDetail("preamble")?.turnId).toBeNull();
+    expect(byDetail("superseded thinking")?.turnId).toBe(oldTurnId);
+    expect(byDetail("active turn thinking")?.turnId).toBe(newTurnId);
+
+    // A duplicate exit finds no buffers left and must not duplicate rows.
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-duplicate-session-exited-stranded"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId,
+    });
+    await harness.drain();
+    const afterSecondExit = (await harness.readModel()).threads.find(
+      (entry) => entry.id === threadId,
+    );
+    expect(
+      afterSecondExit?.activities.filter(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "thinking",
+      ),
+    ).toHaveLength(3);
   });
 
   it("maps canonical content delta/item completed into finalized assistant messages", async () => {

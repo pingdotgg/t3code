@@ -26,6 +26,7 @@ import {
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
+  THINKING_ACTIVITY_KIND,
   type ToolLifecycleItemType,
   type ThreadId,
   type TurnId,
@@ -96,6 +97,17 @@ export interface WorkLogEntry {
 }
 
 const workLogCollapseKey = Symbol();
+
+/**
+ * Persisted model thinking (`thinking` activities from reasoning streams).
+ * Thinking rows stay visible outside collapsed tool groups so a turn that
+ * narrates through its reasoning channel still reads as a narrative.
+ */
+export function isThinkingWorkEntry(
+  entry: Pick<WorkLogEntry, "sourceActivityKind">,
+): boolean {
+  return entry.sourceActivityKind === THINKING_ACTIVITY_KIND;
+}
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
   sourceActivityKind: OrchestrationThreadActivity["kind"];
