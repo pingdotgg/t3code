@@ -350,6 +350,7 @@ describe("instance-scoped model selection", () => {
       availableModel: "gemini-3.1-pro",
       missingModel: "gemini-3.1-pro-high",
     },
+    { driverName: "devin", availableModel: "swe-2-medium", missingModel: "swe-2-high" },
   ])("$driverName catalog gaps", ({ driverName, availableModel, missingModel }) => {
     it("preserves a selected model when a catalog refresh no longer contains it", () => {
       const providers = [

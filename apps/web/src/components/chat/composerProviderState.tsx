@@ -99,7 +99,13 @@ function resolveComposerOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection> | undefined;
 } {
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
-  return { caps, selections: withImplicitFastModeDefault(caps, modelOptions) };
+  return {
+    caps,
+    selections:
+      provider === "devin"
+        ? (modelOptions ?? undefined)
+        : withImplicitFastModeDefault(caps, modelOptions),
+  };
 }
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
@@ -133,7 +139,11 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     modelOptions,
     planModeEnabled,
   );
-  const descriptors = getProviderOptionDescriptors({ caps, selections });
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    selections,
+    preserveUnavailableSelections: provider === "devin",
+  });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
       descriptor.type === "select",

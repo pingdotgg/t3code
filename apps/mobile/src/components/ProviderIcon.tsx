@@ -26,6 +26,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "devin") {
+    return (
+      <Image
+        source={require("../../assets/devin.png")}
+        style={{ width: size, height: size }}
+        tintColor={mono}
+        contentFit="contain"
+      />
+    );
+  }
+
   if (props.provider === "claudeAgent") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">

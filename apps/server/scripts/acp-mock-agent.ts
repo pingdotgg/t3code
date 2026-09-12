@@ -15,6 +15,8 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const devinProfile = process.env.T3_ACP_DEVIN === "1";
+let devinModelsRefreshed = process.env.T3_ACP_DEVIN_STALE_MODELS !== "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -67,8 +69,12 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId = antigravityProfile ? "default" : devinProfile ? "normal" : "ask";
+let currentModelId = antigravityProfile
+  ? "gemini-test-low"
+  : devinProfile
+    ? "devin-test-low"
+    : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -114,6 +120,29 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (devinProfile) {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: [
+          {
+            group: "devin-test",
+            name: "Devin Test",
+            options: [
+              { value: "devin-test-low", name: "Devin Test Low" },
+              ...(devinModelsRefreshed
+                ? [{ value: "devin-test-high", name: "Devin Test High" }]
+                : []),
+            ],
+          },
+        ],
+      },
+    ];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -298,29 +327,40 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
-  ? [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+const devinModes = [
+  { id: "ask", name: "Ask", description: "Answer questions without changing files" },
+  { id: "accept-edits", name: "Accept edits" },
+  { id: "smart", name: "Smart" },
+  { id: "plan", name: "Plan" },
+  { id: "bypass", name: "Bypass" },
+] satisfies ReadonlyArray<AcpSchema.SessionMode>;
+
+// Devin accepts normal even though its advertised picker omits it.
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = devinProfile
+  ? devinModes
+  : antigravityProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -350,6 +390,15 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 ];
 
 function modelState(): AcpSchema.SessionModelState {
+  if (devinProfile) {
+    return {
+      currentModelId,
+      availableModels: [
+        { modelId: "devin-test-low", name: "Devin Test Low" },
+        ...(devinModelsRefreshed ? [{ modelId: "devin-test-high", name: "Devin Test High" }] : []),
+      ],
+    };
+  }
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
   }
@@ -366,6 +415,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const resumeRelease = yield* Deferred.make<void>();
   const nativeCancelRequested = yield* Deferred.make<void>();
+  let promptCancellation: Deferred.Deferred<void> | undefined;
   const nativeCancelRelease = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
@@ -433,6 +483,18 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
+      if (devinProfile) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              { name: "compact", description: "Compact the conversation" },
+              { name: "plan", description: "Plan changes", input: { hint: "[prompt]" } },
+            ],
+          },
+        });
+      }
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
@@ -588,6 +650,7 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (promptCancellation) yield* Deferred.succeed(promptCancellation, undefined);
       if (completeFirstPromptOnCancel) {
         yield* Deferred.succeed(nativeCancelRequested, undefined);
         yield* agent.client.sessionUpdate({
@@ -617,6 +680,22 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+      if (process.env.T3_ACP_WAIT_FOR_CANCEL === "1")
+        promptCancellation = yield* Deferred.make<void>();
+      if (devinProfile) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: { sessionUpdate: "usage_update", used: 1800, size: 200000 },
+        });
+      }
+
+      if (promptCancellation) {
+        if (!cancelledSessions.delete(requestedSessionId))
+          yield* Deferred.await(promptCancellation);
+        cancelledSessions.delete(requestedSessionId);
+        promptCancellation = undefined;
+        return { stopReason: "cancelled" };
+      }
 
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({
@@ -1232,6 +1311,20 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (devinProfile && method === "_cognition.ai/mcp/connectServer") {
+      return Effect.succeed({
+        connectionStatus: process.env.T3_ACP_DEVIN_MCP_STATUS ?? "connected",
+      });
+    }
+    if (devinProfile && method === "_test/refresh-models") {
+      devinModelsRefreshed = true;
+      return agent.client
+        .sessionUpdate({
+          sessionId,
+          update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+        })
+        .pipe(Effect.as({}));
+    }
     if (method === "_test/environment") {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
@@ -1292,7 +1385,7 @@ const program = Effect.gen(function* () {
       });
     }
 
-    if (method !== "session/mode/set") {
+    if (method !== (devinProfile ? "session/set_mode" : "session/mode/set")) {
       return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
     }
 
@@ -1317,6 +1410,14 @@ const program = Effect.gen(function* () {
         : sessionId;
 
     if (typeof nextModeId === "string" && nextModeId.trim()) {
+      if (
+        devinProfile &&
+        !["normal", "accept-edits", "smart", "ask", "plan", "bypass"].includes(nextModeId)
+      ) {
+        return Effect.fail(
+          AcpError.AcpRequestError.invalidParams(`Unsupported Devin mode: ${nextModeId}`),
+        );
+      }
       currentModeId = nextModeId.trim();
       return agent.client
         .sessionUpdate({

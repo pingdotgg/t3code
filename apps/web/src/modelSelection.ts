@@ -79,6 +79,7 @@ function readInstanceCustomModels(
 }
 
 export interface AppModelOption {
+  fusion?: ServerProvider["models"][number]["fusion"];
   slug: string;
   name: string;
   shortName?: string;
@@ -98,7 +99,7 @@ function appendUnavailableDynamicModelSelection(
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (provider !== "opencode" && provider !== "antigravity" && provider !== "devin") return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
@@ -119,6 +120,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
     isCustom: model.isCustom,
   };
   if (model.shortName) option.shortName = model.shortName;
+  if (model.fusion) option.fusion = model.fusion;
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.aliases) option.aliases = model.aliases;
   if (model.badge) option.badge = model.badge;
@@ -308,7 +310,9 @@ export function resolveAppModelSelectionForInstance(
   }
   if (
     resolutionOptions?.preserveUnavailableSelection &&
-    (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
+    (entry.driverKind === "opencode" ||
+      entry.driverKind === "antigravity" ||
+      entry.driverKind === "devin")
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;

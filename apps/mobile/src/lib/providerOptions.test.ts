@@ -62,3 +62,30 @@ describe("mobile provider options", () => {
     ]);
   });
 });
+
+it("keeps a removed Devin thinking choice visible until the user picks an available level", () => {
+  const descriptors = resolveProviderOptionDescriptors({
+    provider: "devin",
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Thinking level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    },
+    selections: [{ id: "reasoningEffort", value: "max" }],
+  });
+  expect(descriptors[0]?.currentValue).toBe("max");
+  expect(
+    applyProviderOptionSelection(descriptors, { id: "reasoningEffort", value: "high" })?.find(
+      (option) => option.id === "reasoningEffort",
+    )?.value,
+  ).toBe("high");
+});

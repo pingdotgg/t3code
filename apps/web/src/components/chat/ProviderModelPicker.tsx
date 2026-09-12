@@ -78,14 +78,18 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: props.model,
       options: selectedInstanceOptions,
     }) ??
-    (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
+    (activeEntry?.driverKind === "opencode" ||
+    activeEntry?.driverKind === "antigravity" ||
+    activeEntry?.driverKind === "devin"
       ? undefined
       : selectedInstanceOptions[0]);
-  const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel)
-    : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? "Choose model"
-      : props.model || "Choose model";
+  const triggerTitle = selectedModel?.fusion
+    ? "Fusion"
+    : selectedModel
+      ? getTriggerDisplayModelName(selectedModel)
+      : props.model === ANTIGRAVITY_DEFAULT_MODEL
+        ? "Choose model"
+        : props.model || "Choose model";
   const triggerLabel = selectedModel
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;

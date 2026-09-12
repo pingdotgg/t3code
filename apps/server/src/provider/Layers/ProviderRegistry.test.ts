@@ -1066,10 +1066,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         );
       });
 
-      describe("Antigravity model inventories", () => {
+      describe.each(["antigravity", "devin"])("%s model inventories", (driver) => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("antigravity-personal"),
-          driver: ProviderDriverKind.make("antigravity"),
+          driver: ProviderDriverKind.make(driver),
           status: "ready",
           enabled: true,
           installed: true,
@@ -1120,7 +1120,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           for (const installed of [false, true]) {
             const pendingProvider = {
               ...previousProvider,
-              status: "warning",
+              status: driver === "devin" && installed ? "error" : "warning",
               installed,
               auth: { status: "unknown" },
               checkedAt: "2026-09-02T00:01:00.000Z",
@@ -1286,7 +1286,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         });
       });
 
-      it("fills missing capabilities from the previous provider snapshot", () => {
+      it("fills missing capabilities except for authoritative Devin inventories", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("cursor"),
           driver: ProviderDriverKind.make("cursor"),
@@ -1333,6 +1333,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...previousProvider.models,
         ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(
+            { ...previousProvider, driver: ProviderDriverKind.make("devin") },
+            { ...refreshedProvider, driver: ProviderDriverKind.make("devin") },
+          ).models,
+          refreshedProvider.models,
+        );
       });
 
       it.effect("does not run provider probes during layer construction", () =>
@@ -2615,6 +2622,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "devin",
                 "grok",
                 "opencode",
               ]);

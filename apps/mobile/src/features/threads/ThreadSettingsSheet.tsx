@@ -429,6 +429,7 @@ function ThreadSettingsSessionProvider(
           ? getProviderOptionDescriptors({
               caps: pendingModel.capabilities,
               selections: pendingModel.selection.options,
+              preserveUnavailableSelections: pendingModel.providerDriver === "devin",
             })
           : []
         : props.optionDescriptors,
@@ -1292,10 +1293,15 @@ export function NewTaskThreadSettingsRouteScreen() {
   const optionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
+        provider: flow.selectedModelOption?.providerDriver,
         capabilities: flow.selectedModelOption?.capabilities,
         selections: flow.selectedModel?.options,
       }),
-    [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
+    [
+      flow.selectedModel?.options,
+      flow.selectedModelOption?.capabilities,
+      flow.selectedModelOption?.providerDriver,
+    ],
   );
 
   return (

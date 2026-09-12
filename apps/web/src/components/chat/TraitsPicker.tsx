@@ -155,6 +155,7 @@ function getSelectedTraits(
     : getProviderOptionDescriptors({
         caps,
         selections: modelOptions,
+        preserveUnavailableSelections: provider === "devin",
       });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>

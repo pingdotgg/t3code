@@ -94,7 +94,7 @@ base URL. Mark secret values as sensitive; after saving, T3 Code does not displa
 their original values.
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
-[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
+[Claude](./providers-claude.md), [Devin](./providers-devin.md), [OpenCode](./providers-opencode.md), and
 [Antigravity](./providers-antigravity.md).
 
 ## Next steps

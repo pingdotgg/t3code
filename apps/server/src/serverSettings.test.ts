@@ -427,6 +427,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("does not assign a fallback background model to a Devin-only environment", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* service.updateSettings({
+        providers: {
+          codex: { enabled: false },
+          claudeAgent: { enabled: false },
+          cursor: { enabled: false },
+          grok: { enabled: false },
+          opencode: { enabled: false },
+          antigravity: { enabled: false },
+          devin: { enabled: true },
+        },
+      });
+      assert.deepEqual(
+        next.textGenerationModelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

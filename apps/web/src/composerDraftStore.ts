@@ -1197,8 +1197,11 @@ export function deriveEffectiveComposerModelState(input: {
           { preserveUnavailableSelection: preserveThreadModel },
         )
       : null) ??
-    // Antigravity has no static model or cross-account catalog fallback.
-    (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
+    // Account catalogs have no static model or cross-account fallback.
+    ((input.selectedProvider === "antigravity" || input.selectedProvider === "devin") &&
+    input.selectedInstanceId
+      ? ""
+      : null) ??
     resolveAppModelSelection(
       input.selectedProvider,
       input.settings,
@@ -1215,7 +1218,7 @@ export function deriveEffectiveComposerModelState(input: {
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
   const legacySelection =
-    input.selectedProvider === "antigravity" &&
+    (input.selectedProvider === "antigravity" || input.selectedProvider === "devin") &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
@@ -1232,7 +1235,9 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
         { preserveUnavailableSelection: true },
       ) ??
-      (input.selectedProvider === "antigravity" ? "" : null) ??
+      (input.selectedProvider === "antigravity" || input.selectedProvider === "devin"
+        ? ""
+        : null) ??
       resolveAppModelSelection(
         input.selectedProvider,
         input.settings,

@@ -221,5 +221,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [ProviderDriverKind.make("devin")]: "Devin",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
 };

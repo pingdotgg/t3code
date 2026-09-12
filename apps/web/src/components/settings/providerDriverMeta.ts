@@ -4,6 +4,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  DevinSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import {
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  DevinIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
@@ -81,6 +83,13 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "Antigravity",
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("devin"),
+    label: "Devin",
+    icon: DevinIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: DevinSettings,
   },
 ];
 

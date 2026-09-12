@@ -9,6 +9,7 @@ import {
 } from "@t3tools/shared/model";
 
 export function resolveProviderOptionDescriptors(input: {
+  readonly provider?: string;
   readonly capabilities: ModelCapabilities | null | undefined;
   readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
@@ -18,6 +19,7 @@ export function resolveProviderOptionDescriptors(input: {
   return getProviderOptionDescriptors({
     caps: input.capabilities,
     selections: input.selections,
+    preserveUnavailableSelections: input.provider === "devin",
   });
 }
 

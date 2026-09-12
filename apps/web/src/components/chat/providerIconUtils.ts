@@ -1,9 +1,10 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 import {
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  DevinIcon,
   Icon,
   OpenAI,
   OpenCodeIcon,
@@ -15,10 +16,12 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("devin")]: DevinIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
 };
 
 export type ModelEsque = {
+  fusion?: ServerProviderModel["fusion"];
   slug: string;
   name: string;
   shortName?: string | undefined;

@@ -490,3 +490,28 @@ describe("provider traits render guards", () => {
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
   });
 });
+
+it("preserves unavailable Devin thinking and speed choices for provider validation", () => {
+  const modelOptions = selections(["reasoningEffort", "max"], ["fastMode", true]);
+  const models = modelWith([
+    selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+  ]);
+  const state = getComposerProviderState({
+    provider: ProviderDriverKind.make("devin"),
+    model: MODEL,
+    models,
+    modelOptions,
+    planModeEnabled: false,
+  });
+  expect(state.modelOptionsForDispatch).toEqual(modelOptions);
+  const descriptors = getProviderOptionDescriptors({
+    caps: models[0]!.capabilities!,
+    selections: modelOptions,
+    preserveUnavailableSelections: true,
+  });
+  expect(descriptors[0]?.currentValue).toBe("max");
+  expect(descriptors[1]?.currentValue).toBe(true);
+  expect(descriptors[0]?.type === "select" && descriptors[0].options.at(-1)?.label).toContain(
+    "Unavailable",
+  );
+});
