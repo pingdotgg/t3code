@@ -446,6 +446,19 @@ public struct FeatureThreadOrderAssignment: Sendable, Equatable {
     }
 }
 
+/// A spread rewrite that wrote some assignments before a later environment
+/// rejected its write. Callers apply `confirmed` — those rows are arranged on
+/// their servers — and surface `underlying` as the move's failure.
+public struct FeatureThreadMovePartialError: Error, Sendable {
+    public let confirmed: [FeatureThreadOrderAssignment]
+    public let underlying: Error
+
+    public init(confirmed: [FeatureThreadOrderAssignment], underlying: Error) {
+        self.confirmed = confirmed
+        self.underlying = underlying
+    }
+}
+
 public enum FeatureMessageRole: String, Sendable, Codable {
     case user
     case assistant

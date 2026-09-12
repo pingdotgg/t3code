@@ -573,16 +573,32 @@ public final class FeatureRootModel {
     public func moveThread(_ id: String, direction: FeatureThreadMoveDirection) async {
         let environment = currentEnvironmentIdentity
         await perform {
-            let assignments = try await client.moveThread(id: id, direction: direction)
-            guard currentEnvironmentIdentity == environment else { return }
+            // The section is fixed by the plan the client is about to run —
+            // reading it after the await would misapply confirmed keys if a
+            // pin/unpin landed in between.
             let section: FeatureThreadOrderSection = snapshot.threads
                 .first(where: { $0.id == id })?.pinnedAt != nil ? .pinned : .active
-            for assignment in assignments {
-                mutateThread(id: assignment.threadID) {
-                    switch section {
-                    case .pinned: $0.pinOrderKey = assignment.orderKey
-                    case .active: $0.activeOrderKey = assignment.orderKey
-                    }
+            do {
+                let assignments = try await client.moveThread(id: id, direction: direction)
+                applyMoveAssignments(assignments, section: section, environment: environment)
+            } catch let partial as FeatureThreadMovePartialError {
+                applyMoveAssignments(partial.confirmed, section: section, environment: environment)
+                throw partial.underlying
+            }
+        }
+    }
+
+    private func applyMoveAssignments(
+        _ assignments: [FeatureThreadOrderAssignment],
+        section: FeatureThreadOrderSection,
+        environment: String
+    ) {
+        guard currentEnvironmentIdentity == environment else { return }
+        for assignment in assignments {
+            mutateThread(id: assignment.threadID) {
+                switch section {
+                case .pinned: $0.pinOrderKey = assignment.orderKey
+                case .active: $0.activeOrderKey = assignment.orderKey
                 }
             }
         }
