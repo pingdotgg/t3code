@@ -13,3 +13,10 @@ export function isPreviewFocused(): boolean {
   if (activeElement.tagName.toLowerCase() === "webview") return true;
   return activeElement.closest("[data-preview-panel-mode]") !== null;
 }
+
+export function focusedPreviewActionTarget(): string | null {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement) || !activeElement.isConnected) return null;
+  // Hosted webviews live outside the pane DOM; their runtime tab id matches the preview chrome.
+  return activeElement.closest("[data-preview-tab]")?.getAttribute("data-preview-tab") ?? null;
+}

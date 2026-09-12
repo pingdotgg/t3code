@@ -7,6 +7,49 @@ import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelSt
 const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 
 describe("diffPanelStore", () => {
+  it("keeps repeatable diff selections and branch bases independent", () => {
+    const secondPanel = { ...THREAD_REF, surfaceId: "diff:2" };
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(THREAD_REF, "origin/main");
+    store.selectBranchBaseRef(secondPanel, "origin/release");
+    store.selectGitScope(secondPanel, "unstaged");
+    store.selectTurn(THREAD_REF, TurnId.make("turn-1"));
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, secondPanel),
+    ).toEqual({ kind: "unstaged" });
+    store.selectGitScope(secondPanel, "branch");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, secondPanel),
+    ).toEqual({ kind: "branch", baseRef: "origin/release" });
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({ kind: "turn", turnId: "turn-1" });
+  });
+
+  it("removes one closed diff instance without resetting the others", () => {
+    const secondPanel = { ...THREAD_REF, surfaceId: "diff:2" };
+    const store = useDiffPanelStore.getState();
+    store.selectGitScope(THREAD_REF, "unstaged");
+    store.selectBranchBaseRef(secondPanel, "origin/release");
+    store.removeSurface(secondPanel);
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "unstaged" });
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, secondPanel),
+    ).toEqual({ kind: "branch", baseRef: null });
+  });
+
+  it("removes every diff instance when its thread is removed", () => {
+    const store = useDiffPanelStore.getState();
+    const otherThread = scopeThreadRef(THREAD_REF.environmentId, ThreadId.make("other-thread"));
+    store.selectBranchBaseRef(THREAD_REF, "origin/main");
+    store.selectBranchBaseRef({ ...THREAD_REF, surfaceId: "diff:2" }, "origin/release");
+    store.selectGitScope(otherThread, "unstaged");
+    store.removeThread(THREAD_REF);
+    expect(Object.values(useDiffPanelStore.getState().byThreadKey)).toEqual([{ kind: "unstaged" }]);
+    expect(useDiffPanelStore.getState().branchBaseRefByThreadKey).toEqual({});
+  });
   beforeEach(() =>
     useDiffPanelStore.setState({
       byThreadKey: {},

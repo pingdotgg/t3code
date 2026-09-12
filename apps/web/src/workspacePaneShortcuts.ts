@@ -1,0 +1,61 @@
+import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+
+import {
+  resolveShortcutCommand,
+  type ShortcutEventLike,
+  type ShortcutMatchOptions,
+} from "./keybindings";
+import type { PaneSplitDirection } from "./splitPaneTree";
+
+export type WorkspacePaneShortcutAction =
+  | { readonly _tag: "Split"; readonly direction: PaneSplitDirection }
+  | { readonly _tag: "Focus"; readonly direction: PaneSplitDirection }
+  | { readonly _tag: "ToggleMaximized" };
+
+/** Converts configurable keybinding commands into pane-domain operations. */
+export function workspacePaneShortcutAction(
+  command: KeybindingCommand,
+): WorkspacePaneShortcutAction | null {
+  switch (command) {
+    case "pane.splitLeft":
+      return { _tag: "Split", direction: "left" };
+    case "pane.splitDown":
+      return { _tag: "Split", direction: "down" };
+    case "pane.splitUp":
+      return { _tag: "Split", direction: "up" };
+    case "pane.splitRight":
+      return { _tag: "Split", direction: "right" };
+    case "pane.focusLeft":
+      return { _tag: "Focus", direction: "left" };
+    case "pane.focusDown":
+      return { _tag: "Focus", direction: "down" };
+    case "pane.focusUp":
+      return { _tag: "Focus", direction: "up" };
+    case "pane.focusRight":
+      return { _tag: "Focus", direction: "right" };
+    case "pane.toggleMaximized":
+      return { _tag: "ToggleMaximized" };
+    default:
+      return null;
+  }
+}
+
+/** Workspace commands that must bubble past the terminal's input handler. */
+export function isWorkspaceShortcutReleasedFromTerminal(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+
+  if (command === null) return false;
+
+  const paneAction = workspacePaneShortcutAction(command);
+
+  return (
+    command === "rightPanel.toggle" ||
+    command === "rightPanel.toggleMaximized" ||
+    paneAction?._tag === "Focus" ||
+    paneAction?._tag === "ToggleMaximized"
+  );
+}

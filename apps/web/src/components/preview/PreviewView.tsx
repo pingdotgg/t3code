@@ -13,7 +13,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -25,6 +25,7 @@ import {
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
+import { focusedPreviewActionTarget } from "~/lib/previewFocus";
 import {
   rememberPreviewUrl,
   updatePreviewServerSnapshot,
@@ -104,6 +105,7 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
+  const emptyPreviewActionTarget = useId();
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
@@ -678,11 +680,11 @@ export function PreviewView({
     };
   }, [runtimeTabId]);
 
-  // Subscribe only while visible; `toggle-panel` is owned by ChatView's
-  // URL-aware handler regardless of whether the panel is currently mounted.
+  const previewActionTarget = runtimeTabId ?? emptyPreviewActionTarget;
   useEffect(() => {
     if (!visible) return;
     return subscribePreviewAction((action) => {
+      if (focusedPreviewActionTarget() !== previewActionTarget) return;
       switch (action) {
         case "refresh":
           handleRefresh();
@@ -703,11 +705,12 @@ export function PreviewView({
           return;
       }
     });
-  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, visible]);
+  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, previewActionTarget, visible]);
 
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
+      data-preview-tab={previewActionTarget}
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow

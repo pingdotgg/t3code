@@ -136,6 +136,9 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   hasExplicitComposerModelSelection: () => false,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
+vi.mock("../initializeThreadWorkspace", () => ({
+  initializeNewThreadWorkspace: vi.fn(),
+}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFileDefaultThreadEnvMode: () => testState.projectFileRead,
 }));

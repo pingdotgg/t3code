@@ -98,6 +98,7 @@ interface CollapsedDiffFilesState {
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 interface DiffPanelProps {
+  surfaceId?: string;
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
   initialGitScope: "branch" | "unstaged";
@@ -106,6 +107,7 @@ interface DiffPanelProps {
 
 export default function DiffPanel({
   mode = "inline",
+  surfaceId = "diff",
   composerDraftTarget,
   initialGitScope: initialGitScopeProp,
   workspaceMutationId,
@@ -134,6 +136,10 @@ export default function DiffPanel({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
+  const diffPanelRef = useMemo(
+    () => (routeThreadRef ? { ...routeThreadRef, surfaceId } : null),
+    [routeThreadRef, surfaceId],
+  );
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useThread(routeThreadRef);
   const activeProjectId = activeThread?.projectId ?? null;
@@ -166,11 +172,7 @@ export default function DiffPanel({
       : null,
   );
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(
-      state.byThreadKey,
-      routeThreadRef,
-      initialGitScope === "unstaged",
-    ),
+    selectThreadDiffPanelSelection(state.byThreadKey, diffPanelRef, initialGitScope === "unstaged"),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -191,12 +193,12 @@ export default function DiffPanel({
   );
 
   useEffect(() => {
-    if (!routeThreadRef || diffSelection.kind !== "turn") return;
+    if (!diffPanelRef || diffSelection.kind !== "turn") return;
     useDiffPanelStore.getState().reconcileTurnSelection(
-      routeThreadRef,
+      diffPanelRef,
       orderedTurnDiffSummaries.map((summary) => summary.turnId),
     );
-  }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
+  }, [diffSelection, orderedTurnDiffSummaries, diffPanelRef]);
 
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
@@ -529,16 +531,18 @@ export default function DiffPanel({
   }, [collapseScopeKey, diffFileKeys]);
 
   const selectTurn = (turnId: TurnId) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
+    if (!diffPanelRef) return;
+    useDiffPanelStore.getState().selectTurn(diffPanelRef, turnId);
   };
+
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    if (!diffPanelRef) return;
+    useDiffPanelStore.getState().selectGitScope(diffPanelRef, scope);
   };
+
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    if (!diffPanelRef) return;
+    useDiffPanelStore.getState().selectBranchBaseRef(diffPanelRef, baseRef);
   };
 
   const headerRow = (

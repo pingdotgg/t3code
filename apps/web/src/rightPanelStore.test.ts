@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -12,15 +12,189 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "./rightPanelStore";
+import { getPanes } from "./splitPaneTree";
+import {
+  selectThreadWorkspaceLayout,
+  useThreadWorkspaceLayoutStore,
+} from "./threadWorkspaceLayoutStore";
+import {
+  createThreadWorkspaceTabFields,
+  findSurfaceTabs,
+  findThreadWorkspaceTabGroup,
+  transitionThreadWorkspaceTabs,
+} from "./threadWorkspaceTabs";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useThreadWorkspaceLayoutStore.setState({ byThreadKey: {} });
 });
 
+function splitSurfaceIntoSoleTabPane(surfaceId: string) {
+  const initial = createThreadWorkspaceTabFields([surfaceId]);
+  const surfaceTab = findSurfaceTabs(initial, surfaceId)[0];
+
+  if (!surfaceTab) throw new Error(`Expected ${surfaceId} surface tab`);
+
+  const sourcePaneId = findThreadWorkspaceTabGroup(initial, surfaceTab.id);
+
+  if (!sourcePaneId) throw new Error(`Expected ${surfaceId} source pane`);
+
+  const split = transitionThreadWorkspaceTabs(initial, {
+    _tag: "SplitTab",
+    paneId: sourcePaneId,
+    tabId: surfaceTab.id,
+    direction: "right",
+    mode: "move",
+  });
+  const surfacePaneId = findThreadWorkspaceTabGroup(split, surfaceTab.id);
+
+  if (!surfacePaneId) throw new Error(`Expected ${surfaceId} split pane`);
+  useThreadWorkspaceLayoutStore.setState({
+    byThreadKey: { [scopedThreadKey(refA)]: split },
+  });
+  return surfacePaneId;
+}
+
+function expectSurfaceReplacementPreservedPane(
+  previousSurfaceId: string,
+  nextSurfaceId: string,
+  paneId: string,
+): void {
+  const layout = selectThreadWorkspaceLayout(
+    useThreadWorkspaceLayoutStore.getState().byThreadKey,
+    refA,
+  );
+  const replacementTab = findSurfaceTabs(layout, nextSurfaceId)[0];
+
+  expect(getPanes(layout.paneTree.root)).toHaveLength(2);
+  expect(findSurfaceTabs(layout, previousSurfaceId)).toHaveLength(0);
+  expect(replacementTab).toBeDefined();
+  expect(replacementTab && findThreadWorkspaceTabGroup(layout, replacementTab.id)).toBe(paneId);
+}
+
 describe("rightPanelStore", () => {
+  it("does not republish the layout when focusing or revealing its already active pane", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "files");
+    const paneId = splitSurfaceIntoSoleTabPane("files");
+    const layouts = useThreadWorkspaceLayoutStore.getState();
+    let updates = 0;
+    const unsubscribe = useThreadWorkspaceLayoutStore.subscribe(() => updates++);
+
+    try {
+      for (let i = 0; i < 2; i++) {
+        layouts.transition(refA, { _tag: "FocusPane", paneId });
+        panels.activateSurface(refA, "files");
+        layouts.transition(refA, { _tag: "TogglePaneMaximized", paneId });
+      }
+      expect(updates).toBe(2);
+      const restored = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        refA,
+      );
+      expect(restored.paneTree.maximizedPaneId).toBeNull();
+      expect(getPanes(restored.paneTree.root)).toHaveLength(2);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("preserves the conversation selection through resource updates and restoration", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "files");
+    const layouts = useThreadWorkspaceLayoutStore.getState();
+    layouts.transition(refA, { _tag: "ActivateThread" });
+    panels.reconcileBrowserSurfaces(refA, []);
+    const surfaceIds = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.map((surface) => surface.id);
+    const restored = layouts.transition(refA, { _tag: "ReconcileSurfaceTabs", surfaceIds });
+    expect(getPanes(restored.paneTree.root)[0]?.activeTabId).toBe("pane-tab:thread");
+
+    panels.open(refA, "files");
+    const reopened = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      refA,
+    );
+    expect(getPanes(reopened.paneTree.root)[0]?.activeTabId).toBe(
+      findSurfaceTabs(reopened, "files")[0]?.id,
+    );
+  });
+
+  it("reveals an existing hidden tool even when it remains the selected surface", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "diff");
+    const paneId = splitSurfaceIntoSoleTabPane("diff");
+    useThreadWorkspaceLayoutStore
+      .getState()
+      .transition(refA, { _tag: "SetRightSidebarVisibility", visibility: "closed" });
+
+    panels.open(refA, "diff");
+
+    const layout = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      refA,
+    );
+    expect(layout.rightSidebarVisibility).toBe("open");
+    expect(layout.paneTree.focusedPaneId).toBe(paneId);
+    expect(findSurfaceTabs(layout, "diff")).toHaveLength(1);
+  });
+
+  it("keeps a selected file in a sole-tab Files pane", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    const paneId = splitSurfaceIntoSoleTabPane("files");
+
+    store.openFile(refA, "src/index.ts");
+
+    expectSurfaceReplacementPreservedPane("files", "file:src/index.ts", paneId);
+  });
+
+  it("keeps a selected attachment in a sole-tab Files pane", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    const paneId = splitSurfaceIntoSoleTabPane("files");
+
+    store.openAttachment(refA, {
+      type: "file",
+      id: "attachment-pdf",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1,
+    });
+
+    expectSurfaceReplacementPreservedPane("files", "attachment:attachment-pdf", paneId);
+  });
+
+  it("keeps a created browser in its sole-tab placeholder pane", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "preview");
+    const paneId = splitSurfaceIntoSoleTabPane("browser:new");
+
+    store.openBrowser(refA, "tab-a");
+
+    expectSurfaceReplacementPreservedPane("browser:new", "browser:tab-a", paneId);
+  });
+
+  it("keeps a selected device in its sole-tab picker pane", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "device");
+    const paneId = splitSurfaceIntoSoleTabPane("device");
+
+    store.openDevice(refA, {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    });
+
+    expectSurfaceReplacementPreservedPane("device", "device:nucbox:emulator-5580", paneId);
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {
@@ -87,7 +261,14 @@ describe("rightPanelStore", () => {
         JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
       );
       useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+      const layoutBeforeAutomaticOpen = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        refA,
+      );
       store.openDevice(refA, target, true);
+      expect(
+        selectThreadWorkspaceLayout(useThreadWorkspaceLayoutStore.getState().byThreadKey, refA),
+      ).toBe(layoutBeforeAutomaticOpen);
       expect(
         selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
           (surface) => surface.kind === "device",
@@ -437,6 +618,47 @@ describe("rightPanelStore", () => {
       activeSurfaceId: "files",
       surfaces: [{ id: "files", kind: "files" }],
     });
+  });
+
+  it("opens repeatable tool surfaces with distinct instance ids", () => {
+    const store = useRightPanelStore.getState();
+    store.openNewSurface(refA, "diff");
+    store.openNewSurface(refA, "diff");
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "agents");
+    store.openNewSurface(refA, "agents");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "diff", kind: "diff" },
+      { id: "diff:2", kind: "diff" },
+      { id: "files", kind: "files" },
+      { id: "files:2", kind: "files" },
+      { id: "agents", kind: "agents" },
+      { id: "agents:2", kind: "agents" },
+    ]);
+  });
+
+  it("replaces only the active explorer when multiple explorers are open", () => {
+    const store = useRightPanelStore.getState();
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "files");
+    store.openFile(refA, "src/index.ts");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "files", kind: "files" },
+      {
+        id: "file:src/index.ts",
+        kind: "file",
+        relativePath: "src/index.ts",
+        revealLine: null,
+        revealRequestId: 1,
+      },
+    ]);
   });
 
   it("replaces the standalone explorer with peer file surfaces", () => {
