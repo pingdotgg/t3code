@@ -478,12 +478,14 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     readonly url: string;
     readonly serverPassword?: string;
     readonly version: string;
+    readonly external?: boolean;
   }) =>
     openCodeRuntime
       .loadOpenCodeInventory(
         openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory: cwd,
+          external: server.external ?? false,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
         }),
       )
