@@ -259,6 +259,8 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
+import { UsageLimitMeter } from "./UsageLimitMeter";
+import { resolveUsageLimitMeter, type UsageLimitMeterModel } from "./UsageLimitMeter.logic";
 import {
   providerSupportsManualCompaction,
   resolveContextWindowModelDisplayName,
@@ -1133,6 +1135,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
+  activeUsageLimits: UsageLimitMeterModel | null;
   activeContextWindow: ContextWindowSnapshot | null;
   reserveContextWindowMeter: boolean;
   activeThreadModelDisplayName: string | null;
@@ -1163,6 +1166,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
+      {props.activeUsageLimits ? <UsageLimitMeter model={props.activeUsageLimits} /> : null}
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
@@ -2014,6 +2018,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedProviderStatus.reportsContextWindow === true
       : null,
   });
+
+  // ------------------------------------------------------------------
+  // Usage limits
+  // ------------------------------------------------------------------
+  const activeUsageLimits = useMemo(
+    () => resolveUsageLimitMeter(providerStatuses, selectedInstanceId),
+    [providerStatuses, selectedInstanceId],
+  );
+  const showsContextWindowMeter =
+    (settings.contextWindowMeterEnabled && activeContextWindow !== null) ||
+    reserveContextWindowMeter;
 
   // ------------------------------------------------------------------
   // Composer-local state
@@ -6374,12 +6389,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   "relative",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
-                    ((settings.contextWindowMeterEnabled && activeContextWindow) ||
-                    reserveContextWindowMeter
-                      ? "pr-28"
-                      : showComposerAttachAction
-                        ? "pr-20"
-                        : "pr-12"),
+                    (showsContextWindowMeter && activeUsageLimits
+                      ? "pr-36"
+                      : showsContextWindowMeter || activeUsageLimits
+                        ? "pr-28"
+                        : showComposerAttachAction
+                          ? "pr-20"
+                          : "pr-12"),
                 )}
               >
                 {previewFile ? (
@@ -6589,6 +6605,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
+                    activeUsageLimits={activeUsageLimits}
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
                     }
