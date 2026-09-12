@@ -540,6 +540,12 @@ describe("environment shell synchronization", () => {
         { id: "created-after-http-snapshot" },
       ]);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
+
+      // A same-session resubscribe still requests a full socket snapshot but
+      // does not pay for another HTTP refresh first.
+      yield* Queue.offer(wakeups, "application-active");
+      expect(yield* Queue.take(subscribeInputs)).toEqual({});
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
     }),
   );
 });
