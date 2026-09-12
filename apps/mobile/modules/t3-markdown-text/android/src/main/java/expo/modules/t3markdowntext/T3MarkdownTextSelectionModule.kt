@@ -3,6 +3,8 @@ package expo.modules.t3markdowntext
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.text.Spannable
+import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ReplacementSpan
 import android.view.ActionMode
@@ -18,19 +20,31 @@ import kotlin.math.min
 
 private const val OBJECT_REPLACEMENT_CHARACTER = "\uFFFC"
 
-private fun copyTextWithoutInlineImages(
+// Match React Native's measurement buffer. Android orders tied line-height
+// spans differently in SpannableString, shifting inline images once RN's
+// span priorities are exhausted.
+private object MarkdownSpannableFactory : Spannable.Factory() {
+  override fun newSpannable(source: CharSequence): Spannable =
+    SpannableStringBuilder(source)
+}
+
+internal fun copyTextWithoutInlineImages(
   text: CharSequence,
   start: Int,
   end: Int
 ): String {
   if (text !is Spanned) return text.subSequence(start, end).toString()
 
+  fun isInlineImage(index: Int): Boolean =
+    index >= 0 && text[index].toString() == OBJECT_REPLACEMENT_CHARACTER &&
+      text.getSpans(index, index + 1, ReplacementSpan::class.java).isNotEmpty()
+
   return buildString {
     for (index in start until end) {
-      val isInlineImage =
-        text[index].toString() == OBJECT_REPLACEMENT_CHARACTER &&
-          text.getSpans(index, index + 1, ReplacementSpan::class.java).isNotEmpty()
-      if (!isInlineImage) append(text[index])
+      // The renderer inserts one NBSP after each image to keep its label on the same line.
+      // Inspect the original text even when selection starts after the image.
+      val isIconSpacer = text[index] == '\u00A0' && isInlineImage(index - 1)
+      if (!isInlineImage(index) && !isIconSpacer) append(text[index])
     }
   }
 }
@@ -85,6 +99,7 @@ class T3MarkdownTextSelectionModule : Module() {
         if (currentCallback is SanitizingSelectionActionModeCallback) {
           return@runOnUiQueueThread
         }
+        textView.setSpannableFactory(MarkdownSpannableFactory)
         textView.customSelectionActionModeCallback =
           SanitizingSelectionActionModeCallback(textView, currentCallback)
       }

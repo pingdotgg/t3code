@@ -1,4 +1,6 @@
 import { InfoIcon, Undo2Icon } from "lucide-react";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   createContext,
@@ -19,6 +21,21 @@ import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import {
+  isProjectScopedSettingKey,
+  listProjectOverrides,
+  scopedSettingsAreMixed,
+  scopedSettingsSource,
+} from "./scopedSettings";
+import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
+import {
+  SettingInheritance,
+  type SettingInheritanceState,
+  type SettingOverridingProject,
+} from "./SettingInheritance";
+
+const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -253,8 +270,11 @@ export function SettingsRow({
   description,
   status,
   resetAction,
+  onResetOverride,
   control,
   serverScoped = false,
+  settingKeys = EMPTY_SETTING_KEYS,
+  mixed: mixedOverride,
   children,
   className,
   ...rowProps
@@ -263,37 +283,152 @@ export function SettingsRow({
   description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
+  /** Replaces the default override clear for rows with side effects beyond the settings key. */
+  onResetOverride?: () => void;
   control?: ReactNode;
   serverScoped?: boolean;
+  settingKeys?: readonly (keyof ServerSettings)[];
+  mixed?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
-  const unavailable = serverScoped && !primarySettingsAvailable;
-  const renderedReset = unavailable ? null : resetAction;
+  const context = useOptionalSettingsScope();
+  const clearOverrides = useClearScopedSettings();
+  const clearProjectOverrides = useClearProjectOverrides();
+  const isProjectScope =
+    context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
+  const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
+  // A project scope can only edit keys that support overrides; the rest stay
+  // visible so the user sees the inherited value, but cannot change it here.
+  const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
+  const mixed =
+    mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+  const source =
+    context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
+  const unavailable =
+    serverScoped &&
+    !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
+  const inheritedFrom =
+    source === "environment" && context?.scope.environmentIds.length === 1
+      ? (context.environments.find(
+          (environment) => environment.environmentId === context.scope.environmentIds[0],
+        )?.label ?? "environment")
+      : "environment";
+  const environmentSettingsById = useMemo(
+    () =>
+      new Map(
+        (context?.connectedEnvironments ?? []).flatMap((environment) =>
+          environment.serverConfig
+            ? [[environment.environmentId, environment.serverConfig.settings] as const]
+            : [],
+        ),
+      ),
+    [context?.connectedEnvironments],
+  );
+  // At environment scope, projects with their own value keep it when the
+  // environment default changes; the chain names them and can reset them.
+  const overridingProjects = useMemo((): SettingOverridingProject[] => {
+    if (context === null || isProjectScope || scopedKeys.length === 0) return [];
+    return listProjectOverrides(context.connectedEnvironments, scopedKeys).flatMap((entry) => {
+      const group = context.groups.find((candidate) =>
+        candidate.memberProjects.some(
+          (member) => member.environmentId === entry.environmentId && member.id === entry.projectId,
+        ),
+      );
+      if (!group) return [];
+      return [
+        {
+          ...entry,
+          label: group.displayName,
+          open: () =>
+            context.selectScope({
+              project: group.projectKey,
+              ...(context.search.machine ? { machine: context.search.machine } : {}),
+            }),
+        },
+      ];
+    });
+  }, [context, isProjectScope, scopedKeys]);
+  const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
+    source === "project" || source === "mixed" ? (
+      <SettingResetButton
+        label={typeof title === "string" ? title : "override"}
+        tooltip="Reset to inherited value"
+        onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
+      />
+    ) : null
+  ) : (
+    resetAction
+  );
+  const inertControl = (message: string) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          // Focusable so keyboard users can still reach the explanation.
+          <span
+            tabIndex={0}
+            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
+          />
+        }
+      >
+        <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
+          {control}
+        </div>
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-72">
+        {message}
+      </TooltipPopup>
+    </Tooltip>
+  );
+  // A mixed selection keeps the real control with "Mixed" as its placeholder
+  // (the multi-selection inspector convention): the popover shows who has
+  // what, and picking a value applies it to every target.
   const renderedControl =
-    unavailable && control ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            // Focusable so keyboard users can still reach the explanation.
-            <span
-              tabIndex={0}
-              className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto"
-            />
-          }
-        >
-          <div inert className="flex w-full items-center gap-2 opacity-50 sm:w-auto">
-            {control}
-          </div>
-        </TooltipTrigger>
-        <TooltipPopup side="top" className="max-w-72">
-          {PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
-        </TooltipPopup>
-      </Tooltip>
-    ) : (
-      control
+    unavailable && control
+      ? inertControl(
+          context
+            ? "Reconnect the selected environment to change this setting."
+            : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+        )
+      : environmentWide && control
+        ? inertControl("Environment-wide setting. Select an environment to change it.")
+        : control;
+  // Server rows get an indicator beside the title that opens the resolution
+  // chain per target at every scope; client rows keep a plain status only.
+  const customized =
+    context !== null &&
+    settingKeys.some((key) =>
+      context.targets.some((candidate) => {
+        const environmentSettings = environmentSettingsById.get(candidate.environmentId);
+        return (
+          environmentSettings !== undefined &&
+          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
+        );
+      }),
     );
+  const inheritance: { state: SettingInheritanceState; summary: string } = mixed
+    ? { state: "mixed", summary: "Mixed across selected environments" }
+    : source === "project"
+      ? { state: "overridden", summary: "Overridden for this project" }
+      : source === "environment" && scopedKeys.length > 0
+        ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+        : customized
+          ? { state: "environment", summary: "Set on the environment" }
+          : { state: "default", summary: "Built-in default" };
+  const renderedInheritance =
+    context && serverScoped && settingKeys.length > 0 ? (
+      <SettingInheritance
+        state={inheritance.state}
+        summary={inheritance.summary}
+        targets={context.targets}
+        environments={context.connectedEnvironments}
+        keys={settingKeys}
+        overridingProjects={overridingProjects}
+        onClearOverrides={(entries) => clearProjectOverrides(entries, scopedKeys)}
+      />
+    ) : null;
+  const renderedStatus = status;
 
   return (
     <div
@@ -311,6 +446,11 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-[-0.005em] text-foreground">{title}</h3>
+            {renderedInheritance ? (
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                {renderedInheritance}
+              </span>
+            ) : null}
             <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
               {renderedReset}
             </span>
@@ -320,7 +460,9 @@ export function SettingsRow({
               {description}
             </p>
           ) : null}
-          {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
+          {renderedStatus ? (
+            <div className="pt-0.5 text-xs text-muted-foreground">{renderedStatus}</div>
+          ) : null}
         </div>
         {renderedControl ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">

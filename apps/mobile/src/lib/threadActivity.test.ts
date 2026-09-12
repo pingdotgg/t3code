@@ -1,5 +1,5 @@
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   ApprovalRequestId,
@@ -26,6 +26,21 @@ import {
   type ThreadFeedEntry,
   type WorkLogEntry,
 } from "./threadActivity";
+
+// Match Hermes: these ES2023 array methods are absent on mobile.
+beforeEach(() => {
+  const methods = ["toSorted", "toReversed"] as const;
+  const descriptors = methods.map((method) =>
+    Object.getOwnPropertyDescriptor(Array.prototype, method),
+  );
+  for (const method of methods) Reflect.deleteProperty(Array.prototype, method);
+  return () => {
+    for (const [index, method] of methods.entries()) {
+      const descriptor = descriptors[index];
+      if (descriptor) Reflect.defineProperty(Array.prototype, method, descriptor);
+    }
+  };
+});
 
 const singleSelectQuestion = {
   id: "runtime",
@@ -258,6 +273,7 @@ function makeThread(
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
