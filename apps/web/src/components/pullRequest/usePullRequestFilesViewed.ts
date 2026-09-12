@@ -16,6 +16,7 @@ import {
   toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
+  type FileViewedStates,
 } from "./pullRequestFilesViewed.logic";
 
 /**
@@ -53,7 +54,8 @@ export interface PullRequestFilesViewedView {
  *
  * The marks live on the server rather than in this tab, so a review carried on from another
  * machine picks up where it was left. Presses show immediately and are held over the server's
- * answer until it agrees with them, so the checkbox never waits on a round trip.
+ * answer until a read that could have seen them comes back, so the checkbox never waits on a
+ * round trip and never outlasts the record it stands in for.
  */
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
@@ -93,14 +95,22 @@ export function usePullRequestFilesViewed(options: {
   const scopeKey = `${environmentId} ${reference.projectId} ${reference.repository} ${reference.number}`;
   const scope = useRef(scopeKey);
 
+  // The host's answer as it stood when a completed write was acknowledged, per path. The first
+  // answer that differs from it is the first read that could have seen the write, which is what
+  // retires the press rather than the host happening to agree with it.
+  const answeredFrom = useRef<Map<string, FileViewedStates | null>>(new Map());
+  const statesRef = useRef(states);
+  statesRef.current = states;
+
   useEffect(() => {
-    setOverlay((current) =>
-      settleFileViewedOverlay(
-        current,
-        states,
-        new Set([...queued.current.keys(), ...sentBy.current.keys()]),
-      ),
-    );
+    const pending = new Set([...queued.current.keys(), ...sentBy.current.keys()]);
+    const answered = new Set<string>();
+    for (const [path, from] of answeredFrom.current) {
+      if (pending.has(path) || from === states) continue;
+      answered.add(path);
+      answeredFrom.current.delete(path);
+    }
+    setOverlay((current) => settleFileViewedOverlay(current, states, pending, answered));
   }, [states]);
 
   const flush = useCallback(() => {
@@ -132,6 +142,9 @@ export function usePullRequestFilesViewed(options: {
         }
         return;
       }
+      // Answered for from the next read on, whatever it says. A push landing between the write
+      // and that read comes back as `dismissed`, and the press must not stand over it.
+      for (const path of mine) answeredFrom.current.set(path, statesRef.current);
       refresh();
     });
   }, [environmentId, reference, refresh, setFilesViewed]);
@@ -154,6 +167,7 @@ export function usePullRequestFilesViewed(options: {
       }
       queued.current = new Map();
       sentBy.current = new Map();
+      answeredFrom.current = new Map();
       setOverlay(NO_OVERLAY);
     };
   }, [scopeKey]);
