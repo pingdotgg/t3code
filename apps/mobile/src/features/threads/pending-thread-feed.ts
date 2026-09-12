@@ -30,6 +30,7 @@ export function appendPendingThreadMessages(
           role: "user",
           text: pendingMessage.text,
           attachments: [],
+          context: pendingMessage.context,
           createdAt: pendingMessage.createdAt,
           updatedAt: pendingMessage.createdAt,
           runId: null,

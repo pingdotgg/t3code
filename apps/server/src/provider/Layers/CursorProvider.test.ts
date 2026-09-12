@@ -122,6 +122,7 @@ describe("buildCursorProviderSnapshot", () => {
       status: "warning",
       message: "Cursor SDK model discovery returned no built-in models.",
       models: [],
+      supportsConversationRollback: false,
     });
   });
 });
