@@ -135,6 +135,7 @@ Configure your version manager for non-interactive shells if this differs from
 your normal terminal. With nvm, setting a compatible default, such as
 `nvm alias default 24`, can resolve the problem.
 
+Closing the desktop app leaves the remote server and running agents active.
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already
 running is left alone.

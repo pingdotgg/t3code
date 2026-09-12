@@ -478,7 +478,7 @@ describe("ssh tunnel scripts", () => {
         Effect.andThen(
           Effect.sync(() => {
             assert.equal(tunnelKillCount, 2);
-            assert.equal(stopCommandCount, mode === "failed stop" ? 3 : 2);
+            assert.equal(stopCommandCount, mode === "failed stop" ? 2 : 1);
           }),
         ),
       );

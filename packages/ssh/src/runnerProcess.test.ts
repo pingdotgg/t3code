@@ -11,7 +11,11 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as NodeNet from "node:net";
 
-import { buildRemoteStopScript, buildRemoteT3RunnerScript } from "./tunnel.ts";
+import {
+  buildRemoteLaunchScript,
+  buildRemoteStopScript,
+  buildRemoteT3RunnerScript,
+} from "./tunnel.ts";
 
 const Started = Schema.Struct({
   pid: Schema.Number,
@@ -161,6 +165,97 @@ if (args.includes("--package")) {
             "command -v t3",
           ];
           assert.deepEqual(calls, [expectedCall, expectedCall]);
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  },
+);
+
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "remote reconnect process ownership",
+  () => {
+    it.live.each(["managed", "external"] as const)(
+      "reuses the same %s server published in the runtime file",
+      (serverKind) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fixture = yield* fs.makeTempDirectoryScoped({ prefix: "t3-reconnect-" });
+          const runner = { nodeScriptPath: path.join(fixture, "unused-cli.mjs") };
+          const child = yield* spawner.spawn(
+            ChildProcess.make(
+              process.execPath,
+              [
+                "--input-type=module",
+                "-e",
+                `import * as http from "node:http";
+import * as fs from "node:fs";
+const server = http.createServer((_request, response) => response.end("ready"));
+process.on("SIGTERM", () => fs.writeFileSync("stopped", "SIGTERM"));
+server.listen(0, "127.0.0.1", () => {
+  process.stdout.write(JSON.stringify({ pid: process.pid, port: server.address().port, args: [] }) + "\\n");
+});
+`,
+              ],
+              { cwd: fixture, detached: false },
+            ),
+          );
+          yield* Effect.addFinalizer(() =>
+            child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore),
+          );
+          const started = decodeStarted(
+            yield* child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.splitLines,
+              Stream.take(1),
+              Stream.mkString,
+            ),
+          );
+          yield* fs.makeDirectory(path.join(fixture, "userdata"));
+          yield* fs.writeFileString(
+            path.join(fixture, "userdata", "server-runtime.json"),
+            `{"pid":${started.pid},"port":${started.port},"origin":"http://127.0.0.1:${started.port}"}`,
+          );
+          yield* fs.writeFileString(
+            path.join(fixture, "run-t3.sh"),
+            `${buildRemoteT3RunnerScript(runner)}\n`,
+          );
+          yield* fs.writeFileString(path.join(fixture, "port"), `${started.port}\n`);
+          yield* fs.writeFileString(path.join(fixture, "managed"), `${serverKind}\n`);
+          if (serverKind === "managed") {
+            yield* fs.writeFileString(path.join(fixture, "pid"), `${started.pid}\n`);
+          }
+          // Redirect state discovery and ownership files to this fixture only.
+          const script = buildRemoteLaunchScript(runner)
+            .replace(/^STATE_DIR=.*$/mu, 'STATE_DIR="$T3_TEST_STATE_DIR"')
+            .replace(/^DEFAULT_SERVER_HOME=.*$/mu, 'DEFAULT_SERVER_HOME="$T3_TEST_STATE_DIR"');
+          const launch = yield* spawner.spawn(
+            ChildProcess.make("/bin/sh", ["-s", "--", "fixture"], {
+              cwd: fixture,
+              env: { T3_TEST_STATE_DIR: fixture },
+              extendEnv: true,
+              stdin: Stream.make(new TextEncoder().encode(script)),
+            }),
+          );
+          const result = yield* Effect.all(
+            {
+              stdout: launch.stdout.pipe(Stream.decodeText(), Stream.mkString),
+              stderr: launch.stderr.pipe(Stream.decodeText(), Stream.mkString),
+              exitCode: launch.exitCode,
+            },
+            { concurrency: "unbounded" },
+          );
+          assert.equal(result.exitCode, 0, result.stderr);
+          assert.isFalse(yield* fs.exists(path.join(fixture, "stopped")));
+          assert.isTrue(yield* child.isRunning);
+          assert.equal(
+            result.stdout,
+            `{"remotePort":${started.port},"serverKind":"${serverKind}"}\n`,
+          );
+          assert.equal(yield* fs.readFileString(path.join(fixture, "managed")), `${serverKind}\n`);
+          if (serverKind === "managed") {
+            assert.equal(yield* fs.readFileString(path.join(fixture, "pid")), `${started.pid}\n`);
+          }
         }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
   },

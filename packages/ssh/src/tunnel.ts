@@ -527,7 +527,8 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
-if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+# A managed server also publishes the default runtime file. Keep its ownership on reconnect.
+if [ -n "$DEFAULT_REMOTE_PORT" ] && { [ "$REMOTE_MANAGED" != "managed" ] || [ "$REMOTE_PID" != "$DEFAULT_RUNTIME_PID" ]; }; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     if [ "$REMOTE_MANAGED" = "managed" ]; then
@@ -1379,55 +1380,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ),
     );
     tunnels.set(input.key, tunnelEntry);
-    const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystemService = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
     yield* Scope.addFinalizer(
       entryScope,
       Effect.gen(function* () {
-        const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
-        if (stopRemote) {
+        if (tunnels.get(tunnelEntry.key) === tunnelEntry) {
           tunnels.delete(tunnelEntry.key);
         }
+        // Client shutdown and tunnel replacement must leave remote work running.
         yield* tunnelEntry.process
           .kill({
             killSignal: "SIGTERM",
             forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
           })
           .pipe(Effect.ignore);
-        if (!stopRemote) {
-          return;
-        }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* stopRemoteServer(
-          tunnelEntry.target,
-          authSecret === null
-            ? {
-                batchMode: "yes",
-                interactiveAuth: false,
-              }
-            : {
-                authSecret,
-                batchMode: "no",
-                interactiveAuth: true,
-              },
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(FileSystem.FileSystem, fileSystemService),
-          Effect.provideService(Path.Path, pathService),
-        );
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
       }).pipe(Effect.ignore),
     );
     yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
@@ -1581,11 +1546,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           hasTunnel: entry !== null,
         });
         if (entry !== null) {
-          // Explicit disconnect owns the remote stop so its failure reaches the caller.
-          yield* Effect.gen(function* () {
-            tunnels.delete(key);
-            yield* closeTunnelEntry(entry);
-          }).pipe(Effect.uninterruptible);
+          yield* closeTunnelEntry(entry);
         }
         yield* runWithSshAuth({
           key,
