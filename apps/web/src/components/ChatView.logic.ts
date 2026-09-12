@@ -498,6 +498,9 @@ export function buildLocalDraftThread(
 export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
   return {
     ...shell,
+    // Shells carry only a wait summary; the detail subscription supplies the
+    // full queued prompt once it loads.
+    pendingProviderTurn: null,
     messages: [],
     proposedPlans: [],
     activities: [],

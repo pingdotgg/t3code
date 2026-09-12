@@ -14,6 +14,7 @@ import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  modelUsageAvailability,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -46,7 +47,7 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { composerContextImportsAtom } from "../../state/use-composer-drafts";
+import { composerContextImportsAtom, composerDraftsAtom } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -137,7 +138,8 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onSendMessage: (intent?: "when-available") => Promise<MessageId | null>;
+  readonly onCancelProviderWait: () => void;
   /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
@@ -422,12 +424,43 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     states: uploadStates,
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
-  const sendBlockedReason = props.sendBlockedReason ?? attachmentBlockReason;
+  const composerDrafts = useAtomValue(composerDraftsAtom);
+  const supportsProviderWait =
+    props.serverConfig?.environment.capabilities.providerAvailabilityWait === true;
+  const queuedProviderWait = props.selectedThread.pendingProviderTurn;
+  // Quota follows the selection `onSendMessage` will enqueue — a pending draft
+  // model override, not the thread's last-used model.
+  const quotaModelSelection =
+    composerDrafts[composerOwnerKey]?.modelSelection ?? currentModelSelection;
+  // Minute-granular: the exhausted state lifts on its own once a reset window
+  // passes, without a per-render impure clock read.
+  const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
+  useEffect(() => {
+    const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const quotaExhausted =
+    modelUsageAvailability(
+      selectedProviderStatus?.usageLimits,
+      quotaModelSelection.model,
+      Date.parse(`${nowMinute}:00.000Z`),
+    ).status === "exhausted";
+  const providerWaitOffered = supportsProviderWait && queuedProviderWait == null && quotaExhausted;
+  const sendBlockedReason =
+    props.sendBlockedReason ??
+    attachmentBlockReason ??
+    (queuedProviderWait != null
+      ? "Cancel the queued message before sending another"
+      : quotaExhausted && supportsProviderWait
+        ? "Usage limit reached"
+        : null);
   const canSend =
     hasContent &&
     !contextImports[composerOwnerKey] &&
     !voiceInput.blocksSubmission &&
     sendBlockedReason === null &&
+    queuedProviderWait == null &&
+    !(quotaExhausted && supportsProviderWait) &&
     !modelUnavailable;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
@@ -477,51 +510,74 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
     onEditorFocusChange?.(false);
   }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
-  const handleSend = useCallback(async () => {
-    // Typed out in full rather than picked from the menu. Attachments mean the
-    // user is sending a prompt, so those go through as usual.
-    if (
-      usageLimitsOffered &&
-      isUsageLimitsCommand(props.draftMessage) &&
-      props.draftAttachments.length === 0
-    ) {
-      if (openUsageLimits()) onChangeDraftMessage("");
-      return;
-    }
-    if (voiceInput.blocksSubmission) return;
-    const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-    if (inFlightThreadIdsRef.current.has(threadKey)) return;
-    inFlightThreadIdsRef.current.add(threadKey);
-    try {
-      const messageId = await onSendMessage();
-      if (messageId === null) {
+  const handleSend = useCallback(
+    async (intent?: "when-available") => {
+      // Typed out in full rather than picked from the menu. Attachments mean the
+      // user is sending a prompt, so those go through as usual.
+      if (
+        usageLimitsOffered &&
+        isUsageLimitsCommand(props.draftMessage) &&
+        props.draftAttachments.length === 0
+      ) {
+        if (openUsageLimits()) onChangeDraftMessage("");
         return;
       }
-      // Sending a prompt starts agent work: arm the lock-screen card while the
-      // app is foregrounded and the activity token can be registered. Armed
-      // after the send so its preference read and native Activity start don't
-      // contend with the queued-message feedback on the tap frame.
-      armAgentAwarenessLiveActivityForLocalWork({
-        environmentId: props.environmentId,
-        threadTitle: props.selectedThread.title,
-        projectTitle: props.environmentLabel ?? "T3 Code",
-      });
-    } finally {
-      inFlightThreadIdsRef.current.delete(threadKey);
-    }
-  }, [
-    props.draftMessage,
-    props.draftAttachments.length,
-    onChangeDraftMessage,
-    openUsageLimits,
-    usageLimitsOffered,
-    onSendMessage,
-    props.environmentId,
-    props.environmentLabel,
-    props.selectedThread.id,
-    props.selectedThread.title,
-    voiceInput.blocksSubmission,
-  ]);
+      if (voiceInput.blocksSubmission) return;
+      if (queuedProviderWait != null) return;
+      if (
+        intent === "when-available" &&
+        (contextImports[composerOwnerKey] != null ||
+          modelUnavailable ||
+          props.sendBlockedReason != null ||
+          attachmentBlockReason != null)
+      )
+        return;
+      if (quotaExhausted && supportsProviderWait && intent !== "when-available") return;
+      const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+      if (inFlightThreadIdsRef.current.has(threadKey)) return;
+      inFlightThreadIdsRef.current.add(threadKey);
+      try {
+        const messageId = await onSendMessage(intent);
+        if (messageId === null) {
+          return;
+        }
+        // Sending a prompt starts agent work: arm the lock-screen card while the
+        // app is foregrounded and the activity token can be registered. Armed
+        // after the send so its preference read and native Activity start don't
+        // contend with the queued-message feedback on the tap frame. A provider
+        // wait only saves the prompt — no agent work has started.
+        if (intent === "when-available") return messageId;
+        armAgentAwarenessLiveActivityForLocalWork({
+          environmentId: props.environmentId,
+          threadTitle: props.selectedThread.title,
+          projectTitle: props.environmentLabel ?? "T3 Code",
+        });
+      } finally {
+        inFlightThreadIdsRef.current.delete(threadKey);
+      }
+    },
+    [
+      props.draftMessage,
+      props.draftAttachments.length,
+      onChangeDraftMessage,
+      openUsageLimits,
+      usageLimitsOffered,
+      onSendMessage,
+      props.environmentId,
+      props.environmentLabel,
+      props.selectedThread.id,
+      props.selectedThread.title,
+      props.sendBlockedReason,
+      attachmentBlockReason,
+      contextImports,
+      composerOwnerKey,
+      modelUnavailable,
+      queuedProviderWait,
+      quotaExhausted,
+      supportsProviderWait,
+      voiceInput.blocksSubmission,
+    ],
+  );
 
   // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
@@ -659,6 +715,42 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
+        ) : null}
+
+        {queuedProviderWait != null ? (
+          <View className="flex-row items-center justify-between px-3 py-2">
+            <Text className="text-xs text-foreground">Waiting for provider capacity</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel queued message"
+              onPress={props.onCancelProviderWait}
+            >
+              <Text className="text-xs text-foreground">Cancel</Text>
+            </Pressable>
+          </View>
+        ) : providerWaitOffered ? (
+          <View className="flex-row items-center justify-between px-3 py-2">
+            <Text className="text-xs text-foreground">Usage limit reached</Text>
+            {hasContent ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Start when available"
+                // Same eligibility blockers as a normal send except the
+                // exhausted quota itself; the server rejects a wait queued on
+                // a running session or otherwise blocked thread.
+                disabled={
+                  Boolean(contextImports[composerOwnerKey]) ||
+                  voiceInput.blocksSubmission ||
+                  modelUnavailable ||
+                  props.sendBlockedReason != null ||
+                  attachmentBlockReason != null
+                }
+                onPress={() => void handleSend("when-available")}
+              >
+                <Text className="text-xs text-foreground">Start when available</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
 
         <ComposerSurface

@@ -45,7 +45,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
+  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4, 5]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
@@ -59,6 +59,8 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
+  // The server holds the turn until the selected provider reports capacity.
+  waitForProvider: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 
@@ -87,6 +89,7 @@ export interface QueuedThreadMessage {
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;
+  readonly waitForProvider?: boolean;
   readonly createdAt: string;
 }
 
@@ -124,8 +127,13 @@ export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelec
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
+  // Ordinary records stay on v3 so a downgraded app keeps reading them. A wait
+  // record bumps to v5: builds without wait support fail the decode and
+  // retain the file instead of silently dropping `waitForProvider` and
+  // sending the prompt ahead of provider capacity.
+  const schemaVersion = message.waitForProvider === true ? 5 : THREAD_OUTBOX_SCHEMA_VERSION;
   return encodeStoredQueuedThreadMessage({
-    schemaVersion: THREAD_OUTBOX_SCHEMA_VERSION,
+    schemaVersion,
     ...message,
   });
 }

@@ -454,6 +454,7 @@ describe("OrchestrationEngine", () => {
           getThreadRuntimeContext: () => Effect.die("unused"),
           getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
+          getPendingProviderTurn: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           searchThreads: () => Effect.succeed({ matches: [] }),
@@ -2124,4 +2125,283 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+});
+
+it.each(["starting", "stopped"] as const)(
+  "persists and releases queued work through %s, and cancels after restart",
+  async (releasedStatus) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "provider-wait-"));
+    const database = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(database);
+    const threadId = ThreadId.make("waiting-thread");
+    const projectId = ProjectId.make("waiting-project");
+    const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+    const message = {
+      messageId: MessageId.make("waiting-message"),
+      role: "user" as const,
+      text: "Keep this exact prompt",
+      attachments: [],
+    };
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("wait-project"),
+          projectId,
+          title: "Waiting",
+          workspaceRoot: directory,
+          defaultModelSelection: selection,
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("wait-thread"),
+          threadId,
+          projectId,
+          title: "Waiting",
+          modelSelection: selection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      const queue = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make("wait-queue"),
+        threadId,
+        message,
+        waitForProvider: true,
+        runtimeMode: "approval-required" as const,
+        interactionMode: "default" as const,
+        createdAt: now(),
+      };
+      await system.run(system.engine.dispatch(queue));
+      let thread = (await system.readModel()).threads[0]!;
+      expect(thread.pendingProviderTurn?.message).toEqual(message);
+      expect(thread.pendingProviderTurn?.modelSelection).toEqual(selection);
+      expect(thread.messages).toHaveLength(0);
+      expect(thread.latestTurn).toBeNull();
+      await expect(
+        system.run(system.engine.dispatch({ ...queue, commandId: CommandId.make("wait-second") })),
+      ).rejects.toThrow("pending work");
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("wait-snooze"),
+            threadId,
+            snoozedUntil: "2099-01-02T00:00:00.000Z",
+          }),
+        ),
+      ).rejects.toThrow("queued turn start");
+      await system.dispose();
+      system = await createOrchestrationSystem(database);
+      thread = (await system.readModel()).threads[0]!;
+      expect(thread.pendingProviderTurn?.message).toEqual(message);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("wait-change-runtime-mode"),
+          createdAt: now(),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("wait-change-interaction-mode"),
+          createdAt: now(),
+          threadId,
+          interactionMode: "plan",
+        }),
+      );
+      const release = {
+        type: "thread.turn.release" as const,
+        commandId: CommandId.make("wait-release"),
+        threadId,
+        messageId: message.messageId,
+        createdAt: "2026-01-02T00:00:00.000Z",
+      };
+      await system.run(system.engine.dispatch(release));
+      await system.run(system.engine.dispatch(release));
+      const releaseEvents = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+      expect(
+        Array.from(releaseEvents).find(
+          (event) =>
+            event.commandId === release.commandId && event.type === "thread.turn-start-requested",
+        )?.payload,
+      ).toMatchObject({ runtimeMode: "approval-required", interactionMode: "default" });
+      // A dropped release handoff re-asserts the stored wait verbatim, while a
+      // resume without a matching pending turn is rejected so a concurrent
+      // cancel cannot resurrect the wait.
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("wait-resume"),
+          threadId,
+          message,
+          waitForProvider: true,
+          resumeProviderWait: true,
+          runtimeMode: "full-access",
+          interactionMode: "plan",
+          createdAt: release.createdAt,
+        }),
+      );
+      thread = (await system.readModel()).threads[0]!;
+      expect(thread.pendingProviderTurn).toMatchObject({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        message,
+      });
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("wait-resume-stale"),
+            threadId,
+            message: { ...message, messageId: MessageId.make("stale-resume-message") },
+            waitForProvider: true,
+            resumeProviderWait: true,
+            runtimeMode: "full-access",
+            interactionMode: "plan",
+            createdAt: release.createdAt,
+          }),
+        ),
+      ).rejects.toThrow("no longer pending");
+      thread = (await system.readModel()).threads[0]!;
+      expect(thread.messages).toHaveLength(1);
+      expect(thread.messages[0]?.text).toBe(message.text);
+      expect(thread.pendingProviderTurn?.message).toEqual(message);
+      for (const status of [releasedStatus, "ready"] as const) {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`wait-session-${status}`),
+            threadId,
+            createdAt: release.createdAt,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: release.createdAt,
+            },
+          }),
+        );
+      }
+      // An idle provider exit reports "stopped"; it must not discard the saved
+      // wait — only a session coming alive adopts the queued turn.
+      const survivingMessageId =
+        releasedStatus === "stopped" ? message.messageId : MessageId.make("cancel-message");
+      if (releasedStatus === "stopped") {
+        expect((await system.readModel()).threads[0]?.pendingProviderTurn?.message).toEqual(
+          message,
+        );
+      } else {
+        expect((await system.readModel()).threads[0]?.pendingProviderTurn).toBeNull();
+        await system.run(
+          system.engine.dispatch({
+            ...queue,
+            commandId: CommandId.make("wait-again"),
+            message: { ...message, messageId: survivingMessageId },
+            createdAt: "2026-01-03T00:00:00.000Z",
+          }),
+        );
+      }
+      await system.dispose();
+      system = await createOrchestrationSystem(database);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("wait-cancel"),
+          threadId,
+          pendingMessageId: survivingMessageId,
+          createdAt: "2026-01-03T01:00:00.000Z",
+        }),
+      );
+      expect((await system.readModel()).threads[0]?.pendingProviderTurn).toBeNull();
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            ...release,
+            commandId: CommandId.make("stale-release"),
+            messageId: survivingMessageId,
+          }),
+        ),
+      ).rejects.toThrow("no longer eligible");
+      expect((await system.readModel()).threads[0]?.messages).toHaveLength(1);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it("rejects a queued wait on a deleted thread", async () => {
+  const system = await createOrchestrationSystem();
+  const threadId = ThreadId.make("deleted-waiting-thread");
+  const projectId = ProjectId.make("deleted-waiting-project");
+  const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+  const createdAt = "2026-01-01T00:00:00.000Z";
+  await system.run(
+    system.engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make("deleted-wait-project"),
+      projectId,
+      title: "Deleted Waiting",
+      workspaceRoot: "/tmp/deleted-waiting-project",
+      defaultModelSelection: selection,
+      createdAt,
+    }),
+  );
+  await system.run(
+    system.engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("deleted-wait-thread"),
+      threadId,
+      projectId,
+      title: "Deleted Waiting",
+      modelSelection: selection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    }),
+  );
+  await system.run(
+    system.engine.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("deleted-wait-delete"),
+      threadId,
+    }),
+  );
+  await expect(
+    system.run(
+      system.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("deleted-wait-queue"),
+        threadId,
+        message: {
+          messageId: MessageId.make("deleted-wait-message"),
+          role: "user",
+          text: "Still wait",
+          attachments: [],
+        },
+        waitForProvider: true,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt,
+      }),
+    ),
+  ).rejects.toThrow("pending work");
+  expect((await system.readModel()).threads[0]?.pendingProviderTurn ?? null).toBeNull();
+  await system.dispose();
 });

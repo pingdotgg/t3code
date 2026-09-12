@@ -380,6 +380,28 @@ describe("thread outbox", () => {
     expect(decodeQueuedThreadMessage({ ...message, schemaVersion: 4 })).toEqual(message);
   });
 
+  it("writes wait-for-provider records as v5 and keeps ordinary records on v3", () => {
+    const waitingMessage = {
+      ...queuedMessage({
+        messageId: "message-wait",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      waitForProvider: true,
+    } satisfies QueuedThreadMessage;
+    const ordinaryMessage = queuedMessage({
+      messageId: "message-ordinary",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+
+    // A build without wait support must fail the v5 decode and retain the
+    // record rather than drop the intent and send ahead of capacity.
+    expect(encodeQueuedThreadMessage(waitingMessage)).toMatchObject({ schemaVersion: 5 });
+    expect(encodeQueuedThreadMessage(ordinaryMessage)).toMatchObject({ schemaVersion: 3 });
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(waitingMessage))).toEqual(
+      waitingMessage,
+    );
+  });
+
   it("persists the exact selector snapshot while remaining compatible with v1 messages", () => {
     const legacyMessage = queuedMessage({
       messageId: "message-1",

@@ -1,7 +1,10 @@
+import * as ProviderAvailabilityWaiter from "../ProviderAvailabilityWaiter.ts";
+import { modelUsageAvailability } from "@t3tools/shared/usageLimits";
 import {
   type ChatAttachment,
   CommandId,
   EventId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -24,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -373,6 +377,10 @@ const make = Effect.gen(function* () {
     }
   >();
   const stoppingThreadIds = new Set<ThreadId>();
+  // Released provider waits whose provider send is in flight, so a
+  // queued-message cancel can interrupt the send instead of letting the
+  // consumed wait run.
+  const queuedWaitSendFibers = new Map<MessageId, Fiber.Fiber<void, unknown>>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -633,6 +641,68 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  // A released wait stays durable until a session adopts it, so a handoff that
+  // ends without a send re-asserts it through a resume and the availability
+  // waiter re-arms on the emitted turn-queued. The decider rejects the resume
+  // once the wait was cancelled or replaced.
+  const requeueProviderWait = Effect.fnUntraced(function* (threadId: ThreadId, createdAt: string) {
+    const pendingTurn = yield* projectionSnapshotQuery
+      .getPendingProviderTurn(threadId)
+      .pipe(Effect.map(Option.flatten), Effect.map(Option.getOrUndefined));
+    if (pendingTurn == null) {
+      return;
+    }
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.turn.start",
+        commandId: yield* serverCommandId("provider-wait-resume"),
+        threadId,
+        message: pendingTurn.message,
+        modelSelection: pendingTurn.modelSelection,
+        ...(pendingTurn.titleSeed !== undefined ? { titleSeed: pendingTurn.titleSeed } : {}),
+        runtimeMode: pendingTurn.runtimeMode,
+        interactionMode: pendingTurn.interactionMode,
+        ...(pendingTurn.sourceProposedPlan !== undefined
+          ? { sourceProposedPlan: pendingTurn.sourceProposedPlan }
+          : {}),
+        waitForProvider: true,
+        resumeProviderWait: true,
+        createdAt,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          error._tag === "OrchestrationCommandInvariantError"
+            ? Effect.void
+            : Effect.logWarning("Could not resume queued provider wait", { threadId, error }),
+        ),
+      );
+  });
+
+  // A wait whose release was consumed or failed before a session adopted it is
+  // released by interrupting the pending message; the projection clears it on
+  // the emitted event instead of leaving a durable wait nothing re-checks.
+  const clearQueuedProviderWait = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    pendingMessageId: MessageId,
+    createdAt: string,
+  ) {
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.turn.interrupt",
+        commandId: yield* serverCommandId("provider-wait-clear"),
+        threadId,
+        pendingMessageId,
+        createdAt,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          error._tag === "OrchestrationCommandInvariantError"
+            ? Effect.void
+            : Effect.logWarning("Could not clear queued provider wait", { threadId, error }),
+        ),
+      );
+  });
+
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
@@ -671,6 +741,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly runtimeMode?: RuntimeMode;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -678,7 +749,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
-    const desiredRuntimeMode = thread.runtimeMode;
+    const desiredRuntimeMode = options?.runtimeMode ?? thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
@@ -858,7 +929,7 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
-      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const runtimeModeChanged = desiredRuntimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -934,6 +1005,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly runtimeMode?: RuntimeMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
@@ -945,6 +1017,7 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      ...(input.runtimeMode !== undefined ? { runtimeMode: input.runtimeMode } : {}),
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -1289,6 +1362,11 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    if (
+      event.payload.providerAvailabilityWait === true &&
+      thread.pendingProviderTurn?.messageId !== event.payload.messageId
+    )
+      return;
     const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
       threadId: thread.id,
       messageId: event.payload.messageId,
@@ -1303,6 +1381,13 @@ const make = Effect.gen(function* () {
         createdAt: event.payload.createdAt,
         requestId: event.payload.messageId,
       });
+      if (event.payload.providerAvailabilityWait === true) {
+        yield* clearQueuedProviderWait(
+          event.payload.threadId,
+          event.payload.messageId,
+          event.payload.createdAt,
+        );
+      }
       return;
     }
     const { message, hasOtherUserMessages } = turnStart.value;
@@ -1398,6 +1483,49 @@ const make = Effect.gen(function* () {
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
     if (authCommandHandled) {
+      if (event.payload.providerAvailabilityWait === true) {
+        // The auth handler consumed the queued message; release the wait so the
+        // thread does not keep showing it as pending.
+        yield* clearQueuedProviderWait(thread.id, event.payload.messageId, event.payload.createdAt);
+      }
+      return;
+    }
+
+    const activeSession =
+      event.payload.modelSelection === undefined && thread.session?.status !== "stopped"
+        ? (yield* providerService.listSessions()).find((session) => session.threadId === thread.id)
+        : undefined;
+    const previousSelection = threadModelSelections.get(thread.id) ?? thread.modelSelection;
+    const selection = event.payload.modelSelection ?? {
+      ...previousSelection,
+      instanceId: activeSession?.providerInstanceId ?? previousSelection.instanceId,
+      model: activeSession?.model ?? previousSelection.model,
+    };
+    const providerSnapshot = (yield* providerRegistry.getProviders).find(
+      (entry) => entry.instanceId === selection.instanceId,
+    );
+    const availability = modelUsageAvailability(
+      providerSnapshot?.usageLimits,
+      selection.model,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    );
+    if (event.payload.providerAvailabilityWait === true && availability.status !== "available") {
+      // The release handoff ended without a session; re-arm the stored wait.
+      yield* requeueProviderWait(thread.id, event.payload.createdAt);
+      return;
+    }
+    if (availability.status === "exhausted") {
+      const detail =
+        "Usage limit reached. Queue a message with Start when available or choose another provider.";
+      const latestSession = (yield* resolveThreadShell(thread.id))?.session;
+      if (latestSession?.status !== "running" && latestSession?.status !== "starting") {
+        yield* setThreadSessionErrorOnTurnStartFailure({
+          threadId: thread.id,
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+      }
+      yield* appendTurnStartFailure("Usage limit reached", detail);
       return;
     }
 
@@ -1503,8 +1631,12 @@ const make = Effect.gen(function* () {
           event.payload.threadId,
           event.payload.createdAt,
           event.payload.modelSelection !== undefined
-            ? { modelSelection: event.payload.modelSelection, pendingTurnStart: true }
-            : { pendingTurnStart: true },
+            ? {
+                modelSelection: event.payload.modelSelection,
+                pendingTurnStart: true,
+                runtimeMode: event.payload.runtimeMode,
+              }
+            : { pendingTurnStart: true, runtimeMode: event.payload.runtimeMode },
         );
         compactionSessionEnsured = true;
         if (event.payload.modelSelection !== undefined) {
@@ -1555,6 +1687,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
@@ -1562,18 +1695,38 @@ const make = Effect.gen(function* () {
     );
 
     if (Option.isNone(sendTurnRequest)) {
+      if (event.payload.providerAvailabilityWait === true) {
+        // The handoff failed before a session adopted the turn; release the
+        // durable wait so it is not stranded while the failure stands.
+        yield* clearQueuedProviderWait(
+          event.payload.threadId,
+          event.payload.messageId,
+          event.payload.createdAt,
+        );
+      }
       return;
     }
 
     const send = providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
+      .pipe(
+        Effect.asVoid,
+        Effect.catchCause(recoverTurnStartFailure),
+        Effect.ensuring(Effect.sync(() => queuedWaitSendFibers.delete(event.payload.messageId))),
+      );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
-    yield* send.pipe(
+    const sendFiber = yield* send.pipe(
       Effect.ensuring(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
       Effect.forkScoped,
     );
+    if (event.payload.providerAvailabilityWait === true) {
+      queuedWaitSendFibers.set(event.payload.messageId, sendFiber);
+      // A send that finished before registering leaves no entry to interrupt.
+      if (sendFiber.pollUnsafe() !== undefined) {
+        queuedWaitSendFibers.delete(event.payload.messageId);
+      }
+    }
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1866,6 +2019,27 @@ const make = Effect.gen(function* () {
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":
+        if (event.payload.pendingMessageId !== undefined) {
+          // The queued-message cancel already cleared the wait in the
+          // projection; also stop a release handoff whose send is in flight.
+          const inFlightSend = queuedWaitSendFibers.get(event.payload.pendingMessageId);
+          if (inFlightSend !== undefined) {
+            yield* Fiber.interrupt(inFlightSend);
+          }
+          // A released wait can sit in the post-compaction queue; remove it so
+          // compaction completion cannot replay a cancelled message. Splice in
+          // place — resumeTurnsAfterCompaction compares the array by identity.
+          const deferred = turnsAfterCompaction.get(event.payload.threadId);
+          if (deferred !== undefined) {
+            for (let index = deferred.length - 1; index >= 0; index--) {
+              if (deferred[index]!.payload.messageId === event.payload.pendingMessageId) {
+                deferred.splice(index, 1);
+              }
+            }
+            if (deferred.length === 0) turnsAfterCompaction.delete(event.payload.threadId);
+          }
+          return;
+        }
         yield* processTurnInterruptRequested(event);
         return;
       case "thread.approval-response-requested":
@@ -1912,14 +2086,27 @@ const make = Effect.gen(function* () {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
-        return Effect.logWarning("provider command reactor failed to process event", {
-          eventType: event.type,
-          cause: Cause.pretty(cause),
+        return Effect.gen(function* () {
+          yield* Effect.logWarning("provider command reactor failed to process event", {
+            eventType: event.type,
+            cause: Cause.pretty(cause),
+          });
+          if (
+            event.type === "thread.turn-start-requested" &&
+            event.payload.providerAvailabilityWait === true
+          ) {
+            yield* clearQueuedProviderWait(
+              event.payload.threadId,
+              event.payload.messageId,
+              event.payload.createdAt,
+            );
+          }
         });
       }),
     );
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const availabilityWaiter = yield* ProviderAvailabilityWaiter.make;
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
@@ -1934,6 +2121,7 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      yield* availabilityWaiter.onEvent(event);
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
@@ -1951,6 +2139,7 @@ const make = Effect.gen(function* () {
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    yield* availabilityWaiter.start;
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
@@ -1981,6 +2170,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: Effect.gen(function* () {
+      yield* availabilityWaiter.drain;
       yield* worker.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),
