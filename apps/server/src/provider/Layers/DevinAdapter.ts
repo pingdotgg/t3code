@@ -32,7 +32,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type { DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import {
   type ProviderAdapterError,
   ProviderAdapterRequestError,
@@ -70,7 +70,7 @@ const DEVIN_RESUME_VERSION = 1 as const;
 const DEVIN_SIGN_IN_REQUIRED_MESSAGE =
   "Devin is not signed in. Run `devin auth login`, then retry.";
 
-type Adapter = ProviderAdapterShape<ProviderAdapterError>;
+type Adapter = DevinAdapterShape;
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   | "handleRequestPermission"

@@ -40,7 +40,7 @@ const DEVIN_PRESENTATION = {
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 
 /** Devin's flagship model tier and the `devin acp` session default. */
-export const DEVIN_DEFAULT_MODEL_SLUG = "swe-2-high";
+const DEVIN_DEFAULT_MODEL_SLUG = "swe-2-high";
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const AUTH_PROBE_TIMEOUT_MS = 10_000;
