@@ -40,6 +40,8 @@ import { ProjectionThreadMessageRepository } from "../../persistence/Services/Pr
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepository } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
@@ -53,6 +55,7 @@ import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+import { deriveOpenCodeRunEvents, openCodeRunItemKey } from "../OpenCodeRunSubagents.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -909,6 +912,7 @@ const make = Effect.gen(function* () {
   const projectionThreadProposedPlans = yield* ProjectionThreadProposedPlanRepository;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+  const commandReceipts = yield* OrchestrationCommandReceiptRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
@@ -963,6 +967,14 @@ const make = Effect.gen(function* () {
         Option.filter(description, (value) => value.length > 0).pipe(Option.getOrUndefined),
       ),
     );
+
+  // Retain terminal state so redelivered shell items cannot repeat the run's
+  // parent or child activities. Only advance state after derived events land.
+  const openCodeRunStateByItemKey = yield* Cache.make<string, "started" | "completed">({
+    capacity: TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY,
+    timeToLive: TASK_DESCRIPTION_BY_TASK_TTL,
+    lookup: () => Effect.succeed("started" as const),
+  });
 
   const resolveThreadRuntimeContext = Effect.fn("resolveThreadRuntimeContext")(function* (
     threadId: ThreadId,
@@ -1475,8 +1487,20 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
+  const processRuntimeEvent = (event: ProviderRuntimeEvent, deduplicateActivity = false) =>
     Effect.gen(function* () {
+      // Accepted synthetic activities already applied their lifecycle effects.
+      // Check before liveness too: the bounded item cache may have expired, and
+      // replaying an old start must not revive a run that has since completed.
+      if (deduplicateActivity) {
+        const receipt = yield* commandReceipts.getByCommandId({
+          commandId: CommandId.make(`provider:${event.eventId}:thread-activity-append`),
+        });
+        if (Option.isSome(receipt) && receipt.value.status === "accepted") {
+          return;
+        }
+      }
+
       if (event.type === "content.delta" && event.payload.streamKind !== "assistant_text") {
         return;
       }
@@ -2135,7 +2159,10 @@ const make = Effect.gen(function* () {
 
       const activities = runtimeEventToActivities(activityEvent, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
-        providerCommandId(event, "thread-activity-append").pipe(
+        (deduplicateActivity
+          ? Effect.succeed(CommandId.make(`provider:${activity.id}:thread-activity-append`))
+          : providerCommandId(event, "thread-activity-append")
+        ).pipe(
           Effect.flatMap((commandId) =>
             orchestrationEngine.dispatch({
               type: "thread.activity.append",
@@ -2151,8 +2178,42 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
+  // A shell item that runs `opencode run` is also a delegated agent: after
+  // the item's own activity lands, feed the derived task.* events through the
+  // same path so liveness, titles, and the Agents roster all follow.
+  const processRuntimeEventWithOpenCodeRuns = (event: ProviderRuntimeEvent) =>
+    Effect.gen(function* () {
+      yield* processRuntimeEvent(event);
+      const itemKey = openCodeRunItemKey(event);
+      if (itemKey === undefined) {
+        return;
+      }
+      const state = Option.getOrUndefined(
+        yield* Cache.getOption(openCodeRunStateByItemKey, itemKey),
+      );
+      if (state === "completed") {
+        return;
+      }
+      const derived = deriveOpenCodeRunEvents(event, { started: state === "started" });
+      if (derived.length === 0) {
+        return;
+      }
+      // Stable synthetic identities let the existing command receipts suppress
+      // activities already persisted before a partial failure or redelivery.
+      yield* Effect.forEach(derived, (derivedEvent) => processRuntimeEvent(derivedEvent, true), {
+        discard: true,
+      });
+      yield* Cache.set(
+        openCodeRunStateByItemKey,
+        itemKey,
+        event.type === "item.completed" ? "completed" : "started",
+      );
+    });
+
   const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+    input.source === "runtime"
+      ? processRuntimeEventWithOpenCodeRuns(input.event)
+      : processDomainEvent(input.event);
 
   const processInputSafely = (input: RuntimeIngestionInput) =>
     processInput(input).pipe(
@@ -2199,6 +2260,7 @@ export const ProviderRuntimeIngestionLive = Layer.effect(
   make,
 ).pipe(
   Layer.provide(ProjectionThreadActivityRepositoryLive),
+  Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(ProjectionThreadMessageRepositoryLive),
   Layer.provide(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provide(ProjectionTurnRepositoryLive),

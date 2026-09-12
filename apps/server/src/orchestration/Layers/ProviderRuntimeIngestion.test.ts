@@ -37,7 +37,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { it as effectIt } from "@effect/vitest";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -264,6 +264,7 @@ describe("ProviderRuntimeIngestion", () => {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
     workspaceSubdirectory?: string;
+    clock?: Clock.Clock;
   }) {
     const repositoryRoot = makeTempDir("t3-provider-project-");
     NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main"], {
@@ -313,7 +314,9 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(Layer.succeed(Tracer.Tracer, sqlCounter.tracer)),
     );
-    const testRuntime = ManagedRuntime.make(layer);
+    const testRuntime = ManagedRuntime.make(
+      options?.clock ? layer.pipe(Layer.provide(Layer.succeed(Clock.Clock, options.clock))) : layer,
+    );
     runtime = testRuntime;
     const engine = await testRuntime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await testRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
@@ -1526,6 +1529,190 @@ describe("ProviderRuntimeIngestion", () => {
 
     expect(activity?.summary).toBe("Ran command");
     expect(payload?.detail).toBe("bun run lint");
+  });
+
+  it("does not revive a completed delegated run after cache expiry and stale start replay", async () => {
+    const liveClock = Effect.runSync(Clock.clockWith(Effect.succeed));
+    let clockMillis = liveClock.currentTimeMillisUnsafe();
+    const harness = await createHarness({
+      clock: {
+        currentTimeNanosUnsafe: () => liveClock.currentTimeNanosUnsafe(),
+        currentTimeNanos: liveClock.currentTimeNanos,
+        monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: liveClock.monotonicTimeNanos,
+        sleep: (duration) => liveClock.sleep(duration),
+        currentTimeMillisUnsafe: () => clockMillis,
+        currentTimeMillis: Effect.sync(() => clockMillis),
+      },
+    });
+    const item = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-expired-run"),
+      itemId: asItemId("item-expired-run"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {
+        itemType: "command_execution",
+        data: { command: "opencode run real" },
+      },
+    };
+    await harness.emitAndDrain([
+      { ...item, type: "item.started", eventId: asEventId("run-start") },
+    ]);
+    expect((await harness.readThreadShell()).backgroundLiveness).toBe("working");
+    await harness.emitAndDrain([
+      { ...item, type: "item.completed", eventId: asEventId("run-end") },
+    ]);
+    expect((await harness.readThreadShell()).backgroundLiveness).not.toBe("working");
+    clockMillis += 121 * 60 * 1000;
+    await harness.emitAndDrain([
+      { ...item, type: "item.started", eventId: asEventId("stale-run-start") },
+      { ...item, type: "item.updated", eventId: asEventId("stale-run-update") },
+    ]);
+    expect((await harness.readThreadShell()).backgroundLiveness).not.toBe("working");
+    const snapshot = await harness.readModel();
+    expect(
+      snapshot.threads[0]?.activities.filter((activity) => activity.kind.startsWith("task.")),
+    ).toHaveLength(2);
+  });
+
+  it("surfaces an opencode run made through a shell tool as a delegated agent", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const command =
+      'opencode run --format json -m opencode-go/deepseek-v4.1-flash "Multiply 17 by 23"';
+    const shellItem = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-opencode-run"),
+      itemId: asItemId("item-opencode-run"),
+    };
+
+    await harness.emitAndDrain([
+      {
+        ...shellItem,
+        type: "item.updated",
+        eventId: asEventId("evt-opencode-run-updated"),
+        createdAt: now,
+        payload: {
+          itemType: "command_execution",
+          status: "inProgress",
+          title: "Command run",
+          data: { toolName: "Bash", input: { command } },
+        },
+      },
+    ]);
+
+    // The delegated run is live agent work: the sidebar shows the thread working.
+    expect((await harness.readThreadShell()).backgroundLiveness).toBe("working");
+
+    const output = [
+      JSON.stringify({
+        type: "tool_use",
+        timestamp: 1_000,
+        sessionID: "ses_parent",
+        part: {
+          id: "prt_1",
+          callID: "call_1",
+          tool: "task",
+          state: {
+            status: "completed",
+            title: "Multiply numbers",
+            input: { description: "Multiply numbers", subagent_type: "flash" },
+            output:
+              '<task id="ses_child" state="completed">\n<task_result>\n391\n</task_result>\n</task>',
+            metadata: {
+              sessionId: "ses_child",
+              model: { providerID: "opencode-go", modelID: "deepseek-v4.1-flash" },
+            },
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "step_finish",
+        timestamp: 2_000,
+        sessionID: "ses_parent",
+        part: {
+          type: "step-finish",
+          tokens: { total: 50, input: 40, output: 10, reasoning: 0, cache: { write: 0, read: 0 } },
+        },
+      }),
+      JSON.stringify({
+        type: "text",
+        timestamp: 2_100,
+        sessionID: "ses_parent",
+        part: { type: "text", text: "The answer is 391." },
+      }),
+    ].join("\n");
+
+    const completion: LegacyProviderRuntimeEvent = {
+      ...shellItem,
+      type: "item.completed",
+      eventId: asEventId("evt-opencode-run-completed"),
+      createdAt: "2026-01-01T00:00:05.000Z",
+      payload: {
+        itemType: "command_execution",
+        status: "completed",
+        title: "Command run",
+        data: {
+          toolName: "Bash",
+          input: { command },
+          result: { type: "tool_result", tool_use_id: "item-opencode-run", content: output },
+        },
+      },
+    };
+    const dispatch = harness.engine.dispatch;
+    let injectedFailure = false;
+    const dispatchSpy = vi.spyOn(harness.engine, "dispatch").mockImplementation((command) => {
+      if (
+        !injectedFailure &&
+        command.type === "thread.activity.append" &&
+        command.activity.kind === "task.completed"
+      ) {
+        injectedFailure = true;
+        return Effect.die("simulated failure after a child start was persisted");
+      }
+      return dispatch(command);
+    });
+    await harness.emitAndDrain([
+      completion,
+      { ...completion, eventId: asEventId("evt-opencode-run-redelivered") },
+      { ...completion, eventId: asEventId("evt-opencode-run-redelivered-again") },
+    ]);
+    dispatchSpy.mockRestore();
+    expect(injectedFailure).toBe(true);
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.kind === "task.completed" &&
+          (activity.payload as Record<string, unknown>).taskId === "opencode-run:item-opencode-run",
+      ),
+    );
+    const taskActivities = thread.activities
+      .filter((activity: ProviderRuntimeTestActivity) => activity.kind.startsWith("task."))
+      .map((activity: ProviderRuntimeTestActivity) => {
+        const payload = activity.payload as Record<string, unknown>;
+        return [activity.kind, payload.taskId, payload.agentKind, payload.title];
+      });
+    expect(taskActivities).toEqual([
+      ["task.started", "opencode-run:item-opencode-run", "agent", "Multiply 17 by 23"],
+      ["task.started", "opencode-run:item-opencode-run:ses_child", "agent", "Multiply numbers"],
+      ["task.completed", "opencode-run:item-opencode-run:ses_child", "agent", "Multiply numbers"],
+      ["task.completed", "opencode-run:item-opencode-run", "agent", "Multiply 17 by 23"],
+    ]);
+    const runCompleted = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.kind === "task.completed" &&
+        (activity.payload as Record<string, unknown>).taskId === "opencode-run:item-opencode-run",
+    );
+    expect(runCompleted?.payload).toMatchObject({
+      status: "completed",
+      summary: "The answer is 391.",
+      model: "opencode-go/deepseek-v4.1-flash",
+      typedUsage: { totalTokens: 50, toolUses: 1 },
+    });
+    expect((await harness.readThreadShell()).backgroundLiveness).toBeNull();
   });
 
   it("uses structured read-file paths when available", async () => {

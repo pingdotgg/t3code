@@ -120,7 +120,9 @@ for custom configuration.
 
 ## Inspect agent work
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, use **Agents** to follow work delegated to subagents. This
+includes `opencode run` commands the agent launches from its shell tool; see
+[OpenCode](./providers-opencode.md#delegating-to-opencode-from-another-provider).
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

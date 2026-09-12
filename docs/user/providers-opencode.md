@@ -47,3 +47,14 @@ restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## Delegating to OpenCode from another provider
+
+When a Claude, Codex, Cursor, or Grok thread runs `opencode run` through its shell
+tool, that run appears in **Agents** as a delegated agent while the command is
+running, and the thread shows as working in the sidebar. Add `--format json` to the
+command so T3 Code can also read the run's token usage, its final reply, and each
+native OpenCode subagent it spawned; those subagents appear alongside the run once
+the command finishes. A run whose prompt comes from a file or command substitution
+shows without a readable prompt, and a run started as a background shell command is
+not tracked.
