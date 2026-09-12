@@ -575,8 +575,8 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 });
 
 /**
- * PowerShell source that launches File Explorer with its raw selection
- * switch. Explorer's contract is the single argument `/select,"<path>"` with
+ * PowerShell source that requests a new File Explorer window with the target
+ * selected. `/n` requests a fresh window; `/select,"<path>"` must arrive with
  * only the path quoted; Node's default spawn quoting wraps the whole argument
  * when the path has spaces and Explorer misparses it, silently opening a
  * fallback folder. A single `-ArgumentList` string in Windows PowerShell 5.1
@@ -589,7 +589,7 @@ export function buildFileExplorerRevealPowerShellSource(
   explorerCommand: string,
   target: string,
 ): string {
-  return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
+  return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/n,/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
 }
 
 function fileExplorerRevealLaunch(

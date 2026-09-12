@@ -242,11 +242,11 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     ]);
     const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
     const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
-    // explorer.exe expects `/select,"<path>"` with only the path quoted;
+    // Request a new window with `/n,/select,"<path>"`, quoting only the path;
     // PowerShell 5.1's Start-Process passes the argument string verbatim.
     assert.equal(
       decodedCommand,
-      "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
+      "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/n,/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
     );
     assert.equal(spawned.options.shell, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -255,12 +255,12 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
 // Real-chain smoke check for the Explorer selection contract: runs the exact
 // PowerShell source the reveal launch encodes, against a stub that records
 // the raw argument tail it receives, and asserts a spaced path arrives as the
-// single `/select,"<path>"` switch. Mock argv assertions cannot prove this —
+// raw `/n,/select,"<path>"` switches. Mock argv assertions cannot prove this —
 // only Windows' own PowerShell -> CreateProcess quoting chain can, so the
 // test runs only where that chain exists.
 // oxlint-disable-next-line t3code/no-global-process-runtime -- the skip decision needs the real host platform, outside any Effect runtime.
 it.skipIf(process.platform !== "win32")(
-  "delivers the raw /select switch for spaced paths through real PowerShell",
+  "delivers the raw new-window reveal switches for spaced paths through real PowerShell",
   { timeout: 60_000 },
   async () => {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-reveal-smoke-"));
@@ -302,7 +302,7 @@ it.skipIf(process.platform !== "win32")(
       }
       await sleep(200);
       const recorded = NodeFS.readFileSync(outputPath, "utf8").trim();
-      assert.equal(recorded, `/select,"${explorerTarget}"`);
+      assert.equal(recorded, `/n,/select,"${explorerTarget}"`);
     } finally {
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -386,13 +386,13 @@ it.effect.skipIf(windowsHost)(
       assert.equal(result.editors.includes("file-manager"), true);
       assert.ok(spawned);
       // The reveal routes through interop PowerShell so Explorer receives its
-      // raw `/select,"<path>"` switch even for spaced paths.
+      // raw `/n,/select,"<path>"` switches even for spaced paths.
       assert.equal(spawned.command, "powershell.exe");
       const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4' + '\"')",
+        "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/n,/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4' + '\"')",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
