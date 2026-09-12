@@ -10,9 +10,7 @@ import {
   GitPullRequestIcon,
   Globe2Icon,
   LayoutTemplateIcon,
-  Maximize2Icon,
   MessageSquareTextIcon,
-  Minimize2Icon,
   PanelBottomIcon,
   PanelRightIcon,
   SmartphoneIcon,
@@ -442,38 +440,5 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         </Menu>
       ) : null}
     </div>
-  );
-});
-
-export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
-  maximized,
-  onToggle,
-}: {
-  maximized: boolean;
-  onToggle: () => void;
-}) {
-  const label = maximized ? "Restore panel size" : "Maximize panel";
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Toggle
-            className="shrink-0 [-webkit-app-region:no-drag]"
-            pressed={maximized}
-            onPressedChange={onToggle}
-            aria-label={label}
-            variant="ghost"
-            size="sm"
-          >
-            {maximized ? (
-              <Minimize2Icon className="size-4" />
-            ) : (
-              <Maximize2Icon className="size-4" />
-            )}
-          </Toggle>
-        }
-      />
-      <TooltipPopup side="bottom">{label}</TooltipPopup>
-    </Tooltip>
   );
 });
