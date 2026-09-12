@@ -13,6 +13,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
+import { useUiStateStore } from "../uiStateStore";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -493,15 +494,27 @@ export const BranchToolbar = memo(function BranchToolbar({
     [canUsePreviousWorktree, activeProjectRef],
   );
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
+  // The thread the user was reading before opening this draft. It only
+  // counts as an origin when it belongs to the draft's project.
+  const lastViewedThreadRef = useUiStateStore((store) => store.lastViewedThreadRef);
+  const lastViewedThread = useThreadShell(canUsePreviousWorktree ? lastViewedThreadRef : null);
+  const originThread =
+    lastViewedThread &&
+    activeProjectRef &&
+    lastViewedThread.environmentId === activeProjectRef.environmentId &&
+    lastViewedThread.projectId === activeProjectRef.projectId
+      ? lastViewedThread
+      : null;
   const previousWorktreeSeed = useMemo(
     () =>
       canUsePreviousWorktree
         ? resolvePreviousWorktreeSeed({
+            originThread,
             threads: projectThreads,
             currentWorktreePath: activeWorktreePath,
           })
         : null,
-    [activeWorktreePath, canUsePreviousWorktree, projectThreads],
+    [activeWorktreePath, canUsePreviousWorktree, originThread, projectThreads],
   );
   const previousWorktreeLabel = previousWorktreeSeed
     ? resolvePreviousWorktreeLabel(previousWorktreeSeed)
