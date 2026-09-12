@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpSessionModeState } from "./AcpRuntimeModel.ts";
@@ -18,6 +19,7 @@ import {
   devinCredentialsFilePaths,
   devinHasAmbientCredentials,
   devinModeFor,
+  isDevinSessionLockedError,
   resolveDevinAuthMethodId,
   resolveDevinModeId,
   resolveDevinModelId,
@@ -37,6 +39,39 @@ const DEVIN_MODES = modeState([
 ]);
 
 it.layer(NodeServices.layer)("DevinAcpSupport", (it) => {
+  it("recognizes Devin's retryable session-locked error", () => {
+    assert.isTrue(
+      isDevinSessionLockedError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32015,
+          errorMessage:
+            "Session 'tattered-ornament' is already open in another process. Close the other instance before opening it here.",
+          data: {
+            "cognition.ai/errorKind": "session_locked",
+            "cognition.ai/retryable": true,
+          },
+        }),
+      ),
+    );
+    // Message-only fallback for builds that drop the structured data.
+    assert.isTrue(
+      isDevinSessionLockedError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "Session 'x' is already open in another process.",
+        }),
+      ),
+    );
+    assert.isFalse(
+      isDevinSessionLockedError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "Reached overall message rate limit. Please try again later.",
+        }),
+      ),
+    );
+  });
+
   it("maps T3 runtime and interaction modes onto Devin session modes", () => {
     assert.equal(devinModeFor("full-access", undefined), "bypass");
     assert.equal(devinModeFor("auto", undefined), "smart");
