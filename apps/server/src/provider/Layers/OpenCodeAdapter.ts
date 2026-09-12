@@ -2318,7 +2318,7 @@ export function makeOpenCodeAdapter(
               },
             });
           }
-          const title = openCodeEventSessionTitle(event);
+          const title = isParentEvent ? openCodeEventSessionTitle(event) : undefined;
           if (title) {
             yield* emit({
               ...(yield* buildEventBase({
