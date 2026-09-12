@@ -26,6 +26,9 @@ import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
+import * as SpeechService from "./speech/SpeechService.ts";
+import { speechHttpApiLayer } from "./speech/http.ts";
+import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -555,6 +558,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
+      Layer.provide(speechHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -564,12 +568,14 @@ export const makeRoutesLayer = Layer.mergeAll(
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
+    speechStreamRouteLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
+  Layer.provide(SpeechService.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),

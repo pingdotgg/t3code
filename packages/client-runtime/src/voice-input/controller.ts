@@ -298,6 +298,11 @@ export class VoiceInputController {
     message = "Voice recording was interrupted.",
     completedUri: string | null = null,
   ): Promise<void> | void {
+    if (this.state.phase === "preparing" || this.state.phase === "transcribing") {
+      this.invalidateOperation();
+      this.setError(message, "retry");
+      return;
+    }
     if (this.state.phase !== "recording") return;
     this.rememberRecordingUri(completedUri);
     this.recordingUri = completedUri ?? this.recordingUri;
@@ -361,8 +366,8 @@ export class VoiceInputController {
       this.rememberRecordingUri(this.recordingUri);
       if (!this.isCurrent(operationToken)) return;
       if (
-        !this.recordingUri ||
         !this.transcription ||
+        (!this.transcription.streaming && !this.recordingUri) ||
         !this.transcriptionAbortController ||
         !this.capturedDraft
       ) {
@@ -377,7 +382,9 @@ export class VoiceInputController {
       let transcript: string;
       try {
         transcript = await runTranscriptionOperation(() =>
-          transcription.transcribe(recordingUri, { signal }),
+          transcription.streaming
+            ? transcription.streaming.finish({ signal })
+            : transcription.transcribe(recordingUri!, { signal }),
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
@@ -435,6 +442,7 @@ export class VoiceInputController {
   }
 
   private async releaseResources(): Promise<void> {
+    this.transcriptionAbortController?.abort();
     this.rememberRecordingUri(this.recordingUri);
     this.rememberRecordingUri(this.dependencies.recorder.uri);
     this.recordingUri = null;

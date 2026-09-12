@@ -11,6 +11,7 @@ import {
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
@@ -79,6 +80,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
@@ -209,6 +211,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
+  },
+  {
+    id: "transcription-environment",
+    title: "Transcription environment",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt server machine device"],
+  },
+  {
+    id: "local-voice-input",
+    title: "Transcription models",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    desktopOnly: true,
   },
   {
     id: "auto-settle-inactive-threads",
@@ -691,6 +713,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/voice": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
   // Keybindings fan out to the selection; Providers shows the representative

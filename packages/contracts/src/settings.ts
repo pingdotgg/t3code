@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ProjectId,
   TrimmedNonEmptyString,
@@ -442,6 +443,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  // Desktop-local input device name. An empty string follows the operating
+  // system default, which remains stable when devices are added or removed.
+  voiceMicrophone: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  // Null follows the primary environment. A concrete ID pins transcription to
+  // that environment across every thread opened by this client.
+  voiceTranscriptionEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
@@ -1006,6 +1015,9 @@ export const ServerSettings = Schema.Struct({
    * between a desktop window and a phone attached to the same server.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechModelId: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
+  ),
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1326,6 +1338,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  speechModelId: Schema.optionalKey(Schema.String),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
@@ -1484,6 +1497,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  voiceMicrophone: Schema.optionalKey(Schema.String),
+  voiceTranscriptionEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),
