@@ -99,6 +99,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     const mount = new TerminalTestElement();
     const context = {
       canvas,
+      getTransform: () => ({ d: 1 }),
       beginPath() {},
       clip() {},
       rect() {},
