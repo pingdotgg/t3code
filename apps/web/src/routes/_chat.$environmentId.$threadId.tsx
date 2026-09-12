@@ -4,7 +4,11 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import {
+  isThreadRouteSnapshotAuthoritative,
+  resolveThreadRouteRef,
+  resolveThreadRouteRenderState,
+} from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -29,7 +33,7 @@ function ChatThreadRouteView() {
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
-  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
+  const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shell.data?.status);
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
   const draftThreadExists = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
