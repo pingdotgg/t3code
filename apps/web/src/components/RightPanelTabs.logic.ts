@@ -7,6 +7,11 @@ export type WorkspaceTabContextTarget =
   | { readonly _tag: "Thread" }
   | { readonly _tag: "Surface"; readonly surface: RightPanelSurface };
 
+export function canCopyWorkspaceTabToSplit(target: WorkspaceTabContextTarget): boolean {
+  // A browser resource has one presentation owner, even when several panes are visible.
+  return target._tag === "Surface" && target.surface.kind !== "preview";
+}
+
 export type TabContextMenuAction =
   | "copy-path"
   | "close"
@@ -41,6 +46,8 @@ export function buildWorkspaceTabContextMenuItems(input: {
   readonly moveToSplitAvailable: boolean;
 }): readonly ContextMenuItem<TabContextMenuAction>[] {
   const items: ContextMenuItem<TabContextMenuAction>[] = [];
+  const copyToSplitAvailable =
+    input.copyToSplitAvailable && canCopyWorkspaceTabToSplit(input.target);
 
   if (input.target._tag === "Surface") {
     if (input.target.surface.kind === "file") {
@@ -70,10 +77,10 @@ export function buildWorkspaceTabContextMenuItems(input: {
     ? directionalGroupItems(input.adjacentGroups)
     : [];
 
-  if (input.copyToSplitAvailable || input.moveToSplitAvailable || moveGroupItems.length > 0) {
+  if (copyToSplitAvailable || input.moveToSplitAvailable || moveGroupItems.length > 0) {
     items.push(
-      { id: "split-right", label: "Split Right", disabled: !input.copyToSplitAvailable },
-      { id: "split-down", label: "Split Down", disabled: !input.copyToSplitAvailable },
+      { id: "split-right", label: "Split Right", disabled: !copyToSplitAvailable },
+      { id: "split-down", label: "Split Down", disabled: !copyToSplitAvailable },
       {
         id: "split-and-move",
         label: "Split & Move",

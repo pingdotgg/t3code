@@ -239,7 +239,7 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
-import type { WorkspaceTabContextTarget } from "./RightPanelTabs.logic";
+import { canCopyWorkspaceTabToSplit, type WorkspaceTabContextTarget } from "./RightPanelTabs.logic";
 import { SplitPaneGrid, type PaneFocusPulse, type PaneTabBarDropPreview } from "./SplitPaneGrid";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -5093,9 +5093,32 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadRef, activateRightPanelSurface],
   );
 
+  const canCopyWorkspaceTab = useCallback(
+    (tabId: PaneTabId) => {
+      if (!activeThreadRef) return false;
+      const layout = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        activeThreadRef,
+      );
+      const tab = layout.tabsById[tabId];
+      if (tab?._tag !== "Surface") return false;
+      const surface = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      ).surfaces.find((candidate) => candidate.id === tab.surfaceId);
+      return surface !== undefined && canCopyWorkspaceTabToSplit({ _tag: "Surface", surface });
+    },
+    [activeThreadRef],
+  );
   const mutateWorkspaceLayout = useCallback(
     (transition: ThreadWorkspaceLayoutTransition) => {
       if (!activeThreadRef) return;
+      if (
+        transition._tag === "SplitTab" &&
+        transition.mode === "copy" &&
+        !canCopyWorkspaceTab(transition.tabId)
+      )
+        return;
 
       const current = selectThreadWorkspaceLayout(
         useThreadWorkspaceLayoutStore.getState().byThreadKey,
@@ -5122,6 +5145,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThreadRef,
+      canCopyWorkspaceTab,
       closeAfterSurfaceConfirmation,
       finishRightPanelSurfaceClose,
       syncFocusedWorkspaceSurface,
@@ -9671,7 +9695,7 @@ export default function ChatView(props: ChatViewProps) {
         }}
         tabDropPreview={tabDropPreview}
         adjacentGroups={adjacentPanes}
-        canCopyTabToSplit={(target) => target._tag === "Surface"}
+        canCopyTabToSplit={canCopyWorkspaceTabToSplit}
         canMoveTabToSplit={() => pane.tabIds.length > 1}
         onCopyFilePath={copyRightPanelFilePath}
         onRenameDevice={(surfaceId, title) =>
@@ -9742,7 +9766,7 @@ export default function ChatView(props: ChatViewProps) {
           <SplitPaneGrid
             tree={visibleWorkspacePaneTree}
             canCopyDraggedTabFromSolePane={(draggedTab) =>
-              threadWorkspaceLayout.tabsById[draggedTab.sourceTabId]?._tag === "Surface"
+              canCopyWorkspaceTab(draggedTab.sourceTabId)
             }
             focusPulse={workspacePaneFocusPulse}
             renderPane={renderWorkspacePane}

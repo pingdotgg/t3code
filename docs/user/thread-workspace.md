@@ -11,6 +11,7 @@ Use **Split editor right** in the workspace toolbar to add an empty pane, then u
 choose what opens there. A tab's context menu can copy it into a split, move it into a new split, or
 move it to an adjacent pane. Drag tabs within a row to reorder them, onto another tab row to move
 them, onto a pane edge to create a split, or onto a pane center to swap pane layouts.
+Browser tabs can move between panes; open another browser tab to show a second browser alongside one.
 
 The **+** menu can open multiple independent Diff, Files, Agents, or Linked pull requests tabs. Tabs
 backed by resources, such as browser sessions and terminals, remain independent per resource.
