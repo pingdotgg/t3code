@@ -53,10 +53,25 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  VOICE_AVAILABILITY_PATH,
+  VOICE_TRANSCRIBE_PATH,
+  VoiceAudioPayload,
+  VoiceAvailabilityResponse,
+  VoiceProviderUnsupportedError,
+  VoiceTranscribeResponse,
+} from "./voice.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+});
+
+const VoiceTranscribeHeaders = Schema.Struct({
+  authorization: Schema.optionalKey(Schema.String),
+  dpop: Schema.optionalKey(Schema.String),
+  // Recorder MIME (e.g. Safari `audio/mp4`); absent/unknown means `audio/webm`.
+  "x-voice-mime-type": Schema.optionalKey(Schema.String),
 });
 
 const OptionalDpopProofHeaders = Schema.Struct({
@@ -614,9 +629,34 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+/** Codex-native one-shot dictation: binary audio in, editable transcript out. */
+export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("availability", VOICE_AVAILABILITY_PATH, {
+      headers: OptionalBearerHeaders,
+      success: VoiceAvailabilityResponse,
+      error: [EnvironmentHttpInternalServerError, EnvironmentScopeRequiredError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("transcribe", VOICE_TRANSCRIBE_PATH, {
+      headers: VoiceTranscribeHeaders,
+      payload: VoiceAudioPayload,
+      success: VoiceTranscribeResponse,
+      error: [
+        VoiceProviderUnsupportedError,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        EnvironmentScopeRequiredError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi) {}

@@ -37,16 +37,18 @@ const primaryHttpRuntime = ManagedRuntime.make(
 
 export type PrimaryHttpEffectRunner = <A, E>(
   effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient.PrimaryEnvironmentHttpClient>,
+  options?: { readonly signal?: AbortSignal },
 ) => Promise<A>;
 
-const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect) =>
-  primaryHttpRuntime.runPromise(effect);
+const livePrimaryHttpRunner: PrimaryHttpEffectRunner = (effect, options) =>
+  primaryHttpRuntime.runPromise(effect, options?.signal ? { signal: options.signal } : undefined);
 
 let primaryHttpRunner = livePrimaryHttpRunner;
 
 export const runPrimaryHttp = <A, E>(
   effect: Effect.Effect<A, E, PrimaryEnvironmentHttpClient.PrimaryEnvironmentHttpClient>,
-) => primaryHttpRunner(effect);
+  options?: { readonly signal?: AbortSignal },
+) => primaryHttpRunner(effect, options);
 
 export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner): void {
   primaryHttpRunner = runner ?? livePrimaryHttpRunner;
