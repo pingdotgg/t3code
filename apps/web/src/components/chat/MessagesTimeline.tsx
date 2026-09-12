@@ -1282,6 +1282,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       }
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      {row.kind === "message" ? (
+        <h3 className="sr-only">{row.message.role === "user" ? "You" : "T3 Code"}</h3>
+      ) : null}
       {row.kind === "work" ? (
         <WorkGroupSection
           anchorKey={row.id}
@@ -1664,6 +1667,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             isStreaming={Boolean(row.message.streaming)}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
+            headingLevelOffset={3}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onImageExpand={ctx.onImageExpand}
           />
@@ -2560,6 +2564,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             cwd={props.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             skills={props.skills}
+            headingLevelOffset={3}
             className="text-message-foreground"
             lineBreaks
             parseRawHtml={false}
@@ -2583,6 +2588,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   cwd={props.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
                   skills={props.skills}
+                  headingLevelOffset={3}
                   className="text-message-foreground"
                   lineBreaks
                   parseRawHtml={false}
@@ -2672,6 +2678,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           cwd={props.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={props.skills}
+          headingLevelOffset={3}
           className="text-message-foreground"
           lineBreaks
           parseRawHtml={false}
@@ -2698,6 +2705,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      headingLevelOffset={3}
       className="text-message-foreground"
       lineBreaks
       parseRawHtml={false}
@@ -2734,6 +2742,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
+          headingLevelOffset={3}
           className="text-message-foreground"
         />
       )}
