@@ -1,10 +1,6 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type {
-  PreparedVoiceTranscription,
-  PreparedStreamingVoiceTranscription,
-  VoiceTranscriber,
-} from "./transcription.ts";
+import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -182,8 +178,7 @@ export class VoiceInputController {
   private state: VoiceInputState = IDLE_STATE;
   private operationToken = 0;
   private sessionToken: symbol | null = null;
-  private transcription: PreparedVoiceTranscription | PreparedStreamingVoiceTranscription | null =
-    null;
+  private transcription: PreparedVoiceTranscription | null = null;
   private transcriptionAbortController: AbortController | null = null;
   private capturedDraft: VoiceDraftSnapshot | null = null;
   private recordingUri: string | null = null;
@@ -372,7 +367,7 @@ export class VoiceInputController {
       if (!this.isCurrent(operationToken)) return;
       if (
         !this.transcription ||
-        (!("finish" in this.transcription) && !this.recordingUri) ||
+        (!this.transcription.streaming && !this.recordingUri) ||
         !this.transcriptionAbortController ||
         !this.capturedDraft
       ) {
@@ -387,8 +382,8 @@ export class VoiceInputController {
       let transcript: string;
       try {
         transcript = await runTranscriptionOperation(() =>
-          "finish" in transcription
-            ? transcription.finish({ signal })
+          transcription.streaming
+            ? transcription.streaming.finish({ signal })
             : transcription.transcribe(recordingUri!, { signal }),
         );
       } catch (error) {

@@ -6,6 +6,7 @@ import {
   transcribeEnvironmentPcm,
   VoiceTranscriptionError,
   type VoiceRecorder,
+  type VoiceTranscriptionOptions,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -149,6 +150,28 @@ export function createBrowserVoiceInputPlatform(input: {
     },
   };
 
+  const transcribeRecording = async (
+    uri: string,
+    { signal: transcriptionSignal }: VoiceTranscriptionOptions,
+  ) => {
+    try {
+      const response = await fetch(uri, { signal: transcriptionSignal });
+      const pcm = new Uint8Array(await response.arrayBuffer());
+      const result = await runtime.runPromise(transcribeEnvironmentPcm(input.prepared, pcm), {
+        signal: transcriptionSignal,
+      });
+      throwIfVoiceTranscriptionAborted(transcriptionSignal);
+      return result.text;
+    } catch (cause) {
+      throwIfVoiceTranscriptionAborted(transcriptionSignal);
+      throw new VoiceTranscriptionError(
+        "transcription-failed",
+        "Voice transcription on this environment failed.",
+        { cause },
+      );
+    }
+  };
+
   return {
     recorder,
     cancelRecording: cleanupCapture,
@@ -178,29 +201,15 @@ export function createBrowserVoiceInputPlatform(input: {
             onError: (error) => input.onError(error.message),
           });
           const session = live;
-          return { locale: "en", finish: () => session.finish() };
+          return {
+            locale: "en",
+            transcribe: transcribeRecording,
+            streaming: { finish: () => session.finish() },
+          };
         }
         return {
           locale: "en",
-          transcribe: async (uri, { signal: transcriptionSignal }) => {
-            try {
-              const response = await fetch(uri, { signal: transcriptionSignal });
-              const pcm = new Uint8Array(await response.arrayBuffer());
-              const result = await runtime.runPromise(
-                transcribeEnvironmentPcm(input.prepared, pcm),
-                { signal: transcriptionSignal },
-              );
-              throwIfVoiceTranscriptionAborted(transcriptionSignal);
-              return result.text;
-            } catch (cause) {
-              throwIfVoiceTranscriptionAborted(transcriptionSignal);
-              throw new VoiceTranscriptionError(
-                "transcription-failed",
-                "Voice transcription on this environment failed.",
-                { cause },
-              );
-            }
-          },
+          transcribe: transcribeRecording,
         };
       },
     },

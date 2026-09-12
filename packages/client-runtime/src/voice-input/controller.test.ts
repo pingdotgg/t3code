@@ -35,6 +35,12 @@ function preparedTranscription(
   return { locale: "en-US", transcribe };
 }
 
+function preparedStreamingTranscription(
+  finish: NonNullable<PreparedVoiceTranscription["streaming"]>["finish"],
+): PreparedVoiceTranscription {
+  return { ...preparedTranscription(), streaming: { finish } };
+}
+
 function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot {
   return {
     ownerKey: "environment:thread",
@@ -83,13 +89,11 @@ describe("streaming voice input", () => {
     const events: string[] = [];
     const harness = createHarness({
       getTranscriber: () => ({
-        prepare: async () => ({
-          locale: "en",
-          finish: async () => {
+        prepare: async () =>
+          preparedStreamingTranscription(async () => {
             events.push("finish");
             return "new text";
-          },
-        }),
+          }),
       }),
     });
     harness.recorder.uri = null;
@@ -111,13 +115,11 @@ describe("streaming voice input", () => {
     const result = deferred<string>();
     const harness = createHarness({
       getTranscriber: () => ({
-        prepare: async () => ({
-          locale: "en",
-          finish: () => {
+        prepare: async () =>
+          preparedStreamingTranscription(() => {
             started.resolve();
             return result.promise;
-          },
-        }),
+          }),
       }),
     });
     harness.recorder.uri = null;
@@ -137,7 +139,7 @@ describe("streaming voice input", () => {
       getTranscriber: () => ({
         prepare: async (options) => {
           signal = options.signal;
-          return { locale: "en", finish: async () => "unused" };
+          return preparedStreamingTranscription(async () => "unused");
         },
       }),
     });

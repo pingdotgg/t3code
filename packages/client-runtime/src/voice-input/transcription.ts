@@ -7,16 +7,14 @@ export type VoiceTranscriptionOptions = {
 export type PreparedVoiceTranscription = {
   readonly locale: string;
   readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
+  readonly streaming?: VoiceStreamingSession;
 };
 
 export type VoiceTranscriber = {
-  readonly prepare: (
-    options: VoiceTranscriptionOptions,
-  ) => Promise<PreparedVoiceTranscription | PreparedStreamingVoiceTranscription>;
+  readonly prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedVoiceTranscription>;
 };
 
-export type PreparedStreamingVoiceTranscription = {
-  readonly locale: string;
+export type VoiceStreamingSession = {
   readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
 };
 
