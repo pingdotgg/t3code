@@ -19,8 +19,14 @@ const decode = <S extends Schema.Top>(
     never
   >;
 
+const decodeKeybindingsConfig = Schema.decodeUnknownSync(KeybindingsConfig);
 const decodeResolvedRule = Schema.decodeUnknownEffect(ResolvedKeybindingRule as never);
 const encodeResolvedKeybindings = Schema.encodeEffect(ResolvedKeybindingsConfig);
+
+it("accepts the opt-in recent preview shortcut", () => {
+  const rules = [{ key: "mod+shift+o", command: "preview.openRecent", when: "!terminalFocus" }];
+  assert.deepStrictEqual(decodeKeybindingsConfig(rules), rules);
+});
 
 it.effect("parses keybinding rules", () =>
   Effect.gen(function* () {
