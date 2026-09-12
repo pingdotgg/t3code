@@ -1,3 +1,4 @@
+import { imageMimeType } from "@t3tools/shared/image";
 import type {
   ChatFileAttachment as ContractChatFileAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
@@ -17,6 +18,9 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { videoMimeType } from "@t3tools/shared/video";
+
+export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -52,32 +56,18 @@ export type ChatAttachment = ChatImageAttachment | ChatFileAttachment | ChatUnkn
 // The union has an open member (`type: string`), so a literal comparison does
 // not narrow. Use these guards wherever type-specific fields are read.
 export function isImageAttachment(attachment: ChatAttachment): attachment is ChatImageAttachment {
-  return attachment.type === "image";
+  // Messages sent before pictures were typed by content carry `file`; they are still
+  // pictures, and reading them as such is what lets them render instead of listing. Only
+  // `file` is reclassified: an attachment type this client does not know yet is not a
+  // picture by default, whatever its name says.
+  if (attachment.type === "image") return true;
+  return attachment.type === "file" && imageMimeType(attachment) !== null;
 }
 
 export function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAttachment {
-  return attachment.type === "file";
-}
-
-const VIDEO_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  avi: "video/x-msvideo",
-  m4v: "video/mp4",
-  mkv: "video/x-matroska",
-  mov: "video/quicktime",
-  mp4: "video/mp4",
-  ogv: "video/ogg",
-  webm: "video/webm",
-};
-
-export function videoMimeType(
-  attachment: Pick<ChatFileAttachment, "name" | "mimeType">,
-): string | null {
-  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (mimeType.startsWith("video/")) return mimeType;
-  const dotIndex = attachment.name.lastIndexOf(".");
-  return dotIndex < 0
-    ? null
-    : (VIDEO_MIME_TYPE_BY_EXTENSION[attachment.name.slice(dotIndex + 1).toLowerCase()] ?? null);
+  // Disjoint from `isImageAttachment` on purpose: a legacy `file` carrying an image reads as a
+  // picture, and callers filter both sets independently, so overlap renders it twice.
+  return attachment.type === "file" && !isImageAttachment(attachment);
 }
 
 export function isVideoAttachment(attachment: ChatFileAttachment): boolean {

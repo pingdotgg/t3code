@@ -12,9 +12,8 @@ import type { Instance } from "./Instance.ts";
  * device mappings — e.g. a Lambda that reports whether a dev box is running.
  * Provide the implementation with
  * `Effect.provide(AWS.EC2.DescribeInstanceHttp)`.
- * @binding
- * @section Observing Instances
- * @example Read the bound instance's live state
+ * ### Observing Instances
+ * **Example:** Read the bound instance's live state
  * ```typescript
  * // init — bind the operation to the instance
  * const describeInstance = yield* AWS.EC2.DescribeInstance(instance);
@@ -23,6 +22,8 @@ import type { Instance } from "./Instance.ts";
  * const live = yield* describeInstance();
  * console.log(live?.State?.Name, live?.PrivateIpAddress);
  * ```
+ *
+ * @binding
  */
 export interface DescribeInstance extends Binding.Service<
   DescribeInstance,

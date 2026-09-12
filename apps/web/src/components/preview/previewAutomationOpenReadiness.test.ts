@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
+  explicitlySuppressesPreviewMiniPlayer,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAutoShowPreviewForAutomationUse,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 
@@ -90,5 +92,50 @@ describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () 
     expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
     expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
     expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
+  });
+
+  it("distinguishes an explicit background request from a disabled preference", () => {
+    expect(explicitlySuppressesPreviewMiniPlayer({ open: false })).toBe(true);
+    expect(explicitlySuppressesPreviewMiniPlayer({ show: false })).toBe(true);
+    expect(explicitlySuppressesPreviewMiniPlayer({})).toBe(false);
+  });
+});
+
+describe("auto-show for existing automation tabs", () => {
+  it("records floating-preview intent whenever an agent uses the tab", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "navigate",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves explicit opens and background-only tabs alone", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "open",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "click",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("honours the auto-show preference for reused tabs", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "snapshot",
+        autoShowFloatingPreview: false,
+        presentationSuppressed: false,
+      }),
+    ).toBe(false);
   });
 });

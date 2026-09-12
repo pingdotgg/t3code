@@ -6,22 +6,496 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = "node";
 const mockAgentArgs = [mockAgentPath];
+const mockRuntimeOptions = {
+  spawn: { command: mockAgentCommand, args: mockAgentArgs },
+  cwd: process.cwd(),
+  clientInfo: { name: "t3-test", version: "0.0.0" },
+  authMethodId: "test",
+} satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
+  for (const setupMethod of ["session/new", "session/resume"] as const) {
+    it.effect(`buffers root metadata while ${setupMethod} startup is still pending`, () =>
+      Effect.gen(function* () {
+        const setupReplied = yield* Deferred.make<void>();
+        const allowStartup = yield* Deferred.make<void>();
+        const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          ...(setupMethod === "session/resume"
+            ? { resumeSessionId: "mock-session-1", resumeMethod: "resume" as const }
+            : {}),
+          requestLogger: (event) =>
+            event.method === setupMethod && event.status === "succeeded"
+              ? Deferred.succeed(setupReplied, undefined).pipe(
+                  Effect.andThen(Deferred.await(allowStartup)),
+                )
+              : Effect.void,
+        });
+        yield* runtime.getEvents().pipe(
+          Stream.runForEach((event) => {
+            if (event._tag === "EventStreamBarrier") {
+              return Deferred.succeed(event.acknowledge, undefined);
+            }
+            events.push(event);
+            return Effect.void;
+          }),
+          Effect.forkChild,
+        );
+        const startup = yield* runtime.start().pipe(Effect.forkChild);
+        yield* Deferred.await(setupReplied);
+        yield* runtime.request("_test/startup-metadata", {});
+        yield* Deferred.succeed(allowStartup, undefined);
+        yield* Fiber.join(startup);
+        yield* runtime.drainEvents;
+
+        expect(events.map((event) => event._tag)).toEqual([
+          "AvailableCommandsUpdated",
+          "ModeChanged",
+          "ConfigOptionsUpdated",
+        ]);
+        expect(events[0]).toMatchObject({
+          availableCommands: [{ name: "plan", description: "Native command" }],
+        });
+        expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+        expect(events[2]).toMatchObject({
+          configOptions: yield* runtime.getConfigOptions,
+        });
+        expect(
+          (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
+        ).toMatchObject({ currentValue: "gpt-5.4" });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  it.effect("publishes model changes returned by a config request and live notifications", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      yield* runtime.start();
+      const updates = yield* Stream.toPull(
+        runtime.getEvents().pipe(Stream.filter((event) => event._tag === "ConfigOptionsUpdated")),
+      );
+      const selected = yield* runtime.setConfigOption("model", "composer-2");
+      expect((yield* updates)[0]?.configOptions).toEqual(selected.configOptions);
+      yield* runtime.request("_test/startup-metadata", {});
+      expect((yield* updates)[0]?.configOptions).toEqual(yield* runtime.getConfigOptions);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("awaits native resume instead of using the load replay idle fallback", () =>
+    Effect.gen(function* () {
+      const resumeStarted = yield* Deferred.make<void>();
+      const requestMethods: Array<string> = [];
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_WAIT_FOR_RESUME_RELEASE: "1" },
+        },
+        resumeSessionId: "mock-session-1",
+        resumeMethod: "resume",
+        sessionLoadReplayIdleGap: "1 second",
+        requestLogger: (event) =>
+          Effect.sync(() => {
+            if (event.status === "started") requestMethods.push(event.method);
+          }),
+      });
+      yield* runtime.handleSessionUpdate((notification) =>
+        notification.update.sessionUpdate === "user_message_chunk"
+          ? Deferred.succeed(resumeStarted, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(resumeStarted);
+      yield* TestClock.adjust("3 seconds");
+      expect(startup.pollUnsafe()).toBeUndefined();
+      yield* runtime.request("_test/release-resume", {});
+      const started = yield* Fiber.join(startup);
+
+      expect(started.sessionSetupResult._meta).toEqual({ nativeResume: true });
+      expect(requestMethods).toContain("session/resume");
+      expect(requestMethods).not.toContain("session/load");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("waits for native cancellation and drains final updates before another prompt", () =>
+    Effect.gen(function* () {
+      const toolStarted = yield* Deferred.make<void>();
+      const cancelReceived = yield* Deferred.make<void>();
+      const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
+      let promptRequests = 0;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+        },
+        cancelBehavior: "wait-for-prompt",
+        requestLogger: (event) =>
+          Effect.sync(() => {
+            if (event.method === "session/prompt" && event.status === "started")
+              promptRequests += 1;
+          }),
+      });
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier") {
+            return Deferred.succeed(event.acknowledge, undefined);
+          }
+          events.push(event);
+          if (event._tag === "ToolCallUpdated" && event.toolCall.status === "inProgress") {
+            return Deferred.succeed(toolStarted, undefined);
+          }
+          if (event._tag === "ThoughtDelta" && event.text === "native-cancel-received") {
+            return Deferred.succeed(cancelReceived, undefined);
+          }
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+      yield* runtime.start();
+      const prompt = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "first" }],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(toolStarted);
+      const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
+      yield* Deferred.await(cancelReceived);
+      const replacement = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "second" }],
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      expect(prompt.pollUnsafe()).toBeUndefined();
+      expect(cancellation.pollUnsafe()).toBeUndefined();
+      expect(promptRequests).toBe(1);
+      yield* runtime.request("_test/finish-cancel", {});
+      yield* Fiber.join(cancellation);
+
+      expect(yield* Fiber.join(prompt)).toEqual({
+        stopReason: "cancelled",
+        _meta: { nativeCancel: true },
+      });
+      expect(
+        events.some(
+          (event) =>
+            event._tag === "ToolCallUpdated" &&
+            event.toolCall.status === "failed" &&
+            event.toolCall.detail === "Cancelled.",
+        ),
+      ).toBe(true);
+      const cancelledDelta = events.find(
+        (event) => event._tag === "ContentDelta" && event.text === "Request cancelled.",
+      );
+      expect(cancelledDelta?._tag).toBe("ContentDelta");
+      if (cancelledDelta?._tag === "ContentDelta") {
+        expect(
+          events.filter(
+            (event) =>
+              event._tag === "AssistantItemCompleted" && event.itemId === cancelledDelta.itemId,
+          ),
+        ).toHaveLength(1);
+      }
+      expect(yield* Fiber.join(replacement)).toMatchObject({ stopReason: "end_turn" });
+      expect(promptRequests).toBe(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retires a process when native cancellation times out", () =>
+    Effect.gen(function* () {
+      const toolStarted = yield* Deferred.make<void>();
+      const cancelReceived = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+        },
+        cancelBehavior: "wait-for-prompt",
+        cancelTimeout: "1 second",
+      });
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "EventStreamBarrier") {
+            return Deferred.succeed(event.acknowledge, undefined);
+          }
+          if (event._tag === "ToolCallUpdated") {
+            return Deferred.succeed(toolStarted, undefined);
+          }
+          if (event._tag === "ThoughtDelta") {
+            return Deferred.succeed(cancelReceived, undefined);
+          }
+          return Effect.void;
+        }),
+        Effect.forkChild,
+      );
+      yield* runtime.start();
+      const prompt = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "first" }],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(toolStarted);
+      const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
+      yield* Deferred.await(cancelReceived);
+      yield* TestClock.adjust("2 seconds");
+
+      const error = yield* Fiber.join(cancellation).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AcpTransportError",
+        method: "session/cancel",
+      });
+      expect(Exit.isFailure(yield* Fiber.await(prompt))).toBe(true);
+      expect(
+        yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "must not run" }],
+          })
+          .pipe(Effect.flip),
+      ).toBe(error);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports an idle child exit and rejects later prompts", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      yield* runtime.start();
+      yield* runtime.notify("_test/exit", {});
+      const events = yield* runtime.getEvents().pipe(Stream.take(1), Stream.runCollect);
+      const event = events[0];
+      expect(event).toMatchObject({ _tag: "ConnectionTerminated", error: { code: 19 } });
+      if (event?._tag !== "ConnectionTerminated") return;
+      expect(
+        yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "must not run" }],
+          })
+          .pipe(Effect.flip),
+      ).toBe(event.error);
+      expect(yield* runtime.start().pipe(Effect.flip)).toBe(event.error);
+      expect(yield* runtime.initialize().pipe(Effect.flip)).toBe(event.error);
+      expect(
+        yield* runtime.request("_test/environment", {}).pipe(
+          Effect.match({
+            onFailure: (error) => error,
+            onSuccess: () => undefined,
+          }),
+        ),
+      ).toBe(event.error);
+      expect(yield* runtime.notify("_test/exit", {}).pipe(Effect.flip)).toBe(event.error);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("retires a native runtime when its prompt caller is interrupted", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+        },
+        cancelBehavior: "wait-for-prompt",
+      });
+      yield* runtime.start();
+      const prompt = yield* runtime
+        .prompt(
+          {
+            prompt: [{ type: "text", text: "first" }],
+          },
+          { dispatched },
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(dispatched);
+      yield* Fiber.interrupt(prompt);
+      const events = yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConnectionTerminated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      expect(events[0]).toMatchObject({
+        error: { _tag: "AcpTransportError", method: "session/prompt" },
+      });
+      expect(
+        yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "must not run" }],
+          })
+          .pipe(Effect.flip),
+      ).toBe(events[0]?.error);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails a pending request when the stderr handler rejects the runtime", () =>
+    Effect.gen(function* () {
+      const failure = new EffectAcpErrors.AcpTransportError({
+        detail: "Sign in before continuing.",
+        cause: undefined,
+      });
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" } },
+        onStderr: () => Effect.fail(failure),
+      });
+      expect(yield* runtime.start().pipe(Effect.flip)).toBe(failure);
+      const events = yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConnectionTerminated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      expect(events[0]?.error).toBe(failure);
+      expect(yield* runtime.initialize().pipe(Effect.flip)).toBe(failure);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
+    Effect.gen(function* () {
+      const lengths: Array<number> = [];
+      for (const logStderr of [false, true]) {
+        yield* Effect.gen(function* () {
+          const runtime = yield* AcpSessionRuntime.make({
+            ...mockRuntimeOptions,
+            spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_FLOOD_STDERR: "1" } },
+            ...(logStderr
+              ? {
+                  onStderr: (text: string) =>
+                    Effect.sync(() => {
+                      lengths.push(text.length);
+                    }),
+                }
+              : {}),
+          });
+          expect(yield* runtime.initialize()).toMatchObject({ protocolVersion: 1 });
+        }).pipe(Effect.scoped);
+      }
+      expect(lengths.length).toBeGreaterThan(0);
+      expect(Math.max(...lengths)).toBeGreaterThanOrEqual(16_384);
+      expect(Math.max(...lengths)).toBeLessThanOrEqual(32_768);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("releases a queued event drain when its runtime scope closes", () =>
+    Effect.gen(function* () {
+      const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const barrierReceived = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions).pipe(
+        Effect.provideService(Scope.Scope, scope),
+      );
+      yield* runtime.start();
+      yield* runtime.getEvents().pipe(
+        Stream.runForEach((event) =>
+          event._tag === "EventStreamBarrier"
+            ? Deferred.succeed(barrierReceived, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.forkIn(scope),
+      );
+      const drain = yield* runtime.drainEvents.pipe(Effect.forkChild);
+      yield* Deferred.await(barrierReceived);
+      yield* Scope.close(scope, Exit.void);
+      yield* Fiber.join(drain);
+      yield* runtime.drainEvents;
+      expect(yield* runtime.initialize().pipe(Effect.flip)).toMatchObject({
+        _tag: "AcpTransportError",
+        detail: "The ACP session runtime is closed.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("bounds native cancellation when its event consumer is absent", () =>
+    Effect.gen(function* () {
+      const toolStarted = yield* Deferred.make<void>();
+      const cancelReceived = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+        },
+        cancelBehavior: "wait-for-prompt",
+        cancelTimeout: "1 second",
+      });
+      yield* runtime.handleSessionUpdate((notification) => {
+        if (notification.update.sessionUpdate === "tool_call") {
+          return Deferred.succeed(toolStarted, undefined).pipe(Effect.asVoid);
+        }
+        if (notification.update.sessionUpdate === "agent_thought_chunk") {
+          return Deferred.succeed(cancelReceived, undefined).pipe(Effect.asVoid);
+        }
+        return Effect.void;
+      });
+      yield* runtime.start();
+      const prompt = yield* runtime
+        .prompt({
+          prompt: [{ type: "text", text: "first" }],
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(toolStarted);
+      const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
+      yield* Deferred.await(cancelReceived);
+      yield* runtime.request("_test/finish-cancel", {});
+      expect(yield* Fiber.join(prompt)).toMatchObject({ stopReason: "cancelled" });
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(cancellation).pipe(Effect.flip)).toMatchObject({
+        _tag: "AcpTransportError",
+        method: "session/cancel",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not restore ambient variables to a sanitized child environment", () =>
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.env.T3_ACP_RUNTIME_AMBIENT;
+          process.env.T3_ACP_RUNTIME_AMBIENT = "sentinel";
+          return previous;
+        }),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.T3_ACP_RUNTIME_AMBIENT;
+            else process.env.T3_ACP_RUNTIME_AMBIENT = previous;
+          }),
+      );
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: mockAgentArgs,
+          extendEnv: false,
+          env: { T3_ACP_RUNTIME_EXPLICIT: "kept" },
+        },
+      });
+      yield* runtime.initialize();
+      expect(yield* runtime.request("_test/environment", {})).toEqual({
+        inherited: false,
+        explicit: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("merges custom initialize client capabilities into the ACP handshake", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {

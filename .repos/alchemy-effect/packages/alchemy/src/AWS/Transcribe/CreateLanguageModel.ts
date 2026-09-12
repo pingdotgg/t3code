@@ -33,9 +33,8 @@ export interface CreateLanguageModelRequest extends Omit<
  * is granted `iam:PassRole` on it alongside `transcribe:CreateLanguageModel`
  * (which has no resource-level IAM).
  *
- * @binding
- * @section Custom Language Models
- * @example Create a Custom Language Model
+ * ### Custom Language Models
+ * **Example:** Create a Custom Language Model
  * ```typescript
  * // init — bind the Transcribe data-access role
  * const createLanguageModel = yield* AWS.Transcribe.CreateLanguageModel(dataAccessRole);
@@ -48,6 +47,8 @@ export interface CreateLanguageModelRequest extends Omit<
  *   InputDataConfig: { S3Uri: "s3://my-bucket/training-data/" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateLanguageModel extends Binding.Service<
   CreateLanguageModel,

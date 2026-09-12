@@ -41,9 +41,8 @@ export interface ReadWriteDomainClient
  * least-privilege `DomainRead` / `DomainWrite` bindings when one direction
  * suffices. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DomainReadWriteHttp)`.
- * @binding
- * @section Reading and Writing a Domain
- * @example Index Then Search
+ * ### Reading and Writing a Domain
+ * **Example:** Index Then Search
  * ```typescript
  * // init — grants es:ESHttp* on the domain
  * const client = yield* AWS.OpenSearch.DomainReadWrite(domain);
@@ -60,12 +59,14 @@ export interface ReadWriteDomainClient
  * });
  * ```
  *
- * @example Create an Index With Explicit Mappings
+ * **Example:** Create an Index With Explicit Mappings
  * ```typescript
  * yield* client.request("PUT", "songs", {
  *   body: { mappings: { properties: { title: { type: "text" } } } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface DomainReadWrite extends Binding.Service<
   DomainReadWrite,

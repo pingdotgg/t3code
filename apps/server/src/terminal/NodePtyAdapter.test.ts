@@ -21,15 +21,50 @@ const spawn = vi.fn(() => ({
 
 vi.mock("node-pty", () => ({ spawn }));
 
-const testLayer = NodePtyAdapter.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      Layer.succeed(HostProcessPlatform, "win32"),
-      Layer.succeed(HostProcessArchitecture, "x64"),
+const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
+  NodePtyAdapter.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessPlatform, platform),
+        Layer.succeed(HostProcessArchitecture, "x64"),
+      ),
     ),
-  ),
-);
+  );
+
+const testLayer = makeTestLayer();
+
+for (const platform of ["win32", "linux", "darwin"] as const) {
+  it.effect(`terminates through node-pty using ${platform} semantics`, () =>
+    Effect.gen(function* () {
+      const adapter = yield* PtyAdapter.PtyAdapter;
+      const process = yield* adapter.spawn({
+        shell: "test-shell",
+        cwd: ".",
+        cols: 80,
+        rows: 24,
+        env: {},
+      });
+      const nativeProcess = spawn.mock.results.at(-1)!.value;
+      nativeProcess.kill.mockImplementation((signal?: string) => {
+        if (platform === "win32" && signal) {
+          throw new Error("Signals not supported on windows.");
+        }
+      });
+
+      process.kill("SIGTERM");
+      process.kill("SIGKILL");
+      process.kill();
+
+      assert.deepEqual(
+        nativeProcess.kill.mock.calls,
+        platform === "win32"
+          ? [[undefined], [undefined], [undefined]]
+          : [["SIGTERM"], ["SIGKILL"], [undefined]],
+      );
+    }).pipe(Effect.provide(makeTestLayer(platform))),
+  );
+}
 
 it.effect("spawns through the public adapter with the provided host references", () =>
   Effect.gen(function* () {

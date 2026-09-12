@@ -89,11 +89,8 @@ export type ShareRecipient = Resource<
  * change triggers a replacement. Association is eventually consistent
  * (`associating → associated`). Do not manage the same recipient both inline
  * on `Share.recipients` and through this resource.
- * @resource
- * @product Resource Sharing
- * @category Account & Identity
- * @section Adding a Recipient
- * @example Share with another account
+ * ### Adding a Recipient
+ * **Example:** Share with another account
  * ```typescript
  * const recipient = yield* Cloudflare.ResourceSharing.ShareRecipient("Partner", {
  *   shareId: share.shareId,
@@ -101,7 +98,7 @@ export type ShareRecipient = Resource<
  * });
  * ```
  *
- * @example Share with an organization
+ * **Example:** Share with an organization
  * ```typescript
  * const recipient = yield* Cloudflare.ResourceSharing.ShareRecipient("Org", {
  *   shareId: share.shareId,
@@ -110,6 +107,10 @@ export type ShareRecipient = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-account-resources/
+ *
+ * @resource
+ * @product Resource Sharing
+ * @category Account & Identity
  */
 export const ShareRecipient = Resource<ShareRecipient>(TypeId);
 
@@ -206,9 +207,9 @@ export const ShareRecipientProvider = () =>
 
       // Ensure — greenfield (or out-of-band delete).
       const created = yield* resourceSharing.createRecipient({
-        pathAccountId: acct,
+        accountId: acct,
         shareId,
-        bodyAccountId: targetAccountId,
+        recipientAccountId: targetAccountId,
         organizationId: targetOrganizationId,
       });
       return toAttributes(created, acct, shareId);

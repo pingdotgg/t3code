@@ -1,7 +1,8 @@
 {
-  "$schema": "https://unpkg.com/@changesets/config@1.6.4/schema.json",
+  "$schema": "https://unpkg.com/@changesets/config@4.0.0-next.8/schema.json",
   "changelog": ["@changesets/changelog-github", { "repo": "Effect-TS/effect" }],
   "commit": false,
+  "format": false,
   "linked": [],
   "access": "restricted",
   "baseBranch": "main",
@@ -14,7 +15,35 @@
   "fixed": [
     [
       "effect",
-      "@effect/*"
+      "@effect/ai-anthropic",
+      "@effect/ai-openai",
+      "@effect/ai-openai-compat",
+      "@effect/ai-openrouter",
+      "@effect/atom-react",
+      "@effect/atom-solid",
+      "@effect/atom-vue",
+      "@effect/docgen",
+      "@effect/doctest",
+      "@effect/openapi-generator",
+      "@effect/opentelemetry",
+      "@effect/platform-browser",
+      "@effect/platform-bun",
+      "@effect/platform-deno",
+      "@effect/platform-node",
+      "@effect/platform-node-shared",
+      "@effect/sql-clickhouse",
+      "@effect/sql-d1",
+      "@effect/sql-libsql",
+      "@effect/sql-mssql",
+      "@effect/sql-mysql2",
+      "@effect/sql-pg",
+      "@effect/sql-pglite",
+      "@effect/sql-sqlite-bun",
+      "@effect/sql-sqlite-do",
+      "@effect/sql-sqlite-node",
+      "@effect/sql-sqlite-react-native",
+      "@effect/sql-sqlite-wasm",
+      "@effect/vitest"
     ]
   ],
   "snapshot": {

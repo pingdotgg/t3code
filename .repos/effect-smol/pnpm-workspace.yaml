@@ -5,30 +5,27 @@ packages:
   - packages/*
   - packages/ai/*
   - packages/atom/*
+  - packages/platform/*
   - packages/sql/*
   - packages/tools/*
   - examples/*
 
-ignoredBuiltDependencies:
-  - core-js
-  - cpu-features
-  - dprint
-  - esbuild
-  - lmdb
-  - msgpackr-extract
-  - msw
-  - protobufjs
-  - sharp
-  - ssh2
-  - unrs-resolver
-  - workerd
+verifyDepsBeforeRun: error
+enableGlobalVirtualStore: false
 
-onlyBuiltDependencies:
-  - better-sqlite3
-  - tree-sitter
-  - tree-sitter-javascript
-  - tree-sitter-typescript
+allowBuilds:
+  core-js: false
+  cpu-features: false
+  dprint: false
+  esbuild: false
+  msgpackr-extract: false
+  protobufjs: false
+  sharp: false
+  ssh2: false
+  tree-sitter: false
+  tree-sitter-javascript: false
+  tree-sitter-typescript: false
+  workerd: false
 
 patchedDependencies:
-  '@changesets/assemble-release-plan': patches/@changesets__assemble-release-plan.patch
-  '@changesets/get-github-info': patches/@changesets__get-github-info.patch
+  '@changesets/get-github-info@1.0.0': patches/@changesets__get-github-info@1.0.0.patch

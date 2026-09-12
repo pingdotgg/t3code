@@ -215,6 +215,32 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   let onInput = EventDispatcher()
   let onResize = EventDispatcher()
+  let onCapture = EventDispatcher()
+  var captureRequest: Double = 0 {
+    didSet {
+      guard captureRequest > 0, captureRequest != oldValue else { return }
+      guard let surface else { onCapture(["text": ""]); return }
+      let selection = ghostty_selection_s(
+        top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+        bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+        rectangle: false)
+      var captured = ghostty_text_s()
+      guard ghostty_surface_read_text(surface, selection, &captured) else { onCapture(["text": ""]); return }
+      defer { ghostty_surface_free_text(surface, &captured) }
+      let text = captured.text.flatMap { String(bytes: UnsafeBufferPointer(start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: Int(captured.text_len)), encoding: .utf8) } ?? ""
+      // Android joins snapshot rows with "\n" and trims each row's trailing whitespace, so do
+      // the same here: identical terminal content must capture identically on both platforms.
+      let normalized = text.split(separator: "\n", omittingEmptySubsequences: false)
+        .map { row -> String in
+          var line = String(row)
+          // Kotlin's trimEnd only strips ASCII whitespace; match it exactly.
+          while let last = line.last, last.isASCII && last.isWhitespace { line.removeLast() }
+          return line
+        }
+        .joined(separator: "\n")
+      onCapture(["text": normalized])
+    }
+  }
 
   var terminalKey: String = "" {
     didSet {
@@ -459,7 +485,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       supports_selection_clipboard: false,
       wakeup_cb: { _ in },
       action_cb: { _, _, _ in false },
-      read_clipboard_cb: { _, _, _ in false },
+      read_clipboard_cb: { _, _, _, _, _, _ in GHOSTTY_CLIPBOARD_READ_UNSUPPORTED },
       confirm_read_clipboard_cb: { _, _, _, _ in },
       write_clipboard_cb: { _, _, _, _, _ in },
       close_surface_cb: { _, _ in }

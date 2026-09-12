@@ -1,5 +1,5 @@
 import * as Haptics from "expo-haptics";
-import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
+import { GlassView } from "expo-glass-effect";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useRef } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, useColorScheme, View } from "react-native";
@@ -11,11 +11,12 @@ import { APP_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
 const OVERLAY_LAYOUT_TRANSITION = LinearTransition.duration(220);
 const OVERLAY_TOP_GAP = 8;
-const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView);
+const AnimatedGlassView = Animated.createAnimatedComponent(GlassView);
 
 export function GitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;
@@ -52,7 +53,7 @@ export function GitActionProgressOverlay(props: {
 
   return (
     <Animated.View
-      entering={isLiquidGlassSupported ? undefined : FadeIn.duration(200)}
+      entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : FadeIn.duration(200)}
       exiting={FadeOut.duration(150)}
       className="absolute inset-x-3 z-[100]"
       style={{ top: insets.top + APP_BAR_HEIGHT + OVERLAY_TOP_GAP }}
@@ -102,7 +103,7 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
     </>
   );
 
-  if (isLiquidGlassSupported) {
+  if (NATIVE_LIQUID_GLASS_SUPPORTED) {
     return (
       <Animated.View
         layout={OVERLAY_LAYOUT_TRANSITION}
@@ -116,10 +117,10 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
           shadowRadius: 18,
         }}
       >
-        <AnimatedLiquidGlassView
+        <AnimatedGlassView
           colorScheme={isDarkMode ? "dark" : "light"}
-          effect="regular"
-          interactive
+          glassEffectStyle="regular"
+          isInteractive
           layout={OVERLAY_LAYOUT_TRANSITION}
           tintColor={glassTint}
           style={{
@@ -136,15 +137,13 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
           >
             {content}
           </Animated.View>
-        </AnimatedLiquidGlassView>
+        </AnimatedGlassView>
       </Animated.View>
     );
   }
 
   const bgClass =
-    progress.phase === "error"
-      ? "border-adaptive-red-200-800 bg-adaptive-red-50-950-a80"
-      : "bg-card border-border";
+    progress.phase === "error" ? "border-danger-border bg-danger" : "bg-card border-border";
 
   return (
     <Animated.View
@@ -168,11 +167,11 @@ function OverlayIcon(props: { readonly phase: GitActionProgress["phase"] }) {
       );
     case "error":
       return (
-        <View className="h-6 w-6 items-center justify-center rounded-full bg-red-500">
+        <View className="h-6 w-6 items-center justify-center rounded-full bg-danger">
           <SymbolView
             name="exclamationmark.triangle"
             size={12}
-            tintColor="white"
+            tintColorClassName="accent-danger-foreground"
             type="monochrome"
           />
         </View>

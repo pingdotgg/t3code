@@ -286,7 +286,7 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
-  it.effect("drops transient canonical events before serialization", () =>
+  it.effect("drops transient provider events before serialization", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "events.log");
@@ -302,6 +302,59 @@ describe("EventNdjsonLogger", () => {
         yield* canonical.write(circularDelta, threadId);
         yield* canonical.write({ type: "item.completed", id: "final" }, threadId);
         yield* native.write({ type: "content.delta", id: "native-delta" }, threadId);
+        yield* native.write(
+          { method: "item/agentMessage/delta", payload: circularDelta },
+          threadId,
+        );
+        yield* native.write(
+          { method: "thread/realtime/outputAudio/delta", payload: circularDelta },
+          threadId,
+        );
+        yield* native.write(
+          { method: "thread/realtime/transcript/delta", payload: circularDelta },
+          threadId,
+        );
+        yield* native.write(
+          {
+            event: {
+              method: "claude/stream_event/content_block_delta/text_delta",
+              payload: circularDelta,
+            },
+          },
+          threadId,
+        );
+        yield* native.write(
+          {
+            event: {
+              method: "session/update",
+              payload: { update: { sessionUpdate: "agent_message_chunk" } },
+            },
+          },
+          threadId,
+        );
+        yield* native.write(
+          {
+            event: {
+              type: "message.part.updated",
+              payload: { properties: { part: { type: "text" } } },
+            },
+          },
+          threadId,
+        );
+        yield* native.write(
+          {
+            event: {
+              type: "message.part.updated",
+              payload: {
+                properties: {
+                  part: { type: "tool", state: { status: "running", output: "progress" } },
+                },
+              },
+            },
+          },
+          threadId,
+        );
+        yield* native.write({ type: "turn.completed", id: "native-final" }, threadId);
         yield* store.close();
 
         const lines = NodeFS.readFileSync(ownedLogPath(basePath, "thread-filtered"), "utf8")
@@ -313,8 +366,53 @@ describe("EventNdjsonLogger", () => {
           lines.map(({ stream, payload }) => ({ stream, payload })),
           [
             { stream: "CANON", payload: '{"type":"item.completed","id":"final"}' },
-            { stream: "NTIVE", payload: '{"type":"content.delta","id":"native-delta"}' },
+            { stream: "NTIVE", payload: '{"type":"turn.completed","id":"native-final"}' },
           ],
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("keeps OpenCode tool input, final output, and errors in native logs", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadId = ThreadId.make("thread-tool-lifecycle");
+
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        const native = store.logger("native");
+        const input = { command: "run-build" };
+        const states = [
+          { status: "pending", input },
+          { status: "completed", input, output: "Build complete", time: { start: 1, end: 2 } },
+          { status: "error", input, error: "Build failed", time: { start: 3, end: 4 } },
+          { status: "unknown", input },
+          null,
+        ];
+        const events = states.map((state) => ({
+          event: {
+            type: "message.part.updated",
+            payload: { properties: { part: { type: "tool", state } } },
+          },
+        }));
+        for (const event of events) {
+          yield* native.write(event, threadId);
+        }
+        yield* store.close();
+
+        const payloads = NodeFS.readFileSync(
+          ownedLogPath(basePath, "thread-tool-lifecycle"),
+          "utf8",
+        )
+          .trim()
+          .split("\n")
+          .map((line) => parseLogLine(line).payload);
+        assert.deepEqual(
+          payloads,
+          events.map((event) => encodeUnknownJson(event)),
         );
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });

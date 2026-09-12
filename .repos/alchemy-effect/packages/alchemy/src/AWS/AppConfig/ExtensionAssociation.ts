@@ -61,9 +61,8 @@ export interface ExtensionAssociation extends Resource<
  * application, environment, or configuration profile so the extension's
  * actions fire for that resource's workflow events.
  *
- * @resource
- * @section Associating an Extension
- * @example Attach an Extension to an Application
+ * ### Associating an Extension
+ * **Example:** Attach an Extension to an Application
  * ```typescript
  * const association = yield* AppConfig.ExtensionAssociation("Hook", {
  *   extensionIdentifier: extension.extensionId,
@@ -71,7 +70,7 @@ export interface ExtensionAssociation extends Resource<
  * });
  * ```
  *
- * @example Attach with Parameter Values
+ * **Example:** Attach with Parameter Values
  * ```typescript
  * const association = yield* AppConfig.ExtensionAssociation("Hook", {
  *   extensionIdentifier: extension.extensionId,
@@ -79,6 +78,8 @@ export interface ExtensionAssociation extends Resource<
  *   parameters: { topicArn: topic.topicArn },
  * });
  * ```
+ *
+ * @resource
  */
 export const ExtensionAssociation = Resource<ExtensionAssociation>(
   "AWS.AppConfig.ExtensionAssociation",

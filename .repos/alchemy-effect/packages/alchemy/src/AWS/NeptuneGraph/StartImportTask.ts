@@ -9,9 +9,8 @@ import type { Graph } from "./Graph.ts";
  *
  * Starts a bulk import from Amazon S3 into the bound graph (the graph must be empty and `AVAILABLE`). The request passes Neptune Analytics a data-access role, so the grant includes `iam:PassRole` conditioned to `neptune-graph.amazonaws.com`. Poll progress with {@link GetImportTask}. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.StartImportTaskHttp)`.
- * @binding
- * @section Importing and Exporting Data
- * @example Bulk-load CSV data from S3
+ * ### Importing and Exporting Data
+ * **Example:** Bulk-load CSV data from S3
  * ```typescript
  * const startImport = yield* NeptuneGraph.StartImportTask(graph);
  *
@@ -22,6 +21,8 @@ import type { Graph } from "./Graph.ts";
  * });
  * // task.taskId, task.status
  * ```
+ *
+ * @binding
  */
 export interface StartImportTask extends Binding.Service<
   StartImportTask,

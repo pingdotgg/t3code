@@ -24,7 +24,7 @@ export class OrganizationsTestFunction extends Lambda.Function<Lambda.Function>(
 export default OrganizationsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // --- account-level bindings (Organizations is a management-account

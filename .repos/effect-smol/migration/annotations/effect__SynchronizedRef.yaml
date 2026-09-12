@@ -1,0 +1,18 @@
+effect/SynchronizedRef#SynchronizedRef:
+  replacement: "SynchronizedRef.SynchronizedRef"
+  note: "The model remains, now extends the v4 Ref model, and is read or updated through explicit SynchronizedRef operations."
+effect/SynchronizedRef#SynchronizedRef.Variance:
+  replacement: "Ref.Ref.Variance"
+  note: "SynchronizedRef now inherits Ref variance instead of declaring a separate public variance marker."
+effect/SynchronizedRef#SynchronizedRefTypeId:
+  replacement: "none"
+  note: "The SynchronizedRef type id is internal in v4; do not inspect or construct the brand directly."
+effect/SynchronizedRef#SynchronizedRefUnify:
+  replacement: "none"
+  note: "SynchronizedRef is no longer an Effect subtype, so its Effect unification helper was removed; call SynchronizedRef.get explicitly."
+effect/SynchronizedRef#SynchronizedRefUnifyIgnore:
+  replacement: "none"
+  note: "SynchronizedRef is no longer an Effect subtype, so its Effect unification ignore marker was removed."
+effect/SynchronizedRef#unsafeMake:
+  replacement: "SynchronizedRef.makeUnsafe"
+  note: "The unsafe suffix moved to the end."

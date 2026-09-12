@@ -42,6 +42,12 @@ describe("formatWorkspaceRelativePath", () => {
       ),
     ).toBe("t3code/apps/web/src/session-logic.ts:501:9");
   });
+
+  it("keeps double-slash POSIX paths case-sensitive", () => {
+    expect(formatWorkspaceRelativePath("//tmp/project/probe.txt", "//tmp/Project")).toBe(
+      "//tmp/project/probe.txt",
+    );
+  });
 });
 
 describe("formatCompactFilePath", () => {

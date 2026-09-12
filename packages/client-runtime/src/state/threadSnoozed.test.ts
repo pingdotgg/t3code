@@ -6,12 +6,14 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canSnooze,
   effectiveSnoozed,
+  hasQueuedTurnStart,
   resolveSnoozePresets,
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 const NOW = "2026-04-10T12:00:00.000Z";
 const SNOOZED_AT = "2026-04-10T09:00:00.000Z";
@@ -59,6 +61,15 @@ function makeShell(input: {
             assistantMessageId: null,
           },
   };
+}
+
+type QueuedTurnShell = Pick<
+  OrchestrationThreadShell,
+  "latestUserMessageAt" | "latestTurn" | "session"
+>;
+
+function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
+  return { latestUserMessageAt: null, latestTurn: null, session: null, ...overrides };
 }
 
 describe("effectiveSnoozed", () => {
@@ -199,6 +210,55 @@ describe("canSnooze", () => {
         { now: NOW },
       ),
     ).toBe(true);
+  });
+});
+
+describe("hasQueuedTurnStart", () => {
+  it("expires queued state after two minutes", () => {
+    const thread = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T11:57:59.000Z",
+    });
+    expect(hasQueuedTurnStart(thread, { now: NOW })).toBe(false);
+  });
+
+  it("clears queued state when a turn adopts the message or the session fails", () => {
+    const messageAt = "2026-04-10T11:59:00.000Z";
+    const adopted = makeQueuedTurnShell({
+      latestUserMessageAt: messageAt,
+      latestTurn: {
+        turnId: TurnId.make("turn-adopted"),
+        state: "running",
+        requestedAt: messageAt,
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const failed = makeQueuedTurnShell({
+      latestUserMessageAt: messageAt,
+      session: {
+        threadId: ThreadId.make("thread-failed"),
+        status: "error",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: "failed",
+        updatedAt: NOW,
+      },
+    });
+    expect(hasQueuedTurnStart(adopted, { now: NOW })).toBe(false);
+    expect(hasQueuedTurnStart(failed, { now: NOW })).toBe(false);
+  });
+
+  it("bounds future client clock skew", () => {
+    const farAhead = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T12:03:00.000Z",
+    });
+    const slightlyAhead = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T12:01:00.000Z",
+    });
+    expect(hasQueuedTurnStart(farAhead, { now: NOW })).toBe(false);
+    expect(hasQueuedTurnStart(slightlyAhead, { now: NOW })).toBe(true);
   });
 });
 

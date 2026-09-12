@@ -196,6 +196,31 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("persists Material You independently for each appearance", async () => {
+    const themes = { lightThemeId: "material-you", darkThemeId: "ocean" } as const;
+    await savePreferencesPatch(themes);
+    await expect(loadPreferences()).resolves.toEqual(themes);
+    await savePreferencesPatch({ lightThemeId: "t3-chat" });
+    await expect(loadPreferences()).resolves.toEqual({ ...themes, lightThemeId: "t3-chat" });
+  });
+
+  it("persists the Material You layout independently of the selected theme", async () => {
+    await savePreferencesPatch({
+      lightThemeId: "material-you",
+      materialYouStyleLayoutEnabled: true,
+    });
+    await savePreferencesPatch({ lightThemeId: "t3-chat" });
+    await expect(loadPreferences()).resolves.toEqual({
+      lightThemeId: "t3-chat",
+      materialYouStyleLayoutEnabled: true,
+    });
+    await savePreferencesPatch({ materialYouStyleLayoutEnabled: false });
+    await expect(loadPreferences()).resolves.toEqual({
+      lightThemeId: "t3-chat",
+      materialYouStyleLayoutEnabled: false,
+    });
+  });
+
   it("drops the removed theme transition preference", async () => {
     mocks.setPreferencesJson(JSON.stringify({ themeTransition: "circle-bottom-left" }), 10);
 
@@ -213,33 +238,35 @@ describe("mobile connection storage", () => {
     expect(fallback.updatedAt).toEqual(expect.any(Number));
   });
 
-  it("persists Thread List v2 shelf expansion preferences", async () => {
+  it("persists thread list shelf expansion preferences", async () => {
     await expect(
       savePreferencesPatch({
-        threadListV2SettledShelfExpanded: false,
-        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: false,
+        threadListSnoozedShelfExpanded: true,
       }),
     ).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
 
     await expect(loadPreferences()).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
   });
 
-  it("ignores invalid Thread List v2 shelf expansion preference types", async () => {
+  it("drops legacy and invalid thread list shelf expansion preferences", async () => {
     mocks.setPreferencesJson(
       JSON.stringify({
         baseFontSize: 17,
-        threadListV2SettledShelfExpanded: "false",
-        threadListV2SnoozedShelfExpanded: 1,
+        threadListV2SettledShelfExpanded: true,
+        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: "false",
+        threadListSnoozedShelfExpanded: 1,
       }),
       10,
     );

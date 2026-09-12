@@ -7,6 +7,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
@@ -93,6 +94,10 @@ export const PullRequestAction = Schema.Literals([
   "enable-auto-merge",
   /** Take the standing instruction back, which leaves the change request where it was. */
   "disable-auto-merge",
+  /** Open a new change request that reverses a merged one. */
+  "revert",
+  /** Allow Actions workflows from a fork pull request to begin running. */
+  "approve-workflows",
 ]);
 export type PullRequestAction = typeof PullRequestAction.Type;
 
@@ -131,6 +136,7 @@ export type PullRequestLabel = typeof PullRequestLabel.Type;
 
 export const PullRequestCheckStatus = Schema.Literals([
   "pending",
+  "action-required",
   "success",
   "failure",
   "skipped",
@@ -286,6 +292,21 @@ export const PullRequestReviewerCandidateList = Schema.Struct({
 });
 export type PullRequestReviewerCandidateList = typeof PullRequestReviewerCandidateList.Type;
 
+/** A label the repository defines, with whether this change request already wears it. */
+export const PullRequestLabelCandidate = Schema.Struct({
+  ...PullRequestLabel.fields,
+  description: Schema.NullOr(Schema.String),
+  isApplied: Schema.Boolean,
+});
+export type PullRequestLabelCandidate = typeof PullRequestLabelCandidate.Type;
+
+export const PullRequestLabelCandidateList = Schema.Struct({
+  candidates: Schema.Array(PullRequestLabelCandidate),
+  /** The repository defines more labels than the read asked for; the list is not all of them. */
+  truncated: Schema.Boolean,
+});
+export type PullRequestLabelCandidateList = typeof PullRequestLabelCandidateList.Type;
+
 export const PullRequestCommit = Schema.Struct({
   oid: TrimmedNonEmptyString,
   messageHeadline: Schema.String,
@@ -392,6 +413,18 @@ export const PullRequestCapabilities = Schema.Struct({
    * what every server before this one was.
    */
   edit: Schema.optional(PullRequestEditCapabilities),
+  /**
+   * The host keeps stacks of change requests as objects of its own, so a linked thread can show
+   * the stack the host shows. Absent means chains are only ever inferred from base branches.
+   */
+  stacks: Schema.optional(Schema.Boolean),
+  stackActions: Schema.optional(Schema.Boolean),
+  /**
+   * The repository's labels can be listed, and one put on a change request or taken off it.
+   * Optional for the same reason `edit` is: a server that says nothing about labels has no way
+   * to change them, which is what every server before this field was.
+   */
+  labels: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -406,6 +439,8 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  /** May request remote stack rebases, including when this layer is already current. */
+  stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -421,6 +456,12 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * Absent or empty means they may not, which is also what a host with no such action says.
    */
   updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
+  /**
+   * This viewer may put a label on the change request, and take one off. Absent is granted, like
+   * every permission here; the capability beside it is what decides whether a label can be
+   * changed on this host at all.
+   */
+  labels: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -431,7 +472,16 @@ export const PullRequestMergeCapabilities = Schema.Struct({
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
+export const PullRequestStackMembership = Schema.Struct({
+  number: PositiveInt,
+  position: PositiveInt,
+  size: PositiveInt,
+  base: TrimmedNonEmptyString,
+});
+export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
+
 export const PullRequestListEntry = Schema.Struct({
+  stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
   /**
    * The host below which `repository` is addressed, so the same provider kind can serve more
@@ -583,12 +633,80 @@ export const PullRequestListResult = Schema.Struct({
 });
 export type PullRequestListResult = typeof PullRequestListResult.Type;
 
+/**
+ * Addresses one pull request for reads and writes. `projectId` picks the checkout the host
+ * CLI runs in and, when its repository matches, the credentials; `host` lets the server
+ * route a pull request from another repository through any project on the same host
+ * (a frontend project's thread linking a backend PR). Absent `host` means "the project's
+ * own host", which is every reference from before thread links became host-level.
+ */
 export const PullRequestRef = Schema.Struct({
   projectId: ProjectId,
+  host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+export const PullRequestLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
+});
+export type PullRequestLinkedThreadsResult = typeof PullRequestLinkedThreadsResult.Type;
+
+/**
+ * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
+ * status check never loads permissions, repository settings, checks, or base comparison data.
+ */
+export const PullRequestSummary = Schema.Struct({
+  provider: SourceControlProviderKind,
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: PullRequestState,
+  /** Present when the host says the open pull request is still a draft. */
+  isDraft: Schema.optional(Schema.Boolean),
+  headBranch: TrimmedNonEmptyString,
+  baseBranch: TrimmedNonEmptyString,
+  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: IsoDateTime,
+  author: Schema.optional(Schema.NullOr(PullRequestActor)),
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
+  checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
+  mergeability: Schema.optional(PullRequestMergeability),
+});
+export type PullRequestSummary = typeof PullRequestSummary.Type;
+
+/** The host-native stack a pull request belongs to, in the thread link's shape. */
+export const PullRequestStack = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+  base: TrimmedNonEmptyString,
+  layers: Schema.Array(
+    Schema.Struct({
+      number: PositiveInt,
+      title: Schema.optional(Schema.String),
+      isDraft: Schema.optional(Schema.Boolean),
+      headSha: Schema.optional(TrimmedNonEmptyString),
+      headBranch: TrimmedNonEmptyString,
+      state: PullRequestState,
+    }),
+  ),
+});
+export type PullRequestStack = typeof PullRequestStack.Type;
 
 /**
  * One row's line counts, read after the listing rather than inside it. On GitHub the pair is
@@ -660,6 +778,7 @@ export const PullRequestDetail = Schema.Struct({
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
   headBranch: TrimmedNonEmptyString,
+  headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   baseBranch: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -690,6 +809,10 @@ export const PullRequestDetail = Schema.Struct({
    * arm something that is already armed, and a second arming is a write nobody asked for.
    */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  /** The strategy the host will use for an armed auto-merge, where it reports one. */
+  autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** GitHub Actions runs on this head commit that are waiting for a maintainer's approval. */
+  workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -800,7 +923,16 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
+export const PullRequestStackHead = Schema.Struct({
+  number: PositiveInt,
+  headSha: TrimmedNonEmptyString,
+});
+export type PullRequestStackHead = typeof PullRequestStackHead.Type;
+
 export const PullRequestActionInput = Schema.Struct({
+  /** Native stack scope; only send to environments advertising pullRequestStackActions. */
+  stackNumber: Schema.optional(PositiveInt),
+  expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**
@@ -970,6 +1102,18 @@ export const PullRequestReviewerRequestInput = Schema.Struct({
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
+/**
+ * Putting a label on and taking it off are one operation with `applied` turned around, which is
+ * what pressing the same row in the menu twice is. Named by the label's own name, which is how
+ * GitHub addresses one.
+ */
+export const PullRequestLabelChangeInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  applied: Schema.Boolean,
+});
+export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
+
 export const PullRequestUnavailableReason = Schema.Literals([
   "cli-missing",
   "cli-unauthenticated",
@@ -1071,7 +1215,7 @@ export function pullRequestProviderRequirement(
  * as-is; the underlying failure travels in `cause` (absent for `provider-unsupported`, which
  * has none).
  */
-export class PullRequestUnavailableError extends Schema.TaggedErrorClass<PullRequestUnavailableError>()(
+export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestUnavailableError>()(
   "PullRequestUnavailableError",
   {
     reason: PullRequestUnavailableReason,
@@ -1100,7 +1244,7 @@ export class PullRequestUnavailableError extends Schema.TaggedErrorClass<PullReq
   }
 }
 
-export class PullRequestOperationError extends Schema.TaggedErrorClass<PullRequestOperationError>()(
+export class PullRequestOperationError extends Schema.TaggedError<PullRequestOperationError>()(
   "PullRequestOperationError",
   {
     operation: Schema.String,

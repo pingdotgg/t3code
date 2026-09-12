@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
@@ -17,6 +16,7 @@ function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeR
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state,
+    ...(summary.isDraft === true ? { isDraft: true } : {}),
     updatedAt: summary.updatedAt ?? Option.none(),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
@@ -184,8 +184,6 @@ export const make = Effect.gen(function* () {
         ),
   });
 });
-
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);
 
 export const makeDiscovery = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;

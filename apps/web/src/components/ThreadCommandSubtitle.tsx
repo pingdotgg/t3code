@@ -1,6 +1,6 @@
-import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import type { ProviderDriverKind } from "@t3tools/contracts";
 import { FolderGit2Icon, FolderIcon, GitBranchIcon } from "lucide-react";
-import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 
@@ -15,8 +15,7 @@ export type ThreadCommandSubtitleVariant =
   | "favicon-workspace"
   | "favicon-branch-harness";
 
-export const THREAD_COMMAND_SUBTITLE_VARIANT: ThreadCommandSubtitleVariant =
-  "favicon-workspace-harness";
+const THREAD_COMMAND_SUBTITLE_VARIANT: ThreadCommandSubtitleVariant = "favicon-workspace-harness";
 
 export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreground/70";
 
@@ -35,10 +34,9 @@ function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktre
 }
 
 export function ThreadCommandSubtitle(props: {
-  environmentId: EnvironmentId;
-  projectCwd: string | null;
-  projectFaviconPath?: string | null;
+  project: ProjectFaviconProject | null;
   projectTitle: string | null;
+  environmentLabel?: string | null;
   branch: string | null;
   worktreePath: string | null;
   isCurrent: boolean;
@@ -68,15 +66,16 @@ export function ThreadCommandSubtitle(props: {
     >
       {projectLabel ? (
         <span className="inline-flex min-w-0 items-center gap-1">
-          {props.projectCwd ? (
-            <ProjectFavicon
-              environmentId={props.environmentId}
-              cwd={props.projectCwd}
-              faviconPath={props.projectFaviconPath}
-              className="size-3 shrink-0"
-            />
+          {props.project ? (
+            <ProjectFavicon project={props.project} className="size-3 shrink-0" />
           ) : null}
           <span className="min-w-0 truncate">{projectLabel}</span>
+          {props.environmentLabel ? (
+            <>
+              <CommandPaletteMetaDot />
+              <span className="shrink-0">{props.environmentLabel}</span>
+            </>
+          ) : null}
         </span>
       ) : null}
 

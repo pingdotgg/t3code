@@ -1,17 +1,17 @@
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref, RefObject } from "react";
 import {
   Platform,
   useColorScheme,
   View,
   type ColorValue,
-  type StyleProp,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
+import { GlassBackdrop } from "./GlassBackdrop";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
 const ThemedGlassView = withUniwind(GlassView, {
@@ -20,24 +20,28 @@ const ThemedGlassView = withUniwind(GlassView, {
 });
 
 interface GlassSurfaceProps extends ViewProps {
+  readonly ref?: Ref<View>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
   readonly tintColorClassName?: string;
   readonly chrome?: "default" | "none";
-  /** Styling used only when native Liquid Glass is unavailable. */
-  readonly fallbackStyle?: StyleProp<ViewStyle>;
+  /** Base color for the frosted tint, or solid fill when blur is unavailable. */
+  readonly fallbackColor?: ColorValue;
+  readonly blurTarget?: RefObject<View | null>;
   /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }
 
 export function GlassSurface({
+  ref,
   children,
   glassEffectStyle = "regular",
   chrome = "default",
   tintColor,
   tintColorClassName,
-  fallbackStyle,
+  fallbackColor,
+  blurTarget,
   fallbackClassName,
   className,
   style,
@@ -68,6 +72,7 @@ export function GlassSurface({
     return (
       <ThemedGlassView
         {...props}
+        ref={ref}
         className={cn(
           chrome === "none"
             ? "border-0 border-transparent bg-transparent"
@@ -90,15 +95,15 @@ export function GlassSurface({
   return (
     <View
       {...props}
+      ref={ref}
       className={cn(
-        chrome === "none"
-          ? "border-0 border-transparent bg-transparent"
-          : "border border-border bg-glass-surface",
+        chrome === "none" ? "border-0 border-transparent" : "border border-border",
         fallbackClassName,
         className,
       )}
-      style={[surfaceStyle, fallbackStyle, style]}
+      style={[surfaceStyle, style]}
     >
+      <GlassBackdrop blurTarget={blurTarget} fallbackColor={fallbackColor} />
       {children}
     </View>
   );

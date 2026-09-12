@@ -67,6 +67,7 @@ it("exports exact object result schemas for preview actions", () => {
   for (const name of actionNames) {
     expect(Tool.getJsonSchemaFromSchema(PreviewToolkit.tools[name].successSchema)).toEqual({
       type: "object",
+      properties: { toolIcon: expect.any(Object) },
       additionalProperties: false,
       description: "The preview action completed successfully.",
     });

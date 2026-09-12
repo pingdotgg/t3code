@@ -16,6 +16,7 @@ export function ComposerEditor({
   textStyle,
   contentInsetVertical = 0,
   singleLineCentered: _singleLineCentered,
+  readOnly = false,
   ...props
 }: ComposerEditorProps) {
   const inputRef = useRef<RNTextInput>(null);
@@ -39,6 +40,7 @@ export function ComposerEditor({
       <TextInput
         ref={inputRef}
         {...props}
+        editable={(props.editable ?? true) && !readOnly}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
         multiline={props.multiline ?? true}

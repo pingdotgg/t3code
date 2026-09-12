@@ -64,6 +64,28 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("keeps preview normalization and fence-only fallback while scanning lines", () => {
+    const preview = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: { rawOutput: `\`\`\`\n  actual\tresult  \n${"x".repeat(5000)}` },
+      }),
+    );
+    const fences = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: { rawOutput: "```\r\n \t \n```\n" },
+      }),
+    );
+
+    expect((preview.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
+      content: "actual result",
+    });
+    expect((fences.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
+      content: "2 lines",
+    });
+  });
+
   it("keeps bounded Claude and ACP command output summaries", () => {
     const claude = projectActivityPayload(
       activity({
@@ -97,7 +119,7 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(acp.payload).length).toBeLessThan(500);
   });
 
-  it("normalizes Claude and OpenCode command inputs before slimming provider data", () => {
+  it("keeps bounded Claude command input and result summaries", () => {
     const claude = projectActivityPayload(
       activity({
         itemType: "command_execution",
@@ -105,7 +127,13 @@ describe("projectActivityPayload", () => {
         data: {
           toolName: "Bash",
           input: { command: "vp test run" },
-          result: { content: "x".repeat(5_000) },
+          result: {
+            type: "tool_result",
+            content: [
+              { type: "text", text: "tests passed" },
+              { type: "text", text: "x".repeat(5_000) },
+            ],
+          },
         },
       }),
     );
@@ -126,14 +154,45 @@ describe("projectActivityPayload", () => {
 
     expect(claude.payload).toMatchObject({
       toolCallId: "claude-call-1",
-      data: { command: "vp test run" },
+      data: {
+        toolName: "Bash",
+        command: "vp test run",
+        rawOutput: { content: "tests passed" },
+      },
     });
     expect(openCode.payload).toMatchObject({
       toolCallId: "opencode-call-1",
       data: { command: "vp lint" },
     });
-    expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
+    expect(JSON.stringify(claude.payload).length).toBeLessThan(250);
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
+  });
+
+  it("keeps full Claude Read image paths through repeated projection", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        detail: 'Read: {"file_path":"truncated..."}',
+        data: {
+          toolName: "Read",
+          input: { file_path: imagePath },
+          result: { content: "Image Size: 1280x720." },
+        },
+      }),
+    );
+    const projectedAgain = projectActivityPayload(projected);
+
+    expect(projected.payload).toMatchObject({ data: { imagePath } });
+    expect(projectedAgain.payload).toMatchObject({ data: { imagePath } });
+
+    const textRead = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: { toolName: "Read", input: { file_path: "/workspace/src/index.ts" } },
+      }),
+    );
+    expect(textRead.payload).not.toMatchObject({ data: { imagePath: expect.anything() } });
   });
 
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
@@ -188,6 +247,84 @@ describe("projectActivityPayload", () => {
     expect(data.input).toEqual({ pr: 42 });
     expect(data.result).toEqual({ content: "first line of output" });
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
+  });
+
+  it.each([
+    {
+      item: {
+        server: "t3-code",
+        tool: "preview_open",
+        result: { structuredContent: { url: "https://example.com/" } },
+      },
+    },
+    {
+      toolName: "mcp__t3-code__preview_navigate",
+      result: { content: '{"url":"https://example.com/"}' },
+    },
+    { tool: "t3-code_preview_status", state: { output: '{"url":"https://example.com/"}' } },
+    {
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: {
+        content: [
+          { type: "text", text: '{"url":"https://example.com/"}' },
+          { type: "text", text: "Snapshot text was bounded. Omitted: accessibilityTree." },
+        ],
+      },
+    },
+    {
+      toolName: "mcp__t3-code__preview_click",
+      result: { content: '{"toolIcon":{"_tag":"website","pageUrl":"https://example.com/"}}' },
+    },
+    {
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: { content: '{"url":"https://example.com/"}\n{"accessibilityTree":"truncated' },
+    },
+    ...[false, true].map((truncated) => ({
+      toolName: "mcp__t3_code__preview_snapshot",
+      result: {
+        content: JSON.stringify({
+          content: [{ type: "text", text: '{"url":"https://example.com/"}' }],
+          structuredContent: { url: "https://example.com/", visibleText: "page" },
+        }).slice(0, truncated ? -5 : undefined),
+      },
+    })),
+    ...[
+      "type",
+      "press",
+      "scroll",
+      "resize",
+      "set_appearance",
+      "evaluate",
+      "wait_for",
+      "recording_start",
+      "recording_stop",
+    ].map((action) => ({
+      toolName: `mcp__t3_code__preview_${action}`,
+      result: { content: '{"toolIcon":{"_tag":"website","pageUrl":"https://example.com/"}}' },
+    })),
+  ])("preserves the preview page favicon through result slimming", (data) => {
+    const projected = projectActivityPayload(activity({ itemType: "mcp_tool_call", data }));
+    const icon = { _tag: "website", pageUrl: "https://example.com/" };
+    expect(projected.payload).toMatchObject({ toolIcon: icon });
+    expect(projectActivityPayload(projected).payload).toMatchObject({ toolIcon: icon });
+  });
+
+  it.each([
+    { toolName: "mcp__other__preview_open", result: { content: '{"url":"https://example.com/"}' } },
+    {
+      toolName: "mcp__t3-code__preview_evaluate",
+      result: { content: '{"url":"https://example.com/"}' },
+    },
+    {
+      toolName: "mcp__t3-code__preview_open",
+      result: { isError: true, content: '{"url":"https://example.com/"}' },
+    },
+    { toolName: "mcp__t3-code__preview_open", result: { content: "malformed JSON" } },
+    { toolName: "mcp__t3-code__preview_open", result: { content: '{"url":"about:blank"}' } },
+  ])("keeps the fallback for unrelated tools, failed navigation, and missing page URLs", (data) => {
+    expect(
+      projectActivityPayload(activity({ itemType: "mcp_tool_call", data })).payload,
+    ).not.toHaveProperty("toolIcon");
   });
 
   it("passes task lifecycle payloads (no data field) through untouched", () => {

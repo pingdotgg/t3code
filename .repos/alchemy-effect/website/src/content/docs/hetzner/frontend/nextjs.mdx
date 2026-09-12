@@ -1,0 +1,172 @@
+---
+title: Next.js
+description: "Deploy a Next.js app to Hetzner with Hetzner.Website.Nextjs — next build plus a Node next({ dev: false }) systemd unit, and next dev under alchemy dev."
+sidebar:
+  order: 9
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.Nextjs` deploys a [Next.js](https://nextjs.org) app
+to a Hetzner Cloud Server. It runs a real `next build`, then a
+long-running `next({ dev: false })` systemd unit on port 3000:
+
+- one [`Hetzner.Server`](/hetzner/compute/servers) (default `cpx12`
+  / `ubuntu-24.04` / `fsn1` when `server` is omitted) and a
+  [`Hetzner.Service`](/hetzner/compute/services) as a systemd unit
+- live URL `http://{ipv4}:3000`
+- `.next` and `public/` packed into the unit archive; `next`,
+  `react`, and `react-dom` installed with `bun install`
+
+This is **not** OpenNext — those wrappers target Lambda and workerd.
+ISR and `next/image` use Next's own Node behavior. Several sites and
+APIs can share one Server.
+
+App Router and Pages Router both work — server components, API
+routes, middleware, server actions, dynamic segments, streaming SSR,
+and `getServerSideProps` pages all run in the Node process.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads the package's
+`/nextjs/node` export from your project at deploy time. It is only
+used at build time, so a dev dependency is enough. Your app still
+needs `next`, `react`, and `react-dom` as usual:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Next.js
+
+Your `next.config.*` is loaded and honored as-is — the build runs a
+real `next build`, and Alchemy never rewrites the file. There is no
+adapter to install and no `open-next.config.ts` to write.
+
+Pass `rootDir` when the Next.js project is not the stack root.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.Nextjs("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyNextjsSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+`url` is `http://{ipv4}:3000` on deploy. `server` and `service` are
+set then and `undefined` under `alchemy dev`.
+
+Pass an existing Server so the Next unit shares the VM with other
+Services:
+
+```typescript
+export const Website = Hetzner.Website.Nextjs("Website", {
+  server: Box,
+});
+```
+
+## Add environment variables
+
+Process environment is the top-level `env` prop — plain strings, or
+`Redacted` secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.Nextjs("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before `next build` /
+`next dev`, and onto the systemd unit at deploy, so server code and
+`NEXT_PUBLIC_*` inlining see the same map in both modes.
+
+## Read the environment in server code
+
+The Next server is a plain Node process, so route handlers, server
+components, and server actions read the environment from
+`process.env`:
+
+```typescript
+// app/api/hello/route.ts
+export function GET() {
+  return Response.json({ greeting: process.env.GREETING ?? "hello" });
+}
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs `next dev` (native HMR, Turbopack) instead of
+deploying; `site.url` is the local address and no Hetzner resources
+are created. Wrap the site in `Alchemy.remote()` to deploy the live
+Service even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* Hetzner.Website.Nextjs("Web", {
+  domain: "app.example.com",
+  zone,
+});
+```
+
+`domain` requires an existing [`Hetzner.Zone`](/hetzner/networking/dns)
+— v1 does not create one, and passing `domain` without `zone` fails.
+Alchemy creates an A RecordSet pointing at the Server's public IPv4.
+`url` becomes `http://app.example.com:3000`. There is no TLS on the
+Service.
+
+## Where next
+
+- [`Hetzner.Website.Nextjs` reference](/providers/hetzner/website/nextjs)
+  — every prop and attribute
+- [Servers](/hetzner/compute/servers),
+  [Services](/hetzner/compute/services),
+  [DNS](/hetzner/networking/dns)

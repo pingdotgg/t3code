@@ -5,11 +5,14 @@ import {
   Context,
   Data,
   Effect,
+  type ExecutionPlan,
   Fiber,
+  HashMap,
   type Layer,
   type Option,
   pipe,
   Result,
+  type Schedule,
   type Scope,
   type Sink,
   type Stream,
@@ -69,6 +72,7 @@ declare const fiberStringOrNumber: Fiber.Fiber<string, "err-1"> | Fiber.Fiber<nu
 declare const stringArray: Array<Effect.Effect<string, "err-3", "dep-3">>
 declare const numberRecord: Record<string, Effect.Effect<number, "err-4", "dep-4">>
 declare const optionalEffect: Option.Option<Effect.Effect<string, "err-1", "dep-1">>
+declare const iterableString: Effect.Effect<Iterable<string>, "err-1", "dep-1">
 
 class AcquireReleaseDependency extends Context.Service<AcquireReleaseDependency, string>()(
   "AcquireReleaseDependency"
@@ -81,6 +85,10 @@ class UpdateServiceScopedService extends Context.Service<UpdateServiceScopedServ
 const UpdateServiceScopedReference = Context.Reference<number>("UpdateServiceScopedReference", {
   defaultValue: () => 0
 })
+
+class ProvideServiceEffectServiceLiteral extends Context.Service<ProvideServiceEffectServiceLiteral, "LITERAL">()(
+  "ProvideServiceEffectServiceLiteral"
+) {}
 
 describe("Types", () => {
   describe("ReasonOf", () => {
@@ -167,8 +175,7 @@ describe("Effect.catchReason", () => {
     pipe(
       aiEffect,
       Effect.catchReason("AiError", "RateLimitError", (_reason, error) => {
-        expect(error.reason).type.toBeAssignableTo<RateLimitError>()
-        expect(error.reason).type.toBeAssignableFrom<RateLimitError>()
+        expect(error.reason).type.toBe<RateLimitError>()
         return Effect.succeed("ok")
       })
     )
@@ -182,8 +189,7 @@ describe("Effect.catchReason", () => {
         "RateLimitError",
         () => Effect.succeed("ok"),
         (_reason, error) => {
-          expect(error.reason).type.toBeAssignableTo<QuotaExceededError | UnknownAiModelError>()
-          expect(error.reason).type.toBeAssignableFrom<QuotaExceededError | UnknownAiModelError>()
+          expect(error.reason).type.toBe<QuotaExceededError | UnknownAiModelError>()
           return Effect.succeed("ok")
         }
       )
@@ -232,12 +238,43 @@ describe("Effect.fromOption", () => {
     expect(result).type.toBe<Effect.Effect<string, SimpleError>>()
   })
 
+  it("supports an inline HashMap lookup in data-first form", () => {
+    const values = HashMap.make(["key", 1])
+    const result = Effect.fromOption(HashMap.get(values, "key"), () => new SimpleError({ code: 1 }))
+    expect(result).type.toBe<Effect.Effect<number, SimpleError>>()
+  })
+
   it("supports a custom error in data-last form", () => {
     const result = pipe(
       optionString,
       Effect.fromOption(() => new SimpleError({ code: 1 }))
     )
     expect(result).type.toBe<Effect.Effect<string, SimpleError>>()
+  })
+
+  it("supports an inline HashMap lookup in data-last form", () => {
+    const values = HashMap.make(["key", 1])
+    const result = pipe(
+      HashMap.get(values, "key"),
+      Effect.fromOption(() => new SimpleError({ code: 1 }))
+    )
+    expect(result).type.toBe<Effect.Effect<number, SimpleError>>()
+  })
+
+  it("uses NoSuchElementError for an explicitly undefined onNone", () => {
+    const result = Effect.fromOption(optionString, undefined)
+    expect(result).type.toBe<Effect.Effect<string, Cause.NoSuchElementError>>()
+  })
+
+  it("includes NoSuchElementError for an optional onNone", () => {
+    const forward = <A, E>(option: Option.Option<A>, onNone?: () => E) => Effect.fromOption(option, onNone)
+    const result = forward(optionString, () => new SimpleError({ code: 1 }))
+    expect(result).type.toBe<Effect.Effect<string, SimpleError | Cause.NoSuchElementError>>()
+  })
+
+  it("rejects an error callback as the data-first value", () => {
+    // @ts-expect-error is not assignable to parameter
+    Effect.fromOption(() => new SimpleError({ code: 1 }), () => new OtherError({ message: "missing" }))
   })
 
   it("supports callback usage with the default error", () => {
@@ -254,6 +291,13 @@ describe("Effect.firstSuccessOf", () => {
     ])
 
     expect(result).type.toBe<Effect.Effect<string | number, "err-1" | "err-2", "dep-1" | "dep-2">>()
+  })
+})
+
+describe("Effect.head", () => {
+  it("infers the element and preserves the source error and requirements", () => {
+    const result = Effect.head(iterableString)
+    expect(result).type.toBe<Effect.Effect<string, "err-1" | Cause.NoSuchElementError, "dep-1">>()
   })
 })
 
@@ -279,13 +323,11 @@ describe("Effect.catchReasons", () => {
       aiEffect,
       Effect.catchReasons("AiError", {
         RateLimitError: (_r, error) => {
-          expect(error.reason).type.toBeAssignableTo<RateLimitError>()
-          expect(error.reason).type.toBeAssignableFrom<RateLimitError>()
+          expect(error.reason).type.toBe<RateLimitError>()
           return Effect.succeed("")
         },
         QuotaExceededError: (_r, error) => {
-          expect(error.reason).type.toBeAssignableTo<QuotaExceededError>()
-          expect(error.reason).type.toBeAssignableFrom<QuotaExceededError>()
+          expect(error.reason).type.toBe<QuotaExceededError>()
           return Effect.succeed("")
         }
       })
@@ -335,8 +377,7 @@ describe("Effect.catchReasons", () => {
       Effect.catchReasons("AiError", {
         RateLimitError: () => Effect.succeed("")
       }, (_others, error) => {
-        expect(error.reason).type.toBeAssignableTo<QuotaExceededError | UnknownAiModelError>()
-        expect(error.reason).type.toBeAssignableFrom<QuotaExceededError | UnknownAiModelError>()
+        expect(error.reason).type.toBe<QuotaExceededError | UnknownAiModelError>()
         return Effect.succeed("")
       })
     )
@@ -829,6 +870,35 @@ describe("Effect.partition", () => {
   })
 })
 
+describe("Effect.forEach", () => {
+  it("data-first", () => {
+    const result = Effect.forEach(
+      [1, 2, 3],
+      (n, i) => string.pipe(Effect.as(`${n}${i}`))
+    )
+    expect(result).type.toBe<Effect.Effect<Array<string>, "err-1", "dep-1">>()
+  })
+
+  it("data-last with an explicitly typed callback", () => {
+    const result = Effect.forEach((n: number, i) => string.pipe(Effect.as(`${n}${i}`)))([1, 2, 3])
+    expect(result).type.toBe<Effect.Effect<Array<string>, "err-1", "dep-1">>()
+  })
+
+  it("data-last with discard", () => {
+    const result = pipe(
+      new Set([1, 2, 3]),
+      Effect.forEach((n: number) => Effect.succeed(`${n}`), { discard: true })
+    )
+    expect(result).type.toBe<Effect.Effect<void>>()
+  })
+
+  it("data-last rejects an incompatible iterable", () => {
+    const forEachNumber = Effect.forEach((n: number) => Effect.succeed(`${n}`))
+    // @ts-expect-error Type 'string' is not assignable to type 'number'
+    forEachNumber(["a", "b"])
+  })
+})
+
 describe("Effect.reduce", () => {
   it("data-first", () => {
     const result = Effect.reduce(
@@ -1097,5 +1167,123 @@ describe("Effect.retry", () => {
       })
     )
     expect(result).type.toBe<Effect.Effect<string, AiError | OtherError>>()
+  })
+})
+
+describe("Effect.schedule", () => {
+  it("includes schedule errors in data-first usage", () => {
+    const schedule = null as unknown as Schedule.Schedule<number, unknown, "schedule-error">
+    expect(Effect.schedule(Effect.fail("effect-error" as const), schedule))
+      .type.toBe<Effect.Effect<number, "effect-error" | "schedule-error">>()
+  })
+
+  it("includes schedule errors in data-last usage", () => {
+    const schedule = null as unknown as Schedule.Schedule<number, unknown, "schedule-error">
+    expect(Effect.fail("effect-error" as const).pipe(Effect.schedule(schedule)))
+      .type.toBe<Effect.Effect<number, "effect-error" | "schedule-error">>()
+  })
+})
+
+describe("Effect.scheduleFrom", () => {
+  it("includes schedule errors in data-first usage", () => {
+    const schedule = null as unknown as Schedule.Schedule<number, string, "schedule-error">
+    expect(Effect.scheduleFrom(Effect.fail("effect-error" as const), "initial", schedule))
+      .type.toBe<Effect.Effect<number, "effect-error" | "schedule-error">>()
+  })
+
+  it("includes schedule errors in data-last usage", () => {
+    const schedule = null as unknown as Schedule.Schedule<number, string, "schedule-error">
+    expect(Effect.fail("effect-error" as const).pipe(Effect.scheduleFrom("initial", schedule)))
+      .type.toBe<Effect.Effect<number, "effect-error" | "schedule-error">>()
+  })
+})
+
+describe("Effect.provideServiceEffect", () => {
+  it("data-first disallows supertype return", () => {
+    Effect.provideServiceEffect(
+      Effect.void,
+      ProvideServiceEffectServiceLiteral,
+      // @ts-expect-error Argument of type 'Effect<string, never, never>' is not assignable to parameter of type 'Effect<"LITERAL", never, never>'
+      Effect.gen(function*() {
+        return "test"
+      })
+    )
+  })
+
+  it("data-last disallows supertype return", () => {
+    Effect.provideServiceEffect(
+      ProvideServiceEffectServiceLiteral,
+      // @ts-expect-error Argument of type 'Effect<string, never, never>' is not assignable to parameter of type 'Effect<"LITERAL", never, never>'
+      Effect.gen(function*() {
+        return "test"
+      })
+    )
+  })
+})
+
+describe("Effect.updateService", () => {
+  it("data-first disallows supertype return", () => {
+    Effect.updateService(
+      Effect.void,
+      ProvideServiceEffectServiceLiteral,
+      // @ts-expect-error Type 'string' is not assignable to type '"LITERAL"'
+      () => "test"
+    )
+  })
+
+  it("data-last disallows supertype return", () => {
+    Effect.updateService(
+      ProvideServiceEffectServiceLiteral,
+      // @ts-expect-error Type 'string' is not assignable to type '"LITERAL"'
+      () => "test"
+    )
+  })
+})
+
+describe("Effect.updateServiceScoped", () => {
+  it("disallows supertype return", () => {
+    Effect.updateServiceScoped(
+      ProvideServiceEffectServiceLiteral,
+      // @ts-expect-error Type 'string' is not assignable to type '"LITERAL"'
+      () => "test"
+    )
+  })
+})
+
+describe("Effect.withExecutionPlan", () => {
+  const plan = null as unknown as ExecutionPlan.ExecutionPlan<{
+    provides: "provided"
+    input: string
+    error: "plan-error"
+    requirements: "plan-dep"
+  }>
+  const self = null as unknown as Effect.Effect<number, string, "provided" | "other-dep">
+
+  it("data-first adds handler requirements to R", () => {
+    const result = Effect.withExecutionPlan(self, plan, {
+      onEvent: (event) => {
+        expect(event).type.toBe<ExecutionPlan.Event<string>>()
+        return null as unknown as Effect.Effect<void, never, "handler-dep">
+      }
+    })
+    expect(result).type.toBe<Effect.Effect<number, string, "other-dep" | "plan-dep" | "handler-dep">>()
+  })
+
+  it("data-last adds handler requirements to R", () => {
+    const result = pipe(
+      self,
+      Effect.withExecutionPlan(plan, {
+        onEvent: (event) => {
+          expect(event).type.toBe<ExecutionPlan.Event<string>>()
+          return null as unknown as Effect.Effect<void, never, "handler-dep">
+        }
+      })
+    )
+    expect(result).type.toBe<Effect.Effect<number, string, "other-dep" | "plan-dep" | "handler-dep">>()
+  })
+
+  it("without options the requirements are unchanged", () => {
+    const result = Effect.withExecutionPlan(self, plan)
+    expect(result).type.toBe<Effect.Effect<number, string, "other-dep" | "plan-dep">>()
   })
 })

@@ -106,17 +106,24 @@ export const makeAssumeRoleResolver = (options: {
           ? creds.SecretAccessKey
           : Redacted.make(creds.SecretAccessKey),
         sessionToken: Redacted.make(creds.SessionToken),
+        region: options.region ?? "us-east-1",
         expiration: creds.Expiration?.getTime(),
       } satisfies ResolvedCredentials;
     }).pipe(
       // Sign AssumeRole with the static base credentials, and provide a
       // (regional) STS endpoint + HttpClient so the resolve effect is
       // self-contained (`R = never`).
-      Effect.provide(options.base),
       Effect.provide(
-        Layer.succeed(Region, Effect.succeed(options.region ?? "us-east-1")),
+        options.base.pipe(
+          Layer.provideMerge(
+            Layer.succeed(
+              Region,
+              Effect.succeed(options.region ?? "us-east-1"),
+            ),
+          ),
+          Layer.provideMerge(FetchHttpClient.layer),
+        ),
       ),
-      Effect.provide(FetchHttpClient.layer),
       Effect.mapError((cause) =>
         cause instanceof AwsCredentialProviderError
           ? cause

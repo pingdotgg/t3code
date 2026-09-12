@@ -16,9 +16,8 @@ export type ListJobRunsInput = Omit<emr.ListJobRunsRequest, "applicationId">;
  * by state, creation window, or mode — so a function can report on running
  * or recently failed jobs. Provide the implementation with
  * `Effect.provide(AWS.EMRServerless.ListJobRunsHttp)`.
- * @binding
- * @section Running Jobs
- * @example List Running Jobs
+ * ### Running Jobs
+ * **Example:** List Running Jobs
  * ```typescript
  * // init
  * const listJobRuns = yield* AWS.EMRServerless.ListJobRuns(app);
@@ -26,6 +25,8 @@ export type ListJobRunsInput = Omit<emr.ListJobRunsRequest, "applicationId">;
  * // runtime
  * const { jobRuns } = yield* listJobRuns({ states: ["RUNNING"] });
  * ```
+ *
+ * @binding
  */
 export interface ListJobRuns extends Binding.Service<
   ListJobRuns,

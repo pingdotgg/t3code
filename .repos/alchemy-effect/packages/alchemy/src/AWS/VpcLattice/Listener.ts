@@ -99,9 +99,8 @@ export interface Listener extends Resource<
  * checks for connection requests on a protocol/port and routes them via its
  * default action and rules.
  *
- * @resource
- * @section Creating Listeners
- * @example HTTP Listener with a Fixed Default Response
+ * ### Creating Listeners
+ * **Example:** HTTP Listener with a Fixed Default Response
  * ```typescript
  * const listener = yield* Listener("HttpListener", {
  *   serviceIdentifier: service.serviceId,
@@ -111,7 +110,7 @@ export interface Listener extends Resource<
  * });
  * ```
  *
- * @example Listener Forwarding to a Target Group
+ * **Example:** Listener Forwarding to a Target Group
  * ```typescript
  * const listener = yield* Listener("ApiListener", {
  *   serviceIdentifier: service.serviceId,
@@ -125,6 +124,8 @@ export interface Listener extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Listener = Resource<Listener>("AWS.VpcLattice.Listener");
 

@@ -16,9 +16,8 @@ export interface UpdateSecretVersionStageRequest extends Omit<
  * protocol, where `AWSCURRENT` is moved onto the new version. Provide the
  * implementation with
  * `Effect.provide(AWS.SecretsManager.UpdateSecretVersionStageHttp)`.
- * @binding
- * @section Rotating Secrets
- * @example Promote a Pending Version to AWSCURRENT
+ * ### Rotating Secrets
+ * **Example:** Promote a Pending Version to AWSCURRENT
  * ```typescript
  * // init — bind the operation to the secret
  * const updateStage = yield* AWS.SecretsManager.UpdateSecretVersionStage(secret);
@@ -30,6 +29,8 @@ export interface UpdateSecretVersionStageRequest extends Omit<
  *   RemoveFromVersionId: currentVersionId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateSecretVersionStage extends Binding.Service<
   UpdateSecretVersionStage,

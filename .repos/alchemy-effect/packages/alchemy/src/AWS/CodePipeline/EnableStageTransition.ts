@@ -12,9 +12,8 @@ export interface EnableStageTransitionRequest extends Omit<
  * Runtime binding for `codepipeline:EnableStageTransition` — re-opens a
  * transition into (`Inbound`) or out of (`Outbound`) a stage that was
  * previously disabled.
- * @binding
- * @section Operating Stages
- * @example Re-enable a Transition
+ * ### Operating Stages
+ * **Example:** Re-enable a Transition
  * ```typescript
  * const enableTransition =
  *   yield* AWS.CodePipeline.EnableStageTransition(pipeline);
@@ -24,6 +23,8 @@ export interface EnableStageTransitionRequest extends Omit<
  *   transitionType: "Inbound",
  * });
  * ```
+ *
+ * @binding
  */
 export interface EnableStageTransition extends Binding.Service<
   EnableStageTransition,

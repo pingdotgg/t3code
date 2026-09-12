@@ -15,17 +15,13 @@
       "types": "./src/rpc.ts",
       "import": "./src/rpc.ts"
     },
-    "./protocol": {
-      "types": "./src/protocol.ts",
-      "import": "./src/protocol.ts"
-    },
     "./errors": {
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "generate": "node scripts/generate.ts",
     "probe": "node test/examples/codex-app-server-probe.ts"

@@ -9,8 +9,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 export const TAILSCALE_STATUS_TIMEOUT = Duration.millis(1_500);
-export const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
-export const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
+const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
+const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
 // tailscale is a real executable everywhere (`tailscale.exe` on Windows), so
 // it is always spawned directly rather than through cmd.exe shell mode.
@@ -47,14 +47,14 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
 ];
 
 /** Classifies stderr into a safe label, dropping the text itself. */
-export const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefined => {
+const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefined => {
   if (stderr.trim().length === 0) {
     return undefined;
   }
   return STDERR_DIAGNOSTIC_PATTERNS.find(([pattern]) => pattern.test(stderr))?.[1] ?? "unknown";
 };
 
-export class TailscaleCommandSpawnError extends Schema.TaggedErrorClass<TailscaleCommandSpawnError>()(
+export class TailscaleCommandSpawnError extends Schema.TaggedError<TailscaleCommandSpawnError>()(
   "TailscaleCommandSpawnError",
   {
     ...TailscaleCommandContext,
@@ -66,7 +66,7 @@ export class TailscaleCommandSpawnError extends Schema.TaggedErrorClass<Tailscal
   }
 }
 
-export class TailscaleCommandOutputError extends Schema.TaggedErrorClass<TailscaleCommandOutputError>()(
+class TailscaleCommandOutputError extends Schema.TaggedError<TailscaleCommandOutputError>()(
   "TailscaleCommandOutputError",
   {
     ...TailscaleCommandContext,
@@ -78,7 +78,7 @@ export class TailscaleCommandOutputError extends Schema.TaggedErrorClass<Tailsca
   }
 }
 
-export class TailscaleCommandExitError extends Schema.TaggedErrorClass<TailscaleCommandExitError>()(
+export class TailscaleCommandExitError extends Schema.TaggedError<TailscaleCommandExitError>()(
   "TailscaleCommandExitError",
   {
     ...TailscaleCommandContext,
@@ -98,7 +98,7 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
   }
 }
 
-export class TailscaleCommandTimeoutError extends Schema.TaggedErrorClass<TailscaleCommandTimeoutError>()(
+export class TailscaleCommandTimeoutError extends Schema.TaggedError<TailscaleCommandTimeoutError>()(
   "TailscaleCommandTimeoutError",
   {
     ...TailscaleCommandContext,
@@ -119,7 +119,7 @@ export const TailscaleCommandError = Schema.Union([
 ]);
 export type TailscaleCommandError = typeof TailscaleCommandError.Type;
 
-export class TailscaleStatusParseError extends Schema.TaggedErrorClass<TailscaleStatusParseError>()(
+export class TailscaleStatusParseError extends Schema.TaggedError<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
   { cause: Schema.Defect() },
 ) {
@@ -137,7 +137,6 @@ const TailscaleStatusJson = Schema.Struct({
   Self: Schema.optional(TailscaleStatusSelf),
 });
 
-export type TailscaleStatusSelf = typeof TailscaleStatusSelf.Type;
 export type TailscaleStatusJson = typeof TailscaleStatusJson.Type;
 
 export interface TailscaleStatus {
@@ -382,23 +381,3 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
   }).pipe(Effect.orElseSucceed(() => false));
-
-export const resolveTailscaleHttpsBaseUrl = (
-  input: {
-    readonly servePort?: number;
-  } = {},
-): Effect.Effect<
-  string | null,
-  TailscaleCommandError | TailscaleStatusParseError,
-  ChildProcessSpawner.ChildProcessSpawner
-> =>
-  readTailscaleStatus.pipe(
-    Effect.map((status) =>
-      status.magicDnsName
-        ? buildTailscaleHttpsBaseUrl({
-            magicDnsName: status.magicDnsName,
-            ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
-          })
-        : null,
-    ),
-  );

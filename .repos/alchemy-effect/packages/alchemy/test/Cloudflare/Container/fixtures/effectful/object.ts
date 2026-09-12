@@ -28,6 +28,8 @@ export class Object extends Cloudflare.DurableObject<Object>()(
           bucket.put(key, value).pipe(Effect.asVoid),
         get: (key: string) => bucket.get(key),
         ping: () => container.ping(),
+        // The env var a `Binding.Service` injected into the container.
+        boundEnv: () => container.boundEnv(),
         // Read the object from inside the container over RPC.
         readObjectRpc: (key: string) => container.readObject(key),
         // Read the object from inside the container over its TCP port (fetch).

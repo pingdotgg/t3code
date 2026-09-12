@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.ListCoverageHttp)`.
- * @binding
- * @section Usage & Coverage
- * @example List Coverage Details
+ * ### Usage & Coverage
+ * **Example:** List Coverage Details
  * ```typescript
  * // init
  * const listCoverage = yield* AWS.GuardDuty.ListCoverage(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * const { Resources } = yield* listCoverage();
  * ```
+ *
+ * @binding
  */
 export interface ListCoverage extends Binding.Service<
   ListCoverage,

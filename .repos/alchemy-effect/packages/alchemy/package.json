@@ -1,13 +1,22 @@
 {
   "name": "alchemy",
-  "version": "2.0.0-beta.65",
+  "version": "2.0.0-beta.76",
+  "description": "Infrastructure as Effects for TypeScript.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
   "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "effect",
+    "infrastructure-as-code"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/alchemy"
+  },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
   },
   "bin": {
     "alchemy": "./bin/cli.js"
@@ -15,18 +24,19 @@
   "files": [
     "bin",
     "lib",
-    "src"
+    "src",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md"
   ],
   "type": "module",
   "sideEffects": false,
   "scripts": {
     "clear:state": "cd ../../ && bun clear:state",
     "dev": "tsdown --watch",
-    "build": "tsc -b && tsc -b tsconfig.bin.json && bun bundle",
+    "build": "rm -rf lib && tsc -b --force && tsc -b tsconfig.bin.json --force && bun bundle && bun ../../scripts/copy-package-files.ts alchemy",
     "bundle": "tsdown",
     "bundle:watch": "tsdown --watch",
-    "publish:npm": "cp ../README.md . && bun publish && rm README.md",
-    "test": "alchemy-test",
+    "test": "alchemy-test --exclude test/Railway",
     "test:benchmark": "tsx --tsconfig tsconfig.test.json test/types.benchmark.ts",
     "nuke": "cd ../../ && bun nuke"
   },
@@ -68,28 +78,22 @@
       "import": "./lib/AWS/*/index.js"
     },
     "./AWS/Credentials": {
-      "types": "./lib/AWS/Credentials/index.d.ts",
-      "bun": "./src/AWS/Credentials/index.ts",
-      "worker": "./src/AWS/Credentials/index.ts",
-      "import": "./lib/AWS/Credentials/index.js"
+      "types": "./lib/AWS/Credentials.d.ts",
+      "bun": "./src/AWS/Credentials.ts",
+      "worker": "./src/AWS/Credentials.ts",
+      "import": "./lib/AWS/Credentials.js"
     },
     "./AWS/Endpoint": {
-      "types": "./lib/AWS/Endpoint/index.d.ts",
-      "bun": "./src/AWS/Endpoint/index.ts",
-      "worker": "./src/AWS/Endpoint/index.ts",
-      "import": "./lib/AWS/Endpoint/index.js"
+      "types": "./lib/AWS/Endpoint.d.ts",
+      "bun": "./src/AWS/Endpoint.ts",
+      "worker": "./src/AWS/Endpoint.ts",
+      "import": "./lib/AWS/Endpoint.js"
     },
     "./AWS/Region": {
-      "types": "./lib/AWS/Region/index.d.ts",
-      "bun": "./src/AWS/Region/index.ts",
-      "worker": "./src/AWS/Region/index.ts",
-      "import": "./lib/AWS/Region/index.js"
-    },
-    "./AWS/Profile": {
-      "types": "./lib/AWS/Profile/index.d.ts",
-      "bun": "./src/AWS/Profile/index.ts",
-      "worker": "./src/AWS/Profile/index.ts",
-      "import": "./lib/AWS/Profile/index.js"
+      "types": "./lib/AWS/Region.d.ts",
+      "bun": "./src/AWS/Region.ts",
+      "worker": "./src/AWS/Region.ts",
+      "import": "./lib/AWS/Region.js"
     },
     "./AWS/Lambda/*": {
       "types": "./lib/AWS/Lambda/*.d.ts",
@@ -120,6 +124,12 @@
       "bun": "./src/Docker/index.ts",
       "worker": "./src/Docker/index.ts",
       "import": "./lib/Docker/index.js"
+    },
+    "./Kubernetes": {
+      "types": "./lib/Kubernetes/index.d.ts",
+      "bun": "./src/Kubernetes/index.ts",
+      "worker": "./src/Kubernetes/index.ts",
+      "import": "./lib/Kubernetes/index.js"
     },
     "./ContentType": {
       "types": "./lib/ContentType.d.ts",
@@ -169,6 +179,12 @@
       "worker": "./src/Drizzle/index.ts",
       "import": "./lib/Drizzle/index.js"
     },
+    "./Drizzle/*": {
+      "types": "./lib/Drizzle/*.d.ts",
+      "bun": "./src/Drizzle/*.ts",
+      "worker": "./src/Drizzle/*.ts",
+      "import": "./lib/Drizzle/*.js"
+    },
     "./Axiom": {
       "types": "./lib/Axiom/index.d.ts",
       "bun": "./src/Axiom/index.ts",
@@ -199,6 +215,74 @@
       "worker": "./src/Neon/*/index.ts",
       "import": "./lib/Neon/*/index.js"
     },
+    "./Hetzner": {
+      "types": "./lib/Hetzner/index.d.ts",
+      "bun": "./src/Hetzner/index.ts",
+      "worker": "./src/Hetzner/index.ts",
+      "import": "./lib/Hetzner/index.js"
+    },
+    "./Hetzner/*": {
+      "types": "./lib/Hetzner/*.d.ts",
+      "bun": "./src/Hetzner/*.ts",
+      "worker": "./src/Hetzner/*.ts",
+      "import": "./lib/Hetzner/*.js"
+    },
+    "./Fly": {
+      "types": "./lib/Fly/index.d.ts",
+      "bun": "./src/Fly/index.ts",
+      "worker": "./src/Fly/index.ts",
+      "import": "./lib/Fly/index.js"
+    },
+    "./Fly/*": {
+      "types": "./lib/Fly/*.d.ts",
+      "bun": "./src/Fly/*.ts",
+      "worker": "./src/Fly/*.ts",
+      "import": "./lib/Fly/*.js"
+    },
+    "./Railway": {
+      "types": "./lib/Railway/index.d.ts",
+      "bun": "./src/Railway/index.ts",
+      "worker": "./src/Railway/index.ts",
+      "import": "./lib/Railway/index.js"
+    },
+    "./Railway/*": {
+      "types": "./lib/Railway/*.d.ts",
+      "bun": "./src/Railway/*.ts",
+      "worker": "./src/Railway/*.ts",
+      "import": "./lib/Railway/*.js"
+    },
+    "./Prisma": {
+      "types": "./lib/Prisma/index.d.ts",
+      "bun": "./src/Prisma/index.ts",
+      "worker": "./src/Prisma/index.ts",
+      "import": "./lib/Prisma/index.js"
+    },
+    "./Prisma/ComputeApp": null,
+    "./Prisma/ComputeService": null,
+    "./Prisma/ComputeVersion": null,
+    "./Prisma/ComputeVersionObserve": null,
+    "./Prisma/App": {
+      "types": "./lib/Prisma/App.d.ts",
+      "bun": "./src/Prisma/App.ts",
+      "worker": "./src/Prisma/App.ts",
+      "import": "./lib/Prisma/App.js"
+    },
+    "./Prisma/Deployment": {
+      "types": "./lib/Prisma/Deployment.d.ts",
+      "bun": "./src/Prisma/Deployment.ts",
+      "worker": "./src/Prisma/Deployment.ts",
+      "import": "./lib/Prisma/Deployment.js"
+    },
+    "./Prisma/EnvironmentVariableValidation": null,
+    "./Prisma/Internal/*": null,
+    "./Prisma/PrismaDevDatabase": null,
+    "./Prisma/Refs": null,
+    "./Prisma/*": {
+      "types": "./lib/Prisma/*.d.ts",
+      "bun": "./src/Prisma/*.ts",
+      "worker": "./src/Prisma/*.ts",
+      "import": "./lib/Prisma/*.js"
+    },
     "./Output": {
       "types": "./lib/Output.d.ts",
       "bun": "./src/Output.ts",
@@ -223,11 +307,25 @@
       "worker": "./src/Runtime.ts",
       "import": "./lib/Runtime.js"
     },
+    "./Runtime/Bootstrap/*": {
+      "types": "./src/Runtime/Bootstrap/*.ts",
+      "bun": "./src/Runtime/Bootstrap/*.ts",
+      "node": "./src/Runtime/Bootstrap/*.ts",
+      "worker": "./src/Runtime/Bootstrap/*.ts",
+      "import": "./src/Runtime/Bootstrap/*.ts",
+      "default": "./src/Runtime/Bootstrap/*.ts"
+    },
     "./Process": {
       "types": "./lib/Process/index.d.ts",
       "bun": "./src/Process/index.ts",
       "worker": "./src/Process/index.ts",
       "import": "./lib/Process/index.js"
+    },
+    "./Redis": {
+      "types": "./lib/Redis/index.d.ts",
+      "bun": "./src/Redis/index.ts",
+      "worker": "./src/Redis/index.ts",
+      "import": "./lib/Redis/index.js"
     },
     "./SQL/*": {
       "types": "./lib/SQL/*.d.ts",
@@ -315,95 +413,134 @@
     "access": "public"
   },
   "dependencies": {
-    "@alchemy.run/node-utils": "catalog:",
-    "@aws-sdk/credential-providers": "catalog:",
-    "@clack/prompts": "^0.11.0",
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/floci": "workspace:*",
+    "@alchemy.run/node-utils": "workspace:*",
+    "@aws-sdk/credential-providers": "catalog:aws",
+    "@clack/prompts": "^1.7.0",
     "@distilled.cloud/aws": "workspace:*",
     "@distilled.cloud/axiom": "workspace:*",
     "@distilled.cloud/cloudflare": "workspace:*",
-    "@distilled.cloud/cloudflare-rolldown-plugin": "workspace:*",
-    "@distilled.cloud/cloudflare-runtime": "workspace:*",
-    "@distilled.cloud/cloudflare-vite-plugin": "workspace:*",
     "@distilled.cloud/core": "workspace:*",
+    "@distilled.cloud/fly-io": "workspace:*",
+    "@distilled.cloud/hetzner": "workspace:*",
     "@distilled.cloud/neon": "workspace:*",
     "@distilled.cloud/planetscale": "workspace:*",
-    "@effect/sql-d1": "catalog:",
-    "@effect/vitest": "catalog:",
-    "@libsql/client": "catalog:",
+    "@distilled.cloud/railway": "workspace:*",
+    "@effect/sql-d1": "catalog:effect",
+    "@effect/sql-sqlite-do": "catalog:effect",
+    "@effect/vitest": "catalog:effect",
+    "@libsql/client": "catalog:database",
     "@octokit/rest": "^22.0.1",
     "@octokit/webhooks": "^14.2.0",
-    "@smithy/node-config-provider": "catalog:",
-    "@smithy/shared-ini-file-loader": "catalog:",
-    "@smithy/types": "catalog:",
-    "@types/aws-lambda": "catalog:",
-    "aws4fetch": "catalog:",
+    "@prisma/dev": "^0.20.0",
+    "@smithy/node-config-provider": "catalog:aws",
+    "@smithy/shared-ini-file-loader": "catalog:aws",
+    "@smithy/types": "catalog:aws",
+    "@types/aws-lambda": "catalog:aws",
+    "aws4fetch": "catalog:aws",
     "capnweb": "^0.6.1",
-    "fast-glob": "^3.3.2",
-    "fast-xml-parser": "catalog:",
+    "fast-glob": "catalog:cloudflare-runtime",
+    "fast-xml-parser": "catalog:shared",
     "ink": "^6.3.1",
     "jszip": "^3.10.1",
     "libsodium-wrappers": "^0.8.3",
-    "mongodb": "^6.10.0",
-    "mysql2": "^3.15.3",
-    "pathe": "^2.0.3",
-    "pg": "^8.13.0",
+    "pathe": "catalog:tooling",
     "picomatch": "^4.0.4",
     "react": "^19.2.0",
-    "rolldown": "catalog:",
+    "rolldown": "catalog:build",
     "undici": "^7.16.0",
-    "yaml": "catalog:"
+    "yaml": "catalog:shared"
   },
   "devDependencies": {
-    "@aws/durable-execution-sdk-js": "^2.1.0",
-    "alchemy-test": "workspace:*",
-    "@clack/prompts": "^0.11.0",
-    "@cloudflare/containers": "catalog:",
-    "@cloudflare/puppeteer": "^1.1.0",
-    "@cloudflare/workers-types": "catalog:",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/platform-node-shared": "catalog:",
-    "@oxc-project/types": "^0.139.0",
-    "@tanstack/react-router": "catalog:fixtures",
-    "@tanstack/react-start": "catalog:fixtures",
-    "@types/aws-lambda": "catalog:",
-    "@types/bun": "catalog:",
-    "@types/node": "catalog:",
-    "@types/pg": "^8.11.0",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@aws/durable-execution-sdk-js": "catalog:aws",
+    "@cloudflare/containers": "catalog:cloudflare",
+    "@cloudflare/puppeteer": "catalog:cloudflare",
+    "@cloudflare/unenv-preset": "catalog:cloudflare-runtime",
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node-shared": "catalog:effect",
+    "@foldkit/vite-plugin": "catalog:frontend",
+    "@octanejs/adapter-cloudflare": "catalog:frontend",
+    "@octanejs/vite-plugin": "catalog:frontend",
+    "@opennextjs/aws": "catalog:frontend",
+    "@opennextjs/cloudflare": "catalog:frontend",
+    "@oxc-project/types": "^0.146.0",
+    "@react-router/dev": "catalog:frontend",
+    "@react-router/node": "catalog:frontend",
+    "@solidjs/router": "catalog:frontend",
+    "@solidjs/start": "catalog:frontend",
+    "@solidjs/vite-plugin-nitro-2": "catalog:frontend",
+    "@sveltejs/kit": "catalog:frontend",
+    "@sveltejs/vite-plugin-svelte": "catalog:frontend",
+    "@tanstack/react-router": "catalog:frontend",
+    "@tanstack/react-start": "catalog:frontend",
+    "@types/aws-lambda": "catalog:aws",
+    "@types/bun": "catalog:tooling",
+    "@types/node": "catalog:tooling",
+    "@types/pg": "catalog:database",
     "@types/picomatch": "^4.0.0",
-    "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "catalog:fixtures",
-    "@vitejs/plugin-rsc": "catalog:fixtures",
-    "better-auth": "catalog:",
-    "effect": "catalog:",
+    "@types/react": "^19.2.2",
+    "@types/ws": "catalog:cloudflare-runtime",
+    "@vercel/nft": "catalog:build",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "@vitejs/plugin-rsc": "catalog:frontend",
+    "alchemy-test": "workspace:*",
+    "astro": "catalog:frontend",
+    "effect": "catalog:effect",
+    "foldkit": "catalog:frontend",
+    "hono": "catalog:frontend",
     "iovalkey": "^0.3.3",
+    "isbot": "catalog:frontend",
+    "mongodb": "catalog:database",
+    "mysql2": "catalog:database",
+    "next": "catalog:frontend",
+    "nitropack": "catalog:frontend",
+    "nuxt": "catalog:frontend",
+    "octane": "catalog:frontend",
+    "pg": "catalog:database",
     "react-devtools-core": "^7.0.1",
-    "react-dom": "catalog:fixtures",
-    "react-router": "catalog:fixtures",
-    "solid-js": "catalog:",
+    "react-dom": "catalog:frontend",
+    "react-router": "catalog:frontend",
+    "react-server-dom-webpack": "catalog:frontend",
+    "solid-js": "catalog:frontend",
+    "svelte": "catalog:frontend",
     "tsconfig-paths": "^4.2.0",
     "tsdown": "^0.15.4",
-    "tsx": "^4.20.6",
-    "typescript": "catalog:",
-    "uuid": "catalog:",
-    "vitest": "catalog:",
-    "wrangler": "catalog:",
-    "ws": "catalog:"
+    "tsx": "catalog:tooling",
+    "typescript": "catalog:build",
+    "unenv": "catalog:cloudflare-runtime",
+    "uuid": "catalog:shared",
+    "vitest": "catalog:testing",
+    "vocs": "catalog:frontend",
+    "waku": "catalog:frontend",
+    "wrangler": "catalog:cloudflare",
+    "ws": "catalog:shared"
   },
   "peerDependencies": {
-    "@aws/durable-execution-sdk-js": "^2.1.0",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/sql-pg": "catalog:",
-    "drizzle-kit": "catalog:",
-    "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "vite": "catalog:",
-    "ws": "catalog:"
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@aws/durable-execution-sdk-js": "catalog:aws",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-mysql2": "catalog:effect",
+    "@effect/sql-pg": "catalog:effect",
+    "@vercel/nft": "catalog:build",
+    "drizzle-kit": "catalog:database",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "mongodb": "catalog:database",
+    "mysql2": "catalog:database",
+    "pg": "catalog:database",
+    "vite": "catalog:build",
+    "ws": "catalog:shared"
   },
   "peerDependenciesMeta": {
+    "@alchemy.run/frontend-frameworks": {
+      "optional": true
+    },
     "@aws/durable-execution-sdk-js": {
       "optional": true
     },
@@ -413,13 +550,28 @@
     "@effect/platform-node": {
       "optional": true
     },
+    "@effect/sql-mysql2": {
+      "optional": true
+    },
     "@effect/sql-pg": {
+      "optional": true
+    },
+    "@vercel/nft": {
       "optional": true
     },
     "drizzle-kit": {
       "optional": true
     },
     "drizzle-orm": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
       "optional": true
     },
     "vite": {

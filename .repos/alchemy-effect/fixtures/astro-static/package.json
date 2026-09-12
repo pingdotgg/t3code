@@ -1,0 +1,26 @@
+{
+  "name": "@fixtures/astro-static",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts dev --port 3107",
+    "build": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium"
+  },
+  "dependencies": {
+    "astro": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@playwright/test": "catalog:testing",
+    "effect": "catalog:effect",
+    "vite": "catalog:build"
+  }
+}

@@ -1,0 +1,186 @@
+---
+title: Sprites
+description: An Effect program running in a Fly.io Sprite. It hibernates when idle.
+---
+
+A [`Sprite`](/providers/fly/sprite) is an Effect program running in
+a Fly.io Sprite. Sprites are org-scoped Linux sandboxes. They
+hibernate when idle and wake on demand.
+
+A [`Service`](/fly/compute/services) is an always-on Machine on an
+[App](/fly/compute/apps). A Sprite has no parent App. Alchemy
+bundles `main` and writes it onto the Sprite. There is no Docker
+image.
+
+Auth is `FLY_API_TOKEN`. Alchemy mints a Sprites bearer from that
+token. There is no extra token to store.
+
+## Declare a Sprite
+
+A Sprite is a class. Props describe the sandbox. The Effect is the
+program that runs on it.
+
+```typescript
+// src/box.ts
+import * as Fly from "alchemy/Fly";
+import * as Effect from "effect/Effect";
+
+export default class Box extends Fly.Sprite<Box>()(
+  "Box",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+`main: import.meta.url` is the bundle entrypoint. Alchemy bundles
+this file with Rolldown, writes it onto the Sprite, and runs it as
+a Sprite service on `port` (default `3000`).
+
+## Serve HTTP with `fetch`
+
+Return `fetch` from the init Effect to boot an HTTP server. The
+Sprite URL proxies to `port`.
+
+```diff lang="typescript"
+import * as Fly from "alchemy/Fly";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Box extends Fly.Sprite<Box>()(
+  "Box",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("hello")),
++    };
+  }),
+) {}
+```
+
+## The public URL
+
+Yield the Sprite in the Stack. `box.url` is
+`https://{name}-….sprites.app`.
+
+```typescript
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Fly.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const box = yield* Box;
+    return { url: box.url };
+  }),
+);
+```
+
+## URL auth
+
+`urlAuth` is `public` or `sprite`. Default is `public` so `url`
+answers without extra auth.
+
+```diff lang="typescript"
+export default class Box extends Fly.Sprite<Box>()(
+  "Box",
+-  { main: import.meta.url },
++  { main: import.meta.url, urlAuth: "sprite" },
+```
+
+:::note[Default is public]
+Fly's API default is `sprite`. Alchemy defaults to `public` so a
+`fetch` handler is reachable.
+:::
+
+## Config
+
+Yield `Config` in init. Alchemy reads the value from the env of
+whoever deploys and writes it onto the Sprite. Do not pass
+`env: { ... }` on a Sprite.
+
+Yield `FileSystem.FileSystem` in init, never inside `fetch`.
+
+```typescript
+import * as Config from "effect/Config";
+import * as FileSystem from "effect/FileSystem";
+import * as Redacted from "effect/Redacted";
+
+export default class Box extends Fly.Sprite<Box>()(
+  "Box",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const apiKey = yield* Config.redacted("API_KEY");
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory("/tmp", { recursive: true });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const token = Redacted.value(apiKey);
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+) {}
+```
+
+## Service vs Sprite
+
+Reach for a [Service](/fly/compute/services) when the process should
+stay up on a Fly Machine behind `{app}.fly.dev`. Reach for a Sprite
+when the sandbox can sleep. A Service needs Docker on the machine
+that deploys. A Sprite does not.
+
+## Exec
+
+[`Exec`](/providers/fly/exec) runs a command on the Sprite. Provide
+[`ExecHttp`](/providers/fly/exechttp).
+
+```typescript
+const exec = yield* Fly.Exec(Box);
+const result = yield* exec({ cmd: ["ls", "-la"] });
+```
+
+## Checkpoint
+
+[`Checkpoint`](/providers/fly/checkpoint) snapshots and restores the
+Sprite disk. Provide
+[`CheckpointHttp`](/providers/fly/checkpointhttp).
+
+```typescript
+const checkpoint = yield* Fly.Checkpoint(Box);
+yield* checkpoint.create({ comment: "before" });
+yield* checkpoint.restore("v1");
+```
+
+:::caution[Restore is destructive]
+The disk rewinds. Later writes are gone.
+:::
+
+## A stable name
+
+Omit `name` and Alchemy generates one from the stack, stage, and
+logical ID.
+
+```typescript
+export default class Box extends Fly.Sprite<Box>()(
+  "Box",
+  { main: import.meta.url, name: "box" },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+:::caution[Changing `name` replaces the Sprite]
+Fly cannot rename a Sprite. Alchemy creates the new name, then
+deletes the old one.
+:::
+
+## Where next
+
+[Services](/fly/compute/services) are always-on Machines on an App.
+[Secrets](/fly/data/secrets) covers `Config.redacted`.
+The [`Sprite` reference](/providers/fly/sprite) lists every prop.

@@ -1,12 +1,30 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { flushSync } from "react-dom";
+import { DEFAULT_CLIENT_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { installReactTestDom } from "~/test/reactDomHarness";
+
+import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GitHubIcon } from "./Icons";
+import { Button } from "./ui/button";
+import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("./ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("./ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/session", async (importOriginal) => ({
@@ -16,6 +34,7 @@ vi.mock("../state/session", async (importOriginal) => ({
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -25,8 +44,7 @@ vi.mock("../editorPreferences", () => ({
   usePreferredEditor: () => [null, vi.fn()],
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
-  findProjectForChangeRequest: () => undefined,
-  matchesLinkedPullRequestUrl: () => false,
+  findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
@@ -34,7 +52,6 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
-  orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 import {
@@ -48,7 +65,319 @@ beforeEach(() => {
 
 afterEach(() => {
   __resetClientSettingsPersistenceForTests();
-  vi.unstubAllGlobals();
+});
+
+function codeButton(renderer: ReactTestRenderer, label: string) {
+  const button = renderer.root
+    .findAllByType(Button)
+    .find((instance) => instance.props["aria-label"] === label);
+  if (!button) throw new Error(`Missing code button: ${label}`);
+  return button.props as ComponentProps<typeof Button>;
+}
+
+describe("ChatMarkdown context references", () => {
+  it("renders text and image references through the chip renderer, with readable fallback", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text =
+      "See [Terminal output](t3-context://v1/terminal/term-1) and ![Error image](t3-context://v1/image/img-1).";
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            renderContextReference={({ kind, label }) => (
+              <button>
+                {kind}: {label}
+              </button>
+            )}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+      ).toEqual(["terminal: Terminal output", "image: Error image"]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} />);
+      });
+      expect(renderer!.root.findAllByType("span").map((span) => span.children.join(""))).toEqual([
+        "Terminal output",
+        "Error image",
+      ]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads formatted context labels through nested markup instead of the context id", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const seen: Array<string> = [];
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text="See [**Bold** `code`](t3-context://v1/terminal/term-1)."
+            renderContextReference={({ kind, label }) => {
+              seen.push(`${kind}: ${label}`);
+              return <button>{label}</button>;
+            }}
+          />,
+        );
+      });
+      expect(seen).toEqual(["terminal: Bold code"]);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown favicon privacy", () => {
+  it("suppresses private link images while preserving public links across updates", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
+    try {
+      await act(async () => {
+        renderer = create(markdown("https://example.com"));
+      });
+      expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
+        "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+      ]);
+      for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
+        await act(async () => {
+          renderer!.update(markdown(url));
+        });
+        expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      }
+      await act(async () => {
+        renderer!.update(markdown("https://example.com"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(1);
+      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
+      await act(async () => {
+        renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType(GitHubIcon)).toHaveLength(1);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown streaming", () => {
+  it("does not retokenize completed lines when streaming finishes", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("typescript");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "```typescript\nconst completed = 1;\nconst current = 2;";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      expect(highlight).toHaveBeenCalled();
+      highlight.mockClear();
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
+      });
+      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const codeToHast = highlighter.codeToHast.bind(highlighter);
+    let fail = true;
+    vi.spyOn(highlighter, "codeToHast").mockImplementation((...args) => {
+      if (fail) throw new Error("Temporary highlighter failure");
+      return codeToHast(...args);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\ninitial\n```"} isStreaming />,
+        );
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initialWrap = codeBlock.props["data-wrap"] === "true";
+      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+      await act(async () => {
+        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(0);
+
+      fail = false;
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
+        );
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(1);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("preserves code controls and details without highlighting an unchanged fence again", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let renderer: ReactTestRenderer | undefined;
+    const text = [
+      "```text",
+      "First code block",
+      "```",
+      "",
+      "<details><summary>More</summary>",
+      "",
+      "Details content",
+      "",
+      "</details>",
+      "",
+      "Streaming reply",
+    ].join("\n");
+
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initialWrap = codeBlock.props["data-wrap"] === "true";
+      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+      const copy = codeButton(mounted, "Copy code");
+      await act(async () => {
+        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+        copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
+      });
+
+      const detailsButton = mounted.root.find(
+        (instance) =>
+          instance.type === "button" && instance.props["data-markdown-details-summary"] === "",
+      );
+      await act(async () => {
+        detailsButton.props.onClick({ nativeEvent: new Event("click") });
+      });
+      const details = mounted.root.findByProps({ "data-markdown-details": "" });
+      expect(details.props["data-markdown-details-open"]).toBe("true");
+      expect(writeText).toHaveBeenCalledWith("First code block\n");
+      expect(highlight).toHaveBeenCalledTimes(1);
+
+      for (let index = 0; index < 10; index += 1) {
+        await act(async () => {
+          mounted.update(<ChatMarkdown cwd="/tmp/project" text={`${text} ${index}`} isStreaming />);
+        });
+      }
+
+      expect(highlight).toHaveBeenCalledTimes(1);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+      expect(mounted.root.findByProps({ "data-markdown-details": "" })).toBe(details);
+      expect(details.props["data-markdown-details-open"]).toBe("true");
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={text.replace("First code block", "Updated code block")}
+            isStreaming
+          />,
+        );
+      });
+      const copyUpdated = codeButton(mounted, "Copied");
+      await act(async () => {
+        copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
+      expect(highlight).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("edits the current task text and marker after reusing a renderer", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    let editedText: string | undefined;
+    const message = (text: string) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        onTaskListChange={({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+          renderer!.update(message(editedText));
+        }}
+      />
+    );
+
+    try {
+      await act(async () => {
+        renderer = create(message("- [ ] First\n- [ ] Second"));
+      });
+      const mounted = renderer!;
+      const originalInput = mounted.root.findAllByType("input")[1]!;
+      await act(async () => {
+        mounted.update(message("- [ ] A longer first task\n- [ ] Second"));
+      });
+
+      const input = mounted.root.findAllByType("input")[1]!;
+      const listItem = mounted.root.findAllByType("li")[1]!;
+      const { onChange } = input.props as ComponentProps<"input">;
+      if (!onChange) throw new Error("Task checkbox has no edit handler");
+      await act(async () => {
+        onChange({
+          currentTarget: {
+            checked: true,
+            closest: () => ({
+              dataset: { taskMarkerOffset: String(listItem.props["data-task-marker-offset"]) },
+            }),
+          },
+        } as unknown as Parameters<typeof onChange>[0]);
+      });
+
+      expect(input).toBe(originalInput);
+      expect(editedText).toBe("- [ ] A longer first task\n- [x] Second");
+      expect(mounted.root.findAllByType("input")[1]!.props.checked).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("canUseMarkdownFileShellActions", () => {
@@ -108,6 +437,46 @@ describe("hasMarkdownFilePrimaryAction", () => {
   });
 });
 
+describe("ChatMarkdown skill chips", () => {
+  it("updates digit-leading skill labels when discovered skills change", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "Use $2spec with a $20k budget.";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      });
+      const mounted = renderer!;
+      const labels = (label: string) =>
+        mounted.root.findAllByType("span").filter((node) => node.children.includes(label));
+      expect(labels("2Spec")).toHaveLength(0);
+
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={text}
+            skills={[
+              { name: "2spec", displayName: "2Spec" },
+              { name: "20k", displayName: "MoneySkill" },
+            ]}
+          />,
+        );
+      });
+      expect(labels("2Spec")).toHaveLength(1);
+      expect(labels("MoneySkill")).toHaveLength(0);
+
+      await act(async () => {
+        mounted.update(<ChatMarkdown cwd="/tmp/project" text={text} skills={[]} />);
+      });
+      expect(labels("2Spec")).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown file option chips", () => {
   it("shows the existing short label by default", () => {
     const html = renderToStaticMarkup(
@@ -118,28 +487,37 @@ describe("ChatMarkdown file option chips", () => {
     expect(html).not.toContain("./src/main.ts");
   });
 
-  it("updates an already-mounted chip when the real preference changes", async () => {
-    const document = installReactTestDom(vi.stubGlobal);
-    const { createRoot } = await import("react-dom/client");
-    const container = document.createElement("div");
-    const root = createRoot(container as unknown as Element);
+  it("updates an already-mounted chip when the preference changes", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const chipText = () =>
+      renderer!.root
+        .findAllByType("button")
+        .filter((button) => String(button.props.className).includes("chat-markdown-file-link"))
+        .flatMap((button) => button.findAll(() => true))
+        .flatMap((node) => node.children)
+        .filter((child): child is string => typeof child === "string")
+        .join("");
 
     try {
-      flushSync(() =>
-        root.render(<ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />),
-      );
-      expect(container.textContent).toContain("main.ts");
-      expect(container.textContent).not.toContain("./src/main.ts");
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+        );
+      });
+      expect(chipText()).toContain("main.ts");
+      expect(chipText()).not.toContain("./src/main.ts");
 
-      flushSync(() =>
+      await act(async () => {
         __setClientSettingsForTests({
           ...DEFAULT_CLIENT_SETTINGS,
           showFileLinkPaths: true,
-        }),
-      );
-      expect(container.textContent).toContain("./src/main.ts");
+        });
+      });
+      expect(chipText()).toContain("./src/main.ts");
     } finally {
-      flushSync(() => root.unmount());
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
     }
   });
 
@@ -402,47 +780,6 @@ describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
         canOpenInPanel: true,
       }),
     ).toBe(true);
-  });
-});
-
-describe("orderedListGutterStyle", () => {
-  it("leaves the default gutter alone for single-digit lists", () => {
-    expect(orderedListGutterStyle(9, undefined)).toBeUndefined();
-  });
-
-  it("leaves the default gutter alone for two-digit lists", () => {
-    expect(orderedListGutterStyle(99, undefined)).toBeUndefined();
-  });
-
-  it("leaves the default gutter alone for a two-digit list that starts above 1", () => {
-    // start=50 + 49 items => last marker is "98", still two digits.
-    expect(orderedListGutterStyle(49, 50)).toBeUndefined();
-  });
-
-  it("widens the gutter once the last marker reaches three digits", () => {
-    // item 100 is the bug from #6512: a 100-item list starting at 1.
-    expect(orderedListGutterStyle(100, undefined)).toEqual({ "--list-gutter": "4ch" });
-  });
-
-  it("accounts for a non-default start attribute", () => {
-    // start=95 + 9 items => last marker is "103", three digits.
-    expect(orderedListGutterStyle(9, 95)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(5, "999995")).toEqual({ "--list-gutter": "7ch" });
-  });
-
-  it("scales further for four-digit markers", () => {
-    expect(orderedListGutterStyle(1000, undefined)).toEqual({ "--list-gutter": "5ch" });
-  });
-
-  it("uses the widest marker and includes a negative start's minus sign", () => {
-    expect(orderedListGutterStyle(1001, -1000)).toEqual({ "--list-gutter": "6ch" });
-    expect(orderedListGutterStyle(3, -15)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(3, -5)).toBeUndefined();
-  });
-
-  it("treats a missing/zero item count as a single item", () => {
-    expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
-    expect(orderedListGutterStyle(0, 100)).toEqual({ "--list-gutter": "4ch" });
   });
 });
 

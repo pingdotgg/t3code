@@ -16,9 +16,8 @@ export interface CreateTokenRequest extends licensemanager.CreateTokenRequest {}
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.CreateTokenHttp)`.
- * @binding
- * @section License Checkout Data Plane
- * @example Mint an Activation Token for a License
+ * ### License Checkout Data Plane
+ * **Example:** Mint an Activation Token for a License
  * ```typescript
  * // init
  * const createToken = yield* AWS.LicenseManager.CreateToken();
@@ -29,6 +28,8 @@ export interface CreateTokenRequest extends licensemanager.CreateTokenRequest {}
  *   ClientToken: crypto.randomUUID(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateToken extends Binding.Service<
   CreateToken,
