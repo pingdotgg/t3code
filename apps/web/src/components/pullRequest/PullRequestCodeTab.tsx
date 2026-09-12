@@ -59,10 +59,10 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { DiffFileTree } from "../diffs/DiffFileTree";
+import { DiffFileTree, type DiffFileTreeHandle } from "../diffs/DiffFileTree";
+import { EditableDiffCodeView, type ReviewEditTargetResolver } from "../diffs/EditableDiffCodeView";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
-import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -614,7 +614,9 @@ function PullRequestCodeTab({
     [items, requestTreeReveal, toggleFile],
   );
 
+  const treeRef = useRef<DiffFileTreeHandle>(null);
   const toggleAllFiles = () => {
+    treeRef.current?.setExpanded(allFilesCollapsed);
     // Held as an override of the default rather than as the file keys on screen: a diff that is
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
@@ -738,6 +740,21 @@ function PullRequestCodeTab({
       );
     },
     [toggleFile],
+  );
+
+  const resolveEditTarget = useCallback<ReviewEditTargetResolver>(
+    (filePath) =>
+      commit === null
+        ? {
+            environmentId,
+            projectId: detail.projectId,
+            cwd: detail.workspaceRoot,
+            filePath,
+            expectedBranch: null,
+            pullRequestUrl: detail.url,
+          }
+        : null,
+    [commit, detail.projectId, detail.url, detail.workspaceRoot, environmentId],
   );
 
   const renderHeaderMetadata = useCallback(
@@ -1182,6 +1199,7 @@ function PullRequestCodeTab({
               render={
                 <Toggle
                   aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  className="data-pressed:border-primary/40 data-pressed:bg-primary/15 data-pressed:text-primary"
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
@@ -1381,7 +1399,7 @@ function PullRequestCodeTab({
           {/* The viewer virtualizes against the element it is told is scrolling and places its
               rows absolutely, so it has to own that element — the thread diff panel hands it the
               same one. Scrolling from a parent instead leaves it painting over its neighbours. */}
-          <StyledDiffCodeView<ReviewAnnotationGroup>
+          <EditableDiffCodeView<ReviewAnnotationGroup>
             // Keep scrollbar space stable so file metadata and line numbers do not shift as a
             // diff crosses the overflow boundary. The viewer is itself focusable for keyboard
             // interaction, but its native host outline clips and competes with the focus
@@ -1397,6 +1415,7 @@ function PullRequestCodeTab({
             // is running out of diff.
             renderCodeViewFooter={renderCodeViewFooter}
             renderHeaderPrefix={renderHeaderPrefix}
+            editing={resolveEditTarget}
             renderHeaderMetadata={renderHeaderMetadata}
             renderAnnotation={renderAnnotation}
             unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
@@ -1404,35 +1423,36 @@ function PullRequestCodeTab({
           {reviewOverlay}
         </div>
         {fileTreeOpen ? (
-          <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
-            <DiffFileTree
-              ariaLabel={`Pull request #${detail.number} files`}
-              entries={fileTreeEntries}
-              onSelectFile={revealFile}
-              // The tree lists only what has arrived; a footer says so while the diff is still
-              // paging, and lets the reader pull the rest in without scrolling for it.
-              footer={
-                nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full"
-                      disabled={diffQuery.isPending}
-                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-                    >
-                      {diffQuery.error !== null
-                        ? "Retry"
-                        : diffQuery.isPending
-                          ? "Loading more files..."
-                          : "Load more files"}
-                    </Button>
-                  </div>
-                )
-              }
-            />
-          </aside>
+          <DiffFileTree
+            ref={treeRef}
+            widthStorageKey="t3code.pullRequestFileTreeWidth"
+            ariaLabel={`Pull request #${detail.number} files`}
+            defaultWidth={320}
+            entries={fileTreeEntries}
+            onSelectFile={revealFile}
+            // The tree lists only what has arrived; a footer says so while the diff is still
+            // paging, and lets the reader pull the rest in without scrolling for it.
+            footer={
+              nextCursor === null ? null : (
+                <div className="shrink-0 border-t border-border/60 p-2">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    className="w-full"
+                    disabled={diffQuery.isPending}
+                    onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+                  >
+                    {diffQuery.error !== null
+                      ? "Retry"
+                      : diffQuery.isPending
+                        ? "Loading more files..."
+                        : "Load more files"}
+                  </Button>
+                </div>
+              )
+            }
+          />
         ) : null}
       </div>
       {unstructured}

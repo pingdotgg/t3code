@@ -7,6 +7,7 @@ import {
   type GitRunStackedActionResult,
   GitStackedAction,
   type ThreadId,
+  type ProjectId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -76,6 +77,9 @@ export interface RunVcsStackedActionInput {
   readonly action: GitStackedAction;
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
+  readonly expectedBranch?: string;
+  readonly pullRequestUrl?: string;
+  readonly projectId?: ProjectId;
   readonly filePaths?: ReadonlyArray<string>;
   /** The thread the action runs beside; the server links a pull request it creates to it. */
   readonly threadId?: ThreadId;
@@ -465,6 +469,9 @@ export function createVcsActionManager<R, E>(
           action: input.action,
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
+          ...(input.expectedBranch !== undefined ? { expectedBranch: input.expectedBranch } : {}),
+          ...(input.pullRequestUrl !== undefined ? { pullRequestUrl: input.pullRequestUrl } : {}),
+          ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };

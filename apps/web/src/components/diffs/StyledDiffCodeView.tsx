@@ -264,7 +264,7 @@ export type StyledDiffCodeViewOptions<LAnnotation> = Omit<
   "unsafeCSS" | "itemMetrics" | "layout"
 >;
 
-type StyledDiffCodeViewProps<LAnnotation> = (
+export type StyledDiffCodeViewProps<LAnnotation> = (
   | Omit<ControlledCodeViewProps<LAnnotation>, "options">
   | Omit<UncontrolledCodeViewProps<LAnnotation>, "options">
 ) & {

@@ -1999,6 +1999,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* (yield* GitVcsDriver.GitVcsDriver).prepareCommitContext(cwd);
         yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
 
+        const missingTarget = yield* (yield* GitVcsDriver.GitVcsDriver)
+          .pushCurrentBranch(cwd, null, { pushToUpstream: true })
+          .pipe(Effect.result);
+        assert.equal(missingTarget._tag, "Failure");
         const pushed = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
         assert.deepInclude(pushed, {
           status: "pushed",

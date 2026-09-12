@@ -676,9 +676,13 @@ export const make = Effect.gen(function* () {
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
   }) {
     const settings = yield* serverSettingsService.getSettings;
-    if (!hasProjectSettingsOverrides(settings) || Option.isNone(projectionQuery)) return settings;
+    if (!hasProjectSettingsOverrides(settings)) return settings;
+    if (input.projectId !== undefined)
+      return resolveProjectSettings(settings, input.projectId).settings;
+    if (Option.isNone(projectionQuery)) return settings;
     const projectId = yield* (
       input.threadId !== undefined
         ? projectionQuery.value
@@ -2335,8 +2339,7 @@ export const make = Effect.gen(function* () {
         ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
       } as const;
-      const localPullRequestBranch =
-        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      const localPullRequestBranch = `${input.mode === "review" ? "t3-review/" : ""}${resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo)}`;
 
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
@@ -2442,7 +2445,7 @@ export const make = Effect.gen(function* () {
         if (localBranch) {
           return localBranch;
         }
-        if (localPullRequestBranch === pullRequest.headBranch) {
+        if (input.mode === "review" || localPullRequestBranch === pullRequest.headBranch) {
           return null;
         }
 
@@ -2574,6 +2577,38 @@ export const make = Effect.gen(function* () {
         GitManagerServiceError
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
+        if (input.expectedBranch !== undefined && initialStatus.branch !== input.expectedBranch) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "The checkout changed. Reopen the review before publishing.",
+          });
+        }
+        if (input.pullRequestUrl) {
+          const pullRequest = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
+            cwd: input.cwd,
+            reference: input.pullRequestUrl,
+          });
+          if (!initialStatus.branch || pullRequest.state !== "open") {
+            return yield* new GitManagerError({
+              operation: "runStackedAction",
+              cwd: input.cwd,
+              detail: "This PR is no longer open for edits.",
+            });
+          }
+          const head = {
+            ...toResolvedPullRequest(pullRequest),
+            ...toPullRequestHeadRemoteInfo(pullRequest),
+          };
+          if (head.isCrossRepository && !resolveHeadRepositoryNameWithOwner(head)) {
+            return yield* new GitManagerError({
+              operation: "runStackedAction",
+              cwd: input.cwd,
+              detail: "The PR source repository is unavailable. Refresh the review and try again.",
+            });
+          }
+          yield* configurePullRequestHeadUpstreamBase(input.cwd, head, initialStatus.branch);
+        }
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
           input.action === "push" ||
@@ -2714,7 +2749,13 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => gitCore.pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() =>
+                  gitCore.pushCurrentBranch(
+                    input.cwd,
+                    currentBranch,
+                    input.pullRequestUrl ? { pushToUpstream: true } : undefined,
+                  ),
+                ),
               )
           : { status: "skipped_not_requested" as const };
 

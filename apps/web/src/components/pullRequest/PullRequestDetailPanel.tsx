@@ -1,3 +1,4 @@
+import { reviewPublishKey, useReviewEdits } from "../diffs/ReviewEdits";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -826,7 +827,21 @@ export function PullRequestDetailPanel({
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
-  const actionPending = pendingAction !== null;
+  const reviewEdits = useReviewEdits();
+  const publishLabel =
+    detail && reviewEdits?.publishing.get(reviewPublishKey(environmentId, detail.url));
+  const reviewFiles = [...(reviewEdits?.drafts.values() ?? [])].filter(
+    (draft) =>
+      draft.environmentId === environmentId &&
+      draft.cwd === detail?.workspaceRoot &&
+      draft.pullRequestUrl === detail?.url,
+  );
+  const pendingEdits = reviewFiles.filter((draft) => draft.pendingPush).length;
+  const savingReview =
+    !!reviewEdits?.saving && reviewFiles.some((draft) => draft.contents !== draft.savedContents);
+  const hasUnsavedEdits = reviewFiles.some((draft) => draft.contents !== draft.savedContents);
+  const actionPending = pendingAction !== null || !!publishLabel;
+  const [pushedReviewUrl, setPushedReviewUrl] = useState<string | null>(null);
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
@@ -961,13 +976,13 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
   ) => {
-    if (pendingAction !== null) return false;
+    if (actionPending) return false;
     setPendingAction(action);
     return finishAction(action, method, updateMethod);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
-    if (pendingAction !== null) return { commentPosted: false };
+    if (actionPending) return { commentPosted: false };
     setPendingAction(action);
     const commentResult = await postComment({
       environmentId,
@@ -1477,7 +1492,42 @@ export function PullRequestDetailPanel({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background">
-      {threadPickerOpen && detail ? (
+      {detail &&
+        (pendingEdits > 0 ||
+          publishLabel ||
+          savingReview ||
+          (pushedReviewUrl === detail.url && !hasUnsavedEdits)) && (
+          <div
+            className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-2"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="text-xs text-muted-foreground">
+              {publishLabel ||
+                (savingReview && "Saving changes...") ||
+                (pendingEdits > 0
+                  ? `${pendingEdits} saved ${pendingEdits === 1 ? "file" : "files"} ready to push`
+                  : "Changes pushed")}
+            </span>
+            {pendingEdits > 0 && (
+              <Button
+                size="sm"
+                disabled={actionPending || reviewEdits?.saving || hasUnsavedEdits}
+                title={hasUnsavedEdits ? "Save your edits with Cmd/Ctrl+S first" : undefined}
+                onClick={async () => {
+                  const url = detail.url;
+                  if (await reviewEdits?.publish(environmentId, detail.workspaceRoot, url)) {
+                    setPushedReviewUrl(url);
+                    void refreshFromHost();
+                  }
+                }}
+              >
+                {publishLabel ? "Publishing..." : "Commit & push"}
+              </Button>
+            )}
+          </div>
+        )}
+      {threadPickerOpen && detail && !publishLabel ? (
         <PullRequestThreadLinks
           key={`${environmentId}:${detail.url}`}
           display="picker"
@@ -1489,6 +1539,7 @@ export function PullRequestDetailPanel({
         />
       ) : null}
       <div
+        inert={!!publishLabel}
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
           detail && "border-b border-border/60",
@@ -2560,6 +2611,7 @@ export function PullRequestDetailPanel({
       </div>
 
       <div
+        inert={!!publishLabel}
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
@@ -2666,7 +2718,7 @@ export function PullRequestDetailPanel({
           if (!open) setConfirmation({ open: false, action: "merge" });
         }}
       >
-        <AlertDialogPopup>
+        <AlertDialogPopup inert={!!publishLabel}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmAction === "merge"

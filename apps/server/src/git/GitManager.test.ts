@@ -28,6 +28,7 @@ import {
   GitCommandError,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -37,7 +38,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+import { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -598,6 +599,9 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    expectedBranch?: string;
+    pullRequestUrl?: string;
+    projectId?: ProjectId;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -4504,6 +4508,115 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["github", "https://github.com/pingdotgg/codething-mvp/pull/77"],
+    ["gitlab", "https://gitlab.com/team/repo/-/merge_requests/77"],
+    ["bitbucket", "https://bitbucket.org/team/repo/pull-requests/77"],
+  ] as const)(
+    "publishes %s review edits from an isolated worktree with the writing agent",
+    ([provider, url]) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-pr-review-");
+        yield* initRepo(cwd);
+        const remote = yield* createBareRemote();
+        yield* runGit(cwd, ["remote", "add", "origin", remote]);
+        yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+        yield* runGit(cwd, ["checkout", "-b", "feature/review"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "review.txt"), "original\n");
+        yield* runGit(cwd, ["add", "review.txt"]);
+        yield* runGit(cwd, ["commit", "-m", "PR head"]);
+        yield* runGit(cwd, ["push", "-u", "origin", "feature/review"]);
+        yield* runGit(cwd, ["push", "origin", "HEAD:refs/pull/77/head"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "review.txt"), "unrelated local work\n");
+        let generated = false;
+        const projectId = ProjectId.make("review-project");
+        const adapter = yield* SourceControlProvider.pipe(
+          Effect.provide(
+            Layer.mock(SourceControlProvider)({
+              kind: provider,
+              getChangeRequest: () =>
+                Effect.succeed({
+                  provider,
+                  number: 77,
+                  title: "Review",
+                  url,
+                  baseRefName: "main",
+                  headRefName: "feature/review",
+                  state: "open",
+                  updatedAt: Option.none(),
+                }),
+              getDefaultBranch: () => Effect.succeed("main"),
+              listChangeRequests: () => Effect.succeed([]),
+            }),
+          ),
+        );
+        const { manager } = yield* makeManager({
+          sourceControlProvider: adapter,
+          serverSettings: {
+            projectSettingsOverrides: {
+              [projectId]: {
+                sourceControlWritingStyle: {
+                  mode: "custom",
+                  customInstructions: "Use the project review style.",
+                },
+              },
+            },
+          },
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                generated = true;
+                expect(input.stagedPatch).toContain("review edit");
+                expect(input.policy?.commitInstructions).toContain("Use the project review style.");
+                return { subject: "Fix review feedback", body: "" };
+              }),
+          },
+        });
+        const prepared = yield* preparePullRequestThread(manager, {
+          cwd,
+          reference: "77",
+          mode: "review",
+        });
+        expect(prepared.branch).toBe("t3-review/feature/review");
+        expect(prepared.isOnPullRequestHead).toBe(true);
+        const reviewCwd = prepared.worktreePath!;
+        NodeFS.writeFileSync(NodePath.join(reviewCwd, "review.txt"), "review edit\n");
+        NodeFS.writeFileSync(NodePath.join(reviewCwd, "unrelated.txt"), "do not publish\n");
+        const result = yield* runStackedAction(manager, {
+          cwd: reviewCwd,
+          action: "commit_push",
+          projectId,
+          expectedBranch: prepared.branch,
+          pullRequestUrl: url,
+          filePaths: ["review.txt"],
+        });
+        expect(generated).toBe(true);
+        expect(result.push.status).toBe("pushed");
+        expect((yield* runGit(cwd, ["show", "origin/feature/review:review.txt"])).stdout).toBe(
+          "review edit\n",
+        );
+        expect(
+          (yield* runGit(cwd, ["log", "-1", "--format=%s", "origin/feature/review"])).stdout.trim(),
+        ).toBe("Fix review feedback");
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(
+          "feature/review",
+        );
+        expect(NodeFS.readFileSync(NodePath.join(cwd, "review.txt"), "utf8")).toBe(
+          "unrelated local work\n",
+        );
+        expect((yield* runGit(reviewCwd, ["status", "--porcelain"])).stdout).toContain(
+          "unrelated.txt",
+        );
+        const wrongBranch = yield* runStackedAction(manager, {
+          cwd: reviewCwd,
+          action: "commit_push",
+          expectedBranch: "other",
+          filePaths: ["unrelated.txt"],
+        }).pipe(Effect.result);
+        expect(wrongBranch._tag).toBe("Failure");
+      }),
+  );
+
   it.effect("preserves both branch materialization failures when the fallback also fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4616,66 +4729,84 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const originDir = yield* createBareRemote();
-      const forkDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-fork"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork\n");
-      yield* runGit(repoDir, ["add", "fork.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
-      yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-fork"]);
-      yield* runGit(repoDir, ["checkout", "main"]);
+  it.effect.each(["worktree", "review"] as const)(
+    "preserves fork upstream tracking when preparing a %s PR",
+    (mode) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-fork"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork\n");
+        yield* runGit(repoDir, ["add", "fork.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fork PR branch"]);
+        yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-fork"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
 
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          pullRequest: {
-            number: 81,
-            title: "Fork PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/81",
-            baseRefName: "main",
-            headRefName: "feature/pr-fork",
-            state: "open",
-            isCrossRepository: true,
-            headRepositoryNameWithOwner: "octocat/codething-mvp",
-            headRepositoryOwnerLogin: "octocat",
-          },
-          repositoryCloneUrls: {
-            "octocat/codething-mvp": {
-              url: forkDir,
-              sshUrl: forkDir,
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            pullRequest: {
+              number: 81,
+              title: "Fork PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/81",
+              baseRefName: "main",
+              headRefName: "feature/pr-fork",
+              state: "open",
+              isCrossRepository: true,
+              headRepositoryNameWithOwner: "octocat/codething-mvp",
+              headRepositoryOwnerLogin: "octocat",
+            },
+            repositoryCloneUrls: {
+              "octocat/codething-mvp": {
+                url: forkDir,
+                sshUrl: forkDir,
+              },
             },
           },
-        },
-      });
+        });
 
-      const result = yield* preparePullRequestThread(manager, {
-        cwd: repoDir,
-        reference: "81",
-        mode: "worktree",
-      });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "81",
+          mode,
+        });
 
-      expect(result.worktreePath).not.toBeNull();
-      const upstreamRef = (yield* runGit(result.worktreePath as string, [
-        "rev-parse",
-        "--abbrev-ref",
-        "@{upstream}",
-      ])).stdout.trim();
-      expect(upstreamRef).toBe("fork-seed/feature/pr-fork");
-      expect(upstreamRef.startsWith("origin/")).toBe(false);
-      expect(
-        (yield* runGit(result.worktreePath as string, [
-          "config",
-          "--get",
-          "remote.fork-seed.url",
-        ])).stdout.trim(),
-      ).toBe(forkDir);
-    }),
+        if (mode === "review") {
+          NodeFS.writeFileSync(NodePath.join(result.worktreePath!, "fork.txt"), "reviewed fork\n");
+          yield* runStackedAction(manager, {
+            cwd: result.worktreePath!,
+            action: "commit_push",
+            expectedBranch: result.branch,
+            pullRequestUrl: "https://github.com/pingdotgg/codething-mvp/pull/81",
+            filePaths: ["fork.txt"],
+          });
+          expect(
+            (yield* runGit(repoDir, ["show", "fork-seed/feature/pr-fork:fork.txt"])).stdout,
+          ).toBe("reviewed fork\n");
+          expect((yield* runGit(repoDir, ["show", "origin/main:README.md"])).stdout).not.toContain(
+            "reviewed fork",
+          );
+        }
+        expect(result.worktreePath).not.toBeNull();
+        const upstreamRef = (yield* runGit(result.worktreePath as string, [
+          "rev-parse",
+          "--abbrev-ref",
+          "@{upstream}",
+        ])).stdout.trim();
+        expect(upstreamRef).toBe("fork-seed/feature/pr-fork");
+        expect(upstreamRef.startsWith("origin/")).toBe(false);
+        expect(
+          (yield* runGit(result.worktreePath as string, [
+            "config",
+            "--get",
+            "remote.fork-seed.url",
+          ])).stdout.trim(),
+        ).toBe(forkDir);
+      }),
   );
 
   it.effect("preserves fork upstream tracking when preparing a local PR thread", () =>

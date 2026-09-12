@@ -20,7 +20,8 @@ import {
 
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
-import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import type { StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import { EditableDiffCodeView, type ReviewEditTargetResolver } from "./EditableDiffCodeView";
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -86,6 +87,7 @@ interface AnnotatableCodeViewProps {
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
+  editing?: ReviewEditTargetResolver;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
@@ -107,6 +109,7 @@ export function AnnotatableCodeView({
   options,
   viewerRef,
   className,
+  editing,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
 }: AnnotatableCodeViewProps) {
@@ -241,8 +244,9 @@ export function AnnotatableCodeView({
 
   const hasOpenComment = draft !== null;
   return (
-    <StyledDiffCodeView<DiffCommentAnnotationGroup>
-      key={codeViewKey}
+    <EditableDiffCodeView<DiffCommentAnnotationGroup>
+      viewerKey={codeViewKey}
+      {...(editing ? { editing } : {})}
       {...(viewerRef ? { viewerRef } : {})}
       {...(className ? { className } : {})}
       items={items}

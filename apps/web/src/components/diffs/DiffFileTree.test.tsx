@@ -1,12 +1,13 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
 import type { FileTree as FileTreeModel } from "@pierre/trees";
 import { FileTree } from "@pierre/trees/react";
-import { act, type MouseEvent, type ReactNode } from "react";
+import { act, createRef, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { DiffFileTree, type DiffFileTreeEntry } from "./DiffFileTree";
+import { DiffFileTree, type DiffFileTreeEntry, type DiffFileTreeHandle } from "./DiffFileTree";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
+import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
 
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 // Tooltip positioning is unrelated to the tree's actual model and activation path.
@@ -33,6 +34,7 @@ class TreeRow {
 describe("diff tree file activation", () => {
   let renderer: ReactTestRenderer | undefined;
   const targets: CodeViewScrollTarget[] = [];
+  const treeRef = createRef<DiffFileTreeHandle>();
   const viewer = {
     getInstance: () => viewer,
     scrollTo: (target: CodeViewScrollTarget) => targets.push(target),
@@ -41,13 +43,17 @@ describe("diff tree file activation", () => {
   function Panel({
     files = entries,
     selectedPath = null,
+    widthStorageKey = "t3code.diffFileTreeWidth",
   }: {
     files?: DiffFileTreeEntry[];
     selectedPath?: string | null;
+    widthStorageKey?: string;
   }) {
     const reveal = useCodeViewFileReveal(viewer, "working-tree");
     return (
       <DiffFileTree
+        ref={treeRef}
+        widthStorageKey={widthStorageKey}
         entries={files}
         ariaLabel="Working tree files"
         selectedPath={selectedPath}
@@ -102,6 +108,7 @@ describe("diff tree file activation", () => {
     vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("HTMLElement", TreeRow);
+    vi.stubGlobal("window", new EventTarget());
   });
 
   afterEach(async () => {
@@ -110,6 +117,46 @@ describe("diff tree file activation", () => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("stores resized widths independently for each review surface", async () => {
+    const widths = new Map<string, string>();
+    Object.assign(window, {
+      localStorage: {
+        getItem: (key: string) => widths.get(key) ?? null,
+        setItem: (key: string, value: string) => widths.set(key, value),
+      },
+    });
+    vi.stubGlobal("document", { body: { style: { removeProperty() {} } } });
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const pointer = {
+      button: 0,
+      pointerId: 1,
+      clientX: 100,
+      preventDefault() {},
+      stopPropagation() {},
+      currentTarget: {
+        setPointerCapture() {},
+        hasPointerCapture: () => true,
+        releasePointerCapture() {},
+      },
+    } as unknown as PointerEvent<HTMLElement>;
+    for (const widthStorageKey of ["t3code.diffFileTreeWidth", "t3code.pullRequestFileTreeWidth"]) {
+      await mount({ widthStorageKey });
+      const { handlers } = renderer!.root.findByType(RightPanelResizeHandle).props;
+      await act(async () => {
+        handlers.onPointerDown(pointer);
+        handlers.onPointerMove({ ...pointer, clientX: 60 });
+        handlers.onPointerUp(pointer);
+      });
+      await act(async () => renderer!.unmount());
+      renderer = undefined;
+    }
+    expect([...widths]).toEqual([
+      ["t3code.diffFileTreeWidth", "296"],
+      ["t3code.pullRequestFileTreeWidth", "296"],
+    ]);
   });
 
   it("reissues the reveal when the sole selected file is activated again", async () => {
@@ -176,6 +223,20 @@ describe("diff tree file activation", () => {
     await activate("src/");
     expect(directory.isExpanded()).toBe(true);
     expect(targets).toEqual([]);
+  });
+
+  it("lets the panel control all folders without a second collapse button", async () => {
+    await mount({ files: [{ path: "src/nested/app.ts", status: "modified" }] });
+    await act(async () => treeRef.current!.setExpanded(false));
+    for (const path of ["src/", "src/nested/"]) {
+      const directory = model().getItem(path)!;
+      expect("isExpanded" in directory && directory.isExpanded()).toBe(false);
+    }
+    await act(async () => treeRef.current!.setExpanded(true));
+    for (const path of ["src/", "src/nested/"]) {
+      const directory = model().getItem(path)!;
+      expect("isExpanded" in directory && directory.isExpanded()).toBe(true);
+    }
   });
 
   it("does not echo controlled selection, but lets the reader activate it", async () => {

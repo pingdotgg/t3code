@@ -1,6 +1,12 @@
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
@@ -8,11 +14,14 @@ import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsDriver from "../vcs/VcsDriver.ts";
 
 function makeLayer(input: {
   readonly detect: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
 }) {
   return GitWorkflowService.layer.pipe(
+    Layer.provide(Path.layer),
+    Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
         detect: input.detect,
@@ -24,6 +33,146 @@ function makeLayer(input: {
 }
 
 describe("GitWorkflowService", () => {
+  it.effect.each(["checkout", "pull", "refresh", "remove", "publish"])(
+    "serializes %s with writes",
+    (action) =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const commandResolved = yield* Deferred.make<void>();
+        const events: string[] = [];
+        const observedAt = yield* DateTime.now;
+        const driver = yield* VcsDriver.VcsDriver.pipe(
+          Effect.provide(
+            Layer.mock(VcsDriver.VcsDriver)({
+              capabilities: {
+                kind: "git",
+                supportsWorktrees: true,
+                supportsBookmarks: false,
+                supportsAtomicSnapshot: false,
+                supportsPushDefaultRemote: true,
+                ignoreClassifier: "native",
+              },
+            }),
+          ),
+        );
+        const resolve: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"] = ({ cwd }) =>
+          Effect.gen(function* () {
+            if (cwd === "/repo/nested") yield* Deferred.succeed(commandResolved, undefined);
+            return {
+              kind: "git" as const,
+              driver,
+              repository: {
+                kind: "git" as const,
+                rootPath: cwd === "/other" ? "/other" : cwd === "/pr-worktree" ? cwd : "/repo",
+                metadataPath:
+                  cwd === "/pr-worktree"
+                    ? "/repo/.git"
+                    : cwd === "/repo/nested"
+                      ? "../.git"
+                      : ".git",
+                freshness: {
+                  source: "live-local" as const,
+                  observedAt,
+                  expiresAt: Option.none(),
+                },
+              },
+            };
+          });
+        const workflow = yield* GitWorkflowService.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Path.layer,
+              FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) }),
+              Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+                resolve,
+                detect: resolve,
+              }),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({
+                removeWorktree: () =>
+                  Effect.sync(() => {
+                    events.push("remove");
+                  }),
+                switchRef: ({ refName }) =>
+                  Effect.sync(() => {
+                    events.push("checkout");
+                    return { refName };
+                  }),
+                pullCurrentBranch: () =>
+                  Effect.sync(() => {
+                    events.push("pull");
+                    return {
+                      status: "pulled" as const,
+                      refName: "main",
+                      upstreamRef: "origin/main",
+                    };
+                  }),
+              }),
+              Layer.mock(GitManager.GitManager)({
+                runStackedAction: () =>
+                  Effect.sync(() => {
+                    events.push("publish");
+                    return {} as never;
+                  }),
+                preparePullRequestThread: () =>
+                  Effect.sync(() => {
+                    events.push("refresh");
+                    return { worktreePath: "/pr-worktree" } as never;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const write = yield* workflow
+          .withRepositoryLock(
+            action === "refresh" || action === "remove" ? "/pr-worktree" : "/repo",
+            Effect.gen(function* () {
+              events.push("validate");
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              events.push("write");
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(entered);
+        const command = yield* (
+          action === "checkout"
+            ? workflow.switchRef({ cwd: "/repo/nested", refName: "other" })
+            : action === "pull"
+              ? workflow.pullCurrentBranch("/repo/nested")
+              : action === "publish"
+                ? workflow.runStackedAction({
+                    cwd: "/repo/nested",
+                    actionId: "publish",
+                    action: "commit_push",
+                    expectedBranch: "review",
+                  })
+                : action === "remove"
+                  ? workflow.removeWorktree({
+                      cwd: "/repo/nested",
+                      path: "/pr-worktree",
+                      force: false,
+                    })
+                  : workflow.preparePullRequestThread({
+                      cwd: "/repo/nested",
+                      reference: "42",
+                      mode: "worktree",
+                    })
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(commandResolved);
+        yield* Effect.yieldNow;
+        yield* workflow.withRepositoryLock(
+          "/other",
+          Effect.sync(() => events.push("other repository")),
+        );
+        assert.deepStrictEqual(events, ["validate", "other repository"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(write);
+        yield* Fiber.join(command);
+        assert.deepStrictEqual(events, ["validate", "other repository", "write", action]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("returns an empty local status when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;
@@ -87,6 +236,8 @@ describe("GitWorkflowService", () => {
     const status = vi.fn();
 
     const testLayer = GitWorkflowService.layer.pipe(
+      Layer.provide(Path.layer),
+      Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
       Layer.provide(
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
           detect: () => Effect.succeed(null),

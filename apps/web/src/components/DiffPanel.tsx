@@ -1,6 +1,6 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
-import type { FileDiffContentsLoader } from "@pierre/diffs";
+import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -27,7 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
@@ -54,7 +54,8 @@ import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
-import { DiffFileTree } from "./diffs/DiffFileTree";
+import { DiffFileTree, type DiffFileTreeHandle } from "./diffs/DiffFileTree";
+import type { ReviewEditTargetResolver } from "./diffs/EditableDiffCodeView";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -500,6 +501,47 @@ export default function DiffPanel({
     },
     [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
+  const editEnvironmentId = activeThread?.environmentId;
+  const resolveEditTarget = useCallback<ReviewEditTargetResolver>(
+    (filePath) => {
+      const relativePath = resolveDiffPathForWorkspace({
+        filePath,
+        workspaceRoot: activeCwd,
+        repositoryRoot: activeRepositoryRoot,
+      });
+      if (
+        shouldRetryBranchDiffAtEnvironmentCwd ||
+        !gitStatusQuery.data ||
+        !editEnvironmentId ||
+        !activeCwd ||
+        !relativePath
+      )
+        return null;
+      return {
+        environmentId: editEnvironmentId,
+        cwd: activeCwd,
+        filePath: relativePath,
+        expectedBranch: gitStatusQuery.data.refName,
+        ...(canRefreshGitDiff ? { onSaved: refreshBranchDiffPreview } : {}),
+      };
+    },
+    [
+      activeCwd,
+      activeRepositoryRoot,
+      editEnvironmentId,
+      gitStatusQuery.data,
+      canRefreshGitDiff,
+      refreshBranchDiffPreview,
+      shouldRetryBranchDiffAtEnvironmentCwd,
+    ],
+  );
+  const renderHeaderFilenameSuffix = useCallback(
+    (fileDiff: FileDiffMetadata) => (
+      <DiffFilePathCopyButton filePath={resolveFileDiffPath(fileDiff)} />
+    ),
+    [],
+  );
+
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
       setCollapsedDiffFiles((current) => {
@@ -515,7 +557,9 @@ export default function DiffPanel({
     [collapseScopeKey],
   );
 
+  const treeRef = useRef<DiffFileTreeHandle>(null);
   const toggleDiffFileCollapse = useCallback(() => {
+    treeRef.current?.setExpanded(allDiffFilesCollapsed);
     setCodeViewRevision((current) => current + 1);
     setCollapsedDiffFiles((current) => {
       const currentKeys =
@@ -526,7 +570,7 @@ export default function DiffPanel({
         fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
       };
     });
-  }, [collapseScopeKey, diffFileKeys]);
+  }, [allDiffFilesCollapsed, collapseScopeKey, diffFileKeys]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
@@ -862,6 +906,7 @@ export default function DiffPanel({
               render={
                 <Toggle
                   aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  className="data-pressed:border-primary/40 data-pressed:bg-primary/15 data-pressed:text-primary"
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
@@ -972,12 +1017,11 @@ export default function DiffPanel({
                     codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
+                    editing={resolveEditTarget}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
-                    renderHeaderFilenameSuffix={(fileDiff) => (
-                      <DiffFilePathCopyButton filePath={resolveFileDiffPath(fileDiff)} />
-                    )}
+                    renderHeaderFilenameSuffix={renderHeaderFilenameSuffix}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       const filePath = resolveFileDiffPath(fileDiff);
                       return (
@@ -1027,15 +1071,15 @@ export default function DiffPanel({
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
-                    <DiffFileTree
-                      ariaLabel={`${reviewSectionTitle} files`}
-                      entries={fileTreeEntries}
-                      selectedPath={selectedFilePath}
-                      revealRequestId={selectedFileRevealRequestId}
-                      onSelectFile={revealDiffFile}
-                    />
-                  </aside>
+                  <DiffFileTree
+                    ref={treeRef}
+                    widthStorageKey="t3code.diffFileTreeWidth"
+                    ariaLabel={`${reviewSectionTitle} files`}
+                    entries={fileTreeEntries}
+                    selectedPath={selectedFilePath}
+                    revealRequestId={selectedFileRevealRequestId}
+                    onSelectFile={revealDiffFile}
+                  />
                 ) : null}
               </div>
             ) : (

@@ -1965,6 +1965,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
+    if (options?.pushToUpstream && !details.hasUpstream) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
+        detail: "The PR push target is unavailable. Refresh the review and try again.",
+      });
+    }
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
@@ -2050,6 +2056,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const currentUpstream = yield* resolveCurrentUpstream(cwd).pipe(
       Effect.orElseSucceed(() => null),
     );
+    if (options?.pushToUpstream && !currentUpstream) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
+        detail: "The PR push target is unavailable. Refresh the review and try again.",
+      });
+    }
     if (currentUpstream) {
       // A branch tracking a differently named ref was cut from it, the way
       // `git checkout -b feature origin/dev` and our own worktree flow leave
@@ -2061,6 +2073,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // `effect-atom`: the branch name ends in the upstream head while the
       // upstream ref ends in the branch name.
       const isAliasOfUpstreamHead =
+        options?.pushToUpstream === true ||
         branch === currentUpstream.branchName ||
         (branch.endsWith(`/${currentUpstream.branchName}`) &&
           currentUpstream.upstreamRef.endsWith(`/${branch}`));

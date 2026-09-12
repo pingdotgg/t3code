@@ -516,6 +516,7 @@ const buildAppUnderTest = (options?: {
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
+    workspaceFileSystem?: Partial<WorkspaceFileSystem.WorkspaceFileSystem["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
@@ -671,7 +672,7 @@ const buildAppUnderTest = (options?: {
             kind:
               input.requestedKind === "auto" || !input.requestedKind ? "git" : input.requestedKind,
             rootPath: input.cwd,
-            metadataPath: null,
+            metadataPath: tempBaseDir,
             freshness: {
               source: "live-local",
               observedAt: TEST_EPOCH,
@@ -695,10 +696,10 @@ const buildAppUnderTest = (options?: {
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePaths.layer,
       workspaceEntriesLayer,
-      WorkspaceFileSystem.layer.pipe(
-        Layer.provide(WorkspacePaths.layer),
-        Layer.provide(workspaceEntriesLayer),
-      ),
+      (options?.layers?.workspaceFileSystem
+        ? Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)(options.layers.workspaceFileSystem)
+        : WorkspaceFileSystem.layer
+      ).pipe(Layer.provide(WorkspacePaths.layer), Layer.provide(workspaceEntriesLayer)),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),
@@ -7082,6 +7083,168 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.relativePath, "nested/created.txt");
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serializes ordinary file writes with compare-and-save requests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-save-race-" });
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const ordinaryAtLock = yield* Deferred.make<void>();
+      const ordinaryWritten = yield* Deferred.make<void>();
+      let contents = "original";
+      let detections = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          vcsDriverRegistry: {
+            detect: (input) =>
+              Effect.gen(function* () {
+                if (input.cwd === cwd && ++detections === 2)
+                  yield* Deferred.succeed(ordinaryAtLock, undefined);
+                return null;
+              }),
+          },
+          workspaceFileSystem: {
+            readFile: () =>
+              Effect.gen(function* () {
+                const snapshot = contents;
+                yield* Deferred.succeed(readStarted, undefined);
+                yield* Deferred.await(releaseRead);
+                return {
+                  relativePath: "file.ts",
+                  contents: snapshot,
+                  byteLength: snapshot.length,
+                  truncated: false,
+                };
+              }),
+            writeFile: (input) =>
+              Effect.gen(function* () {
+                contents = input.contents;
+                if (contents === "ordinary") yield* Deferred.succeed(ordinaryWritten, undefined);
+                return { relativePath: input.relativePath };
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const input = { cwd, relativePath: "file.ts" };
+            const guarded = yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              expectedContents: "original",
+              contents: "guarded",
+            }).pipe(Effect.forkChild);
+            yield* Deferred.await(readStarted);
+            const ordinary = yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              contents: "ordinary",
+            }).pipe(Effect.forkChild);
+            yield* Effect.raceFirst(
+              Deferred.await(ordinaryAtLock),
+              Deferred.await(ordinaryWritten),
+            );
+            yield* Deferred.succeed(releaseRead, undefined);
+            yield* Fiber.join(guarded);
+            yield* Fiber.join(ordinary);
+            assert.equal(contents, "ordinary");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects a delayed workspace save after the checkout changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-guarded-write-" });
+      let branch: string | null = "review";
+      let invalidated = false;
+      yield* buildAppUnderTest({
+        layers: {
+          vcsDriver: {
+            detectRepository: () =>
+              Effect.succeed({
+                kind: "git",
+                rootPath: cwd,
+                metadataPath: cwd,
+                freshness: {
+                  source: "live-local",
+                  observedAt: TEST_EPOCH,
+                  expiresAt: Option.none(),
+                },
+              }),
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitManager: {
+            invalidateLocalStatus: () =>
+              Effect.sync(() => {
+                invalidated = true;
+              }),
+            localStatus: () =>
+              Effect.sync(() => {
+                assert.isTrue(invalidated);
+                invalidated = false;
+                return {
+                  isRepo: true,
+                  hasPrimaryRemote: false,
+                  isDefaultRef: false,
+                  refName: branch,
+                  hasWorkingTreeChanges: false,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                };
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const input = {
+              cwd,
+              relativePath: "file.ts",
+              contents: "saved",
+              expectedBranch: "review",
+            };
+            yield* client[WS_METHODS.projectsWriteFile](input);
+            assert.isTrue(invalidated);
+            yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              expectedContents: "saved",
+              contents: "new saved",
+            });
+            const stale = yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              expectedContents: "saved",
+              contents: "stale edit",
+            }).pipe(Effect.result);
+            assert.equal(stale._tag, "Failure");
+            assert.equal(yield* fs.readFileString(path.join(cwd, "file.ts")), "new saved");
+            yield* client[WS_METHODS.projectsWriteFile]({
+              ...input,
+              expectedContents: "new saved",
+            });
+            for (const nextBranch of ["other", null]) {
+              branch = nextBranch;
+              const result = yield* client[WS_METHODS.projectsWriteFile]({
+                ...input,
+                contents: "pending edit",
+              }).pipe(Effect.result);
+              assert.equal(result._tag, "Failure");
+              if (result._tag === "Failure") {
+                assert.include(result.failure.message, "checkout changed");
+                assert.propertyVal(result.failure, "failure", "checkout_changed");
+              }
+              assert.equal(yield* fs.readFileString(path.join(cwd, "file.ts")), "saved");
+            }
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
