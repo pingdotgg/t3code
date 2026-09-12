@@ -145,6 +145,9 @@ describe("source-control image delivery", () => {
           );
           expect(redirect.status).toBe(302);
           expect(redirect.headers.get("location")).toBe(signedUrl);
+          expect(redirect.headers.get("cache-control")).toMatch(
+            /^private, (?:no-store|max-age=\d+)$/u,
+          );
           const imageUrl = yield* issueAssetUrl({
             resource: { _tag: "source-control-media", reference: gitlab },
           });
@@ -152,11 +155,13 @@ describe("source-control image delivery", () => {
             Effect.promise(() => handler(new Request(`http://t3.test${relativeUrl}`, { method })));
           const image = yield* fetchImage(imageUrl.relativeUrl);
           expect(image.status).toBe(200);
+          expect(image.headers.get("cache-control")).toBe("private, no-store");
           expect(image.headers.get("content-type")).toBe("image/svg+xml");
           expect(image.headers.get("content-security-policy")).toContain("sandbox");
           expect(yield* Effect.promise(() => image.text())).toBe("<svg>image</svg>");
           const head = yield* fetchImage(imageUrl.relativeUrl, "HEAD");
           expect(head.status).toBe(200);
+          expect(head.headers.get("cache-control")).toBe("private, no-store");
           expect(yield* Effect.promise(() => head.text())).toBe("");
           expect(
             (yield* fetchImage(
@@ -185,11 +190,13 @@ describe("source-control image delivery", () => {
             );
           const video = yield* requestVideo();
           expect(video.status).toBe(200);
+          expect(video.headers.get("cache-control")).toBe("private, no-store");
           expect(video.headers.get("content-type")).toBe("video/mp4");
           expect(video.headers.get("accept-ranges")).toBe("bytes");
           expect(yield* Effect.promise(() => video.text())).toBe("abcdefgh");
           const segment = yield* requestVideo("bytes=2-5");
           expect(segment.status).toBe(206);
+          expect(segment.headers.get("cache-control")).toBe("private, no-store");
           expect(segment.headers.get("content-range")).toBe("bytes 2-5/8");
           expect(segment.headers.get("content-length")).toBe("4");
           expect(yield* Effect.promise(() => segment.text())).toBe("cdef");
@@ -198,6 +205,7 @@ describe("source-control image delivery", () => {
           expect(invalidRange.headers.get("content-range")).toBe("bytes */8");
           const videoHead = yield* requestVideo("bytes=2-5", "HEAD");
           expect(videoHead.status).toBe(200);
+          expect(videoHead.headers.get("cache-control")).toBe("private, no-store");
           expect(videoHead.headers.get("content-length")).toBe("8");
           expect(yield* Effect.promise(() => videoHead.text())).toBe("");
           yield* TestClock.adjust("61 minutes");

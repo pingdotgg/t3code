@@ -414,6 +414,8 @@ export const assetRouteLayer = HttpRouter.add(
       const headers = {
         ...delivery.headers,
         ...assetResponseHeaders("upload", { mimeType: delivery.contentType }),
+        // Provider credentials can change independently of the signed asset URL.
+        "Cache-Control": "private, no-store",
         "Content-Type": delivery.contentType,
       };
       return request.method === "HEAD"
