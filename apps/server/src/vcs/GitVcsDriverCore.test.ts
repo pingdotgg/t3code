@@ -1077,6 +1077,17 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           .filter((entry) => entry.startsWith("sharedindex."))
           .sort();
 
+        const source = preview.sources.find((candidate) => candidate.kind === "working-tree")!;
+        assert.deepStrictEqual(source.files, [
+          { path: "after.ts", previousPath: "before.ts", additions: 1, deletions: 1 },
+        ]);
+        const scoped = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "after.ts", previousPath: "before.ts", sourceKind: "working-tree" },
+        });
+        const scopedSource = scoped.sources.find((candidate) => candidate.kind === "working-tree")!;
+        assert.deepStrictEqual(scopedSource.files, source.files);
+        assert.equal(scopedSource.diff, diff);
         assert.include(diff, "rename from before.ts");
         assert.include(diff, "rename to after.ts");
         assert.include(diff, "-three");
@@ -1194,8 +1205,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         ]);
         assert.deepStrictEqual(dirty.files, [
           { path: "a-large.txt", previousPath: null, additions: 4000, deletions: 4000 },
-          { path: "z-last.txt", previousPath: null, additions: 1, deletions: 1 },
           { path: "untracked.txt", previousPath: null, additions: 4000, deletions: 0 },
+          { path: "z-last.txt", previousPath: null, additions: 1, deletions: 1 },
         ]);
       }),
     );
