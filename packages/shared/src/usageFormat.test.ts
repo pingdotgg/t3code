@@ -10,6 +10,30 @@ import {
 } from "./usageFormat.ts";
 
 describe("hourly usage formatting", () => {
+  it("keeps requested zones separate when formatting repeated calls", () => {
+    const instant = "2026-08-11T12:37:00.000Z";
+    for (const zone of ["UTC", "America/New_York", "Asia/Kathmandu", "UTC"]) {
+      expect(formatHourShort(instant, zone)).toBe(
+        new Intl.DateTimeFormat("en-US", { timeZone: zone, hour: "numeric" }).format(
+          new Date(instant),
+        ),
+      );
+    }
+    expect(() => formatHourShort(instant, "Etc/Unknown")).toThrow(RangeError);
+    expect(formatHourShort("invalid", "UTC")).toBe("invalid");
+  });
+
+  it("uses the current system zone when no zone is supplied", () => {
+    try {
+      vi.stubEnv("TZ", "UTC");
+      expect(formatHourShort("2026-08-11T12:37:00.000Z")).toBe("12 PM");
+      vi.stubEnv("TZ", "America/New_York");
+      expect(formatHourShort("2026-08-11T12:37:00.000Z")).toBe("8 AM");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("enumerates 24 fixed buckets across a rolling window", () => {
     const hours = enumerateHourStarts("2026-08-10T12:37:00.000Z", "2026-08-11T12:37:00.000Z");
 
