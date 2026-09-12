@@ -2383,6 +2383,7 @@ const makeWsRpcLayer = (
                 ProviderSessionDirectory.ProviderSessionDirectory,
                 providerSessionDirectory,
               ),
+              Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
             ),
             { "rpc.aggregate": "workspace" },
           ),

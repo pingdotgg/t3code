@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  type AgentSessionImportSource,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderDriverKind,
@@ -105,16 +106,34 @@ const runScan = (input: ScannerTestInput) =>
     return yield* scanner.scan;
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreadOutcomes = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreadOutcomes = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly completedSources?: ReadonlyArray<AgentSessionImportSource>;
+    readonly windowMs?: number | null;
+  },
+) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-    return yield* scanner.recentThreads(input.workspaceRoot).pipe(
-      Stream.runCollect,
-      Effect.map((outcomes) => Array.from(outcomes)),
-    );
+    return yield* scanner
+      .recentThreads(
+        input.workspaceRoot,
+        input.completedSources ?? [],
+        input.windowMs === undefined ? undefined : { windowMs: input.windowMs },
+      )
+      .pipe(
+        Stream.runCollect,
+        Effect.map((outcomes) => Array.from(outcomes)),
+      );
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
-const runRecentThreads = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
+const runRecentThreads = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly completedSources?: ReadonlyArray<AgentSessionImportSource>;
+    readonly windowMs?: number | null;
+  },
+) =>
   runRecentThreadOutcomes(input).pipe(
     Effect.map((outcomes) =>
       outcomes.flatMap((outcome) => (outcome._tag === "Importable" ? [outcome.thread] : [])),
@@ -1758,7 +1777,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
                     thread: { messages: [{ text: "Replacement prompt" }] },
                   });
                 } else {
-                  expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+                  expect(outcomes).toEqual([{ _tag: "Skipped", reason: "unreadable" }]);
                 }
               }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
             }),
@@ -1948,7 +1967,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
 
-        expect(outcomes).toEqual([{ _tag: "Skipped" }, { _tag: "Skipped" }, { _tag: "Skipped" }]);
+        expect(outcomes).toEqual([
+          { _tag: "Skipped", reason: "unreadable" },
+          { _tag: "Skipped", reason: "unreadable" },
+          { _tag: "Skipped", reason: "unreadable" },
+        ]);
       }),
     );
 
@@ -2008,7 +2031,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
         expect(transcriptStatCount).toBe(2);
         expect(transcriptOpenCount).toBe(1);
-        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+        expect(outcomes).toEqual([{ _tag: "Skipped", reason: "unreadable" }]);
       }),
     );
 
@@ -2119,7 +2142,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
         expect(transcriptOpenCount).toBe(2);
         expect(fullReadBytes).toBe(new TextEncoder().encode(contents).byteLength);
-        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+        expect(outcomes).toEqual([{ _tag: "Skipped", reason: "unreadable" }]);
       }),
     );
 
@@ -2178,7 +2201,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
 
         expect(transcriptOpenCount).toBe(2);
-        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+        expect(outcomes).toEqual([{ _tag: "Skipped", reason: "unreadable" }]);
       }),
     );
 
@@ -2486,6 +2509,121 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual(["recent-session"]);
       }),
     );
+
+    it.effect("includes transcripts older than 30 days only with a null window", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-window-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-window-codex-");
+        const workspace = yield* makeTempDir("t3code-window-workspace-");
+        const dayMs = 24 * 60 * 60 * 1000;
+
+        const makeCodexContents = (sessionId: string, text: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: text },
+            }),
+          ].join("\n");
+
+        yield* writeTranscript({
+          filePath: path.join(codexHomePath, "sessions", "2026", "07", "24", "rollout-old.jsonl"),
+          contents: makeCodexContents("old-session", "Old prompt"),
+          mtimeMs: nowMs - 31 * dayMs,
+        });
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            "rollout-future.jsonl",
+          ),
+          contents: makeCodexContents("future-session", "Future prompt"),
+          mtimeMs: nowMs + 1_000,
+        });
+
+        const baseInput = { claudeHomePath, codexHomePath, workspaceRoot: workspace };
+        const defaultOutcomes = yield* runRecentThreadOutcomes(baseInput);
+        expect(defaultOutcomes).toEqual([]);
+
+        const explicitWindowOutcomes = yield* runRecentThreadOutcomes({
+          ...baseInput,
+          windowMs: 30 * dayMs,
+        });
+        expect(explicitWindowOutcomes).toEqual([]);
+
+        const nullWindowOutcomes = yield* runRecentThreadOutcomes({
+          ...baseInput,
+          windowMs: null,
+        });
+        expect(
+          nullWindowOutcomes.flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+          ),
+        ).toEqual(["old-session"]);
+      }),
+    );
+
+    it.effect("tags transcript budget exhaustion separately from unreadable failures", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-budget-tag-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-budget-tag-codex-");
+        const workspace = yield* makeTempDir("t3code-budget-tag-workspace-");
+
+        for (let index = 0; index < 101; index += 1) {
+          const sessionId = `budget-session-${index}`;
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${sessionId}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: sessionId, cwd: workspace },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: `Prompt ${index}` },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - index * 1_000,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(outcomes).toHaveLength(101);
+        expect(outcomes.slice(0, 100).map((outcome) => outcome._tag)).toEqual(
+          Array.from({ length: 100 }, () => "Importable"),
+        );
+        expect(outcomes[100]).toEqual({ _tag: "Skipped", reason: "budget" });
+        expect(
+          outcomes.flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+          ),
+        ).toEqual(Array.from({ length: 100 }, (_, index) => `budget-session-${index}`));
+      }),
+    );
   });
 });
 
@@ -2622,7 +2760,7 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it("keeps the canonical first prompt after long Codex transcripts are capped", () => {
+  it("retains every message in long Codex transcripts without a cap", () => {
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
     const laterAssistantMessages = Array.from({ length: 200 }, (_, index) =>
@@ -2661,7 +2799,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages).toHaveLength(201);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
       text: canonicalPrompt,
@@ -2669,7 +2807,7 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
-  it("restores the canonical first prompt when a later user message remains", () => {
+  it("retains the canonical first prompt alongside later messages without a cap", () => {
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
     const assistantMessages = Array.from({ length: 198 }, (_, index) =>
@@ -2723,7 +2861,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages).toHaveLength(201);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
       text: canonicalPrompt,
@@ -3068,7 +3206,7 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread).toBeNull();
   });
 
-  it("keeps the first prompt when later assistant output exceeds the message limit", () => {
+  it("retains every message when later assistant output exceeds the old message limit", () => {
     const transcript = [
       encodeTranscriptRecord({
         type: "user",
@@ -3091,7 +3229,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages).toHaveLength(251);
     expect(thread?.messages[0]?.text).toBe("Keep this prompt");
     expect(thread?.messages.at(-1)?.text).toBe("Assistant update 249");
   });

@@ -8,10 +8,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type AgentSessionImportWindow,
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationThread,
   type ProviderSendTurnInput,
+  type ServerSettingsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -183,17 +185,21 @@ const runImport = (input: {
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly snapshots: ReturnType<typeof makeSnapshotsLayer>;
   readonly expectedWorkspaceRoot?: string;
+  readonly window?: AgentSessionImportWindow;
+  readonly settings?: Layer.Layer<ServerSettingsService, ServerSettingsError>;
 }) =>
   importRecentAgentThreads({
     projectId: PROJECT_ID,
     ...(input.expectedWorkspaceRoot === undefined
       ? {}
       : { expectedWorkspaceRoot: input.expectedWorkspaceRoot }),
+    ...(input.window === undefined ? {} : { window: input.window }),
   }).pipe(
     Effect.provideService(AgentSessionScanner.AgentSessionScanner, input.scanner),
     Effect.provideService(OrchestrationEngine.OrchestrationEngineService, input.engine),
     Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, input.directory),
     Effect.provide(input.snapshots),
+    Effect.provide(input.settings ?? ServerSettingsService.layerTest()),
   );
 
 it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
@@ -244,7 +250,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           expectedWorkspaceRoot: `${WORKSPACE_ROOT}/`,
         });
 
-        expect(result).toEqual({ importedCount: 2, skippedCount: 0 });
+        expect(result).toEqual({ importedCount: 2, skippedCount: 0, remainingCount: 0 });
         expect(scannedRoot).toBe(WORKSPACE_ROOT);
         expect(commands.map((command) => command.type)).toEqual([
           "thread.create",
@@ -304,6 +310,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             Layer.mergeAll(
               Layer.mock(OrchestrationEngine.OrchestrationEngineService)({}),
               Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({}),
+              Layer.mock(ServerSettingsService)({}),
               makeSnapshotsLayer({
                 project: { ...makeProject(), workspaceRoot: "/tmp/project-moved" },
               }),
@@ -321,7 +328,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
       Effect.gen(function* () {
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
-          recentThreads: () => Stream.succeed({ _tag: "Skipped" }),
+          recentThreads: () => Stream.succeed({ _tag: "Skipped", reason: "unreadable" }),
         });
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
           dispatch: () => Effect.die("must not dispatch for a scanner skip"),
@@ -348,7 +355,144 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           snapshots: makeSnapshotsLayer({ project: makeProject() }),
         });
 
-        expect(result).toEqual({ importedCount: 0, skippedCount: 1 });
+        expect(result).toEqual({ importedCount: 0, skippedCount: 1, remainingCount: 0 });
+      }),
+    );
+
+    it.effect("counts only budget skips as remaining for a later run", () =>
+      Effect.gen(function* () {
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () =>
+            Stream.fromIterable([
+              { _tag: "Skipped", reason: "budget" },
+              { _tag: "Skipped", reason: "unreadable" },
+              makeThreadOutcome(makeThread("codex")),
+            ] satisfies ReadonlyArray<AgentSessionScanner.AgentSessionRecentThread>),
+        });
+        const commands: Array<OrchestrationCommand> = [];
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.void,
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.void,
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({ project: makeProject() }),
+        });
+
+        expect(result).toEqual({ importedCount: 1, skippedCount: 1, remainingCount: 1 });
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.create",
+          "thread.history.import",
+        ]);
+      }),
+    );
+
+    it.effect("passes the configured import window to the scanner", () =>
+      Effect.gen(function* () {
+        const receivedOptions: Array<{ readonly windowMs: number | null } | undefined> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: (_workspaceRoot, _completedSources, options) => {
+            receivedOptions.push(options);
+            return Stream.empty;
+          },
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: () => Effect.die("must not dispatch without threads"),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not bind without threads"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.die("unused"),
+          getBinding: () => Effect.die("must not read bindings without threads"),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+        const snapshots = makeSnapshotsLayer({ project: makeProject() });
+
+        expect(
+          yield* runImport({
+            scanner,
+            engine,
+            directory,
+            snapshots,
+            settings: ServerSettingsService.layerTest({ agentSessionImportWindow: "90d" }),
+          }),
+        ).toEqual({ importedCount: 0, skippedCount: 0, remainingCount: 0 });
+        expect(yield* runImport({ scanner, engine, directory, snapshots })).toEqual({
+          importedCount: 0,
+          skippedCount: 0,
+          remainingCount: 0,
+        });
+        expect(receivedOptions).toEqual([
+          { windowMs: 90 * 24 * 60 * 60 * 1000 },
+          { windowMs: null },
+        ]);
+      }),
+    );
+
+    it.effect("prefers the input window over the configured setting", () =>
+      Effect.gen(function* () {
+        const receivedOptions: Array<{ readonly windowMs: number | null } | undefined> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: (_workspaceRoot, _completedSources, options) => {
+            receivedOptions.push(options);
+            return Stream.empty;
+          },
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: () => Effect.die("must not dispatch without threads"),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not bind without threads"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.die("unused"),
+          getBinding: () => Effect.die("must not read bindings without threads"),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        expect(
+          yield* runImport({
+            scanner,
+            engine,
+            directory,
+            snapshots: makeSnapshotsLayer({ project: makeProject() }),
+            window: "30d",
+            settings: ServerSettingsService.layerTest({ agentSessionImportWindow: "all" }),
+          }),
+        ).toEqual({ importedCount: 0, skippedCount: 0, remainingCount: 0 });
+        expect(receivedOptions).toEqual([{ windowMs: 30 * 24 * 60 * 60 * 1000 }]);
       }),
     );
 
@@ -427,11 +571,27 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         });
         const importOnce = () => runImport({ scanner, engine, directory, snapshots });
 
-        expect(yield* importOnce()).toEqual({ importedCount: 0, skippedCount: 1 });
-        expect(yield* importOnce()).toEqual({ importedCount: 0, skippedCount: 1 });
-        expect(yield* importOnce()).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(yield* importOnce()).toEqual({
+          importedCount: 0,
+          skippedCount: 1,
+          remainingCount: 0,
+        });
+        expect(yield* importOnce()).toEqual({
+          importedCount: 0,
+          skippedCount: 1,
+          remainingCount: 0,
+        });
+        expect(yield* importOnce()).toEqual({
+          importedCount: 1,
+          skippedCount: 0,
+          remainingCount: 0,
+        });
         const historyAttemptsAfterCompletion = historyAttemptCount;
-        expect(yield* importOnce()).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(yield* importOnce()).toEqual({
+          importedCount: 1,
+          skippedCount: 0,
+          remainingCount: 0,
+        });
         expect(historyAttemptCount).toBe(historyAttemptsAfterCompletion);
         expect(historyAttemptCount).toBe(2);
         expect(bindings).toHaveLength(1);
@@ -482,7 +642,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           }),
         });
 
-        expect(result).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(result).toEqual({ importedCount: 1, skippedCount: 0, remainingCount: 0 });
       }),
     );
 
@@ -533,7 +693,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           }),
         });
 
-        expect(result).toEqual({ importedCount: 0, skippedCount: 2 });
+        expect(result).toEqual({ importedCount: 0, skippedCount: 2, remainingCount: 0 });
         expect(commands).toHaveLength(0);
       }),
     );
@@ -568,6 +728,7 @@ const integrationLayer = Layer.mergeAll(
   integrationRuntimeRepository,
   ProviderSessionDirectoryLive.pipe(Layer.provide(integrationRuntimeRepository)),
   Layer.succeed(AgentSessionScanner.AgentSessionScanner, integrationScanner),
+  ServerSettingsService.layerTest(),
 ).pipe(
   Layer.provide(ThreadBackgroundLiveness.layer),
   Layer.provide(ThreadPlanProgress.layer),
@@ -617,7 +778,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       const importedThread = yield* snapshots.getThreadDetailById(threadId);
       const binding = yield* directory.getBinding(threadId);
 
-      expect(result).toEqual({ importedCount: 1, skippedCount: 0 });
+      expect(result).toEqual({ importedCount: 1, skippedCount: 0, remainingCount: 0 });
       expect(Option.getOrThrow(importedThread).messages.map((message) => message.text)).toEqual(
         integrationThread.messages.map((message) => message.text),
       );
@@ -809,7 +970,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         });
 
         const first = yield* runAttempt(new Set());
-        expect(first.result).toEqual({ importedCount: 99, skippedCount: 2 });
+        expect(first.result).toEqual({ importedCount: 99, skippedCount: 1, remainingCount: 1 });
         expect(failHistory).toBe(false);
         expect(first.fullReads).toEqual(transcripts.slice(0, 100).map((entry) => entry.filePath));
         expect(first.openCounts.get(remaining.filePath)).toBe(1);
@@ -830,7 +991,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
 
         const completedPaths = new Set(completedSources.map((entry) => entry.source.filePath));
         const second = yield* runAttempt(completedPaths);
-        expect(second.result).toEqual({ importedCount: 101, skippedCount: 0 });
+        expect(second.result).toEqual({ importedCount: 101, skippedCount: 0, remainingCount: 0 });
         expect(second.fullReads).toEqual([failed.filePath, remaining.filePath]);
         for (const transcript of transcripts) {
           expect(second.openCounts.get(transcript.filePath)).toBe(
@@ -950,6 +1111,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           expect(yield* importRecentAgentThreads({ projectId })).toEqual({
             importedCount: 1,
             skippedCount: 0,
+            remainingCount: 0,
           });
           yield* Deferred.await(importSettled);
           yield* reactor.drain;
@@ -1087,7 +1249,11 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       });
       yield* Deferred.succeed(releaseImporter, undefined);
 
-      expect(yield* Fiber.join(importFiber)).toEqual({ importedCount: 1, skippedCount: 0 });
+      expect(yield* Fiber.join(importFiber)).toEqual({
+        importedCount: 1,
+        skippedCount: 0,
+        remainingCount: 0,
+      });
       expect(
         Option.getOrThrow(yield* snapshots.getThreadDetailById(threadId)).messages.map(
           (message) => message.text,
@@ -1197,7 +1363,11 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       });
       yield* Deferred.succeed(releaseImporter, undefined);
 
-      expect(yield* Fiber.join(importFiber)).toEqual({ importedCount: 0, skippedCount: 1 });
+      expect(yield* Fiber.join(importFiber)).toEqual({
+        importedCount: 0,
+        skippedCount: 1,
+        remainingCount: 0,
+      });
       expect(Option.getOrThrow(yield* directory.getBinding(threadId))).toMatchObject({
         status: "running",
         resumeCursor: { threadId: "active-client-session" },

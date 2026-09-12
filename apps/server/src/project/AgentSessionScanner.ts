@@ -83,7 +83,6 @@ const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  * those payloads. Raw I/O and selected history have separate budgets.
  */
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
@@ -170,7 +169,7 @@ export type AgentSessionRecentThread =
     }
   | { readonly _tag: "AlreadyImported"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
-  | { readonly _tag: "Skipped" };
+  | { readonly _tag: "Skipped"; readonly reason: "budget" | "unreadable" };
 
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
@@ -186,6 +185,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      options?: { readonly windowMs: number | null },
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -367,7 +367,6 @@ function parseAgentSessionRecords(
       firstUserMessage = message;
     }
     messages.push(message);
-    if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
 
   const hasMatchingCodexEventInTurn = (text: string) => {
@@ -481,11 +480,8 @@ function parseAgentSessionRecords(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
   if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
-  const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
-  const retainedMessages = firstUserMessageRetained
-    ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+  const retainedMessages = visibleMessages;
   const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
 
   return {
@@ -1255,13 +1251,15 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    options?: { readonly windowMs: number | null },
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
+    const windowMs = options === undefined ? RECENT_THREAD_WINDOW_MS : options.windowMs;
+    const cutoffMs = windowMs === null ? null : nowMs - windowMs;
 
     const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
@@ -1279,8 +1277,8 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
-          transcript.mtimeMs > nowMs
+          transcript.mtimeMs > nowMs ||
+          (cutoffMs !== null && transcript.mtimeMs < cutoffMs)
         ) {
           continue;
         }
@@ -1316,11 +1314,11 @@ export const make = Effect.gen(function* () {
             completed === undefined &&
             (transcriptsRemaining === 0 || bytesRemaining === 0 || recordsRemaining === 0)
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "budget" });
           }
           const stats = yield* statOption(transcript.filePath);
           if (Option.isNone(stats) || stats.value.type !== "File") {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
           const identity = transcriptIdentity(transcript.filePath, stats.value);
           const completedSource = completed?.find(
@@ -1342,7 +1340,7 @@ export const make = Effect.gen(function* () {
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
             identity.size > bytesRemaining
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "budget" });
           }
           // Reserve the whole file even if its read or parse fails.
           transcriptsRemaining -= 1;
@@ -1354,7 +1352,7 @@ export const make = Effect.gen(function* () {
             candidate.source,
           );
           if (snapshot === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
           recordsRemaining -= snapshot.recordCount;
 
@@ -1365,14 +1363,14 @@ export const make = Effect.gen(function* () {
             if (snapshotCwd !== null) break;
           }
           if (snapshotCwd === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
           const expandedCwd = expandHomePath(snapshotCwd.trim());
           if (
             !path.isAbsolute(expandedCwd) ||
             (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
           ) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
 
           const parsedThread = parseAgentSessionRecords(
@@ -1385,7 +1383,7 @@ export const make = Effect.gen(function* () {
             snapshot.records,
           );
           if (parsedThread === null) {
-            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped", reason: "unreadable" });
           }
 
           const source: AgentSessionImportSource = {
@@ -1414,7 +1412,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    options,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, options));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });
