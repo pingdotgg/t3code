@@ -245,8 +245,17 @@ type OpenCodeAskedRequestEvent = Extract<
 
 type OpenCodeRoutedRequestEvent = OpenCodeAskedRequestEvent | OpenCodeTerminalRequestEvent;
 
+type OpenCodeChildSessionEvent = Extract<
+  OpenCodeSubscribedEvent,
+  { readonly type: "session.created" | "session.updated" | "session.deleted" }
+>;
+
 interface OpenCodeRequestRelationRetry {
   warned: boolean;
+  fiber?: Fiber.Fiber<void, never>;
+}
+
+interface OpenCodeSessionRelationRetry {
   fiber?: Fiber.Fiber<void, never>;
 }
 
@@ -352,6 +361,7 @@ interface OpenCodeSessionContext {
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
   readonly requestRelationRetries: Map<string, OpenCodeRequestRelationRetry>;
+  readonly sessionRelationRetries: Map<string, OpenCodeSessionRelationRetry>;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
@@ -2042,6 +2052,85 @@ export function makeOpenCodeAdapter(
       retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
     });
 
+    const scheduleChildSessionRelationRetry = Effect.fn("scheduleChildSessionRelationRetry")(
+      function* (context: OpenCodeSessionContext, event: OpenCodeChildSessionEvent) {
+        const session = event.properties.info;
+        if (context.sessionRelationRetries.has(session.id)) return;
+        const retry: OpenCodeSessionRelationRetry = {};
+        context.sessionRelationRetries.set(session.id, retry);
+        const run = Effect.gen(function* () {
+          let retryCount = 0;
+          while (context.sessionRelationRetries.get(session.id) === retry) {
+            const related = yield* isRelatedOpenCodeSession(context, session.id).pipe(
+              Effect.orElseSucceed(() => false),
+            );
+            if (context.sessionRelationRetries.get(session.id) !== retry) return;
+            if (related) {
+              context.sessionRelationRetries.delete(session.id);
+              const turnId = context.activeTurnId;
+              const base = yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              });
+              if (event.type === "session.created") {
+                yield* emit({
+                  ...base,
+                  type: "task.started",
+                  payload: {
+                    taskId: session.id,
+                    taskType: "local_agent",
+                    title: session.title,
+                    description: session.title,
+                  },
+                });
+              } else if (event.type === "session.updated") {
+                yield* emit({
+                  ...base,
+                  type: "task.progress",
+                  payload: {
+                    taskId: session.id,
+                    taskType: "local_agent",
+                    title: session.title,
+                    description: session.title,
+                    summary: session.title,
+                    status: "running",
+                  },
+                });
+              } else {
+                yield* emit({
+                  ...base,
+                  type: "task.completed",
+                  payload: {
+                    taskId: session.id,
+                    taskType: "local_agent",
+                    status: "completed",
+                    summary: session.title,
+                  },
+                });
+                context.relatedSessionIds.delete(session.id);
+              }
+              return;
+            }
+            const delayMs = Math.min(250 * 2 ** retryCount, 5_000);
+            retryCount += 1;
+            yield* Effect.sleep(`${delayMs} millis`);
+          }
+        }).pipe(
+          Effect.catchCause(() => Effect.void),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (context.sessionRelationRetries.get(session.id) === retry) {
+                context.sessionRelationRetries.delete(session.id);
+              }
+            }),
+          ),
+        );
+        retry.fiber = yield* run.pipe(Effect.forkIn(context.sessionScope));
+      },
+    );
+
     const schedulePendingRequestRecovery = Effect.fn("schedulePendingRequestRecovery")(function* (
       context: OpenCodeSessionContext,
     ) {
@@ -2222,7 +2311,10 @@ export function makeOpenCodeAdapter(
         !context.relatedSessionIds.has(payloadSessionId) &&
         (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event))
       ) {
-        if (event.type === "permission.asked") {
+        if (isOpenCodeChildSessionEvent(event)) {
+          yield* scheduleChildSessionRelationRetry(context, event);
+          return;
+        } else if (event.type === "permission.asked") {
           yield* scheduleRequestRelationRetry(context, event);
         } else if (event.type === "question.asked") {
           yield* scheduleRequestRelationRetry(context, event);
@@ -3059,6 +3151,7 @@ export function makeOpenCodeAdapter(
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
           requestRelationRetries: new Map(),
+          sessionRelationRetries: new Map(),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),

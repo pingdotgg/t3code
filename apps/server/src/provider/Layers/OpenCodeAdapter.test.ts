@@ -2147,7 +2147,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("marks subagents when a child is proven related by ancestry lookup", () =>
+  it.effect("replays an out-of-order child session after ancestry lookup", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-child-ancestry-usage");
@@ -2156,15 +2156,15 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       runtimeMock.state.sessionParentById.set("ses_child", "http://127.0.0.1:9999/session");
       runtimeMock.state.sessionStatus = "busy";
       const busy = promiseWithResolvers<unknown>();
-      const childPermission = promiseWithResolvers<unknown>();
+      const childSession = promiseWithResolvers<unknown>();
       const idle = promiseWithResolvers<unknown>();
-      runtimeMock.state.subscribedEvents = [busy.promise, childPermission.promise, idle.promise];
+      runtimeMock.state.subscribedEvents = [busy.promise, childSession.promise, idle.promise];
 
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter(
           (event) =>
             event.threadId === threadId &&
-            (event.type === "request.opened" || event.type === "turn.completed"),
+            (event.type === "task.started" || event.type === "turn.completed"),
         ),
         Stream.take(2),
         Stream.runCollect,
@@ -2199,10 +2199,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       runtimeMock.state.sessionGetObserved = (sessionID) => {
         if (sessionID === "ses_child") requestOpened.resolve(undefined);
       };
-      childPermission.resolve({
-        id: "evt-child-ancestry-permission",
-        type: "permission.asked",
-        properties: permissionRequest("per_child_ancestry", "ses_child"),
+      childSession.resolve({
+        id: "evt-child-ancestry-session",
+        type: "session.created",
+        properties: { info: { id: "ses_child", title: "Child task" } },
       });
       yield* Effect.promise(() => requestOpened.promise);
       yield* Effect.yieldNow;
@@ -2219,7 +2219,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
       NodeAssert.deepEqual(
         events.map((event) => event.type),
-        ["request.opened", "turn.completed"],
+        ["task.started", "turn.completed"],
       );
       const completed = events[1];
       if (completed?.type === "turn.completed") {
