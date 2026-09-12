@@ -21,6 +21,7 @@ export type ThreadActionMenuId =
   | "mark-unread"
   | "copy"
   | "copy-path"
+  | "copy-pr-link"
   | "copy-branch"
   | "copy-thread-id"
   | "archive"
@@ -28,6 +29,7 @@ export type ThreadActionMenuId =
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
+  readonly prUrl: string | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
@@ -117,6 +119,7 @@ export function buildThreadActionMenuItems(
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
+        ...(state.prUrl ? [{ id: "copy-pr-link" as const, label: "PR Link", icon: "link" }] : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },

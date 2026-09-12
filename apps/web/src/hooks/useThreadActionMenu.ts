@@ -111,6 +111,13 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy branch", error),
   });
+  const { copyToClipboard: copyPrLinkToClipboard } = useCopyToClipboard<{ url: string }>({
+    target: "PR link",
+    onCopy: ({ url }) => {
+      toastManager.add({ type: "success", title: "PR link copied", description: url });
+    },
+    onError: (error) => failureToast("Failed to copy PR link", error),
+  });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
       toastManager.add({ type: "success", title: "Thread ID copied", description: threadId });
@@ -136,9 +143,11 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
+        const prUrl = (thread.linkedPullRequest ?? thread.branchPullRequest)?.url ?? null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
+          prUrl,
           isPinned: thread.pinnedAt != null,
           isSettled: supports.settlement && thread.settledOverride === "settled",
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -273,6 +282,11 @@ export function useThreadActionMenu(input: {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
             }
             return;
+          case "copy-pr-link":
+            if (prUrl) {
+              copyPrLinkToClipboard(prUrl, { url: prUrl });
+            }
+            return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
@@ -335,6 +349,7 @@ export function useThreadActionMenu(input: {
       confirmAndUnpinThread,
       copyBranchToClipboard,
       copyPathToClipboard,
+      copyPrLinkToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,

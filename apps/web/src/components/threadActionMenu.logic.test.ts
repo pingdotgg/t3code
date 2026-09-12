@@ -4,6 +4,7 @@ import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./thread
 
 const baseState: ThreadActionMenuState = {
   branch: null,
+  prUrl: null,
   isPinned: false,
   isSettled: false,
   isSnoozed: false,
@@ -53,6 +54,19 @@ describe("buildThreadActionMenuItems", () => {
     expect(withBranch).toContain("copy-branch");
     expect(allIds(baseState)).not.toContain("new-thread-on-branch");
     expect(allIds(baseState)).not.toContain("copy-branch");
+  });
+
+  it("offers PR Link in Copy only when a PR URL is available", () => {
+    const copy = buildThreadActionMenuItems({
+      ...baseState,
+      prUrl: "https://github.com/pingdotgg/t3code/pull/8531",
+    }).find((item) => item.id === "copy");
+    expect(copy?.children).toContainEqual({
+      id: "copy-pr-link",
+      label: "PR Link",
+      icon: "link",
+    });
+    expect(allIds(baseState)).not.toContain("copy-pr-link");
   });
 
   it("flips lifecycle labels with thread state", () => {

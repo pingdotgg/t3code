@@ -2173,6 +2173,21 @@ export default function Sidebar() {
       );
     },
   });
+  const { copyToClipboard: copyPrLinkToClipboard } = useCopyToClipboard<{ url: string }>({
+    target: "PR link",
+    onCopy: ({ url }) => {
+      toastManager.add({ type: "success", title: "PR link copied", description: url });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy PR link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: ({ threadId }) => {
       toastManager.add({
@@ -3990,12 +4005,14 @@ export default function Sidebar() {
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
+        const prUrl = (thread.linkedPullRequest ?? thread.branchPullRequest)?.url ?? null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
+              prUrl,
               isPinned,
               isSettled,
               isSnoozed,
@@ -4114,6 +4131,11 @@ export default function Sidebar() {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
             }
             return;
+          case "copy-pr-link":
+            if (prUrl) {
+              copyPrLinkToClipboard(prUrl, { url: prUrl });
+            }
+            return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
@@ -4189,6 +4211,7 @@ export default function Sidebar() {
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
+      copyPrLinkToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
