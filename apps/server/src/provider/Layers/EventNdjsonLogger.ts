@@ -32,6 +32,19 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+// Per string value, in UTF-16 code units rather than bytes: `String.length` is
+// O(1), while measuring real bytes would scan every string on the write path.
+const DEFAULT_MAX_STRING_LENGTH = 256 * 1024;
+// Across all string values of one record, so that many merely large values
+// cannot add up to a line the per-value cap would have allowed individually.
+// It bounds retained text, not the encoded line: keys and JSON syntax are not
+// counted, and escaping can grow the text at most sixfold (`\u0000`).
+const DEFAULT_MAX_RECORD_LENGTH = 4 * MEBIBYTE;
+// Values this short are the identifiers that make a record legible - `type`,
+// `method`, ids. They draw from a reserve a long value may not touch, because
+// key order puts a provider's bulky `raw` payload ahead of `type`, so without
+// one a single large field would empty every identifier behind it.
+const SHORT_VALUE_RESERVE = 256;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -80,6 +93,8 @@ export interface EventNdjsonLogStoreOptions {
   readonly retentionCheckIntervalMs?: number;
   readonly maxBufferedBytes?: number;
   readonly maxBufferedRecords?: number;
+  readonly maxStringLength?: number;
+  readonly maxRecordLength?: number;
   readonly attribution?: ResourceAttribution["Service"];
 }
 
@@ -113,6 +128,17 @@ export class EventNdjsonLogDirectoryError extends Schema.TaggedError<EventNdjson
   }
 }
 
+class EventNdjsonLogRecordError extends Schema.TaggedError<EventNdjsonLogRecordError>()(
+  "EventNdjsonLogRecordError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to read a provider event while bounding its log record";
+  }
+}
+
 export type EventNdjsonLogStoreError =
   | EventNdjsonLogConfigurationError
   | EventNdjsonLogDirectoryError;
@@ -126,6 +152,8 @@ interface ResolvedOptions {
   readonly retentionCheckIntervalMs: number;
   readonly maxBufferedBytes: number;
   readonly maxBufferedRecords: number;
+  readonly maxStringLength: number;
+  readonly maxRecordLength: number;
   readonly attribution: ResourceAttribution["Service"] | undefined;
 }
 
@@ -373,6 +401,8 @@ function resolveOptions(
       options.retentionCheckIntervalMs ?? DEFAULT_RETENTION_CHECK_INTERVAL_MS,
     maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
     maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
+    maxStringLength: options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
+    maxRecordLength: options.maxRecordLength ?? DEFAULT_MAX_RECORD_LENGTH,
     attribution: options.attribution,
   } satisfies ResolvedOptions;
 
@@ -385,6 +415,8 @@ function resolveOptions(
     ["retentionCheckIntervalMs", resolved.retentionCheckIntervalMs, 1],
     ["maxBufferedBytes", resolved.maxBufferedBytes, 1],
     ["maxBufferedRecords", resolved.maxBufferedRecords, 1],
+    ["maxStringLength", resolved.maxStringLength, 1],
+    ["maxRecordLength", resolved.maxRecordLength, 1],
   ] as const;
 
   for (const [option, value, minimum] of validations) {
@@ -494,8 +526,200 @@ function drainPending(input: {
   ];
 }
 
-const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
-  return yield* encodeUnknownJsonString(event).pipe(
+function truncationMarker(length: number): string {
+  return `[truncated by t3, ${length} characters total]`;
+}
+
+/**
+ * Keeps the head of an oversized value and records how long the original was, so
+ * a truncated record still says which file a diff touched and how much was cut.
+ */
+function truncateString(value: string, headLength: number): string {
+  // Never cut between a surrogate pair; a lone surrogate would survive into the log line.
+  const lastCode = value.charCodeAt(headLength - 1);
+  const keep = lastCode >= 0xd800 && lastCode <= 0xdbff ? headLength - 1 : headLength;
+  return `${value.slice(0, Math.max(keep, 0))}${truncationMarker(value.length)}`;
+}
+
+/**
+ * Answers whether a value can be rebuilt field by field. Anything else reaches the
+ * encoder untouched, because a class instance or a `toJSON` carrier such as `Date`
+ * would not survive being copied into a plain object.
+ */
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const prototype = Reflect.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * How much of the record budget a string may draw on. Values this short are the
+ * identifiers that make a record legible, so they may also spend the reserve.
+ */
+function spendableFor(value: string, budget: { remaining: number }): number {
+  return value.length <= SHORT_VALUE_RESERVE
+    ? budget.remaining
+    : Math.max(budget.remaining - SHORT_VALUE_RESERVE, 0);
+}
+
+/**
+ * Answers whether an event already fits both limits, reading it without copying
+ * anything. It spends the budget exactly the way `clampStrings` does, so an event
+ * it accepts would come out of `clampStrings` unchanged. This is the only pass an
+ * ordinary event takes, which is why it walks objects with `for...in` rather
+ * than allocating an `Object.entries` array for each one.
+ */
+function fitsLimits(
+  value: unknown,
+  maxLength: number,
+  budget: { remaining: number },
+  ancestors: Set<object>,
+): boolean {
+  if (typeof value === "string") {
+    if (value.length > maxLength || value.length > spendableFor(value, budget)) return false;
+    budget.remaining -= value.length;
+    return true;
+  }
+  if (typeof value !== "object" || value === null) return true;
+  if (!isPlainContainer(value) || ancestors.has(value)) return true;
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const entries = value as ReadonlyArray<unknown>;
+      for (let index = 0; index < entries.length; index += 1) {
+        if (!fitsLimits(entries[index], maxLength, budget, ancestors)) return false;
+      }
+      return true;
+    }
+
+    const fields = value as Record<string, unknown>;
+    for (const key in fields) {
+      if (Object.hasOwn(fields, key) && !fitsLimits(fields[key], maxLength, budget, ancestors)) {
+        return false;
+      }
+    }
+    return true;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/**
+ * Rebuilds an event that does not fit, bounding its string values on the way.
+ *
+ * Two bounds apply, and a truncation marker counts against both. No single value
+ * keeps more than `maxLength` characters, and the string values of one record
+ * together keep no more than the record budget, so an event carrying many merely
+ * large values cannot add up to a line the per-value cap would have allowed on
+ * its own. Once a limit cannot even fit a marker, the value is dropped. The
+ * budget is spent in encounter order, which is stable for a given event shape,
+ * and short values keep a reserve of it so the identifiers behind a bulky field
+ * survive.
+ *
+ * Every plain object and array is copied, and this pass reads each field once
+ * and stores it as data, so the encoder sees only values that were bounded
+ * rather than whatever an accessor returns on a later read. Objects are copied
+ * without a prototype so a `__proto__` key stays an ordinary field. Anything
+ * that is not a plain object or array is left alone, because `toJSON` carriers
+ * such as `Date` must reach the encoder intact. A cycle is returned untouched at
+ * the point it closes, so serialization still fails the way it did before and
+ * `serializeEvent` reports it.
+ */
+function clampStrings(
+  value: unknown,
+  maxLength: number,
+  budget: { remaining: number },
+  ancestors: Set<object>,
+): unknown {
+  if (typeof value === "string") {
+    const spendable = spendableFor(value, budget);
+    if (value.length <= maxLength && value.length <= spendable) {
+      budget.remaining -= value.length;
+      return value;
+    }
+    // The marker is itself part of the value, so it counts against both limits
+    // like any other retained text. Otherwise a truncated value would outgrow its
+    // cap, and a run of oversized values would keep spending marker-sized bites
+    // of a budget that reads as exhausted.
+    const room = Math.min(maxLength, spendable);
+    const marker = truncationMarker(value.length);
+    if (marker.length > room) return "";
+
+    const replacement = truncateString(value, room - marker.length);
+    budget.remaining -= replacement.length;
+    return replacement;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (!isPlainContainer(value) || ancestors.has(value)) return value;
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const entries = value as ReadonlyArray<unknown>;
+      const bounded: Array<unknown> = [];
+      for (let index = 0; index < entries.length; index += 1) {
+        bounded.push(clampStrings(entries[index], maxLength, budget, ancestors));
+      }
+      return bounded;
+    }
+
+    const fields = value as Record<string, unknown>;
+    const bounded: Record<string, unknown> = Object.create(null);
+    for (const key in fields) {
+      if (!Object.hasOwn(fields, key)) continue;
+      bounded[key] = clampStrings(fields[key], maxLength, budget, ancestors);
+    }
+    return bounded;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+/**
+ * Bounds the string values of one event before it is serialized. A provider can
+ * hand us a payload far larger than any log record should be (a Codex
+ * `turn/diff/updated` diff reaches hundreds of MiB on a big turn), and encoding
+ * it whole materializes an equally large line that can exhaust the heap. An
+ * event that already fits is returned as it came, so the ordinary path copies
+ * no object or array; only one that does not fit is rebuilt.
+ *
+ * The read-once guarantee therefore belongs to the rebuild. An event that fits
+ * reaches the encoder as it came, which reads its accessors again, exactly as it
+ * did before any bounding existed; an event that is rebuilt has its accessors
+ * read twice, once by each pass. Logged events are JSON-decoded payloads and
+ * object literals, so neither case arises in practice.
+ */
+function boundEvent(
+  event: unknown,
+  limits: Pick<ResolvedOptions, "maxStringLength" | "maxRecordLength">,
+): unknown {
+  const fits = fitsLimits(
+    event,
+    limits.maxStringLength,
+    { remaining: limits.maxRecordLength },
+    new Set(),
+  );
+  if (fits) return event;
+  return clampStrings(
+    event,
+    limits.maxStringLength,
+    { remaining: limits.maxRecordLength },
+    new Set(),
+  );
+}
+
+const serializeEvent = Effect.fnUntraced(function* (
+  event: unknown,
+  limits: Pick<ResolvedOptions, "maxStringLength" | "maxRecordLength">,
+) {
+  // Bounding the record reads every enumerable property before the encoder does,
+  // so a hostile accessor can throw there too; both sit behind the same guard.
+  return yield* Effect.try({
+    try: () => boundEvent(event, limits),
+    catch: (cause) => new EventNdjsonLogRecordError({ cause }),
+  }).pipe(
+    Effect.flatMap((bounded) => encodeUnknownJsonString(bounded)),
     Effect.catch((error) =>
       logWarning("failed to serialize provider event log record", {
         errorTag: errorTag(error),
@@ -613,7 +837,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
       if (!shouldPersist(stream, event)) return;
-      const payload = yield* serializeEvent(event);
+      const payload = yield* serializeEvent(event, resolved);
       if (payload === undefined) return;
 
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));

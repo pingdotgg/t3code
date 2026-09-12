@@ -990,6 +990,23 @@ function runtimeEventBase(
   };
 }
 
+/**
+ * Replaces the diff in a mirrored `turn/diff/updated` payload with a short
+ * marker. `payload.unifiedDiff` on the canonical event already carries the same
+ * string, and a turn diff is large enough that serializing it twice has
+ * exhausted the backend heap while logging the event.
+ */
+function elideNativeTurnDiff(payload: unknown): unknown {
+  if (typeof payload !== "object" || payload === null) return payload;
+  const fields = payload as Record<string, unknown>;
+  const diff = fields.diff;
+  if (typeof diff !== "string") return payload;
+  return {
+    ...fields,
+    diff: `[omitted by t3, ${diff.length} characters in payload.unifiedDiff]`,
+  };
+}
+
 function mapItemLifecycle(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -1648,9 +1665,12 @@ function mapToRuntimeEvents(
     if (!payload) {
       return [];
     }
+    const base = runtimeEventBase(event, canonicalThreadId);
+    const raw = base.raw;
     return [
       {
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...base,
+        ...(raw ? { raw: { ...raw, payload: elideNativeTurnDiff(raw.payload) } } : {}),
         type: "turn.diff.updated",
         payload: {
           unifiedDiff: payload.diff,
