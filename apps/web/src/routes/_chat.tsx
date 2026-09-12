@@ -108,7 +108,7 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "preview.toggle") {
+      if (command === "preview.toggle" || command === "preview.openRecent") {
         event.preventDefault();
         event.stopPropagation();
         if (!routeThreadRef) return;
@@ -122,7 +122,9 @@ function ChatRouteGlobalShortcuts() {
           );
           return;
         }
-        dispatchPreviewAction("toggle-panel");
+        if (command !== "preview.openRecent" || !event.repeat) {
+          dispatchPreviewAction(command === "preview.openRecent" ? "open-recent" : "toggle-panel");
+        }
         return;
       }
 

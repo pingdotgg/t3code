@@ -183,7 +183,7 @@ import {
 } from "../previewStateStore";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { BrowserSettingsReadError } from "../browser/openFileInPreview";
-import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { addBrowserSurface, openRecentBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -4834,8 +4834,23 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       subscribePreviewAction((action) => {
         if (action === "toggle-panel") togglePreviewPanel();
+        if (action === "open-recent" && activeThreadRef && isPreviewSupportedInRuntime()) {
+          void openRecentBrowserSurface({ threadRef: activeThreadRef, openPreview }).then(
+            (result) => {
+              if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open browser",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            },
+          );
+        }
       }),
-    [togglePreviewPanel],
+    [activeThreadRef, openPreview, togglePreviewPanel],
   );
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {

@@ -7,17 +7,19 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
+import * as Cause from "effect/Cause";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyPreviewServerSnapshot,
+  rememberPreviewUrl,
   readThreadPreviewState,
   resetPreviewStateForTests,
 } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
-import { addBrowserSurface } from "./addBrowserSurface";
+import { addBrowserSurface, openRecentBrowserSurface } from "./addBrowserSurface";
 
 const threadRef = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
@@ -79,5 +81,68 @@ describe("addBrowserSurface", () => {
         threadRef,
       ).surfaces.map((surface) => surface.id),
     ).toEqual(["browser:tab-1", "browser:tab-2"]);
+  });
+});
+
+describe("openRecentBrowserSurface", () => {
+  it("opens only one tab for overlapping shortcut invocations", async () => {
+    let tabNumber = 0;
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot(`tab-${++tabNumber}`)));
+    await Promise.all([
+      openRecentBrowserSurface({ threadRef, openPreview }),
+      openRecentBrowserSurface({ threadRef, openPreview }),
+    ]);
+    expect(openPreview).toHaveBeenCalledTimes(1);
+    expect(Object.keys(readThreadPreviewState(threadRef).sessions)).toEqual(["tab-1"]);
+  });
+
+  it("allows another shortcut attempt after opening fails", async () => {
+    const openPreview = vi.fn(async () =>
+      AsyncResult.failure<PreviewSessionSnapshot, Error>(Cause.fail(new Error("Open failed"))),
+    );
+    await openRecentBrowserSurface({ threadRef, openPreview });
+    await openRecentBrowserSurface({ threadRef, openPreview });
+    expect(openPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens a blank browser when the thread has no URL", async () => {
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot("tab-1")));
+    await openRecentBrowserSurface({ threadRef, openPreview });
+    expect(openPreview.mock.calls).toHaveLength(1);
+    expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-1");
+    expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
+  });
+
+  it("restores the most recent URL without borrowing another thread's history", async () => {
+    rememberPreviewUrl(threadRef, "https://example.com/old");
+    rememberPreviewUrl(threadRef, "https://example.com/recent");
+    rememberPreviewUrl(
+      { ...threadRef, threadId: "other" as ScopedThreadRef["threadId"] },
+      "https://other.com/",
+    );
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("tab-2")),
+    );
+    await openRecentBrowserSurface({ threadRef, openPreview: ({ input }) => openPreview(input) });
+    expect(openPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://example.com/recent", threadId: threadRef.threadId }),
+    );
+  });
+
+  it("reopens the tab with the most recent URL and never toggles it closed", async () => {
+    const existing = {
+      ...snapshot("tab-1"),
+      navStatus: { _tag: "Success" as const, url: "https://example.com/", title: "Example" },
+    };
+    applyPreviewServerSnapshot(threadRef, existing);
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot("tab-2")));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await openRecentBrowserSurface({ threadRef, openPreview });
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef)
+          .activeSurfaceId,
+      ).toBe("browser:tab-1");
+    }
+    expect(openPreview).not.toHaveBeenCalled();
   });
 });
