@@ -5,6 +5,7 @@ import { useEffect, useMemo } from "react";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
+import { useAgentSessionAutoReconcile } from "../hooks/useAgentSessionAutoReconcile";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
@@ -175,6 +176,7 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  useAgentSessionAutoReconcile();
   return (
     <>
       <ChatRouteGlobalShortcuts />
