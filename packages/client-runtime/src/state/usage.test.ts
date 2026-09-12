@@ -3,14 +3,20 @@ import {
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type UsageSummary,
+  type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { refreshUsage } from "./usage.ts";
+
+class UsageScanTestError extends Schema.TaggedError<UsageScanTestError>()("UsageScanTestError", {
+  cause: Schema.Defect(),
+}) {}
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -46,9 +52,12 @@ function harness(ids = ["a"]) {
       connection: { phase: "connected" },
     } as EnvironmentPresentation | null);
     const query = Atom.make(
-      Effect.promise(() => {
-        scanStarted.resolve();
-        return scan.promise;
+      Effect.tryPromise({
+        try: () => {
+          scanStarted.resolve();
+          return scan.promise;
+        },
+        catch: (cause) => new UsageScanTestError({ cause }),
       }),
     );
     return { environmentId, rates, scan, scanStarted, presentation, query };
@@ -62,9 +71,14 @@ function harness(ids = ["a"]) {
     registry,
     environmentIds: environments.map((entry) => entry.environmentId),
     input,
+    refreshToken: "test-refresh",
     server: {
-      usageSummary: ({ environmentId }: { environmentId: EnvironmentId }) =>
-        get(environmentId).query,
+      usageSummary: ({
+        environmentId,
+      }: {
+        environmentId: EnvironmentId;
+        input: UsageSummaryInput;
+      }) => get(environmentId).query,
       refreshUsageRates: {
         label: "test:rates",
         run: (
@@ -77,7 +91,7 @@ function harness(ids = ["a"]) {
       presentationAtom: (environmentId: EnvironmentId) => get(environmentId).presentation,
     },
   } satisfies Parameters<typeof refreshUsage>[0];
-  return { registry, environments, refresh: () => refreshUsage(options) };
+  return { registry, environments, options, refresh: () => refreshUsage(options) };
 }
 
 describe("manual usage refresh", () => {
@@ -101,6 +115,68 @@ describe("manual usage refresh", () => {
     expect(finished).toBe(false);
     entry.scan.resolve(summary);
     await refreshing;
+    expect(finished).toBe(true);
+  });
+
+  it("waits for the fresh source scan and ordinary window publication", async () => {
+    const {
+      environments: [entry],
+      options,
+      refresh,
+    } = harness();
+    const tokenScan = Promise.withResolvers<UsageSummary>();
+    const tokenStarted = Promise.withResolvers<void>();
+    const publication = Promise.withResolvers<UsageSummary>();
+    const publicationStarted = Promise.withResolvers<void>();
+    const tokenQuery = Atom.make(
+      Effect.promise(() => {
+        tokenStarted.resolve();
+        return tokenScan.promise;
+      }),
+    );
+    const ordinaryQuery = Atom.make(
+      Effect.promise(() => {
+        publicationStarted.resolve();
+        return publication.promise;
+      }),
+    );
+    options.server.usageSummary = ({ input }) => (input.refreshToken ? tokenQuery : ordinaryQuery);
+    let finished = false;
+    const refreshing = refresh().then(() => {
+      finished = true;
+    });
+    entry!.rates.resolve(AsyncResult.success(pricing));
+    await tokenStarted.promise;
+    expect(finished).toBe(false);
+    tokenScan.resolve(summary);
+    await publicationStarted.promise;
+    expect(finished).toBe(false);
+    publication.resolve(summary);
+    await refreshing;
+    expect(finished).toBe(true);
+  });
+
+  it("reports a scan failure after the other selected environment finishes", async () => {
+    const { environments, refresh } = harness(["failed", "healthy"]);
+    const [failed, healthy] = environments;
+    const failure = new UsageScanTestError({ cause: "Usage scan failed" });
+    failed!.query = Atom.make(Effect.fail(failure));
+    let finished = false;
+    const refreshing = refresh().then(
+      () => {
+        finished = true;
+        return null;
+      },
+      (error: unknown) => {
+        finished = true;
+        return error;
+      },
+    );
+    for (const entry of environments) entry.rates.resolve(AsyncResult.success(pricing));
+    await healthy!.scanStarted.promise;
+    expect(finished).toBe(false);
+    healthy!.scan.resolve(summary);
+    expect(await refreshing).toBe(failure);
     expect(finished).toBe(true);
   });
 
@@ -178,7 +254,8 @@ describe("manual usage refresh", () => {
     entry.rates.resolve(AsyncResult.success(pricing));
     await rescanned.promise;
     await refreshing;
-    expect(reads).toBe(2);
+    // The mock shares one atom for the token scan and normal publication.
+    expect(reads).toBe(3);
     unmount();
   });
 });
