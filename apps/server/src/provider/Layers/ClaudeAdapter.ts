@@ -4740,6 +4740,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "^(EnterWorktree|ExitWorktree)$",
+              hooks: [
+                (hookInput) =>
+                  runPromise(
+                    Effect.gen(function* () {
+                      const context = yield* Ref.get(contextRef);
+                      if (
+                        context &&
+                        hookInput.hook_event_name === "PostToolUse" &&
+                        !hookInput.agent_id
+                      ) {
+                        context.session = {
+                          ...context.session,
+                          cwd: hookInput.cwd,
+                          updatedAt: yield* nowIso,
+                        };
+                      }
+                      return {};
+                    }),
+                  ),
+              ],
+            },
+          ],
+        },
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],

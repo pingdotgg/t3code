@@ -965,12 +965,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ],
         });
       }
-      const branch =
-        command.branch !== undefined &&
-        command.expectedBranch !== undefined &&
-        thread.branch !== command.expectedBranch
-          ? thread.branch
-          : command.branch;
+      const staleCheckout =
+        (command.expectedBranch !== undefined && thread.branch !== command.expectedBranch) ||
+        (command.expectedWorktreePath !== undefined &&
+          thread.worktreePath !== command.expectedWorktreePath);
+      const branch = staleCheckout ? thread.branch : command.branch;
+      const worktreePath = staleCheckout ? thread.worktreePath : command.worktreePath;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -1000,7 +1000,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(branch !== undefined ? { branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(worktreePath !== undefined ? { worktreePath } : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),

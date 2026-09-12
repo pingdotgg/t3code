@@ -14,8 +14,10 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -35,7 +37,9 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
+import { VcsDriverRegistry } from "../../vcs/VcsDriverRegistry.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 
@@ -89,6 +93,9 @@ const make = Effect.gen(function* () {
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const vcs = yield* VcsDriverRegistry;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
 
@@ -524,6 +531,8 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
     if (!thread || thread.branch !== checkedOutBranch) return;
     if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, input.turnId)) return;
+    const sessionRuntime = yield* resolveSessionRuntimeForThread(input.threadId);
+    if (Option.isNone(sessionRuntime) || sessionRuntime.value.cwd !== input.cwd) return;
     yield* vcsStatusBroadcaster.refreshPullRequestStatus(input.cwd).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to refresh pull request status after turn completion", {
@@ -535,61 +544,116 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // A `git checkout` run inside a thread's dedicated worktree (by an agent or
-  // the user) bypasses T3's commands, so the thread's recorded branch goes
-  // stale. Since #4460 the client only attributes PR state to a thread when
-  // the checked-out branch equals the recorded one, so stale metadata silently
-  // orphans the thread's PR. Follow the drift here: adopt the checked-out
-  // branch as the thread's branch, but only when the worktree belongs to
-  // exactly this thread — for shared cwds the strict matching is the point.
+  // Follow provider cwd moves and external checkouts. Only a dedicated worktree
+  // owns its HEAD; moving elsewhere clears the old branch's attribution.
   const followWorktreeBranchDrift = Effect.fn("followWorktreeBranchDrift")(function* (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
     readonly local: VcsStatusLocalResult;
   }) {
-    // Detached HEAD has no branch to adopt; a temporary placeholder checkout
-    // means the first-turn auto-rename is still in flight — don't race it.
     const checkedOutBranch = input.local.refName;
-    if (checkedOutBranch === null || isTemporaryWorktreeBranch(checkedOutBranch)) {
-      return;
-    }
+    const adoptableBranch =
+      checkedOutBranch !== null && !isTemporaryWorktreeBranch(checkedOutBranch);
 
     yield* Effect.gen(function* () {
       const thread = yield* projectionSnapshotQuery
         .getThreadShellById(input.threadId)
         .pipe(Effect.map(Option.getOrUndefined));
-      if (
-        !thread ||
-        thread.branch === null ||
-        thread.branch === checkedOutBranch ||
-        thread.worktreePath === null ||
-        thread.worktreePath !== input.cwd
-      ) {
+      if (!thread) return;
+
+      const project = yield* projectionSnapshotQuery
+        .getProjectShellById(thread.projectId)
+        .pipe(Effect.map(Option.getOrUndefined));
+      if (!project) return;
+      const recordedCwd = thread.worktreePath ?? project.workspaceRoot;
+      const locationChanged =
+        recordedCwd !== input.cwd &&
+        (yield* fileSystem.realPath(recordedCwd).pipe(Effect.orElseSucceed(() => recordedCwd))) !==
+          (yield* fileSystem.realPath(input.cwd));
+      let worktreePath = thread.worktreePath;
+      if (locationChanged) {
+        const current = yield* vcs.detect({ cwd: input.cwd });
+        const original = yield* vcs.detect({ cwd: project.workspaceRoot });
+        if (!current?.repository.metadataPath || !original?.repository.metadataPath) return;
+        const currentMetadata = yield* fileSystem.realPath(
+          path.resolve(input.cwd, current.repository.metadataPath),
+        );
+        const originalMetadata = yield* fileSystem.realPath(
+          path.resolve(project.workspaceRoot, original.repository.metadataPath),
+        );
+        // Only follow checkouts belonging to this project's repository.
+        if (currentMetadata !== originalMetadata) return;
+        worktreePath =
+          current.repository.rootPath === original.repository.rootPath
+            ? null
+            : current.repository.rootPath;
+      } else if (!adoptableBranch || worktreePath === null || thread.branch === checkedOutBranch) {
         return;
       }
 
       const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const worktreeIsShared = shell.threads.some(
-        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
-      );
-      if (worktreeIsShared) {
-        return;
-      }
+      const projectRoots = new Map(shell.projects.map((entry) => [entry.id, entry.workspaceRoot]));
+      const targetPath = worktreePath === null ? null : yield* fileSystem.realPath(worktreePath);
+      const worktreeIsShared = yield* Effect.findFirst(shell.threads, (other) => {
+        const otherCwd = other.worktreePath ?? projectRoots.get(other.projectId);
+        if (other.id === thread.id || !otherCwd) return Effect.succeed(false);
+        return fileSystem.realPath(otherCwd).pipe(
+          Effect.map((otherPath) => otherPath === targetPath),
+          Effect.orElseSucceed(() => false),
+        );
+      }).pipe(Effect.map(Option.isSome));
+      if (!locationChanged && worktreeIsShared) return;
+      const branch =
+        worktreePath !== null && !worktreeIsShared && adoptableBranch ? checkedOutBranch : null;
+      const { driver } = yield* vcs.resolve({ cwd: input.cwd });
 
-      // expectedBranch makes this a compare-and-swap in the decider: if the
-      // recorded branch moved between our read and the dispatch (rename,
-      // concurrent drift-follow), the stale update is dropped.
-      yield* orchestrationEngine.dispatch({
-        type: "thread.meta.update",
-        commandId: yield* serverCommandId("worktree-branch-drift"),
-        threadId: thread.id,
-        branch: checkedOutBranch,
-        expectedBranch: thread.branch,
-      });
+      // Reject stale reads if a user changed the branch or worktree meanwhile.
+      yield* orchestrationEngine.dispatch(
+        {
+          type: "thread.meta.update",
+          commandId: yield* serverCommandId("worktree-branch-drift"),
+          threadId: thread.id,
+          branch,
+          expectedBranch: thread.branch,
+          expectedWorktreePath: thread.worktreePath,
+          ...(locationChanged ? { worktreePath } : {}),
+        },
+        {
+          validateBeforeCommit: Effect.gen(function* () {
+            const currentBranch = yield* driver
+              .execute({
+                operation: "CheckpointReactor.validateWorktreeBranch",
+                cwd: input.cwd,
+                args: ["branch", "--show-current"],
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationCommandInvariantError({
+                      commandType: "thread.meta.update",
+                      detail: "Could not verify the provider checkout branch.",
+                      cause,
+                    }),
+                ),
+              );
+            const sessionRuntime = yield* resolveSessionRuntimeForThread(input.threadId);
+            if (
+              Option.isNone(sessionRuntime) ||
+              sessionRuntime.value.cwd !== input.cwd ||
+              (currentBranch.stdout.trim() || null) !== checkedOutBranch
+            ) {
+              return yield* new OrchestrationCommandInvariantError({
+                commandType: "thread.meta.update",
+                detail: "Provider checkout changed during worktree status refresh.",
+              });
+            }
+          }),
+        },
+      );
       yield* Effect.logInfo("thread branch followed worktree checkout", {
         threadId: thread.id,
         previousBranch: thread.branch,
-        branch: checkedOutBranch,
+        branch,
       });
     }).pipe(
       Effect.catchCause((cause) => {

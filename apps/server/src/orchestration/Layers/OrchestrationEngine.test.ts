@@ -20,6 +20,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -54,6 +56,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -130,6 +133,66 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  effectIt.effect("validates queued commands before committing their events", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const blocked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const projectId = asProjectId("guarded-project");
+      let cwd = "/tmp/checkout-a";
+      const create = yield* engine
+        .dispatch(
+          {
+            type: "project.create",
+            commandId: CommandId.make("guarded-create"),
+            projectId,
+            title: "Original",
+            workspaceRoot: cwd,
+            createdAt: now(),
+          },
+          {
+            validateBeforeCommit: Deferred.succeed(blocked, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+            ),
+          },
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(blocked);
+      const update = yield* engine
+        .dispatch(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make("guarded-update"),
+            projectId,
+            title: "Stale",
+          },
+          {
+            validateBeforeCommit: Effect.suspend(() =>
+              cwd === "/tmp/checkout-a"
+                ? Effect.void
+                : Effect.fail(
+                    new OrchestrationCommandInvariantError({
+                      commandType: "project.meta.update",
+                      detail: "cwd changed",
+                    }),
+                  ),
+            ),
+          },
+        )
+        .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+      cwd = "/tmp/checkout-b";
+      yield* Deferred.succeed(release, undefined);
+      const created = yield* Fiber.join(create);
+      expect(yield* Fiber.join(update)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "OrchestrationCommandInvariantError", detail: "cwd changed" },
+      });
+      expect(yield* engine.latestSequence).toBe(created.sequence);
+      const snapshots = yield* ProjectionSnapshotQuery;
+      expect((yield* snapshots.getSnapshot()).projects[0]?.title).toBe("Original");
+    }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -1020,6 +1083,24 @@ describe("OrchestrationEngine", () => {
 
     const snapshot = await system.readModel();
     expect(snapshot.threads[0]?.branch).toBe("t3code/generated-branch-name");
+    for (const expected of [
+      { expectedBranch: "stale", expectedWorktreePath: "/tmp/project-branch-race-worktree" },
+      { expectedBranch: "t3code/generated-branch-name", expectedWorktreePath: null },
+    ]) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make(`stale-location-${expected.expectedBranch}`),
+          threadId: ThreadId.make("thread-branch-race"),
+          branch: "another-branch",
+          worktreePath: "/tmp/another-worktree",
+          ...expected,
+        }),
+      );
+      const current = (await system.readModel()).threads[0];
+      expect(current?.branch).toBe("t3code/generated-branch-name");
+      expect(current?.worktreePath).toBe("/tmp/project-branch-race-worktree");
+    }
     await system.dispose();
   });
 
