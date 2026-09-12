@@ -181,13 +181,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       };
     }),
   });
-  const makeService = (environmentPath = installerPath) =>
+  const makeService = (environmentPath = installerPath, execPath = "/usr/bin/node") =>
     BootService.make({
       baseDir,
       logsDir: path.join(baseDir, "userdata", "logs"),
       cliVersion: "1.2.3",
       host: {
-        execPath: "/usr/bin/node",
+        execPath,
         ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
       },
     }).pipe(
@@ -207,7 +207,21 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, control, runtime };
+  return { service, makeService, fs, home, statePath, commands, timeouts, control, runtime };
+});
+
+it("maps a Homebrew Node keg to the formula's stable opt link", () => {
+  expect(BootService.durableHomebrewNodePath("/opt/homebrew/Cellar/node/26.8.1/bin/node")).toBe(
+    "/opt/homebrew/opt/node/bin/node",
+  );
+  expect(BootService.durableHomebrewNodePath("/opt/homebrew/Cellar/node@22/22.1.0/bin/node")).toBe(
+    "/opt/homebrew/opt/node@22/bin/node",
+  );
+  expect(
+    BootService.durableHomebrewNodePath("/home/linuxbrew/.linuxbrew/Cellar/node/26.8.1/bin/node"),
+  ).toBe("/home/linuxbrew/.linuxbrew/opt/node/bin/node");
+  expect(BootService.durableHomebrewNodePath("/usr/bin/node")).toBeNull();
+  expect(BootService.durableHomebrewNodePath("/opt/homebrew/bin/node")).toBeNull();
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -523,6 +537,29 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const { service } = yield* makeHarness("win32");
       expect((yield* service.status).supported).toBe(false);
       expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceUnsupportedError");
+    }),
+  );
+
+  it.effect("points the launch agent at the Homebrew opt link instead of the Node keg", () =>
+    Effect.gen(function* () {
+      const { makeService, fs, home } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const kegNode = path.join(home, "brew", "Cellar", "node", "26.8.1", "bin", "node");
+      const optNode = path.join(home, "brew", "opt", "node", "bin", "node");
+      yield* fs.makeDirectory(path.dirname(kegNode), { recursive: true });
+      yield* fs.writeFileString(kegNode, "");
+
+      // Without the opt link the keg path is still the only known executable.
+      const kegOnly = yield* (yield* makeService(macInstallerPath, kegNode)).install();
+      expect(yield* fs.readFileString(kegOnly.unitPath)).toContain(`<string>${kegNode}</string>`);
+
+      yield* fs.makeDirectory(path.dirname(optNode), { recursive: true });
+      yield* fs.writeFileString(optNode, "");
+      const plan = yield* (yield* makeService(macInstallerPath, kegNode)).install();
+      expect(plan.nodePath).toBe(optNode);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      expect(plist).toContain(`<string>${optNode}</string>`);
+      expect(plist).not.toContain("Cellar");
     }),
   );
 

@@ -263,6 +263,19 @@ async function terminateChild(
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 
+/**
+ * The service unit starts the launcher through a durable Node path (a Homebrew
+ * `opt` link, for example). `process.execPath` is the realpath behind it, which
+ * a Node upgrade can delete while the launcher keeps running, so runtimes spawn
+ * through the path the launcher was started with whenever that is absolute.
+ */
+export function launcherNodePath(
+  argv0: string = process.argv0,
+  execPath: string = process.execPath,
+): string {
+  return NodePath.isAbsolute(argv0) ? argv0 : execPath;
+}
+
 export class Launcher {
   readonly #baseDir: string;
   readonly #statePath: string;
@@ -402,7 +415,7 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const child = NodeChildProcess.spawn(process.execPath, [paths.entryPath, "serve"], {
+    const child = NodeChildProcess.spawn(launcherNodePath(), [paths.entryPath, "serve"], {
       env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });

@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  Launcher,
+  launcherNodePath,
+  readServiceState,
+  writeServiceState,
+} from "./serviceLauncher.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -289,4 +294,15 @@ if (context.update?.status === "pending") {
       assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
     }),
   );
+});
+
+it("spawns runtimes through the Node path the service unit started, not its realpath", () => {
+  assert.equal(
+    launcherNodePath(
+      "/opt/homebrew/opt/node/bin/node",
+      "/opt/homebrew/Cellar/node/26.8.1/bin/node",
+    ),
+    "/opt/homebrew/opt/node/bin/node",
+  );
+  assert.equal(launcherNodePath("node", "/usr/bin/node"), "/usr/bin/node");
 });

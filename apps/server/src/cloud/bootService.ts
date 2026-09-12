@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { homebrewOwnershipFromCommandPath } from "../provider/providerMaintenance.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimePaths,
@@ -497,6 +498,20 @@ export interface BootServiceHost {
   readonly launcherSourcePath?: string;
 }
 
+/**
+ * `process.execPath` is the realpath, so a Homebrew Node is its versioned keg
+ * (`/opt/homebrew/Cellar/node/26.8.1/bin/node`), which `brew upgrade` deletes.
+ * The formula's `opt` link follows the current keg and keeps the same absolute
+ * path across upgrades, which is what a service unit needs.
+ */
+export function durableHomebrewNodePath(execPath: string): string | null {
+  const keg = homebrewOwnershipFromCommandPath(execPath);
+  if (!keg || keg.kind !== "formula") {
+    return null;
+  }
+  return `${keg.prefix}/opt/${keg.name}/bin/node`;
+}
+
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -512,6 +527,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const durableNodePath = durableHomebrewNodePath(host.execPath);
+  const nodePath =
+    durableNodePath !== null &&
+    (yield* fs.exists(durableNodePath).pipe(Effect.orElseSucceed(() => false)))
+      ? durableNodePath
+      : host.execPath;
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -523,7 +544,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const environmentPath = Array.from(
     new Set([
       ...xmlSafeInstallerDirectories,
-      path.dirname(host.execPath),
+      path.dirname(nodePath),
       "/opt/homebrew/bin",
       "/usr/local/bin",
       "/usr/bin",
@@ -568,7 +589,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {
-    nodePath: host.execPath,
+    nodePath,
     launcherPath,
     baseDir: input.baseDir,
     logPath,
@@ -711,7 +732,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       validate: (runtime) =>
         runner
           .run({
-            command: host.execPath,
+            command: nodePath,
             args: [runtime.entryPath, "--version"],
             timeout: Duration.seconds(30),
           })
