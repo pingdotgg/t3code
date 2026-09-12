@@ -213,6 +213,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       const paths = yield* ensurePinnedRuntimeInstalled({
         baseDir: serverConfig.baseDir,
         version: targetVersion,
+        execPath,
         fs,
         path,
         runner,

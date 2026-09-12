@@ -21,6 +21,7 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly nativeModuleAvailable?: boolean;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
 }
@@ -46,6 +47,19 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             stdout: "",
             stderr: "",
             code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }
+        if (input.args[0] === "--input-type=commonjs") {
+          order.push("native-module");
+          return {
+            stdout: "",
+            stderr: options.nativeModuleAvailable === false ? "Cannot find module pty.node" : "",
+            code: ChildProcessSpawner.ExitCode(options.nativeModuleAvailable === false ? 1 : 0),
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
@@ -329,7 +343,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         method: "boot-service",
         updateId: "launcher-id",
       });
-      expect(order).toEqual(["install", "preflight", "accept"]);
+      expect(order).toEqual(["install", "native-module", "preflight", "accept"]);
     }),
   );
 
@@ -344,6 +358,15 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("does not hand off an update when npm succeeds without a working native module", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ nativeModuleAvailable: false });
+      const error = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(error.reason).toBe("Could not prepare t3@1.1.0.");
+      expect(order).toEqual(["install", "native-module"]);
     }),
   );
 

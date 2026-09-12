@@ -705,6 +705,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     yield* ensurePinnedRuntimeInstalled({
       baseDir: input.baseDir,
       version: input.cliVersion,
+      execPath: host.execPath,
       fs,
       path,
       runner,
