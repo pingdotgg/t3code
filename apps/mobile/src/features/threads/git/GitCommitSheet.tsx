@@ -1,5 +1,5 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -13,6 +13,19 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
+
+// The sheet is a screen and unmounts the moment the action starts, so a draft has to outlive the
+// component to survive a commit the server refuses, typically a rejected commit-msg hook.
+// Keyed by environment as well as path, since two environments can mount the same cwd.
+let pendingCommitDraft: {
+  readonly key: string;
+  readonly message: string;
+  readonly excludedFiles: ReadonlySet<string>;
+} | null = null;
+
+function commitDraftKey(environmentId: string | null, cwd: string | null): string | null {
+  return environmentId === null || cwd === null ? null : `${environmentId}\n${cwd}`;
+}
 
 type GitCommitSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -40,9 +53,32 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
-  const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const draftKey = commitDraftKey(selectedThread?.environmentId ?? null, selectedThreadCwd);
+  const draft =
+    draftKey !== null && pendingCommitDraft?.key === draftKey ? pendingCommitDraft : null;
+  const [dialogCommitMessage, setDialogCommitMessage] = useState(draft?.message ?? "");
+  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
+    draft?.excludedFiles ?? new Set(),
+  );
   const [isEditingFiles, setIsEditingFiles] = useState(false);
+
+  // Dismissing the sheet is the mobile equivalent of Cancel on web, so it discards the draft.
+  // Submitting also unmounts the sheet, hence the guard.
+  const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
+  const isSubmittingRef = useRef(false);
+  useEffect(
+    () => () => {
+      if (isSubmittingRef.current) {
+        return;
+      }
+      const key = draftKeyRef.current;
+      if (key !== null && pendingCommitDraft?.key === key) {
+        pendingCommitDraft = null;
+      }
+    },
+    [],
+  );
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -53,16 +89,34 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const runCommitAction = useCallback(
     async (featureBranch: boolean) => {
+      isSubmittingRef.current = true;
       const commitMessage = dialogCommitMessage.trim();
+      const submitted =
+        draftKey === null ? null : { key: draftKey, message: commitMessage, excludedFiles };
+      if (submitted) {
+        pendingCommitDraft = submitted;
+      }
       navigation.goBack();
-      await gitActions.onRunSelectedThreadGitAction({
+      const result = await gitActions.onRunSelectedThreadGitAction({
         action: "commit",
         featureBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
       });
+      // Identity check: a concurrent commit elsewhere may already own the stored draft.
+      if (result !== null && pendingCommitDraft === submitted) {
+        pendingCommitDraft = null;
+      }
     },
-    [allSelected, dialogCommitMessage, gitActions, navigation, selectedFiles],
+    [
+      allSelected,
+      dialogCommitMessage,
+      draftKey,
+      excludedFiles,
+      gitActions,
+      navigation,
+      selectedFiles,
+    ],
   );
 
   return (
