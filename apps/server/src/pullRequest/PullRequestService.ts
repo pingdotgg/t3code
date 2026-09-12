@@ -45,6 +45,7 @@ import {
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
   type PullRequestRef,
+  type PullRequestRoutingResult,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerRequestInput,
@@ -146,6 +147,9 @@ export class PullRequestService extends Context.Service<
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
+    readonly routing: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestRoutingResult, PullRequestError>;
     readonly summary: (
       input: PullRequestRef,
       options?: { readonly recoverTransientFailure?: boolean },
@@ -472,6 +476,7 @@ function withRateLimitBackoff(
     kind: api.kind,
     capabilities: api.capabilities,
     getViewer: wrap("getViewer", api.getViewer),
+    ...(api.getRoutingIdentity === undefined ? {} : { getRoutingIdentity: api.getRoutingIdentity }),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -750,13 +755,19 @@ export const make = Effect.gen(function* () {
    * handed to a provider on the client's word. Read freshly for that reason, rather than taken
    * from whatever the detail said when the page loaded.
    */
-  const viewerPermissionsOf = (project: SupportedProject, ref: PullRequestRef, operation: string) =>
+  const viewerPermissionsOf = (
+    project: SupportedProject,
+    ref: PullRequestRef,
+    operation: string,
+    includeUpdateBranch = false,
+  ) =>
     project.api
       .getViewerPermissions({
         cwd: project.project.workspaceRoot,
         repository: project.repository,
         host: project.host,
         number: ref.number,
+        includeUpdateBranch,
       })
       .pipe(Effect.mapError(toPullRequestError(operation)));
 
@@ -816,7 +827,7 @@ export const make = Effect.gen(function* () {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
       const api = withRateLimitBackoff(registered, host, rateLimits);
-      return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd }))).pipe(
+      return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
         Effect.map((viewer) => ({
           host,
           kind,
@@ -1285,6 +1296,33 @@ export const make = Effect.gen(function* () {
   const viewerOf = (project: SupportedProject): Effect.Effect<string | null> =>
     resolveViewers([project], new Map()).pipe(Effect.map(([resolved]) => resolved?.viewer ?? null));
 
+  const routing = Effect.fn("PullRequestService.routing")(function* (input: PullRequestRef) {
+    const project = yield* requireProject(input);
+    const api = project.api.kind === "github" ? registry.get("github") : null;
+    if (api?.getRoutingIdentity === undefined) {
+      return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+    }
+    const identity = yield* api
+      .getRoutingIdentity({
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+      })
+      .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
+    if (!identity.viewer.trim() || !identity.accountId.trim()) {
+      return yield* new PullRequestOperationError({
+        operation: "routeIdentity",
+        detail: "The signed-in account could not be verified.",
+      });
+    }
+    return {
+      host: project.host,
+      provider: project.api.kind,
+      ...identity,
+      projectTitle: project.project.title,
+      workspaceRoot: project.project.workspaceRoot,
+    };
+  });
+
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) => {
@@ -1594,7 +1632,12 @@ export const make = Effect.gen(function* () {
         // What the host can do and what this account may ask of it are two questions, and both
         // have to say yes. The second is asked last, because it costs a request and the checks
         // above do not.
-        return viewerPermissionsOf(project, input, "runAction").pipe(
+        return viewerPermissionsOf(
+          project,
+          input,
+          "runAction",
+          input.action === "update-branch",
+        ).pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
             const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
             if (
@@ -2281,18 +2324,21 @@ export const make = Effect.gen(function* () {
       ref.host?.toLowerCase() ?? null,
       ref.repository.toLowerCase(),
       ref.number,
+      ref.expectedAccountId ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number] = JSON.parse(key) as [
+    const [, projectId, host, repository, number, expectedAccountId] = JSON.parse(key) as [
       number,
       string,
       string | null,
       string,
       number,
+      string | null,
     ];
     return {
       projectId,
       ...(host === null ? {} : { host }),
+      ...(expectedAccountId === null ? {} : { expectedAccountId }),
       repository,
       number,
     } as PullRequestRef;
@@ -2353,6 +2399,7 @@ export const make = Effect.gen(function* () {
       project.project.id,
       project.project.workspaceRoot,
       String(input.number),
+      input.expectedAccountId ?? "",
     ]
       .map(encodeURIComponent)
       .join(":");
@@ -2383,6 +2430,7 @@ export const make = Effect.gen(function* () {
     const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
     return held !== undefined &&
+      input.allowStale !== false &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
       ? Effect.succeed(held)
       : cached.pipe(
@@ -2540,18 +2588,17 @@ export const make = Effect.gen(function* () {
     // `serveHeld` returns immediately. Skip the write when that read is older
     // than a later strict summary — display reuse would otherwise keep the
     // regression and never ask the host again.
-    return lastGoodDetail.serveHeld(
-      key,
-      Cache.get(detailCache, key).pipe(
-        Effect.tap((value) => {
-          const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
-          return shouldReplaceHeldSummary(key, summary)
-            ? lastGoodSummary.record(key, summary)
-            : Effect.void;
-        }),
-      ),
-      "revalidate",
+    const read = Cache.get(detailCache, key).pipe(
+      Effect.tap((value) => {
+        const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
+        return shouldReplaceHeldSummary(key, summary)
+          ? lastGoodSummary.record(key, summary)
+          : Effect.void;
+      }),
     );
+    return input.allowStale === false
+      ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
+      : lastGoodDetail.serveHeld(key, read, "revalidate");
   };
 
   const activityCache = yield* Cache.makeWith(
@@ -2733,6 +2780,7 @@ export const make = Effect.gen(function* () {
   });
 
   return PullRequestService.of({
+    routing,
     list,
     listStats,
     summary,

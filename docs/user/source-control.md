@@ -79,6 +79,15 @@ GitLab calls these merge requests.
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
+GitHub review details, linked PR status, and review actions can use another connected environment
+signed in to the same GitHub account. Each environment needs a project on that GitHub host.
+A connected local environment is preferred for actions and can answer slow or failed reads.
+Browsers and mobile clients need a paired environment to use its GitHub CLI credentials.
+Credentials stay on their machines. Previously verified credentials remain usable for routing
+for ten minutes during a GitHub outage; new credentials must be verified first. An action with
+an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
+PR creation from Git actions continue to use the project's environment.
+
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.
 

@@ -513,6 +513,36 @@ it.effect("propagates workflow discovery rate limits", () =>
 );
 
 describe("getViewerPermissions", () => {
+  it.effect("checks fresh access without reading branch details for unrelated operations", () => {
+    let accessReads = 0;
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const permissions = yield* provider.getViewerPermissions({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        includeUpdateBranch: false,
+      });
+
+      expect(accessReads).toBe(1);
+      expect(permissions.actions).toContain("merge");
+      expect(permissions.actions).not.toContain("update-branch");
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestDetail: () => Effect.die("Unexpected detail read"),
+          getPullRequestBaseComparison: () => Effect.die("Unexpected comparison read"),
+          getViewerAccess: () =>
+            Effect.sync(() => {
+              accessReads++;
+              return { canWrite: true, canTriage: true, canUpdate: true, didAuthor: false };
+            }),
+        }),
+      ),
+    );
+  });
+
   const layerWithComparison = (
     comparison: Effect.Effect<{
       readonly behindBy: number | null;

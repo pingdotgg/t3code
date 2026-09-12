@@ -1,11 +1,15 @@
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
   resolvePullRequestAuthorFilter,
+  PositiveInt,
+  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -413,8 +417,16 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
+    readonly getRoutingIdentity: (input: {
+      readonly cwd: string;
+      readonly host: string;
+    }) => Effect.Effect<
+      { readonly accountId: string; readonly viewer: string },
+      GitHubPullRequestCliError
+    >;
     readonly getViewerLogin: (input: {
       readonly cwd: string;
+      readonly host: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
@@ -991,6 +1003,63 @@ function actionArgs(
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+  const routingIdentities = new Map<
+    string,
+    {
+      at: number;
+      value: { accountId: string; viewer: string };
+    }
+  >();
+  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        id: PositiveInt,
+        login: TrimmedNonEmptyString,
+      }),
+    ),
+  );
+  const getRoutingIdentity = Effect.fn("GitHubPullRequestCli.getRoutingIdentity")(
+    function* (input: { readonly cwd: string; readonly host: string }) {
+      const unavailable = () =>
+        new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd });
+      const host = input.host.toLowerCase();
+      // Only the digest is retained. Never attach credential lookup output to an error.
+      const token = (yield* github
+        .execute({
+          cwd: input.cwd,
+          args: ["auth", "token", "--hostname", host],
+          env: { GH_DEBUG: "" },
+        })
+        .pipe(Effect.mapError(unavailable))).stdout.trim();
+      if (!token) return yield* unavailable();
+      const key = `${host}:${NodeCrypto.createHash("sha256").update(token).digest("hex")}`;
+      const now = yield* Clock.currentTimeMillis;
+      const cached = routingIdentities.get(key);
+      if (cached !== undefined && now - cached.at < 10 * 60_000) return cached.value;
+      // Pin this read to the captured credential so an auth switch cannot poison its cache entry.
+      const response = yield* github
+        .execute({
+          cwd: input.cwd,
+          args: ["api", "user", "--hostname", host],
+          env: {
+            GH_TOKEN: token,
+            GITHUB_TOKEN: token,
+            GH_ENTERPRISE_TOKEN: token,
+            GITHUB_ENTERPRISE_TOKEN: token,
+            GH_DEBUG: "",
+          },
+        })
+        .pipe(Effect.mapError(unavailable));
+      const identity = yield* decodeRoutingIdentity(response.stdout).pipe(
+        Effect.mapError(unavailable),
+      );
+      const value = { accountId: String(identity.id), viewer: identity.login };
+      if (routingIdentities.size >= 128)
+        routingIdentities.delete(routingIdentities.keys().next().value!);
+      routingIdentities.set(key, { at: now, value });
+      return value;
+    },
+  );
 
   /**
    * The pull request's own node id, which is what a mutation against the pull request itself is
@@ -1468,15 +1537,9 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
+    getRoutingIdentity,
     getViewerLogin: (input) =>
-      github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
-        Effect.flatMap((result) => {
-          const login = result.stdout.trim();
-          return login.length > 0
-            ? Effect.succeed(login)
-            : Effect.fail(new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }));
-        }),
-      ),
+      getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer)),
 
     listPullRequests: (input) => {
       const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);

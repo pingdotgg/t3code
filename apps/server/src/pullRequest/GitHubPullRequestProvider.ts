@@ -212,9 +212,13 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
+    getRoutingIdentity: (input) =>
+      cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
 
     getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
@@ -494,20 +498,22 @@ export const make = Effect.gen(function* () {
           // comparison only resolves through the head ref the detail carries. A failure here
           // withholds that one action rather than the whole answer, the way the detail path
           // leaves the banner unknown.
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                ? Effect.succeed(false)
-                : cli
-                    .getPullRequestBaseComparison({
-                      ...input,
-                      headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                      allowReserve: true,
-                    })
-                    .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
-            ),
-            Effect.orElseSucceed(() => false),
-          ),
+          input.includeUpdateBranch === false
+            ? Effect.succeed(false)
+            : cli.getPullRequestDetail(input).pipe(
+                Effect.flatMap((pullRequest) =>
+                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                    ? Effect.succeed(false)
+                    : cli
+                        .getPullRequestBaseComparison({
+                          ...input,
+                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                          allowReserve: true,
+                        })
+                        .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
+                ),
+                Effect.orElseSucceed(() => false),
+              ),
         ],
         { concurrency: 2 },
       ).pipe(
