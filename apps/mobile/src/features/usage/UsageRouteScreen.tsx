@@ -310,7 +310,7 @@ export function UsageRouteScreen() {
                   />
                   <ProviderSection merged={merged} metric={metric} />
                   <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-                  <ModelsSection merged={merged} />
+                  <ModelsSection merged={merged} metric={metric} />
                 </>
               )}
             </>
@@ -585,14 +585,20 @@ function MetricCell(props: {
   );
 }
 
-function ModelsSection(props: { readonly merged: MergedUsage }) {
-  const { merged } = props;
+function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
+  const { merged, metric } = props;
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
 
+  // Ranked by whatever the toggle is showing, matching the provider rows.
+  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
+  const ordered = [...merged.models].sort((a, b) =>
+    metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
+  );
+
   return (
     <SettingsSection title="By model" card>
-      {merged.models.map((model, index) => (
+      {ordered.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
           className={
@@ -610,13 +616,21 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
               {model.model}
             </Text>
             <Text className="text-sm text-foreground-muted">
-              {isModelCostUnknown(model)
-                ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+              {metric === "tokens"
+                ? `${formatPercent(model.tokenShare)} of tokens · ${
+                    isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
+                  }`
+                : isModelCostUnknown(model)
+                  ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
+                  : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
           </View>
           <Text className="text-base tabular-nums text-foreground">
-            {isModelCostUnknown(model) ? "Unpriced" : formatUsd(model.costUsd)}
+            {metric === "tokens"
+              ? formatTokens(model.totalTokens)
+              : isModelCostUnknown(model)
+                ? "Unpriced"
+                : formatUsd(model.costUsd)}
           </Text>
         </View>
       ))}
