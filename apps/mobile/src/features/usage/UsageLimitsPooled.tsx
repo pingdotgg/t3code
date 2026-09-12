@@ -212,12 +212,7 @@ export function UsageLimitsSection({
   const colors = useProviderColors();
   return (
     <View className="gap-6">
-      {failedLabels.length ? (
-        <Text className="text-sm text-foreground-muted">
-          {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
-        </Text>
-      ) : null}
-      {pools.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
             ? "Select an environment to see limits."
@@ -243,11 +238,32 @@ export function UsageLimitsSection({
           ))}
         </View>
       ))}
-      {notices.map((notice) => (
-        <Text key={notice} className="text-sm text-foreground-muted">
-          {notice}
-        </Text>
-      ))}
+      {notices.length > 0 || failedLabels.length > 0 ? (
+        <View
+          accessible
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+        >
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={16}
+            tintColorClassName="accent-warning-foreground"
+          />
+          <View className="min-w-0 flex-1 gap-0.5">
+            {notices.map((notice) => (
+              <Text key={notice} className="text-sm font-t3-medium text-warning-foreground">
+                {notice}
+              </Text>
+            ))}
+            {failedLabels.length > 0 ? (
+              <Text className="text-sm font-t3-medium text-warning-foreground">
+                {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
