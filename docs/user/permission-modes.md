@@ -31,3 +31,7 @@ Antigravity can still send native approval requests in **Full access**. It only 
 approvals for actions that support them.
 
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.
+
+Oh My Pi threads map the modes onto omp's approval flags: **Supervised** passes
+`--approval-mode=always-ask`, **Auto-accept edits** passes `--approval-mode=write`,
+**Auto** passes `--auto-approve`, and **Full access** passes `--approval-mode=yolo`.
