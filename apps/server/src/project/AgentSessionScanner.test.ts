@@ -1471,7 +1471,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           contents: [
             encodeTranscriptRecord({
               type: "session_meta",
-              payload: { id: "codex-recent", cwd: workspace },
+              payload: { id: "codex-recent", cwd: workspace, name: "Saved code review" },
             }),
             encodeTranscriptRecord({
               type: "event_msg",
@@ -1500,6 +1500,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.providerSessionId)).toEqual([
           "codex-recent",
           "claude-recent",
+        ]);
+        expect(threads.map((thread) => thread.title)).toEqual([
+          "Saved code review",
+          "Fix the project",
         ]);
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
           ["Review this code", "Looks good"],
@@ -2959,7 +2963,7 @@ describe("parseAgentSessionTranscript", () => {
         }),
         encodeTranscriptRecord({
           type: "session_meta",
-          payload: { id: "parent-session" },
+          payload: { id: "parent-session", name: "Parent title" },
         }),
         encodeTranscriptRecord({
           type: "event_msg",
@@ -2973,6 +2977,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.providerSessionId).toBe("fork-session");
+    expect(thread?.title).toBe("Continue in the fork");
   });
 
   it("skips Codex transcripts without a resumable session ID", () => {
@@ -3065,6 +3070,52 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
+  it.each([
+    [
+      "<recommended_plugins>\nAvailable plugins\n</recommended_plugins>Fix the import",
+      {},
+      "Fix the import",
+    ],
+    [
+      "<recommended_plugins>\nPlugins\n</recommended_plugins>\n<environment_context>\n<cwd>/tmp</cwd>\n</environment_context>\n## My request for Codex:\n\nFix the import",
+      {},
+      "Fix the import",
+    ],
+    [
+      "# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>\n<user_instructions>Rules</user_instructions>\nFix the import",
+      {},
+      "Fix the import",
+    ],
+    ["<recommended_plugins>Plugins</recommended_plugins>", {}, "Imported thread"],
+    ["<recommended_plugins>Unclosed example", {}, "<recommended_plugins>Unclosed example"],
+    ["<example>Keep this XML</example>", {}, "<example>Keep this XML</example>"],
+    ["Fix the import\nMore detail", { name: " Saved title " }, "Saved title"],
+    ["Fix the import", { threadName: "Renamed thread" }, "Renamed thread"],
+    ["Fix the import", { name: " ", threadName: " " }, "Fix the import"],
+    ["Fix the import", { name: null, threadName: null }, "Fix the import"],
+    ["x".repeat(120), {}, "x".repeat(100)],
+  ])("derives a Codex title without changing prompt %s", (prompt, metadata, title) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "codex-session", ...metadata },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(title);
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
   it("preserves context markup in response-only Codex messages", () => {
     const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3098,7 +3149,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
@@ -3125,7 +3176,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
@@ -3148,7 +3199,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("## My request for Codex:");
+    expect(thread?.title).toBe("Fix the visible bug");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
