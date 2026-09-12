@@ -13,10 +13,13 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Blacksmith runners only exist under the pingdotgg org. Every job picks its
+# runner with `case(github.repository_owner == 'pingdotgg', <blacksmith>, <github-hosted>)`
+# so forks run the same CI on GitHub-hosted runners. New jobs should do the same.
 jobs:
   check:
     name: Check
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -75,7 +78,7 @@ jobs:
   # limit stays at the default 4 so peak load per runner is unchanged.
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -115,7 +118,7 @@ jobs:
   # isolation that flag buys is preserved exactly.
   test_server:
     name: Test Server ${{ matrix.shard }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -182,7 +185,7 @@ jobs:
   # for checks that take under 3s, on the critical path of every PR.
   rust:
     name: Rust
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-4vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -216,7 +219,7 @@ jobs:
   # the diff cannot be resolved, the lint runs.
   mobile_native_changes:
     name: Mobile Native Changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-2vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -294,7 +297,7 @@ jobs:
     # Skip only on an explicit "no": a gate job that failed or errored leaves the
     # output empty, and that must run the lint rather than silently skip it.
     if: ${{ !cancelled() && needs.mobile_native_changes.outputs.changed != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-6vcpu-macos-26', 'macos-26') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -322,7 +325,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ case(github.repository_owner == 'pingdotgg', 'blacksmith-8vcpu-ubuntu-2404', 'ubuntu-24.04') }}
     timeout-minutes: 10
     steps:
       - name: Checkout
