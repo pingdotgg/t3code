@@ -45,9 +45,9 @@ export class DesktopBackendConfiguration extends Context.Service<
       PlatformError.PlatformError
     >;
     // Build a WSL backend start config for the given distro on the given
-    // port. The WSL backend is always loopback-only (the primary owns LAN
-    // exposure when the user opts in), so this takes the port directly and
-    // hardcodes 127.0.0.1. Distro=null means "WSL default distro" and is
+    // port. The bind host follows the user's exposure (DesktopServerExposure)
+    // so "Limited to this machine" holds inside WSL too; only the port is
+    // taken directly. Distro=null means "WSL default distro" and is
     // forwarded to wsl.exe with no -d flag.
     readonly resolveWsl: (input: {
       readonly port: number;
@@ -522,6 +522,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
 const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl")(function* (
   input: SharedBootstrapInput & {
     readonly port: number;
+    readonly host: string;
     readonly distro: string | null;
   },
 ): Effect.fn.Return<
@@ -536,18 +537,14 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
-  // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
-  // -> WSL 127.0.0.1) AND via the distro's eth0 IP directly from
-  // Windows. wslhost forwarding is unreliable on some Windows hosts:
-  // the desktop's readiness probe and the renderer's saved-env-style
-  // fetch both saw "Failed to fetch" when the backend only bound to
-  // 127.0.0.1 inside WSL. Binding to 0.0.0.0 plus advertising the
-  // WSL IP as the renderer-visible URL avoids that dependency.
-  // Security-wise this is acceptable for the local-only WSL backend:
-  // the network it exposes on is the WSL-vEthernet network, not the
-  // LAN; the primary owns LAN exposure when the user opts in.
-  const wslBindHost = "0.0.0.0";
+  // The bind host is the exposure's bindHost, same as the Windows primary.
+  // Local-only binds 127.0.0.1 inside WSL and relies on WSL2 localhost
+  // forwarding (wslhost: Windows 127.0.0.1 -> WSL 127.0.0.1) to reach it;
+  // network-accessible binds 0.0.0.0 and advertises the distro's eth0 IP,
+  // which also sidesteps wslhost forwarding on hosts where it is flaky.
+  // Previously WSL always bound 0.0.0.0, which made "Limited to this
+  // machine" untrue for anyone running Tailscale inside the distro.
+  const bindsLoopbackOnly = input.host === DesktopServerExposure.DESKTOP_LOOPBACK_HOST;
 
   const bootstrap = {
     mode: "desktop" as const,
@@ -556,7 +553,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // Omit t3Home so the Linux backend uses its own home dir instead of
     // the Windows-side baseDir (which would be a /mnt/c path and share
     // the SQLite file with the primary).
-    host: wslBindHost,
+    host: input.host,
     desktopBootstrapToken: input.bootstrapToken,
     // PortSchema rejects 0, so when tailscale serve is disabled we still
     // need a valid number in this slot. The backend reads tailscaleServePort
@@ -626,10 +623,14 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  // Resolve the selected distro's IPv4 address. In mirrored mode the distro
-  // reports a host interface, so use loopback instead; a failed probe also
-  // falls back to loopback and preserves the previous behavior.
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  // Resolve the selected distro's IPv4 address. A loopback-only bind is
+  // only reachable through localhost forwarding, so skip the probe. In
+  // mirrored mode the distro reports a host interface, so use loopback
+  // instead; a failed probe also falls back to loopback and preserves the
+  // previous behavior.
+  const distroIp = bindsLoopbackOnly
+    ? Option.none<string>()
+    : yield* wslEnvironment.getDistroIp(distroForConfig);
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
@@ -795,6 +796,7 @@ export const make = Effect.gen(function* () {
     return yield* resolveWslStartConfig({
       ...shared,
       port: backendExposure.port,
+      host: backendExposure.bindHost,
       distro: persistedSettings.wslDistro,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -859,7 +861,12 @@ export const make = Effect.gen(function* () {
     resolveWsl: (input) =>
       Effect.gen(function* () {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        const backendExposure = yield* serverExposure.backendConfig;
+        return yield* resolveWslStartConfig({
+          ...shared,
+          ...input,
+          host: backendExposure.bindHost,
+        }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
