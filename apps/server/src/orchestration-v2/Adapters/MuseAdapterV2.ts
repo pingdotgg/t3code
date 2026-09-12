@@ -97,6 +97,8 @@ import { museItemStatus, museToolPresentation } from "./MuseItemPresentation.ts"
 
 export const MUSE_PROVIDER = ProviderDriverKind.make("muse");
 const defaultMuseSettings = Schema.decodeSync(MuseSettings)({});
+const isOpenSessionError = Schema.is(ProviderAdapterOpenSessionError);
+const isProtocolError = Schema.is(ProviderAdapterProtocolError);
 const effectiveModelCatalogSchema = Schema.Struct({
   providerId: Schema.String,
   models: Schema.Array(
@@ -120,9 +122,11 @@ export const MuseProviderCapabilitiesV2 = {
   threads: {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
-    canRollbackThread: true,
-    canForkThread: true,
-    canForkFromTurn: true,
+    // Muse 1.1.1 native forks can lose the effective Contributor model. Until
+    // that is fixed upstream, public forks use V2's portable context handoff.
+    canRollbackThread: false,
+    canForkThread: false,
+    canForkFromTurn: false,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -188,8 +192,8 @@ export const MuseProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: false,
-    providerCanRollbackConversation: true,
-    providerRollbackReturnsSnapshot: true,
+    providerCanRollbackConversation: false,
+    providerRollbackReturnsSnapshot: false,
     providerCanReadConversationSnapshot: true,
   },
   identity: {
@@ -593,14 +597,20 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
         if (closed || broken) return;
         broken = true;
-        const detail = cause instanceof Error ? cause.message : "Muse transport failed.";
+        const rootCause = Cause.isCause(cause) ? Cause.squash(cause) : cause;
+        const failure = isOpenSessionError(rootCause) ? rootCause.cause : rootCause;
+        const detail = isProtocolError(failure)
+          ? failure.detail
+          : failure instanceof Error
+            ? failure.message
+            : "Muse transport failed.";
         yield* Effect.tryPromise(() => host.close()).pipe(Effect.ignore);
         if (active) yield* finish(active, "failed", detail, "broken");
         else {
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
-        yield* Queue.end(events);
+        yield* Queue.fail(events, protocolError(detail, cause));
       });
       const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
         const turn = active;
@@ -1360,7 +1370,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           return thread;
         }).pipe(
           Effect.onError((cause) =>
-            missingNativeSession ? Effect.void : eventPermit.withPermits(1)(failHost(cause)),
+            missingNativeSession || fresh || expectedForkModel !== undefined
+              ? Effect.void
+              : eventPermit.withPermits(1)(failHost(cause)),
           ),
         );
       });
@@ -1796,6 +1808,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                   );
                   broken = true;
                   yield* finish(turn, "interrupted", undefined, "broken");
+                  yield* updateSession("stopped");
                   yield* Queue.end(events);
                 }),
               );
@@ -1925,6 +1938,10 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
                 yield* launchHost();
                 thread = undefined;
                 nativeSessionId = undefined;
+                providerTurns.clear();
+                messages.clear();
+                historyTerminals.clear();
+                observedChildren.clear();
                 const fresh = yield* register(
                   {
                     threadId: source.appThreadId ?? input.threadId,
