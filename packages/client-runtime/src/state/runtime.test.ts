@@ -684,6 +684,19 @@ describe("executeAtomQuery", () => {
     registry.dispose();
   });
 
+  it("fails with a defect when the query exceeds its timeout", async () => {
+    const atom = Atom.make(Effect.never);
+    const registry = AtomRegistry.make();
+
+    const result = await executeAtomQuery(registry, atom, { timeoutMs: 10, reportDefect: false });
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(Cause.hasDies(result.cause)).toBe(true);
+    }
+    registry.dispose();
+  });
+
   it("settles when its caller aborts a waiting query", async () => {
     const registry = AtomRegistry.make();
     const controller = new AbortController();
