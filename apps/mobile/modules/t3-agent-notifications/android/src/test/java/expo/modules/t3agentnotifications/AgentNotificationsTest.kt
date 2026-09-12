@@ -400,6 +400,46 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun liveUpdateChipChangesWithActivityAndClearsOnCompletion() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(context, update("work", true))
+    assertEquals(
+      "Active",
+      manager.activeNotifications.single().notification.extras
+        .getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    AgentNotifications.receive(context, update("input", true) + ("activity_chip" to "Review"))
+    val activeCard = manager.activeNotifications.single().notification
+    assertEquals(
+      "Review",
+      activeCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    assertTrue(NotificationCompat.isRequestPromotedOngoing(activeCard))
+
+    AgentNotifications.receive(
+      context,
+      update("done", false) + mapOf(
+        "activity_chip" to "Review",
+        "activity_expires_at" to (System.currentTimeMillis() + 900000).toString()
+      )
+    )
+    val finishedCard = manager.activeNotifications.single().notification
+    assertEquals(null, finishedCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+    assertFalse(NotificationCompat.isRequestPromotedOngoing(finishedCard))
+    assertFalse(finishedCard.flags and Notification.FLAG_ONGOING_EVENT != 0)
+  }
+
+  @Test
+  fun blankTitleCannotMakeAnActivityIneligibleForPromotion() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(context, update("work", true) + ("activity_title" to "  "))
+    assertEquals(
+      "Agent activity",
+      manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TITLE)
+    )
+  }
+
+  @Test
   fun expiredMalformedAndFutureMessagesCannotDisplayOrPoisonLaterUpdates() {
     val invalid = update("invalid", true)
     AgentNotifications.receive(context, invalid - "updated_at")
