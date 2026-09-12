@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
@@ -13,6 +14,10 @@ import {
 } from "./third-party-licenses.js";
 
 const tempDirectories: string[] = [];
+const REPOSITORY_ROOT = NodePath.resolve(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
@@ -72,6 +77,21 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  it("keeps the GhosttyKit notice pinned to the vendored framework revision", async () => {
+    const [config, revision] = await Promise.all([
+      NodeFSP.readFile(NodePath.join(REPOSITORY_ROOT, "third-party-licenses.config.json"), "utf8"),
+      NodeFSP.readFile(
+        NodePath.join(REPOSITORY_ROOT, "apps/mobile/modules/t3-terminal/Vendor/libghostty/VERSION"),
+        "utf8",
+      ),
+    ]);
+
+    expect(config).toContain(revision.trim());
+    expect(config).toContain(
+      "https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed",
+    );
+  });
+
   it("collects production packages and custom asset notices", async () => {
     const fixture = await createFixture();
     const manifest = await generateThirdPartyLicenseManifest({

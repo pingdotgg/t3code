@@ -84,13 +84,13 @@
       "bundles": ["ios", "mobile"],
       "license": "MIT",
       "name": "GhosttyKit",
-      "sourceUrl": "https://github.com/Yash-Singh1/ghostty/tree/custom-io",
+      "sourceUrl": "https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed",
       "generatedNotices": [
         {
           "licenseId": "MIT",
           "copyrights": ["Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors"],
           "preamble": [
-            "GhosttyKit\n\nThe iOS terminal renderer vendors GhosttyKit.xcframework, a libghostty build produced from T3's iOS 16 support fork. That fork was created from VVTerm's custom-I/O Ghostty fork.\n\nUpstream project: https://github.com/ghostty-org/ghostty\nCustom-I/O base fork: https://github.com/wiedymi/ghostty/tree/custom-io\nVendored source fork: https://github.com/Yash-Singh1/ghostty/tree/custom-io\nVendored revision: d36c3b8dffd0d756dd5e5f4933962f774a0e6753\nReference integration: https://github.com/vivy-company/vvterm"
+            "GhosttyKit\n\nThe iOS terminal renderer vendors GhosttyKit.xcframework, a libghostty build produced from VVTerm's custom-I/O and live-padding Ghostty branch.\n\nUpstream project: https://github.com/ghostty-org/ghostty\nBased on: https://github.com/wiedymi/ghostty/tree/vvterm/custom-io-padding\nVendored source branch: https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed\nVendored revision: cf8edc23f3a6a87a96e41a90013e89e987d34980\nReference integration: https://github.com/vivy-company/vvterm"
           ]
         }
       ]
