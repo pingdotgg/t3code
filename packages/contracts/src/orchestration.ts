@@ -2234,6 +2234,15 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedError<Orchestrat
   },
 ) {}
 
+export class OrchestrationThreadNotFoundError extends Schema.TaggedError<OrchestrationThreadNotFoundError>()(
+  "OrchestrationThreadNotFoundError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} was not found`;
+  }
+}
+
 export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
   {

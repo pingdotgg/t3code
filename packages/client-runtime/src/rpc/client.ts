@@ -1,6 +1,7 @@
 import { ORCHESTRATION_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -181,6 +182,15 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
+  /**
+   * Classifies an all-Fail cause as terminal: the attempt ends for this
+   * session with no retry, after `handle` runs. Checked after transport
+   * failures and before expected-failure retry.
+   */
+  readonly terminalFailure?: {
+    readonly matches: (error: EnvironmentRpcStreamFailure<TTag>) => boolean;
+    readonly handle: (cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>) => Effect.Effect<void>;
+  };
 }
 
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
@@ -196,6 +206,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
     Effect.gen(function* () {
       const supervisor = yield* EnvironmentSupervisor;
       const observer = yield* EnvironmentRpcSubscriptionObserver;
+      // Signaled before a terminalFailure handler runs. Interrupts the
+      // outer session stream below so a supervisor.session replacement
+      // landing during the handler's cache I/O cannot re-issue the
+      // subscription after a terminal tombstone; the handler itself still
+      // runs to completion as the draining inner.
+      const terminalHalt = yield* Deferred.make<void>();
       const sessionChanges = SubscriptionRef.changes(supervisor.session);
       const sessions =
         options?.resubscribe === undefined
@@ -207,6 +223,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
               ),
             );
       return sessions.pipe(
+        Stream.interruptWhen(Deferred.await(terminalHalt)),
         Stream.switchMap(
           Option.match({
             onNone: () => Stream.empty,
@@ -266,6 +283,21 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                               method: tag,
                               environmentId: supervisor.target.environmentId,
                             },
+                          ),
+                        ).pipe(Stream.drain);
+                      }
+                      const terminal = options?.terminalFailure;
+                      if (
+                        hasOnlyExpectedFailures &&
+                        terminal !== undefined &&
+                        cause.reasons.every(
+                          (reason) => reason._tag === "Fail" && terminal.matches(reason.error),
+                        )
+                      ) {
+                        return Stream.fromEffect(
+                          Deferred.succeed(terminalHalt, undefined).pipe(
+                            Effect.asVoid,
+                            Effect.andThen(terminal.handle(cause)),
                           ),
                         ).pipe(Stream.drain);
                       }

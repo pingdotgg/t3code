@@ -465,6 +465,105 @@ describe("environment RPC", () => {
     }),
   );
 
+  it.effect("ends the subscription permanently when the failure is terminal", () =>
+    Effect.gen(function* () {
+      const notFound = new Error("thread was not found");
+      const subscriptionCount = yield* Ref.make(0);
+      const handled = yield* Ref.make<Cause.Cause<unknown> | null>(null);
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map(() => Stream.fail(notFound)),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          terminalFailure: {
+            matches: (error) => error === notFound,
+            handle: (cause) => Ref.set(handled, cause),
+          },
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(handled)) === null; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(handled)).not.toBeNull();
+
+      // Far past any retry delay: a terminal failure must not re-attempt.
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      expect(yield* Ref.get(subscriptionCount)).toBe(1);
+    }),
+  );
+
+  it.effect("does not treat failures rejected by the terminal classifier as terminal", () =>
+    Effect.gen(function* () {
+      const transient = new Error("transient snapshot failure");
+      const subscriptionCount = yield* Ref.make(0);
+      const retryReady = yield* Deferred.make<void>();
+      const retryStarted = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () =>
+          Stream.unwrap(
+            Ref.getAndUpdate(subscriptionCount, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                count === 0
+                  ? Stream.fail(transient)
+                  : Stream.fromEffect(Deferred.succeed(retryStarted, undefined)).pipe(
+                      Stream.drain,
+                      Stream.concat(Stream.never),
+                    ),
+              ),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        {
+          onExpectedFailure: () => Deferred.succeed(retryReady, undefined).pipe(Effect.asVoid),
+          retryExpectedFailureAfter: "100 millis",
+          terminalFailure: {
+            matches: () => false,
+            handle: () => Effect.void,
+          },
+        },
+      ).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      // The handler runs immediately before the retry delay; let that fiber schedule its sleep.
+      yield* Deferred.await(retryReady);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("100 millis");
+      yield* Deferred.await(retryStarted);
+      yield* Fiber.interrupt(subscriptionFiber);
+
+      // Classified as a regular expected failure: retried once, handler untouched.
+      expect(yield* Ref.get(subscriptionCount)).toBe(2);
+    }),
+  );
+
   it.effect.each(["input", "stream"] as const)(
     "does not classify %s subscription defects as expected failures",
     (where) =>
