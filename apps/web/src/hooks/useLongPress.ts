@@ -7,8 +7,9 @@ export const LONG_PRESS_MS = 500;
  * How far a touch may drift and still count as a press rather than a scroll.
  * The sidebar scrolls, and people start scrolls with their finger on a row, so
  * anything past this belongs to the scroll rather than to the gesture.
+ * Match SidebarPointerSensor's 6px activation distance so a drag cancels the hold.
  */
-export const LONG_PRESS_MOVE_TOLERANCE = 10;
+export const LONG_PRESS_MOVE_TOLERANCE = 6;
 
 export type LongPressPosition = { readonly x: number; readonly y: number };
 
