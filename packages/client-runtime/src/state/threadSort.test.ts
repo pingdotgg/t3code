@@ -1,7 +1,9 @@
+import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   generateSpreadPinOrderKeys,
+  getLatestThreadForProject,
   pinOrderKeyBetween,
   planPinnedMove,
   planPinnedReorder,
@@ -58,6 +60,22 @@ describe("resolveSettledThreadTimestamp", () => {
 });
 
 describe("sortThreads", () => {
+  it.each(["created_at", "updated_at"] as const)(
+    "preserves references, input order and descending id ties for %s",
+    (sortOrder) => {
+      const threads = Object.freeze([
+        makeThread({ id: "a" }),
+        makeThread({ id: "z" }),
+        makeThread({ id: "invalid-a", createdAt: "invalid", updatedAt: "invalid" }),
+        makeThread({ id: "invalid-z", createdAt: "invalid", updatedAt: "invalid" }),
+      ]);
+      const sorted = sortThreads(threads, sortOrder);
+      expect(sorted).toEqual([threads[1], threads[0], threads[3], threads[2]]);
+      expect(sorted[0]).toBe(threads[1]);
+      expect(threads[0]?.id).toBe("a");
+    },
+  );
+
   it("falls back to updatedAt and createdAt when latestUserMessageAt is invalid and there are no messages", () => {
     const sorted = sortThreads(
       [
@@ -110,6 +128,33 @@ describe("sortThreads", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
   });
+});
+
+describe("getLatestThreadForProject", () => {
+  it.each(["created_at", "updated_at"] as const)(
+    "matches the first sorted eligible thread for %s",
+    (sortOrder) => {
+      const projectId = ProjectId.make("project");
+      const threads = [
+        { ...makeThread({ id: "a" }), projectId, archivedAt: null },
+        { ...makeThread({ id: "z" }), projectId, archivedAt: null },
+        { ...makeThread({ id: "zz" }), projectId, archivedAt: "2026-03-10T00:00:00Z" },
+        { ...makeThread({ id: "zzz" }), projectId: ProjectId.make("other"), archivedAt: null },
+      ];
+      expect(getLatestThreadForProject(threads, projectId, sortOrder)).toBe(threads[1]);
+      expect(getLatestThreadForProject([], projectId, sortOrder)).toBeNull();
+      expect(getLatestThreadForProject(threads, ProjectId.make("missing"), sortOrder)).toBeNull();
+      const invalid = threads.slice(0, 2).map((thread) => ({
+        ...thread,
+        createdAt: "invalid",
+        updatedAt: "invalid",
+      }));
+      expect(getLatestThreadForProject(invalid, projectId, sortOrder)).toBe(invalid[1]);
+      expect(
+        getLatestThreadForProject([threads[1]!, { ...threads[1]! }], projectId, sortOrder),
+      ).toBe(threads[1]);
+    },
+  );
 });
 
 describe("planPinnedReorder with hidden rows", () => {

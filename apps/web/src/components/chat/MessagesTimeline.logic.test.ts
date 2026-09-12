@@ -390,6 +390,7 @@ describe("streaming row projection", () => {
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
+      pullRequests: [],
       worktreePath: null,
       latestTurn: {
         ...initial.input.latestTurn,
