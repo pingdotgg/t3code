@@ -228,6 +228,9 @@ jobs:
       - name: Install browser secret helper build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
+      # `vp run test` includes the apps/server suite, whose jj tests skip without jj.
+      - uses: ./.github/actions/setup-jj
+
       - name: Test
         run: vp run test
 
