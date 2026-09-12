@@ -127,6 +127,7 @@ function signedOutEnvironment(home: string): NodeJS.ProcessEnv {
     ...process.env,
     HOME: home,
     WINDSURF_API_KEY: "",
+    DEVIN_API_KEY: "",
     // Blank (not delete) so a machine where these are set still reads as
     // signed out: resolution treats empty values as unset.
     XDG_DATA_HOME: "",

@@ -89,6 +89,7 @@ it.layer(DevinTextGenerationTestLayer)("DevinTextGeneration", (it) => {
         ...process.env,
         HOME: fakeHome,
         WINDSURF_API_KEY: "",
+        DEVIN_API_KEY: "",
         XDG_DATA_HOME: NodePath.join(fakeHome, "xdg"),
         LOCALAPPDATA: NodePath.join(fakeHome, "localappdata"),
       },

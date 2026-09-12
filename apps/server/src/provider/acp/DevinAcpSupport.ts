@@ -33,6 +33,13 @@ const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
  */
 export const DEVIN_BROWSER_AUTH_METHOD = "devin-browser";
 export const DEVIN_API_KEY_ENV = "WINDSURF_API_KEY";
+/**
+ * `devin` also honors `DEVIN_API_KEY` for headless runs (Cognition REST API
+ * tokens, `apk_`/`cog_` prefixes). If `devin acp` ignores it the session simply
+ * fails auth and the user is told to run `devin auth login` — the same outcome
+ * as a stale credentials file.
+ */
+export const DEVIN_REST_API_KEY_ENV = "DEVIN_API_KEY";
 const DEVIN_CREDENTIALS_PATH_SEGMENTS = [".local", "share", "devin", "credentials.toml"] as const;
 
 type DevinAcpRuntimeDevinSettings = Pick<DevinSettings, "binaryPath">;
@@ -64,14 +71,15 @@ export function devinCredentialsFilePaths(
 
 /**
  * Whether the Devin CLI can authenticate without a browser round trip. Mirrors
- * the credential order `devin acp` itself applies: `WINDSURF_API_KEY` from the
- * environment first, then the `devin auth login` credentials file.
+ * the credential order `devin acp` itself applies: `WINDSURF_API_KEY` (or the
+ * headless `DEVIN_API_KEY`) from the environment first, then the
+ * `devin auth login` credentials file.
  */
 export const devinHasAmbientCredentials = (
   environment: NodeJS.ProcessEnv | undefined,
 ): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    if (environment?.[DEVIN_API_KEY_ENV]?.trim()) {
+    if (environment?.[DEVIN_API_KEY_ENV]?.trim() || environment?.[DEVIN_REST_API_KEY_ENV]?.trim()) {
       return true;
     }
     const fileSystem = yield* FileSystem.FileSystem;
