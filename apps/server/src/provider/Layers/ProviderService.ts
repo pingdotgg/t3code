@@ -2426,7 +2426,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (!goal) return yield* unsupported();
     return { routed, goal } as const;
   });
-
   const getCodexGoal: ProviderServiceMethod<"getCodexGoal"> = Effect.fn("getCodexGoal")(
     function* (threadId, options) {
       const { routed, goal } = yield* resolveCodexGoalRoute(
@@ -2446,7 +2445,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       return yield* goal.get(routed.threadId);
     },
   );
-
   const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
     function* (input) {
       return yield* Effect.gen(function* () {
@@ -2455,7 +2453,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }).pipe((set) => withRecoveryLock(input.threadId, set));
     },
   );
-
   const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
     function* (threadId) {
       return yield* Effect.gen(function* () {
@@ -2464,7 +2461,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }).pipe((clear) => withRecoveryLock(threadId, clear));
     },
   );
-
   return {
     startSession,
     sendTurn,
