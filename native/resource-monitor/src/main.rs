@@ -455,7 +455,7 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
-        let process_details = if cfg!(target_os = "linux") && !tracked.is_empty() {
+        let process_details = if !tracked.is_empty() {
             let monitor_pid = Pid::from_u32(std::process::id());
             let mut detail_pids = tracked
                 .iter()
@@ -562,11 +562,7 @@ impl Collector {
 
 // Keep CPU baselines separate. Even a metadata refresh resets Linux process times.
 fn process_discovery_refresh_kind() -> ProcessRefreshKind {
-    if cfg!(target_os = "linux") {
-        ProcessRefreshKind::nothing().with_cpu().without_tasks()
-    } else {
-        process_refresh_kind()
-    }
+    ProcessRefreshKind::nothing().with_cpu().without_tasks()
 }
 
 fn process_refresh_kind() -> ProcessRefreshKind {
@@ -1021,6 +1017,12 @@ mod tests {
             external_processes: HashMap::new(),
         };
         assert!(collector.sample(&config, None).processes.is_empty());
+        let unselected = collector
+            .system
+            .process(Pid::from_u32(std::process::id()))
+            .expect("current process discovered");
+        assert!(unselected.cmd().is_empty());
+        assert_eq!(unselected.memory(), 0);
 
         config.root_pid = std::process::id();
         let snapshot = collector.sample(&config, None);
@@ -1033,6 +1035,13 @@ mod tests {
         assert!(!process.command.is_empty());
         assert!(process.resident_bytes > 0);
         assert!(process.cpu_percent.is_finite());
+        // Snapshot details must not accumulate in the process-table baseline.
+        let baseline = collector
+            .system
+            .process(Pid::from_u32(config.root_pid))
+            .expect("selected process still discovered");
+        assert!(baseline.cmd().is_empty());
+        assert_eq!(baseline.memory(), 0);
     }
 
     #[test]
