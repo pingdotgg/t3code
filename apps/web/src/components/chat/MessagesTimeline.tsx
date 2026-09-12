@@ -1768,9 +1768,10 @@ function RevertUserMessageButton({
 /**
  * Hover-revealed wall-clock time with a full-date tooltip — the same metadata
  * presentation as message rows, for work entries and turn folds. The parent
- * carries the `group/timeline-row` class that drives the reveal; keyboard
- * focus anywhere in that parent reveals it too, since the span itself is not
- * focusable. Hidden timestamps stay outside the row layout.
+ * carries `group/timeline-row`; hover or focus on an existing control reveals
+ * the time without adding a tab stop. Hidden timestamps stay outside the row
+ * layout. Visibility changes immediately so leaving flow cannot overlap text
+ * during a fade-out.
  */
 function TimelineRowTimestamp({
   createdAt,
@@ -1783,7 +1784,7 @@ function TimelineRowTimestamp({
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-muted-foreground text-xs tabular-nums opacity-0 transition-opacity duration-200 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100" />
+          <span className="pointer-events-none absolute me-1 shrink-0 whitespace-nowrap rounded-md text-muted-foreground text-xs tabular-nums opacity-0 group-hover/timeline-row:pointer-events-auto group-hover/timeline-row:static group-hover/timeline-row:opacity-100 group-focus-within/timeline-row:pointer-events-auto group-focus-within/timeline-row:static group-focus-within/timeline-row:opacity-100" />
         }
       >
         {formatDayAwareTimestamp(createdAt, timestampFormat)}
