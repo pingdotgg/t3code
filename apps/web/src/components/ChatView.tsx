@@ -5510,6 +5510,7 @@ export default function ChatView(props: ChatViewProps) {
       return [];
     });
     resetLocalDispatch();
+    setWorkLocallyResendPending(false);
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
 
@@ -8309,20 +8310,34 @@ export default function ChatView(props: ChatViewProps) {
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
   // Resend once the cancelled dispatch has settled and the composer is free.
-  // The flag stays set until `onSend` gets past its own guards, so a reconnect
-  // or a loading thread in between does not lose the message.
+  // Every state that makes `onSend` bail and wait is part of the readiness
+  // check, so the flag survives a reconnect, a reverting checkpoint, or a
+  // feedback upload in between. What remains inside `onSend` are the checks
+  // that need the user to change something, and those should not auto retry.
   const workLocallyResendReady =
     workLocallyResendPending &&
+    activeThread !== null &&
     !isSendBusy &&
     !isConnecting &&
+    !isRevertingCheckpoint &&
     !threadDetailLoading &&
     clientSettingsHydrated &&
+    !needsLoadBalancing &&
+    !activeEnvironmentUnavailable &&
+    !activePendingProgress &&
+    !feedbackUploading &&
     sendEnvMode === "local";
   useEffect(() => {
-    if (!workLocallyResendReady || sendInFlightRef.current) return;
+    if (
+      !workLocallyResendReady ||
+      sendInFlightRef.current ||
+      feedbackUploadsInFlightRef.current.has(routeThreadKey)
+    ) {
+      return;
+    }
     setWorkLocallyResendPending(false);
     void onSendRef.current();
-  }, [workLocallyResendReady]);
+  }, [routeThreadKey, workLocallyResendReady]);
 
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {
