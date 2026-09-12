@@ -20,6 +20,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
+  resolveKnownPosixCliDirs,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
@@ -330,6 +331,33 @@ describe("resolveKnownWindowsCliDirs", () => {
       "C:\\Users\\testuser\\.local\\bin",
       "C:\\Users\\testuser\\.bun\\bin",
       "C:\\Users\\testuser\\scoop\\shims",
+    ]);
+  });
+});
+
+describe("resolveKnownPosixCliDirs", () => {
+  it("returns known macOS CLI install directories in priority order", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/Users/testuser" }, "darwin")).toEqual([
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      "/usr/local/bin",
+      "/Users/testuser/.local/bin",
+    ]);
+  });
+
+  it("returns known Linux CLI install directories in priority order", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/home/testuser" }, "linux")).toEqual([
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/usr/local/bin",
+      "/home/testuser/.local/bin",
+    ]);
+  });
+
+  it("omits the home directory entry when HOME is unset or blank", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "   " }, "darwin")).toEqual([
+      "/opt/homebrew/bin",
+      "/opt/homebrew/sbin",
+      "/usr/local/bin",
     ]);
   });
 });
