@@ -231,11 +231,26 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
-function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+function isNushellExecutable(shell: string): boolean {
+  const executableName = NodePath.basename(shell).toLowerCase();
+  return executableName === "nu" || executableName === "nu.exe";
+}
+
+function buildEnvironmentCaptureCommand(shell: string, names: ReadonlyArray<string>): string {
+  const isNushell = isNushellExecutable(shell);
+
   return names
     .map((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
+      }
+
+      if (isNushell) {
+        return [
+          `print '${envCaptureStart(name)}'`,
+          `try { printenv ${name} } catch { print '' }`,
+          `print '${envCaptureEnd(name)}'`,
+        ].join("; ");
       }
 
       return [
@@ -298,7 +313,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)], {
     encoding: "utf8",
     timeout: 5000,
   });
