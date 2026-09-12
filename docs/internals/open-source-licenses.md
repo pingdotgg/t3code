@@ -6,8 +6,9 @@ License notices are generated independently for the client that ships them:
   static file, so the same artifact works in hosted web, the client bundled with `npx t3`, and
   desktop.
 - The mobile Metro config generates an ignored virtual module before each development, native, or
-  over-the-air JavaScript bundle. Mobile reads the manifest directly from that module and does not
-  need a network request.
+  over-the-air JavaScript bundle. Mobile loads and decodes that module only when a license screen
+  opens, so the notice text does not occupy memory during ordinary app startup. It does not need a
+  network request.
 
 Neither path depends on the connected environment or an RPC.
 

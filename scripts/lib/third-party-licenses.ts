@@ -851,6 +851,19 @@ function entrySort(left: ThirdPartyLicenseEntry, right: ThirdPartyLicenseEntry):
   );
 }
 
+function assertUniqueEntries(entries: ReadonlyArray<ThirdPartyLicenseEntry>): void {
+  const identities = new Set<string>();
+  for (const entry of entries) {
+    const identity = JSON.stringify([entry.kind, entry.name, entry.version]);
+    if (identities.has(identity)) {
+      throw new Error(
+        `Third-party license generation found a duplicate ${entry.kind} notice for ${entry.name}${entry.version ? `@${entry.version}` : ""}.`,
+      );
+    }
+    identities.add(identity);
+  }
+}
+
 export async function generateThirdPartyLicenseManifest(input: {
   readonly configFile?: string | URL;
   readonly packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>;
@@ -905,9 +918,11 @@ export async function generateThirdPartyLicenseManifest(input: {
     includedBundles,
     input.allowMissingGeneratedNotices ?? false,
   );
+  const entries = [...packageEntries, ...manualEntries].sort(entrySort);
+  assertUniqueEntries(entries);
   return {
     schemaVersion: 1,
-    entries: [...packageEntries, ...manualEntries].sort(entrySort),
+    entries,
   };
 }
 

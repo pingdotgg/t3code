@@ -15,7 +15,17 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { MOBILE_THIRD_PARTY_LICENSES } from "./mobileThirdPartyLicenses";
+import { getMobileThirdPartyLicenses } from "./mobileThirdPartyLicenses";
+
+function useMobileThirdPartyLicenses() {
+  return useMemo(() => {
+    try {
+      return getMobileThirdPartyLicenses();
+    } catch {
+      return null;
+    }
+  }, []);
+}
 
 function LicenseRow(props: {
   readonly entry: ThirdPartyLicenseEntry;
@@ -55,7 +65,8 @@ export function SettingsOpenSourceLicensesRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
-  const entries = MOBILE_THIRD_PARTY_LICENSES.entries;
+  const manifest = useMobileThirdPartyLicenses();
+  const entries = manifest?.entries ?? [];
   const filteredEntries = useMemo(
     () => filterThirdPartyLicenseEntries(entries, query),
     [entries, query],
@@ -77,6 +88,24 @@ export function SettingsOpenSourceLicensesRouteScreen() {
     ),
     [navigation],
   );
+
+  if (!manifest) {
+    return (
+      <View collapsable={false} className="flex-1 bg-sheet">
+        {Platform.OS === "android" ? (
+          <>
+            <NativeStackScreenOptions options={{ headerShown: false }} />
+            <AndroidScreenHeader title="Open source licenses" onBack={() => navigation.goBack()} />
+          </>
+        ) : null}
+        <View className="flex-1 items-center justify-center px-6">
+          <Text className="text-center text-base text-foreground-muted">
+            License notices are unavailable in this build.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -136,10 +165,10 @@ type LicenseDetailProps = StaticScreenProps<{ readonly entryKey: string }>;
 export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const entry = findThirdPartyLicenseEntry(
-    MOBILE_THIRD_PARTY_LICENSES.entries,
-    route.params.entryKey,
-  );
+  const manifest = useMobileThirdPartyLicenses();
+  const entry = manifest
+    ? findThirdPartyLicenseEntry(manifest.entries, route.params.entryKey)
+    : undefined;
   const sourceUrl = entry?.sourceUrl?.match(/^https?:\/\//) ? entry.sourceUrl : null;
 
   if (!entry) {

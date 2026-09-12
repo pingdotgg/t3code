@@ -447,4 +447,32 @@ describe("third-party license generation", () => {
       }),
     ).rejects.toThrow('Custom third-party notice "demo-asset" is empty');
   });
+
+  it("fails generation when custom notices produce duplicate navigation keys", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.configFile, {
+      customNotices: [
+        {
+          name: "duplicate-asset",
+          license: "MIT",
+          noticeFile: "asset-notice.txt",
+          bundles: ["assets", "web"],
+        },
+        {
+          name: "duplicate-asset",
+          license: "CC0-1.0",
+          noticeFile: "asset-notice.txt",
+          bundles: ["assets", "web"],
+        },
+      ],
+      packageOverrides: [],
+    });
+
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      }),
+    ).rejects.toThrow("duplicate custom notice for duplicate-asset");
+  });
 });

@@ -1,4 +1,13 @@
-import generatedManifest from "@t3tools/mobile-third-party-licenses";
-import { decodeThirdPartyLicenseManifest } from "@t3tools/shared/thirdPartyLicenses";
+import {
+  decodeThirdPartyLicenseManifest,
+  type ThirdPartyLicenseManifest,
+} from "@t3tools/shared/thirdPartyLicenses";
 
-export const MOBILE_THIRD_PARTY_LICENSES = decodeThirdPartyLicenseManifest(generatedManifest);
+let cachedManifest: ThirdPartyLicenseManifest | undefined;
+
+export function getMobileThirdPartyLicenses(): ThirdPartyLicenseManifest {
+  if (cachedManifest) return cachedManifest;
+  const generatedManifest: unknown = require("@t3tools/mobile-third-party-licenses");
+  cachedManifest = decodeThirdPartyLicenseManifest(generatedManifest);
+  return cachedManifest;
+}
