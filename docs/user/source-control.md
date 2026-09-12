@@ -82,6 +82,46 @@ supports approving waiting fork workflows and opening a revert pull request for 
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.
 
+## Jujutsu repositories
+
+T3 Code works with [Jujutsu](https://jj-vcs.github.io/jj/) repositories that are colocated with Git,
+which is what `jj git init --colocate` creates. Pull requests, cloning, and publishing still run
+against the Git store in that repository, so a Jujutsu project gets the same hosting integration as a
+Git one. Install Jujutsu 0.42.0 or newer on the machine running the server.
+
+Terms follow the repository: bookmarks instead of branches, workspaces instead of worktrees, changes
+instead of commits. Checkpoints, turn diffs, and revert work the same way. A revert restores your
+working copy with `jj restore`, so `jj undo` takes it back.
+
+### Choosing the version control system
+
+T3 Code uses the nearest marker directory, so a checkout holding `.jj` is Jujutsu and a Git checkout
+inside it is still Git. Threads that already run in a Git worktree keep working as Git.
+
+To pin a project, add `.t3code/vcs.json` in its root:
+
+```json
+{ "vcs": { "kind": "git" } }
+```
+
+Use `"jj"` to force Jujutsu, or delete the file to go back to detection. For a directory with no
+version control yet, **Initialize Jujutsu** sits alongside **Initialize Git** and runs
+`jj git init --colocate`.
+
+### What is different under Jujutsu
+
+- **Git hooks do not run** for commits made through T3 Code. Hooks that read the Git index, such as
+  `lint-staged` or a staged-diff format check, see nothing under Jujutsu, so T3 Code skips them
+  rather than reporting a hook run that did nothing. Run them yourself if you depend on them.
+- A change with conflicts cannot be pushed until you resolve it, and its diff shows one side of each
+  conflicted file rather than the markers on disk.
+- Jujutsu refuses to snapshot a new file above `snapshot.max-new-file-size`, 1 MiB by default. That
+  file is outside checkpoints, so reverting a turn leaves it on disk. Raise the limit in your own
+  Jujutsu config if you want those files tracked.
+- A repository that is not colocated, a missing `jj`, or a version below 0.42.0 leaves source control
+  actions disabled with the reason, instead of silently falling back to Git. Install or upgrade
+  Jujutsu, or run `jj git init --colocate` in the repository.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,

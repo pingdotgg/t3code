@@ -126,7 +126,7 @@ it.effect("reports implemented tools separately from locally available executabl
       })),
       [
         { kind: "git", implemented: true, status: "available" },
-        { kind: "jj", implemented: false, status: "missing" },
+        { kind: "jj", implemented: true, status: "missing" },
       ],
     );
     assert.deepStrictEqual(

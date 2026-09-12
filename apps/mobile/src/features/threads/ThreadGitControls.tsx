@@ -10,11 +10,10 @@ import {
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
+import { resolveVcsTerminology, resolveVcsUnsupportedReason } from "@t3tools/shared/vcs";
 import { useNavigation } from "@react-navigation/native";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
-import { Alert } from "react-native";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import {
   basename,
   getTerminalStatusLabel,
@@ -112,7 +111,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const threadId = props.threadId;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
-  const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
+  const vcsTerminology = resolveVcsTerminology(gitStatus);
+  const vcsUnsupportedReason = resolveVcsUnsupportedReason(gitStatus);
+  const currentBranchLabel =
+    gitStatus?.refName ?? props.currentBranch ?? `No ${vcsTerminology.refNoun}`;
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
@@ -123,21 +125,20 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       isRepo
         ? resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote)
         : {
-            label: "Git unavailable",
+            label: `${vcsTerminology.systemName} unavailable`,
             disabled: true,
             kind: "show_hint" as const,
-            hint: "This workspace is not a git repository.",
+            hint: `This workspace is not a ${vcsTerminology.systemName} repository.`,
           },
-    [busy, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo],
+    [busy, gitStatus, hasPrimaryRemote, isDefaultRef, isRepo, vcsTerminology],
   );
 
-  const quickActionHint = quickAction.disabled
-    ? (quickAction.hint ?? "This action is unavailable.")
-    : null;
+  const quickActionHint =
+    vcsUnsupportedReason ??
+    (quickAction.disabled ? (quickAction.hint ?? "This action is unavailable.") : null);
 
   const quickActionIcon: QuickActionIcon = (() => {
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
-    if (quickAction.kind === "open_pr") return "arrow.up.right.circle";
     if (quickAction.kind === "run_action") {
       if (quickAction.action === "commit") return "checkmark.circle";
       if (quickAction.action === "push" || quickAction.action === "commit_push")
@@ -145,17 +146,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     }
     return "arrow.up.right.circle";
   })();
-
-  const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
-    if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
-      return;
-    }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
-    }
-  }, [gitStatus]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
@@ -191,10 +181,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   );
 
   const runQuickAction = useCallback(async () => {
-    if (quickAction.kind === "open_pr") {
-      await openExistingPr();
-      return;
-    }
     if (quickAction.kind === "run_pull") {
       await onPull();
       return;
@@ -202,7 +188,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (quickAction.kind === "run_action" && quickAction.action) {
       await runActionWithPrompt({ action: quickAction.action });
     }
-  }, [onPull, openExistingPr, quickAction, runActionWithPrompt]);
+  }, [onPull, quickAction, runActionWithPrompt]);
 
   const openFiles = useCallback(() => {
     if (props.onOpenFilesInspector) {
@@ -236,6 +222,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    vcsTerminology,
     openFiles,
     openGitInspector,
     openReview,
@@ -319,10 +306,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         variant: "plain",
       },
       git: {
-        accessibilityLabel: "Git actions",
+        accessibilityLabel: `${model.vcsTerminology.systemName} actions`,
         icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
         identifier: "thread-right-git",
-        label: "Git",
+        label: model.vcsTerminology.systemName,
         menu: {
           items: [
             {
@@ -345,7 +332,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action",
             },
             {
-              description: "Turn diffs and worktree changes",
+              description: `Turn diffs and ${model.vcsTerminology.workspaceNoun} changes`,
               disabled: !model.isRepo,
               icon: { name: "text.bubble", type: "sfSymbol" },
               label: "Review changes",
@@ -353,14 +340,14 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action",
             },
             {
-              description: "Commit, files, branches",
+              description: `Commit, files, ${model.vcsTerminology.refNounPlural}`,
               icon: { name: "ellipsis", type: "sfSymbol" },
               label: "More",
               onPress: model.openGitInspector,
               type: "action",
             },
           ],
-          title: "Git",
+          title: model.vcsTerminology.systemName,
         },
         sharesBackground: true,
         type: "menu",
@@ -370,6 +357,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
     [
       model.currentBranchLabel,
       model.isRepo,
+      model.vcsTerminology,
       model.openFiles,
       model.openGitInspector,
       model.openReview,
@@ -526,14 +514,14 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
         icon="text.bubble"
         disabled={!model.isRepo}
         onPress={model.openReview}
-        subtitle="Turn diffs and worktree changes"
+        subtitle={`Turn diffs and ${model.vcsTerminology.workspaceNoun} changes`}
       >
         <NativeHeaderToolbar.Label>Review changes</NativeHeaderToolbar.Label>
       </NativeHeaderToolbar.MenuAction>
       <NativeHeaderToolbar.MenuAction
         icon="ellipsis"
         onPress={model.openGitInspector}
-        subtitle="Commit, files, branches"
+        subtitle={`Commit, files, ${model.vcsTerminology.refNounPlural}`}
       >
         <NativeHeaderToolbar.Label>More</NativeHeaderToolbar.Label>
       </NativeHeaderToolbar.MenuAction>

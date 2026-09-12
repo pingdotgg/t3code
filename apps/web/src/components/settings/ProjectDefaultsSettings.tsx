@@ -16,6 +16,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
+import { useVcsTerminology } from "../../state/vcs";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -84,12 +85,16 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     checkout?.environmentId ?? EnvironmentId.make("none"),
     category === "general" && checkout ? checkout.workspaceRoot : null,
   );
+  const vcsTerminology = useVcsTerminology(
+    category === "general" && checkout ? checkout.environmentId : null,
+    checkout?.workspaceRoot ?? null,
+  );
   const repositoryEnvMode = t3File.file?.defaultThreadEnvMode ?? null;
   const inheritedEnvModeLabel =
     workspaceSource === "project"
       ? null
       : repositoryEnvMode
-        ? `${resolveEnvModeLabel(repositoryEnvMode)} (t3.json)`
+        ? `${resolveEnvModeLabel(repositoryEnvMode, vcsTerminology)} (t3.json)`
         : null;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
@@ -258,7 +263,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   <SelectValue>
                     {(value: string | null) =>
                       value === "local" || value === "worktree"
-                        ? resolveEnvModeLabel(value)
+                        ? resolveEnvModeLabel(value, vcsTerminology)
                         : unavailable
                           ? "Unavailable"
                           : "Mixed"
@@ -266,8 +271,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+                  <SelectItem value="local">
+                    {resolveEnvModeLabel("local", vcsTerminology)}
+                  </SelectItem>
+                  <SelectItem value="worktree">
+                    {resolveEnvModeLabel("worktree", vcsTerminology)}
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             }

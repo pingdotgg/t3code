@@ -13,6 +13,8 @@ import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts"
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -58,8 +60,16 @@ function makeLayer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly detect?: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
+  readonly jj?: Partial<JjWorkflow.JjWorkflow["Service"]>;
 }) {
   const serviceLayer = SourceControlRepositoryService.layer.pipe(
+    Layer.provide(
+      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        detect: input.detect ?? (() => Effect.succeed(null)),
+      }),
+    ),
+    Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)(input.jj ?? {})),
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         get: () => Effect.succeed(input.provider ?? makeProvider()),
@@ -296,6 +306,53 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
     ),
   );
 });
+
+it.effect(
+  "publishes a Jujutsu repository through the bookmark push, not Git's detached HEAD",
+  () => {
+    const publishCalls: Array<{ cwd: string; remoteName: string; remoteUrl: string }> = [];
+    const gitPushes: Array<string> = [];
+    const provider = makeProvider({ createRepository: () => Effect.succeed(CLONE_URLS) });
+
+    return Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.publishRepository({
+        cwd: "/workspace",
+        provider: "github",
+        repository: "octocat/t3code",
+        visibility: "private",
+        remoteName: "upstream",
+        protocol: "ssh",
+      });
+
+      assert.deepStrictEqual(publishCalls, [
+        { cwd: "/workspace", remoteName: "upstream", remoteUrl: CLONE_URLS.sshUrl },
+      ]);
+      assert.deepStrictEqual(gitPushes, []);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider,
+          detect: () =>
+            Effect.succeed({ kind: "jj" } as unknown as VcsDriverRegistry.VcsDriverHandle),
+          jj: {
+            publishRepository: (input) =>
+              Effect.sync(() => {
+                publishCalls.push(input);
+                return { refName: "main", status: "pushed" as const };
+              }),
+          },
+          git: {
+            pushCurrentBranch: (cwd) =>
+              Effect.sync(() => gitPushes.push(cwd)).pipe(
+                Effect.andThen(Effect.die("the jj path must not reach Git's push")),
+              ),
+          },
+        }),
+      ),
+    );
+  },
+);
 
 it.effect("publishes to the remote name returned by ensureRemote", () => {
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];

@@ -1,13 +1,19 @@
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
+
 type WorkspaceMode = "local" | "worktree";
 
 export function resolveNewTaskWorkspaceLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+  readonly terminology?: VcsTerminology;
+}): string {
+  const terminology = input.terminology ?? DEFAULT_VCS_TERMINOLOGY;
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return `New ${terminology.workspaceNoun}`;
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath
+    ? `Current ${terminology.workspaceNoun}`
+    : `Current ${terminology.currentRefFallback}`;
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {
@@ -61,9 +67,10 @@ export function resolveNewTaskBranchLabel(input: {
   readonly branchName: string | null;
   readonly startFromOrigin: boolean;
   readonly workspaceMode: WorkspaceMode;
+  readonly terminology?: VcsTerminology;
 }): string {
   if (!input.branchName) {
-    return "Choose branch";
+    return `Choose ${(input.terminology ?? DEFAULT_VCS_TERMINOLOGY).refNoun}`;
   }
 
   if (input.workspaceMode === "local") {

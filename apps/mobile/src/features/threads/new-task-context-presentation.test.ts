@@ -1,10 +1,32 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
+
 import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskBranchLabel,
   resolveNewTaskLocalWorkspaceSelection,
+  resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
+
+describe("new task VCS nouns", () => {
+  it("names the local-mode workspace with jj nouns", () => {
+    expect(
+      resolveNewTaskWorkspaceLabel({
+        workspaceMode: "local",
+        worktreePath: null,
+        terminology: JJ_VCS_TERMINOLOGY,
+      }),
+    ).toBe("Current working copy");
+    expect(
+      resolveNewTaskWorkspaceLabel({
+        workspaceMode: "local",
+        worktreePath: "/ws",
+        terminology: JJ_VCS_TERMINOLOGY,
+      }),
+    ).toBe("Current workspace");
+  });
+});
 
 describe("resolveNewTaskLocalWorkspaceSelection", () => {
   it("waits for refs instead of carrying a worktree base into Current checkout", () => {
