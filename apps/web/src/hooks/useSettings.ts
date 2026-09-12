@@ -518,7 +518,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
-  clientSettingsSnapshot = settings;
+  replaceClientSettingsSnapshot(settings);
   clientSettingsHydrationStatus = "ready";
   clientSettingsHydrationPromise = null;
 }

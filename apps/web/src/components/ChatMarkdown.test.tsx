@@ -1,8 +1,8 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -11,15 +11,6 @@ import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("../hooks/useSettings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../hooks/useSettings")>();
-  const settings = actual.getClientSettings();
-  return {
-    ...actual,
-    useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
-  };
-});
 vi.mock("./ui/tooltip", async () => {
   const { cloneElement, isValidElement } = await import("react");
   return {
@@ -63,6 +54,18 @@ import ChatMarkdown, {
   hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "../hooks/useSettings";
+
+beforeEach(() => {
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+});
+
+afterEach(() => {
+  __resetClientSettingsPersistenceForTests();
+});
 
 function codeButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root
@@ -475,6 +478,49 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown file option chips", () => {
+  it("shows the existing short label by default", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+    );
+
+    expect(html).toContain("main.ts");
+    expect(html).not.toContain("./src/main.ts");
+  });
+
+  it("updates an already-mounted chip when the preference changes", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const chipText = () =>
+      renderer!.root
+        .findAllByType("button")
+        .filter((button) => String(button.props.className).includes("chat-markdown-file-link"))
+        .flatMap((button) => button.findAll(() => true))
+        .flatMap((node) => node.children)
+        .filter((child): child is string => typeof child === "string")
+        .join("");
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+        );
+      });
+      expect(chipText()).toContain("main.ts");
+      expect(chipText()).not.toContain("./src/main.ts");
+
+      await act(async () => {
+        __setClientSettingsForTests({
+          ...DEFAULT_CLIENT_SETTINGS,
+          showFileLinkPaths: true,
+        });
+      });
+      expect(chipText()).toContain("./src/main.ts");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,

@@ -126,6 +126,7 @@ import {
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
+import { formatFileChipLabel } from "../filePathDisplay";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -2386,7 +2387,9 @@ function useChatMarkdownState({
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
-  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  const clientSettings = useClientSettings();
+  const linkTargetPreference = clientSettings.browserLinkTarget;
+  const showFileLinkPaths = clientSettings.showFileLinkPaths;
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
@@ -2535,15 +2538,15 @@ function useChatMarkdownState({
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
-      const labelParts = [fileLinkMeta.basename];
-      if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-        labelParts.push(parentSuffix);
-      }
-      if (fileLinkMeta.line) {
-        labelParts.push(
-          `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-        );
-      }
+      const label = formatFileChipLabel({
+        showFileLinkPaths,
+        targetPath: fileLinkMeta.targetPath,
+        workspaceRoot: cwd,
+        basename: fileLinkMeta.basename,
+        parentSuffix,
+        line: fileLinkMeta.line,
+        column: fileLinkMeta.column,
+      });
       const mediaPath = mediaSource ?? fileLinkMeta.filePath;
       const canPreviewMedia =
         mediaMimeTypeFromExtension(
@@ -2563,7 +2566,7 @@ function useChatMarkdownState({
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
           line={fileLinkMeta.line}
-          label={labelParts.join(" · ")}
+          label={label}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2603,6 +2606,7 @@ function useChatMarkdownState({
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,
+      showFileLinkPaths,
       threadRef,
     ],
   );
