@@ -511,6 +511,17 @@ describe("ClientSettings microphone", () => {
       "studio-mic",
     );
   });
+
+  it("follows the primary transcription environment by default", () => {
+    expect(decodeClientSettings({}).voiceTranscriptionEnvironmentId).toBeNull();
+  });
+
+  it("accepts a transcription environment selection", () => {
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionEnvironmentId: "environment-2" })
+        .voiceTranscriptionEnvironmentId,
+    ).toBe("environment-2");
+  });
 });
 
 describe("ServerSettings speech model", () => {

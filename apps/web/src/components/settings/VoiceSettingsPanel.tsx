@@ -6,15 +6,23 @@ import {
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentSpeechModel,
+  EnvironmentSpeechStatus,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useClientSettingsHydrated,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -24,7 +32,9 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const SYSTEM_DEFAULT = "system-default";
+const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
+const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
 function ModelCard(props: {
@@ -118,7 +128,15 @@ function ModelCard(props: {
 }
 
 export function VoiceSettingsPanel() {
-  const environmentId = usePrimaryEnvironmentId();
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const selectedEnvironmentId = useClientSettings(
+    (settings) => settings.voiceTranscriptionEnvironmentId,
+  );
+  const environmentId = clientSettingsHydrated
+    ? (selectedEnvironmentId ?? primaryEnvironmentId)
+    : null;
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const updateClientSettings = useUpdateClientSettings();
@@ -204,6 +222,14 @@ export function VoiceSettingsPanel() {
   const selectedIsUnavailable = Boolean(
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
+  const unavailableSelectedEnvironmentId =
+    selectedEnvironmentId !== null &&
+    !environments.some((environment) => environment.environmentId === selectedEnvironmentId)
+      ? selectedEnvironmentId
+      : null;
+  const primaryEnvironment = environments.find(
+    (environment) => environment.environmentId === primaryEnvironmentId,
+  );
   const currentStatus = status?.prepared === prepared ? status.value : null;
   const installed = models.filter((model) => model.state !== "downloadable");
   const available = models.filter((model) => model.state === "downloadable");
@@ -211,6 +237,60 @@ export function VoiceSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="Voice">
+        <SettingsRow
+          {...searchableSetting("transcription-environment")}
+          description="Run voice transcription on this environment for every thread."
+          control={
+            <Select
+              disabled={!clientSettingsHydrated || operation !== null}
+              value={
+                selectedEnvironmentId
+                  ? environmentValue(selectedEnvironmentId)
+                  : PRIMARY_ENVIRONMENT
+              }
+              onValueChange={(value) => {
+                if (!value) return;
+                if (value === PRIMARY_ENVIRONMENT) {
+                  void updateClientSettings({ voiceTranscriptionEnvironmentId: null });
+                  return;
+                }
+                const selectedEnvironment = environments.find(
+                  (environment) => environmentValue(environment.environmentId) === value,
+                );
+                if (selectedEnvironment)
+                  void updateClientSettings({
+                    voiceTranscriptionEnvironmentId: selectedEnvironment.environmentId,
+                  });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value={PRIMARY_ENVIRONMENT}>
+                  {primaryEnvironment
+                    ? `${primaryEnvironment.label} (Primary)`
+                    : "Primary environment"}
+                </SelectItem>
+                {unavailableSelectedEnvironmentId !== null ? (
+                  <SelectItem value={environmentValue(unavailableSelectedEnvironmentId)}>
+                    Selected environment (Unavailable)
+                  </SelectItem>
+                ) : null}
+                {environments
+                  .filter((environment) => environment.environmentId !== primaryEnvironmentId)
+                  .map((environment) => (
+                    <SelectItem
+                      key={environment.environmentId}
+                      value={environmentValue(environment.environmentId)}
+                    >
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("microphone")}
           description={
@@ -271,7 +351,7 @@ export function VoiceSettingsPanel() {
       >
         <div className="space-y-4 px-3 sm:px-4">
           <p className="max-w-xl text-[12px] leading-relaxed text-muted-foreground/80">
-            Models run on the connected T3 environment. Recordings are deleted after transcription.
+            Models run on the selected T3 environment. Recordings are deleted after transcription.
           </p>
           {currentStatus?.supported && prepared ? (
             <div className="space-y-4">

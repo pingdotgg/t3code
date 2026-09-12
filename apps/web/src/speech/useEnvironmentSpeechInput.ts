@@ -6,14 +6,15 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentId, EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { ensureLocalApi } from "../localApi";
 import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -24,7 +25,6 @@ type DraftInput = {
 };
 
 type HookInput = {
-  readonly environmentId: EnvironmentId;
   readonly ownerKey: string;
   readonly draftText: string;
   readonly readDraft: () => DraftInput;
@@ -35,7 +35,15 @@ type HookInput = {
 };
 
 export function useEnvironmentSpeechInput(input: HookInput) {
-  const prepared = Option.getOrNull(usePreparedConnection(input.environmentId));
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const configuredEnvironmentId = useClientSettings(
+    (settings) => settings.voiceTranscriptionEnvironmentId,
+  );
+  const transcriptionEnvironmentId = clientSettingsHydrated
+    ? (configuredEnvironmentId ?? primaryEnvironmentId)
+    : null;
+  const prepared = Option.getOrNull(usePreparedConnection(transcriptionEnvironmentId));
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;

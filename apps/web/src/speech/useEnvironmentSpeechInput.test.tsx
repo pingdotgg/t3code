@@ -4,13 +4,33 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type EnvironmentId } from "@t3tools/contracts";
 
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
-const mocks = vi.hoisted(() => ({ prepared: {} as PreparedConnection }));
-vi.mock("../state/session", () => ({ usePreparedConnection: () => Option.some(mocks.prepared) }));
-vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "" }));
+const mocks = vi.hoisted(() => ({
+  prepared: {} as PreparedConnection,
+  preparedEnvironmentId: null as EnvironmentId | null,
+  primaryEnvironmentId: "primary-environment" as EnvironmentId,
+  transcriptionEnvironmentId: null as EnvironmentId | null,
+}));
+vi.mock("../state/session", () => ({
+  usePreparedConnection: (environmentId: EnvironmentId | null) => {
+    mocks.preparedEnvironmentId = environmentId;
+    return Option.some(mocks.prepared);
+  },
+}));
+vi.mock("../state/environments", () => ({
+  usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
+}));
+vi.mock("../hooks/useSettings", () => ({
+  useClientSettingsHydrated: () => true,
+  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector({
+      ...DEFAULT_CLIENT_SETTINGS,
+      voiceTranscriptionEnvironmentId: mocks.transcriptionEnvironmentId,
+    }),
+}));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
@@ -38,7 +58,6 @@ let root: Root | undefined;
 let voice: ReturnType<typeof useEnvironmentSpeechInput>;
 function Probe() {
   const value = useEnvironmentSpeechInput({
-    environmentId: "environment" as EnvironmentId,
     ownerKey: "draft",
     draftText: "",
     readDraft: () => ({ text: "", selection: { start: 0, end: 0 } }),
@@ -49,11 +68,8 @@ function Probe() {
   });
   return null;
 }
-afterEach(async () => {
-  await act(() => root?.unmount());
-  vi.unstubAllGlobals();
-});
-it("clears the previous connection's recording error when replacing the controller", async () => {
+
+async function mountProbe() {
   const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
   const container = {
     nodeType: 1,
@@ -70,6 +86,25 @@ it("clears the previous connection's recording error when replacing the controll
   vi.stubGlobal("MediaRecorder", function MediaRecorder() {});
   root = createRoot(container as unknown as HTMLElement);
   await act(() => root!.render(<Probe />));
+}
+
+afterEach(async () => {
+  await act(() => root?.unmount());
+  root = undefined;
+  mocks.transcriptionEnvironmentId = null;
+  mocks.preparedEnvironmentId = null;
+  vi.unstubAllGlobals();
+});
+it("uses the primary environment for transcription by default", async () => {
+  await mountProbe();
+  expect(mocks.preparedEnvironmentId).toBe(mocks.primaryEnvironmentId);
+
+  mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
+  await act(() => root!.render(<Probe />));
+  expect(mocks.preparedEnvironmentId).toBe(mocks.transcriptionEnvironmentId);
+});
+it("clears the previous connection's recording error when replacing the controller", async () => {
+  await mountProbe();
   await act(() => voice.start());
   expect(voice.state.phase).toBe("error");
   const previousConnection = mocks.prepared;
