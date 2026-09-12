@@ -4,6 +4,9 @@
  * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
  * Grok Build) rather than T3 Code's orchestration projections, so usage covers
  * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * OpenCode is the one provider without transcript files: its usage lives in a
+ * SQLite database, read by a sibling source in `usageOpenCodeDatabase.ts` that
+ * folds into the same aggregation.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -45,6 +48,11 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import {
+  createOpenCodeScanState,
+  resolveOpenCodeDatabasePath,
+  scanOpenCodeDatabase,
+} from "./usageOpenCodeDatabase.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -142,6 +150,11 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+
+  // OpenCode's incremental state sits beside the file scan cache: same shape
+  // of problem (append-only source, cheap change gate), different medium —
+  // a rowid cursor into `message` rather than a byte offset into a file.
+  const openCodeState = createOpenCodeScanState();
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -410,6 +423,42 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
+  /**
+   * OpenCode publishes usage through its own SQLite database rather than JSONL
+   * transcripts, so it is a sibling source to the directory scan rather than an
+   * entry in it: byte-offset resume is meaningless for a database, and the
+   * scan cache is keyed on transcript files. Incrementality comes from the
+   * rowid cursor the scan state tracks instead. The scan reads in chunks and
+   * yields between them, so this stays a genuinely async step rather than a
+   * synchronous read parked behind `Effect.promise`.
+   */
+  const collectOpenCodeSource = Effect.fn("UsageService.collectOpenCodeSource")(function* (
+    retentionCutoffMs: number,
+  ) {
+    const dbPath = resolveOpenCodeDatabasePath({
+      xdgDataHome: hostEnvironment["XDG_DATA_HOME"],
+      homedir: NodeOS.homedir(),
+    });
+    const outcome = yield* Effect.promise(() =>
+      scanOpenCodeDatabase(dbPath, openCodeState, { retentionCutoffMs }),
+    ).pipe(
+      // One source must never fail the scan: a defective OpenCode read
+      // resolves to a failed outcome and is reported as a source, the way a
+      // missing transcript directory is, instead of taking Claude and Codex
+      // reporting down with it.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("OpenCode usage scan failed unexpectedly", Cause.squash(cause)).pipe(
+          Effect.as({
+            status: "failed" as const,
+            volumeId: "",
+            detail: "OpenCode database could not be read.",
+          }),
+        ),
+      ),
+    );
+    return { dbPath, outcome };
+  });
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -462,9 +511,14 @@ export const make = Effect.gen(function* () {
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all(
-      [ensureRates(false), collectDirs(windowStartMs, settings)],
-      { concurrency: 2 },
+    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const [, scannedDirs, openCode] = yield* Effect.all(
+      [
+        ensureRates(false),
+        collectDirs(windowStartMs, settings),
+        collectOpenCodeSource(retentionCutoffMs),
+      ],
+      { concurrency: 3 },
     );
 
     const aggregator = new UsageAggregator({
@@ -529,11 +583,57 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    // The OpenCode source folds into the same aggregator, so dedupe, day
+    // bucketing, pricing and session counting stay shared with the file
+    // sources; no aggregation rule knows it exists.
+    const openCodeSessionIds = new Set<string>();
+    if (openCode.outcome.status === "ok") {
+      for (const record of openCode.outcome.records) {
+        // Only sessions that contributed in-window count, matching the
+        // directory sources above.
+        if (aggregator.add(record) && record.sessionId.length > 0) {
+          openCodeSessionIds.add(record.sessionId);
+        }
+      }
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider: "opencode",
+          resolvedHomePath: openCode.dbPath,
+          volumeId: openCode.outcome.volumeId,
+        },
+        status: "ok",
+        scannedFiles: 1,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: openCodeSessionIds.size,
+        message: null,
+      });
+    } else {
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider: "opencode",
+          resolvedHomePath: openCode.dbPath,
+          volumeId: openCode.outcome.volumeId,
+        },
+        status: openCode.outcome.status,
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message:
+          openCode.outcome.status === "failed"
+            ? openCode.outcome.detail
+            : "No OpenCode database on this environment.",
+      });
+    }
+
     const pruned = pruneScanCache(fileCache, {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      retentionCutoffMs,
     });
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();

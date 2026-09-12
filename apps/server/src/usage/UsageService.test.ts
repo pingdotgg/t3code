@@ -37,6 +37,55 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
   })}\n`;
 }
 
+/** Epoch ms inside the test window, so OpenCode rows land on a known day. */
+const IN_WINDOW_MS = Date.parse("2026-08-01T10:00:00Z");
+
+/** Shaped after a real OpenCode assistant `message` row's `data` payload. */
+function opencodePayload(
+  overrides: { role?: string; cost?: number; tokens?: Record<string, unknown> } = {},
+): string {
+  return JSON.stringify({
+    role: overrides.role ?? "assistant",
+    time: { created: IN_WINDOW_MS, completed: IN_WINDOW_MS + 4_000 },
+    modelID: "gpt-5.1-codex-max",
+    providerID: "openai",
+    cost: overrides.cost ?? 0.005,
+    tokens: overrides.tokens ?? {
+      input: 1000,
+      output: 200,
+      reasoning: 50,
+      cache: { read: 400, write: 20 },
+    },
+    finish: "tool-calls",
+  });
+}
+
+/** Builds a temporary OpenCode database — never the developer's real one. */
+async function seedOpenCodeDatabase(
+  dbPath: string,
+  rows: readonly { id: string; sessionId: string; timeCreated: number; data: string }[],
+): Promise<void> {
+  const { DatabaseSync } = await import("node:sqlite");
+  await NodeFSP.mkdir(NodePath.dirname(dbPath), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`CREATE TABLE message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    )`);
+    for (const row of rows) {
+      db.prepare(
+        "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+      ).run(row.id, row.sessionId, row.timeCreated, row.timeCreated, row.data);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -89,7 +138,10 @@ const serviceLayers = (input: {
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+      Layer.succeed(HostProcessEnvironment, {
+        GROK_HOME: NodePath.join(input.home, "grok"),
+        XDG_DATA_HOME: NodePath.join(input.home, "xdg"),
+      }),
     ),
   );
 
@@ -156,6 +208,108 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reports OpenCode usage from its SQLite database beside the file sources", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const dbPath = NodePath.join(home, "xdg", "opencode", "opencode.db");
+      yield* Effect.promise(() =>
+        seedOpenCodeDatabase(dbPath, [
+          {
+            id: "msg_oc_1",
+            sessionId: "oc-session-1",
+            timeCreated: IN_WINDOW_MS,
+            data: opencodePayload(),
+          },
+          {
+            id: "msg_oc_2",
+            sessionId: "oc-session-2",
+            timeCreated: IN_WINDOW_MS + 60_000,
+            data: opencodePayload(),
+          },
+          // Non-assistant and zero-usage rows must not become records.
+          {
+            id: "msg_oc_3",
+            sessionId: "oc-session-3",
+            timeCreated: IN_WINDOW_MS + 120_000,
+            data: opencodePayload({ role: "user" }),
+          },
+          {
+            id: "msg_oc_4",
+            sessionId: "oc-session-4",
+            timeCreated: IN_WINDOW_MS + 180_000,
+            data: opencodePayload({ cost: 0, tokens: {} }),
+          },
+        ]),
+      );
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-opencode-test", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+
+      const opencodeBuckets = summary.buckets.filter(
+        (bucket) => bucket.provider === "opencode",
+      );
+      assert.lengthOf(opencodeBuckets, 1);
+      const opencode = opencodeBuckets[0]!;
+      // outputTokens = 200 visible + 50 reasoning per row; OpenCode reports
+      // the two separately and the subset invariant must hold.
+      assert.deepStrictEqual(opencode.totals, {
+        uncachedInputTokens: 2000,
+        cachedInputTokens: 800,
+        cacheCreationTokens: 40,
+        outputTokens: 500,
+        reasoningTokens: 100,
+      });
+      assert.closeTo(opencode.costUsd, 0.01, 1e-12);
+      assert.strictEqual(opencode.costSource, "providerReported");
+      assert.strictEqual(opencode.sessions, 2);
+
+      const opencodeSource = summary.sources.find(
+        (source) => source.fingerprint.provider === "opencode",
+      );
+      assert.strictEqual(opencodeSource?.status, "ok");
+      assert.strictEqual(opencodeSource?.distinctSessions, 2);
+      assert.strictEqual(opencodeSource?.scannedFiles, 1);
+      assert.strictEqual(opencodeSource?.fingerprint.resolvedHomePath, dbPath);
+
+      // The file sources still report alongside it.
+      assert.exists(summary.buckets.find((bucket) => bucket.provider === "claude"));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the other providers when the OpenCode database is unreadable", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const dbPath = NodePath.join(home, "xdg", "opencode", "opencode.db");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.dirname(dbPath), { recursive: true }),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(dbPath, "this is not a database"));
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-opencode-failed-test", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+
+      const opencodeSource = summary.sources.find(
+        (source) => source.fingerprint.provider === "opencode",
+      );
+      assert.strictEqual(opencodeSource?.status, "failed");
+      assert.isNotNull(opencodeSource?.message);
+      assert.strictEqual(
+        summary.buckets.find((bucket) => bucket.provider === "opencode"),
+        undefined,
+      );
+      // The whole read still succeeded and Claude still reports.
+      assert.exists(summary.buckets.find((bucket) => bucket.provider === "claude"));
     }).pipe(Effect.scoped),
   );
 
