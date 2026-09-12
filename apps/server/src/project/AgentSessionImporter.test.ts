@@ -66,7 +66,9 @@ const WORKSPACE_ROOT = "/tmp/project-from-server";
 const CLAUDE_SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const encodeTranscriptRecord = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeThread = (source: "codex" | "claudeAgent"): AgentSessionScanner.AgentSessionThread => ({
+const makeThread = (
+  source: "codex" | "claudeAgent" | "jcode",
+): AgentSessionScanner.AgentSessionThread => ({
   source,
   providerInstanceId: ProviderInstanceId.make(source),
   providerSessionId: source === "codex" ? "codex-session" : CLAUDE_SESSION_ID,
@@ -213,8 +215,17 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
               Stream.fromEffect(
                 Effect.sync(() => {
                   expect(bindings).toHaveLength(1);
-                  return makeThreadOutcome(makeThread("claudeAgent"));
+                  return makeThreadOutcome(makeThread("jcode"));
                 }),
+              ),
+            ).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  Effect.sync(() => {
+                    expect(bindings).toHaveLength(2);
+                    return makeThreadOutcome(makeThread("claudeAgent"));
+                  }),
+                ),
               ),
             );
           },
@@ -245,15 +256,18 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           expectedWorkspaceRoot: `${WORKSPACE_ROOT}/`,
         });
 
-        expect(result).toEqual({ importedCount: 2, skippedCount: 0 });
+        expect(result).toEqual({ importedCount: 3, skippedCount: 0 });
         expect(scannedRoot).toBe(WORKSPACE_ROOT);
         expect(commands.map((command) => command.type)).toEqual([
           "thread.create",
           "thread.history.import",
           "thread.create",
           "thread.history.import",
+          "thread.create",
+          "thread.history.import",
         ]);
         expect(commands.filter((command) => command.type === "thread.create")).toMatchObject([
+          { historyImport: true },
           { historyImport: true },
           { historyImport: true },
         ]);
@@ -264,6 +278,8 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         ).toEqual([
           "import:codex:codex-session:000000",
           "import:codex:codex-session:000001",
+          `import:jcode:${CLAUDE_SESSION_ID}:000000`,
+          `import:jcode:${CLAUDE_SESSION_ID}:000001`,
           `import:claudeAgent:${CLAUDE_SESSION_ID}:000000`,
           `import:claudeAgent:${CLAUDE_SESSION_ID}:000001`,
         ]);
@@ -272,6 +288,13 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             provider: "codex",
             providerInstanceId: "codex",
             resumeCursor: { threadId: "codex-session" },
+            runtimePayload: { cwd: WORKSPACE_ROOT },
+          },
+          {
+            provider: "jcode",
+            providerInstanceId: "jcode",
+            // The Jcode adapter resumes an ACP session by provider session id.
+            resumeCursor: { schemaVersion: 1, sessionId: CLAUDE_SESSION_ID },
             runtimePayload: { cwd: WORKSPACE_ROOT },
           },
           {

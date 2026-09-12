@@ -6,6 +6,7 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parseJcodeMessage,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -562,5 +563,45 @@ describe("parseGrokLine", () => {
 
     const records = parseGrokLine(line);
     expect(records[0]?.timestampMs).toBe(1_786_372_566_000);
+  });
+});
+
+describe("parseJcodeMessage", () => {
+  const baseMessage = {
+    id: "message_1789046252045_1",
+    role: "assistant",
+    content: [{ type: "text", text: "ok" }],
+    timestamp: "2026-09-10T13:17:32.045037100Z",
+    token_usage: {
+      input_tokens: 13679,
+      output_tokens: 287,
+      cache_read_input_tokens: 13632,
+    },
+  };
+
+  it("extracts provider, session model, and token totals", () => {
+    const record = parseJcodeMessage(baseMessage, "omen-alpha", "session_shrimp_1");
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("jcode");
+    expect(record?.model).toBe("omen-alpha");
+    expect(record?.sessionId).toBe("session_shrimp_1");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 13679,
+      cachedInputTokens: 13632,
+      cacheCreationTokens: 0,
+      outputTokens: 287,
+      reasoningTokens: 0,
+    });
+    expect(record?.dedupeKey).toBe("session_shrimp_1:message_1789046252045_1");
+  });
+
+  it("ignores user messages and messages without token_usage", () => {
+    expect(parseJcodeMessage({ ...baseMessage, role: "user" }, "m", "s")).toBeNull();
+    const { token_usage: _omitted, ...withoutUsage } = baseMessage;
+    expect(parseJcodeMessage(withoutUsage, "m", "s")).toBeNull();
+  });
+
+  it("returns null for malformed timestamps", () => {
+    expect(parseJcodeMessage({ ...baseMessage, timestamp: "nope" }, "m", "s")).toBeNull();
   });
 });

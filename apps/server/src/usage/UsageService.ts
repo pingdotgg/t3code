@@ -260,6 +260,14 @@ export const make = Effect.gen(function* () {
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
 
+    // Jcode Settings exposes `homePath` exactly like Claude: overridden in
+    // sandboxed homes, default `~/.jcode` otherwise.
+    const jcodeHomeConfigured = settings.providers.jcode.homePath.trim();
+    const jcodeHome =
+      jcodeHomeConfigured.length > 0
+        ? path.resolve(expandHomePath(jcodeHomeConfigured))
+        : path.join(NodeOS.homedir(), ".jcode");
+
     return [
       { provider: "claude" as const, dir: claudeDir },
       { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
@@ -268,6 +276,7 @@ export const make = Effect.gen(function* () {
         dir: path.join(grokHome, "sessions"),
         fileName: "updates.jsonl",
       },
+      { provider: "jcode" as const, dir: path.join(jcodeHome, "sessions") },
     ];
   });
 
