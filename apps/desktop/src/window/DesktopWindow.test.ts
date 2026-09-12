@@ -217,6 +217,9 @@ function makeTestLayer(input: {
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
+  readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+  readonly destroyAll?: Effect.Effect<void>;
+  readonly onWindowCreate?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
@@ -263,6 +266,7 @@ function makeTestLayer(input: {
         input.createdWindowOptions?.push(options);
       }).pipe(
         Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
+        Effect.andThen(input.onWindowCreate ?? Effect.void),
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
@@ -273,9 +277,10 @@ function makeTestLayer(input: {
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
-    destroyAll: Effect.void,
+    destroyAll: input.destroyAll ?? Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+  const desktopStateLayer = DesktopState.layer;
 
   return DesktopWindow.layer.pipe(
     Layer.provide(
@@ -285,7 +290,7 @@ function makeTestLayer(input: {
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
-        DesktopState.layer,
+        desktopStateLayer,
         electronAppLayer,
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
@@ -308,7 +313,7 @@ function makeTestLayer(input: {
         electronWindowLayer,
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
-          setMainWindow: () => Effect.void,
+          setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           reapplyZoom: () =>
@@ -318,6 +323,7 @@ function makeTestLayer(input: {
         }),
       ),
     ),
+    Layer.merge(desktopStateLayer),
   );
 }
 
@@ -399,6 +405,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           DesktopAppSettings.layerTest(),
           desktopClientSettingsLayer,
           desktopServerExposureLayer,
+          DesktopState.layer,
           electronAppLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
@@ -729,12 +736,143 @@ describe("DesktopWindow", () => {
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
         assert.equal(createdWindowOptions[0]?.width, 1320);
         assert.equal(createdWindowOptions[0]?.height, 880);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
+        assert.isTrue(yield* Ref.get(desktopState.windowCreated));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("marks the connecting splash as an owned window", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+
+        yield* desktopWindow.showConnectingSplash;
+
+        assert.isTrue(yield* Ref.get(desktopState.windowCreated));
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not create the connecting splash after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+
+        yield* Ref.set(desktopState.quitting, true);
+        yield* desktopWindow.showConnectingSplash;
+
+        assert.equal(yield* Ref.get(createCount), 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("destroys a connecting splash whose creation finishes after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const destroyCount = yield* Ref.make(0);
+      const desktopStateRef = yield* Ref.make<DesktopState.DesktopState["Service"] | null>(null);
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        destroyAll: Ref.update(destroyCount, (count) => count + 1),
+        onWindowCreate: Effect.gen(function* () {
+          const state = yield* Ref.get(desktopStateRef);
+          if (state !== null) {
+            yield* Ref.set(state.quitting, true);
+          }
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* Ref.set(desktopStateRef, desktopState);
+
+        yield* desktopWindow.showConnectingSplash;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(yield* Ref.get(destroyCount), 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not register a main window whose setup finishes after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const previewStarted = yield* Deferred.make<void>();
+      const releasePreview = yield* Deferred.make<void>();
+      const destroyCount = yield* Ref.make(0);
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        setPreviewMainWindow: () =>
+          Deferred.succeed(previewStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releasePreview)),
+            Effect.asVoid,
+          ),
+        destroyAll: Ref.update(destroyCount, (count) => count + 1),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        const creation = yield* desktopWindow
+          .handleBackendReady(new URL("http://127.0.0.1:3773"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(previewStarted);
+        yield* Ref.set(desktopState.quitting, true);
+        yield* Deferred.succeed(releasePreview, undefined);
+        yield* Fiber.join(creation);
+
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+        assert.equal(yield* Ref.get(destroyCount), 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not start main window creation after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+
+        yield* Ref.set(desktopState.quitting, true);
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(yield* Ref.get(createCount), 0);
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
       }).pipe(Effect.provide(layer));
     }),
   );
