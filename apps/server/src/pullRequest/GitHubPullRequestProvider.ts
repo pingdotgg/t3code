@@ -181,458 +181,471 @@ export function loginAvatarUrl(login: string, host: string): string | null {
 const rendersEmpty = (body: string): boolean =>
   body.replace(/<!--[\s\S]*?-->/g, "").trim().length === 0;
 
-export const make = Effect.gen(function* () {
-  const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+/** The kinds `gh` answers for: github.com and every authenticated enterprise host. */
+export type GitHubPullRequestProviderKind = "github" | "github-enterprise";
 
-  const repositoryAccessCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
-      return cli.getRepositoryAccess({ cwd, repository, host });
-    },
-    {
-      capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
-    },
-  );
-  const getRepositoryAccess = (input: {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-  }) => Cache.get(repositoryAccessCache, JSON.stringify([input.cwd, input.repository, input.host]));
+export const makeProvider = (kind: GitHubPullRequestProviderKind) =>
+  Effect.gen(function* () {
+    const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-  const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
-    new PullRequestProviderError({
-      provider: "github",
-      operation,
-      ...gitHubProviderFailure(error),
-      detail: error.detail,
-      cause: error,
-    });
+    const repositoryAccessCache = yield* Cache.makeWith(
+      (key: string) => {
+        const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
+        return cli.getRepositoryAccess({ cwd, repository, host });
+      },
+      {
+        capacity: 128,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
+      },
+    );
+    const getRepositoryAccess = (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+    }) =>
+      Cache.get(repositoryAccessCache, JSON.stringify([input.cwd, input.repository, input.host]));
 
-  const provider: PullRequestProviderApi = {
-    kind: "github",
-    capabilities: CAPABILITIES,
+    const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
+      new PullRequestProviderError({
+        provider: kind,
+        operation,
+        ...gitHubProviderFailure(error),
+        detail: error.detail,
+        cause: error,
+      });
 
-    getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+    const provider: PullRequestProviderApi = {
+      kind,
+      capabilities: CAPABILITIES,
 
-    listChangeRequests: (input) =>
-      cli
-        .listPullRequests({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          filters: input.filters,
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              // A listing without faces is still a listing, so a failed lookup falls back to
-              // the initials rather than taking the rows down with it.
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
-        ),
+      getViewer: (input) =>
+        cli
+          .getViewerLogin({ cwd: input.cwd, host: input.host })
+          .pipe(Effect.mapError(fail("getViewer"))),
 
-    /**
-     * The same listing for a whole host in one search. The avatar lookup the per-repository read
-     * needs is not here: a search reports an author's picture itself, so a face costs no request
-     * of its own — `withAvatar` still stands behind it for the login GitHub answered nothing for.
-     */
-    listChangeRequestsAcross: (input) =>
-      cli
-        .searchPullRequests({
-          cwd: input.cwd,
-          host: input.host,
-          repositories: input.repositories,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          filters: input.filters,
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequestsAcross")),
-          Effect.map((batch) => ({
-            truncated: batch.truncated,
-            items: batch.items.map((item) => ({
-              ...item,
-              author: withAvatar(item.author, new Map<string, string>(), input.host),
-            })),
-          })),
-        ),
-
-    listChangeRequestStats: (input) =>
-      cli
-        .listPullRequestStats({
-          cwd: input.cwd,
-          host: input.host,
-          changeRequests: input.changeRequests,
-        })
-        .pipe(Effect.mapError(fail("listChangeRequestStats"))),
-
-    getChangeRequestSummary: (input) =>
-      cli.getPullRequestSummary(input).pipe(
-        // `gh pr view` names the author without an avatar; the login-shaped URL every user
-        // has stands in, without the second request the listing spends on it.
-        Effect.map((summary) => ({
-          ...summary,
-          ...(summary.author === undefined
-            ? {}
-            : { author: withAvatar(summary.author, new Map(), input.host) }),
-        })),
-        Effect.mapError(fail("getChangeRequestSummary")),
-      ),
-
-    getChangeRequestStack: (input) =>
-      cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
-
-    getChangeRequest: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              Effect.all({
-                // Only an open pull request can be behind anything worth saying so about, and
-                // only one whose head repository is known can be compared at all.
-                comparison:
-                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                    ? Effect.succeed(null)
-                    : cli
-                        .getPullRequestBaseComparison({
-                          ...input,
-                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                        })
-                        .pipe(Effect.orElseSucceed(() => null)),
-                // GitHub omits a fork workflow that has not been approved from the normal check
-                // rollup. Read the action-required runs by head revision so "all passed" cannot
-                // be shown while a whole workflow is still waiting to start.
-                workflowApprovals:
-                  pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-                    ? Effect.succeed({
-                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                        unavailable: false,
-                      })
-                    : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
-                      ? Effect.succeed({
-                          runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                          unavailable: true,
-                        })
-                      : cli
-                          .listWorkflowRunsRequiringApproval({
-                            ...input,
-                            headSha: pullRequest.headSha,
-                            headBranch: pullRequest.headBranch,
-                            headRepositoryOwner: pullRequest.headRepositoryOwner,
-                            isCrossRepository: true,
-                          })
-                          .pipe(
-                            Effect.matchEffect({
-                              onFailure: (error) =>
-                                error._tag === "GitHubCliRateLimitError" ||
-                                error._tag === "SourceControlRateLimitPausedError"
-                                  ? Effect.fail(error)
-                                  : Effect.succeed({
-                                      runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                                      unavailable: true,
-                                    }),
-                              onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
-                            }),
-                          ),
-              }).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
-            ),
-          ),
-          getRepositoryAccess({
+      listChangeRequests: (input) =>
+        cli
+          .listPullRequests({
             cwd: input.cwd,
             repository: input.repository,
             host: input.host,
-          }),
-          // A small permissions query replaces the deeply paginated review-thread walk on the
-          // core path. Writes ask again immediately before mutating, so this is presentation.
-          cli.getViewerAccess(input),
-        ],
-        { concurrency: 3 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
-          ...detail.pullRequest,
-          checks: withWorkflowApprovals(
-            detail.pullRequest.checks,
-            detail.workflowApprovals.runs,
-            detail.workflowApprovals.unavailable,
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            filters: input.filters,
+          })
+          .pipe(
+            Effect.mapError(fail("listChangeRequests")),
+            Effect.flatMap((page) =>
+              cli
+                .listActorAvatars({
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  host: input.host,
+                  ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
+                })
+                // A listing without faces is still a listing, so a failed lookup falls back to
+                // the initials rather than taking the rows down with it.
+                .pipe(
+                  Effect.orElseSucceed(() => new Map<string, string>()),
+                  Effect.map((avatarsByLogin) => ({
+                    ...page,
+                    items: page.items.map((item) => ({
+                      ...item,
+                      author: withAvatar(item.author, avatarsByLogin, input.host),
+                    })),
+                  })),
+                ),
+            ),
           ),
-          ...(detail.workflowApprovals.unavailable
-            ? {}
-            : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
-          reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
-          mergeCapabilities: repository.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...viewerAccess,
-            canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
-          }),
-          baseComparison:
-            detail.comparison === null || detail.comparison.behindBy === null
-              ? "unknown"
-              : detail.comparison.behindBy > 0
-                ? "behind"
-                : "up-to-date",
-          ...(detail.comparison?.behindBy == null ? {} : { behindBy: detail.comparison.behindBy }),
-        })),
-      ),
 
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          // Line comments live on review threads, which `gh pr view --json` cannot reach. A
-          // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
-              comments: [],
-              dismissalsByReviewId: new Map<string, string>(),
-              reactions: [],
-              reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
-              reviewThreads: [],
-              commentCount: 0,
-              truncated: true,
-              reviewers: [],
-              avatarsByLogin: new Map<string, string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
-              commits: [],
-              viewer: { canUpdate: true, didAuthor: false },
+      /**
+       * The same listing for a whole host in one search. The avatar lookup the per-repository read
+       * needs is not here: a search reports an author's picture itself, so a face costs no request
+       * of its own — `withAvatar` still stands behind it for the login GitHub answered nothing for.
+       */
+      listChangeRequestsAcross: (input) =>
+        cli
+          .searchPullRequests({
+            cwd: input.cwd,
+            host: input.host,
+            repositories: input.repositories,
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            filters: input.filters,
+          })
+          .pipe(
+            Effect.mapError(fail("listChangeRequestsAcross")),
+            Effect.map((batch) => ({
+              truncated: batch.truncated,
+              items: batch.items.map((item) => ({
+                ...item,
+                author: withAvatar(item.author, new Map<string, string>(), input.host),
+              })),
             })),
           ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-          author: withAvatar(pullRequest.author, reviewThreads.avatarsByLogin, input.host),
-          reviewers: reviewThreads.reviewers,
-          reactions: reviewThreads.reactions,
-          commits: (reviewThreads.commits.length > 0
-            ? reviewThreads.commits
-            : pullRequest.commits
-          ).map((commit) => ({
-            ...commit,
-            ...reviewThreads.commitStats.get(commit.oid),
-            authors: commit.authors?.map(
-              (author) => withAvatar(author, reviewThreads.avatarsByLogin, input.host) ?? author,
-            ),
-          })),
-          comments: [...pullRequest.comments, ...reviewThreads.comments]
-            .map((comment) => ({
-              ...comment,
-              // GitHub keeps the dismissal reason on the timeline event, not on the review,
-              // so a dismissed review with nothing visible of its own reads its words from
-              // there. "Visible" and not "empty": bot reviews often carry only an HTML
-              // marker comment, which markdown renders as nothing.
-              body:
-                comment.kind === "review" &&
-                comment.reviewState?.toUpperCase() === "DISMISSED" &&
-                rendersEmpty(comment.body)
-                  ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
-                  : comment.body,
-              author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
-              // A comment out of `gh pr view --json` carries none of its own: that read
-              // reports no reaction at all, so they arrive from the GraphQL page by node id.
-              reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
-            }))
-            .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-          // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
-          // are always whole and only the thread walk can stop short of the host.
-          commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-          commentsTruncated: reviewThreads.truncated,
-          reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
-            })),
-          })),
-        })),
-      ),
 
-    getReviewThreadComments: (input) =>
-      cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
+      listChangeRequestStats: (input) =>
+        cli
+          .listPullRequestStats({
+            cwd: input.cwd,
+            host: input.host,
+            changeRequests: input.changeRequests,
+          })
+          .pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
-    getViewerPermissions: (input) =>
-      Effect.all(
-        [
-          cli.getViewerAccess({ ...input, allowReserve: true }),
-          // Whether this viewer may update the branch is only on the comparison, and the
-          // comparison only resolves through the head ref the detail carries. A failure here
-          // withholds that one action rather than the whole answer, the way the detail path
-          // leaves the banner unknown.
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                ? Effect.succeed(false)
-                : cli
-                    .getPullRequestBaseComparison({
-                      ...input,
-                      headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                      allowReserve: true,
-                    })
-                    .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
-            ),
-            Effect.orElseSucceed(() => false),
-          ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.mapError(fail("getViewerPermissions")),
-        Effect.map(([access, canUpdateBranch]) =>
-          gitHubViewerPermissions({ ...access, canUpdateBranch }),
+      getChangeRequestSummary: (input) =>
+        cli.getPullRequestSummary(input).pipe(
+          // `gh pr view` names the author without an avatar; the login-shaped URL every user
+          // has stands in, without the second request the listing spends on it.
+          Effect.map((summary) => ({
+            ...summary,
+            ...(summary.author === undefined
+              ? {}
+              : { author: withAvatar(summary.author, new Map(), input.host) }),
+          })),
+          Effect.mapError(fail("getChangeRequestSummary")),
         ),
-      ),
 
-    getDiff: (input) => cli.getPullRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+      getChangeRequestStack: (input) =>
+        cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
-    getDiffFileContents: (input) =>
-      cli.getPullRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+      getChangeRequest: (input) =>
+        Effect.all(
+          [
+            cli.getPullRequestDetail(input).pipe(
+              Effect.flatMap((pullRequest) =>
+                Effect.all({
+                  // Only an open pull request can be behind anything worth saying so about, and
+                  // only one whose head repository is known can be compared at all.
+                  comparison:
+                    pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                      ? Effect.succeed(null)
+                      : cli
+                          .getPullRequestBaseComparison({
+                            ...input,
+                            headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                          })
+                          .pipe(Effect.orElseSucceed(() => null)),
+                  // GitHub omits a fork workflow that has not been approved from the normal check
+                  // rollup. Read the action-required runs by head revision so "all passed" cannot
+                  // be shown while a whole workflow is still waiting to start.
+                  workflowApprovals:
+                    pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+                      ? Effect.succeed({
+                          runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                          unavailable: false,
+                        })
+                      : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+                        ? Effect.succeed({
+                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                            unavailable: true,
+                          })
+                        : cli
+                            .listWorkflowRunsRequiringApproval({
+                              ...input,
+                              headSha: pullRequest.headSha,
+                              headBranch: pullRequest.headBranch,
+                              headRepositoryOwner: pullRequest.headRepositoryOwner,
+                              isCrossRepository: true,
+                            })
+                            .pipe(
+                              Effect.matchEffect({
+                                onFailure: (error) =>
+                                  error._tag === "GitHubCliRateLimitError" ||
+                                  error._tag === "SourceControlRateLimitPausedError"
+                                    ? Effect.fail(error)
+                                    : Effect.succeed({
+                                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                                        unavailable: true,
+                                      }),
+                                onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                              }),
+                            ),
+                }).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
+              ),
+            ),
+            getRepositoryAccess({
+              cwd: input.cwd,
+              repository: input.repository,
+              host: input.host,
+            }),
+            // A small permissions query replaces the deeply paginated review-thread walk on the
+            // core path. Writes ask again immediately before mutating, so this is presentation.
+            cli.getViewerAccess(input),
+          ],
+          { concurrency: 3 },
+        ).pipe(
+          Effect.mapError(fail("getChangeRequest")),
+          Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
+            ...detail.pullRequest,
+            checks: withWorkflowApprovals(
+              detail.pullRequest.checks,
+              detail.workflowApprovals.runs,
+              detail.workflowApprovals.unavailable,
+            ),
+            ...(detail.workflowApprovals.unavailable
+              ? {}
+              : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
+            reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
+              login,
+              name: null,
+              avatarUrl: null,
+            })),
+            mergeCapabilities: repository.mergeCapabilities,
+            viewerPermissions: gitHubViewerPermissions({
+              ...viewerAccess,
+              canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
+            }),
+            baseComparison:
+              detail.comparison === null || detail.comparison.behindBy === null
+                ? "unknown"
+                : detail.comparison.behindBy > 0
+                  ? "behind"
+                  : "up-to-date",
+            ...(detail.comparison?.behindBy == null
+              ? {}
+              : { behindBy: detail.comparison.behindBy }),
+          })),
+        ),
 
-    listReviewerCandidates: (input) =>
-      cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
+      getChangeRequestActivity: (input) =>
+        Effect.all(
+          [
+            cli.getPullRequestActivity(input),
+            // Line comments live on review threads, which `gh pr view --json` cannot reach. A
+            // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
+            cli.listReviewThreadComments(input).pipe(
+              Effect.orElseSucceed(() => ({
+                comments: [],
+                dismissalsByReviewId: new Map<string, string>(),
+                reactions: [],
+                reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+                reviewThreads: [],
+                commentCount: 0,
+                truncated: true,
+                reviewers: [],
+                avatarsByLogin: new Map<string, string>(),
+                commitStats: new Map<
+                  string,
+                  { readonly additions: number; readonly deletions: number }
+                >(),
+                commits: [],
+                viewer: { canUpdate: true, didAuthor: false },
+              })),
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.mapError(fail("getChangeRequestActivity")),
+          Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
+            author: withAvatar(pullRequest.author, reviewThreads.avatarsByLogin, input.host),
+            reviewers: reviewThreads.reviewers,
+            reactions: reviewThreads.reactions,
+            commits: (reviewThreads.commits.length > 0
+              ? reviewThreads.commits
+              : pullRequest.commits
+            ).map((commit) => ({
+              ...commit,
+              ...reviewThreads.commitStats.get(commit.oid),
+              authors: commit.authors?.map(
+                (author) => withAvatar(author, reviewThreads.avatarsByLogin, input.host) ?? author,
+              ),
+            })),
+            comments: [...pullRequest.comments, ...reviewThreads.comments]
+              .map((comment) => ({
+                ...comment,
+                // GitHub keeps the dismissal reason on the timeline event, not on the review,
+                // so a dismissed review with nothing visible of its own reads its words from
+                // there. "Visible" and not "empty": bot reviews often carry only an HTML
+                // marker comment, which markdown renders as nothing.
+                body:
+                  comment.kind === "review" &&
+                  comment.reviewState?.toUpperCase() === "DISMISSED" &&
+                  rendersEmpty(comment.body)
+                    ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
+                    : comment.body,
+                author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+                // A comment out of `gh pr view --json` carries none of its own: that read
+                // reports no reaction at all, so they arrive from the GraphQL page by node id.
+                reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
+              }))
+              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+            // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
+            // are always whole and only the thread walk can stop short of the host.
+            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentsTruncated: reviewThreads.truncated,
+            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+              })),
+            })),
+          })),
+        ),
 
-    setReviewerRequest: (input) =>
-      cli
-        .setReviewerRequest({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          reviewers: input.reviewers,
-          requested: input.requested,
-        })
-        .pipe(Effect.mapError(fail("setReviewerRequest"))),
+      getReviewThreadComments: (input) =>
+        cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
 
-    listLabelCandidates: (input) =>
-      cli.listLabelCandidates(input).pipe(Effect.mapError(fail("listLabelCandidates"))),
+      getViewerPermissions: (input) =>
+        Effect.all(
+          [
+            cli.getViewerAccess({ ...input, allowReserve: true }),
+            // Whether this viewer may update the branch is only on the comparison, and the
+            // comparison only resolves through the head ref the detail carries. A failure here
+            // withholds that one action rather than the whole answer, the way the detail path
+            // leaves the banner unknown.
+            cli.getPullRequestDetail(input).pipe(
+              Effect.flatMap((pullRequest) =>
+                pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                  ? Effect.succeed(false)
+                  : cli
+                      .getPullRequestBaseComparison({
+                        ...input,
+                        headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                        allowReserve: true,
+                      })
+                      .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
+              ),
+              Effect.orElseSucceed(() => false),
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.mapError(fail("getViewerPermissions")),
+          Effect.map(([access, canUpdateBranch]) =>
+            gitHubViewerPermissions({ ...access, canUpdateBranch }),
+          ),
+        ),
 
-    setLabels: (input) =>
-      cli
-        .setLabels({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          labels: input.labels,
-          applied: input.applied,
-        })
-        .pipe(Effect.mapError(fail("setLabels"))),
+      getDiff: (input) => cli.getPullRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
-    runAction: (input) =>
-      cli
-        .runPullRequestAction({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          action: input.action,
-          ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
-          ...(input.expectedStackHeads === undefined
-            ? {}
-            : { expectedStackHeads: input.expectedStackHeads }),
-          ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
-          ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
-        })
-        .pipe(Effect.mapError(fail("runAction"))),
+      getDiffFileContents: (input) =>
+        cli
+          .getPullRequestDiffFileContents(input)
+          .pipe(Effect.mapError(fail("getDiffFileContents"))),
 
-    updateChangeRequest: (input) =>
-      cli
-        .updatePullRequest({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.body === undefined ? {} : { body: input.body }),
-        })
-        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+      listReviewerCandidates: (input) =>
+        cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
-    comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
+      setReviewerRequest: (input) =>
+        cli
+          .setReviewerRequest({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            reviewers: input.reviewers,
+            requested: input.requested,
+          })
+          .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
-    updateComment: (input) =>
-      cli
-        .updateComment({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          commentId: input.commentId,
-          kind: input.kind,
-          body: input.body,
-        })
-        .pipe(Effect.mapError(fail("updateComment"))),
+      listLabelCandidates: (input) =>
+        cli.listLabelCandidates(input).pipe(Effect.mapError(fail("listLabelCandidates"))),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+      setLabels: (input) =>
+        cli
+          .setLabels({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            labels: input.labels,
+            applied: input.applied,
+          })
+          .pipe(Effect.mapError(fail("setLabels"))),
 
-    replyToThread: (input) =>
-      cli
-        .replyToReviewThread({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          threadId: input.threadId,
-          body: input.body,
-        })
-        .pipe(Effect.mapError(fail("replyToThread"))),
+      runAction: (input) =>
+        cli
+          .runPullRequestAction({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            action: input.action,
+            ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+            ...(input.expectedStackHeads === undefined
+              ? {}
+              : { expectedStackHeads: input.expectedStackHeads }),
+            ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+            ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
+          })
+          .pipe(Effect.mapError(fail("runAction"))),
 
-    setReaction: (input) =>
-      cli
-        .setReaction({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
-          content: input.content,
-          reacted: input.reacted,
-        })
-        .pipe(Effect.mapError(fail("setReaction"))),
+      updateChangeRequest: (input) =>
+        cli
+          .updatePullRequest({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.body === undefined ? {} : { body: input.body }),
+          })
+          .pipe(Effect.mapError(fail("updateChangeRequest"))),
 
-    setThreadResolution: (input) =>
-      cli
-        .setReviewThreadResolution({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          threadId: input.threadId,
-          resolved: input.resolved,
-        })
-        .pipe(Effect.mapError(fail("setThreadResolution"))),
-  };
+      comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
 
-  return provider;
-});
+      updateComment: (input) =>
+        cli
+          .updateComment({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            commentId: input.commentId,
+            kind: input.kind,
+            body: input.body,
+          })
+          .pipe(Effect.mapError(fail("updateComment"))),
+
+      submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+
+      replyToThread: (input) =>
+        cli
+          .replyToReviewThread({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            threadId: input.threadId,
+            body: input.body,
+          })
+          .pipe(Effect.mapError(fail("replyToThread"))),
+
+      setReaction: (input) =>
+        cli
+          .setReaction({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
+            content: input.content,
+            reacted: input.reacted,
+          })
+          .pipe(Effect.mapError(fail("setReaction"))),
+
+      setThreadResolution: (input) =>
+        cli
+          .setReviewThreadResolution({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            threadId: input.threadId,
+            resolved: input.resolved,
+          })
+          .pipe(Effect.mapError(fail("setThreadResolution"))),
+    };
+
+    return provider;
+  });
+
+export const make = makeProvider("github");

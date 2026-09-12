@@ -1,13 +1,16 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { SourceControlProviderDiscoveryItem, VcsStatusResult } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
+  getPublishProviderReadiness,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  resolveSelectedEnterpriseHost,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
@@ -1151,5 +1154,250 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+function discoveryItem(overrides: {
+  readonly kind: SourceControlProviderDiscoveryItem["kind"];
+  readonly id: string;
+  readonly host?: string;
+  readonly label?: string;
+  readonly status?: SourceControlProviderDiscoveryItem["status"];
+  readonly authStatus?: SourceControlProviderDiscoveryItem["auth"]["status"];
+  readonly authDetail?: string;
+}): SourceControlProviderDiscoveryItem {
+  return {
+    kind: overrides.kind,
+    id: overrides.id,
+    host: overrides.host ? Option.some(overrides.host) : Option.none(),
+    label: overrides.label ?? overrides.kind,
+    status: overrides.status ?? "available",
+    version: Option.none(),
+    installHint: "Install the CLI.",
+    detail: Option.none(),
+    auth: {
+      status: overrides.authStatus ?? "authenticated",
+      account: Option.none(),
+      host: overrides.host ? Option.some(overrides.host) : Option.none(),
+      detail: overrides.authDetail ? Option.some(overrides.authDetail) : Option.none(),
+    },
+  };
+}
+
+describe("getPublishProviderReadiness", () => {
+  const staticProviders = [
+    discoveryItem({ kind: "github", id: "github", host: "github.com", label: "GitHub" }),
+    discoveryItem({ kind: "gitlab", id: "gitlab", host: "gitlab.com", label: "GitLab" }),
+    discoveryItem({
+      kind: "bitbucket",
+      id: "bitbucket",
+      host: "bitbucket.org",
+      label: "Bitbucket",
+      status: "missing",
+    }),
+    discoveryItem({
+      kind: "azure-devops",
+      id: "azure-devops",
+      host: "dev.azure.com",
+      label: "Azure DevOps",
+      authStatus: "unauthenticated",
+      authDetail: "Run az login.",
+    }),
+  ];
+
+  it("resolves the four static providers from their own rows", () => {
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "github",
+        sourceControlProviders: staticProviders,
+      }),
+      { ready: true, hint: null },
+    );
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "gitlab",
+        sourceControlProviders: staticProviders,
+      }),
+      { ready: true, hint: null },
+    );
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "bitbucket",
+        sourceControlProviders: staticProviders,
+      }),
+      { ready: false, hint: "Install the CLI." },
+    );
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "azure-devops",
+        sourceControlProviders: staticProviders,
+      }),
+      { ready: false, hint: "Run az login." },
+    );
+  });
+
+  it("reports an unavailable provider when discovery has no matching row", () => {
+    assert.deepEqual(
+      getPublishProviderReadiness({ provider: "github", sourceControlProviders: [] }),
+      {
+        ready: false,
+        hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
+      },
+    );
+  });
+
+  it("reports an unauthenticated enterprise host as not ready", () => {
+    const readiness = getPublishProviderReadiness({
+      provider: "github-enterprise",
+      host: "git.corp.com",
+      sourceControlProviders: [
+        discoveryItem({ kind: "github", id: "github", host: "github.com", label: "GitHub" }),
+        discoveryItem({
+          kind: "github-enterprise",
+          id: "github-enterprise:git.corp.com",
+          host: "git.corp.com",
+          label: "git.corp.com",
+          authStatus: "unauthenticated",
+          authDetail: "Run `gh auth login --hostname git.corp.com` to authenticate.",
+        }),
+      ],
+    });
+
+    assert.deepEqual(readiness, {
+      ready: false,
+      hint: "Run `gh auth login --hostname git.corp.com` to authenticate.",
+    });
+  });
+
+  it("answers per enterprise host rather than per kind", () => {
+    const providers = [
+      discoveryItem({
+        kind: "github-enterprise",
+        id: "github-enterprise:acme.ghe.com",
+        host: "acme.ghe.com",
+        label: "acme.ghe.com",
+        authStatus: "unauthenticated",
+        authDetail: "Run `gh auth login --hostname acme.ghe.com` to authenticate.",
+      }),
+      discoveryItem({
+        kind: "github-enterprise",
+        id: "github-enterprise:git.corp.com",
+        host: "git.corp.com",
+        label: "git.corp.com",
+      }),
+    ];
+
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "github-enterprise",
+        host: "git.corp.com",
+        sourceControlProviders: providers,
+      }),
+      { ready: true, hint: null },
+    );
+    assert.equal(
+      getPublishProviderReadiness({
+        provider: "github-enterprise",
+        host: "acme.ghe.com",
+        sourceControlProviders: providers,
+      }).ready,
+      false,
+    );
+  });
+
+  it("falls back to the generic hint when an enterprise row omits a detail", () => {
+    assert.deepEqual(
+      getPublishProviderReadiness({
+        provider: "github-enterprise",
+        host: "git.corp.com",
+        sourceControlProviders: [
+          discoveryItem({
+            kind: "github-enterprise",
+            id: "github-enterprise:git.corp.com",
+            host: "git.corp.com",
+            label: "git.corp.com",
+            authStatus: "unauthenticated",
+          }),
+        ],
+      }),
+      {
+        ready: false,
+        hint: "git.corp.com is not authenticated. Open Settings -> Source Control for setup guidance.",
+      },
+    );
+  });
+});
+
+describe("resolveSelectedEnterpriseHost", () => {
+  it("keeps the selected host when it is still available", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["acme.ghe.com", "git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("defaults to the first available host when nothing is selected yet", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["acme.ghe.com", "git.corp.com"],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("gives up a selected host that lost authentication while another is ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "acme.ghe.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("keeps a selected host that lost authentication when no host is ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: [],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("skips an unauthenticated first host in favour of a ready one", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: ["git.corp.com"],
+    });
+    assert.equal(host, "git.corp.com");
+  });
+
+  it("falls back to the first available host when none are ready", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: null,
+      availableHosts: ["acme.ghe.com", "git.corp.com"],
+      readyHosts: [],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("falls back to the first available host when the selected host disappears", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: ["acme.ghe.com"],
+      readyHosts: ["acme.ghe.com"],
+    });
+    assert.equal(host, "acme.ghe.com");
+  });
+
+  it("returns null when no hosts are available", () => {
+    const host = resolveSelectedEnterpriseHost({
+      selectedHost: "git.corp.com",
+      availableHosts: [],
+      readyHosts: [],
+    });
+    assert.equal(host, null);
   });
 });

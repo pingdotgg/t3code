@@ -73,6 +73,21 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads a pull request on an Enterprise host named nothing like GitHub", () => {
+    // A `ghe.com` tenant and a GHES install the CLI refined are as much GitHub as github.com is,
+    // and neither carries the name in its hostname.
+    expect(parseChangeRequestUrl("https://acme.ghe.com/platform/api/pull/7")).toEqual({
+      host: "acme.ghe.com",
+      repository: "platform/api",
+      number: 7,
+    });
+    expect(parseChangeRequestUrl("https://git.corp.test/platform/api/pull/7")).toEqual({
+      host: "git.corp.test",
+      repository: "platform/api",
+      number: 7,
+    });
+  });
+
   it("claims nothing it cannot be sure of", () => {
     for (const link of [
       "https://github.com/t3tools/t3code/issues/123",
@@ -80,7 +95,6 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code",
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
-      "https://blog.example.test/2026/updates/pull/3",
       "javascript:alert(1)//github.com/t3tools/t3code/pull/1",
       "not a url",
     ]) {

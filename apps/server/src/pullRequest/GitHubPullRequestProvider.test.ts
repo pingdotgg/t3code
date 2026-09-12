@@ -5,7 +5,12 @@ import type { PullRequestReaction } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
-import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
+import {
+  gitHubViewerPermissions,
+  loginAvatarUrl,
+  make,
+  makeProvider,
+} from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 it.effect("uses one narrow read for a linked pull request summary", () =>
@@ -708,6 +713,28 @@ describe("getChangeRequest commits", () => {
 
       expect(detail.commits.map((commit) => commit.oid)).toEqual(["view-oldest"]);
     }).pipe(Effect.provide(layerWith([]))),
+  );
+});
+
+describe("makeProvider", () => {
+  it.effect("registers under the enterprise kind and names it on a failure", () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider("github-enterprise");
+      expect(provider.kind).toBe("github-enterprise");
+
+      const error = yield* Effect.flip(provider.getViewer({ cwd: "/w", host: "ghe.example.com" }));
+      expect(error.provider).toBe("github-enterprise");
+      expect(error.reason).toBe("unauthenticated");
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getViewerLogin: () =>
+            Effect.fail(
+              new GitHubCli.GitHubCliAuthenticationError({ command: "gh", cwd: "/w", cause: null }),
+            ),
+        }),
+      ),
+    ),
   );
 });
 

@@ -166,6 +166,24 @@ it.effect("reports implemented tools separately from locally available executabl
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
     assert.strictEqual(bitbucket.executable, undefined);
+
+    // github is "available", so expandGitHubInstances stamps the github.com host on it;
+    // gitlab/azure-devops are "missing" (no executable) and take the defaulting path,
+    // which stamps id = the spec's own kind and an absent host.
+    const github = result.sourceControlProviders.find((item) => item.kind === "github");
+    assert.ok(github);
+    assert.strictEqual(github.id, "github");
+    assert.deepStrictEqual(github.host, Option.some("github.com"));
+
+    const gitlab = result.sourceControlProviders.find((item) => item.kind === "gitlab");
+    assert.ok(gitlab);
+    assert.strictEqual(gitlab.id, "gitlab");
+    assert.deepStrictEqual(gitlab.host, Option.none());
+
+    const azureDevOps = result.sourceControlProviders.find((item) => item.kind === "azure-devops");
+    assert.ok(azureDevOps);
+    assert.strictEqual(azureDevOps.id, "azure-devops");
+    assert.deepStrictEqual(azureDevOps.host, Option.none());
   }).pipe(Effect.provide(testLayer));
 });
 
@@ -279,5 +297,81 @@ Logged in to gitlab.com as gitlab-user
         },
       ],
     );
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("defaults identity fields when the auth probe itself fails", () => {
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) => {
+      if (input.args[0] === "--version") {
+        return Effect.succeed(processOutput(`${input.command} version test\n`));
+      }
+      if (input.command === "gh" && input.args.join(" ") === "auth status --json hosts") {
+        return Effect.fail(
+          new VcsProcessSpawnError({
+            operation: input.operation,
+            command: input.command,
+            cwd: input.cwd,
+            cause: new Error("gh auth status crashed"),
+          }),
+        );
+      }
+      if (input.command === "glab" && input.args.join(" ") === "auth status") {
+        return Effect.succeed(
+          processOutput(`gitlab.com\nLogged in to gitlab.com as gitlab-user\n`),
+        );
+      }
+      if (
+        input.command === "az" &&
+        input.args.join(" ") === "account show --query user.name -o tsv"
+      ) {
+        return Effect.succeed(processOutput("azure-user@example.com\n"));
+      }
+      return Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          cause: new Error(`${input.command} not found`),
+        }),
+      );
+    },
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const testLayer = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-source-control-auth-error-discovery-",
+      }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(
+      sourceControlProviderRegistryTestLayer({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "authenticated",
+            account: Option.some("bitbucket-user"),
+            host: Option.some("bitbucket.org"),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+
+    // gh's --version succeeds ("available") but its auth probe throws, so this
+    // exercises the Effect.catch defaulting path distinct from the missing-executable
+    // and non-expanding-success paths covered by the tests above.
+    const github = result.sourceControlProviders.find((item) => item.kind === "github");
+    assert.ok(github);
+    assert.strictEqual(github.status, "available");
+    assert.strictEqual(github.auth.status, "unknown");
+    assert.strictEqual(github.id, "github");
+    assert.deepStrictEqual(github.host, Option.none());
   }).pipe(Effect.provide(testLayer));
 });

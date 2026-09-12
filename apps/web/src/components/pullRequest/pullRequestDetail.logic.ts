@@ -107,6 +107,7 @@ export function pullRequestCheckoutCommand(
 ): string | null {
   switch (provider) {
     case "github":
+    case "github-enterprise":
       return `gh pr checkout ${number}`;
     case "gitlab":
       return `glab mr checkout ${number}`;

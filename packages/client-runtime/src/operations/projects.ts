@@ -25,9 +25,15 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "github-enterprise" | "gitlab" | "bitbucket" | "azure-devops"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
+
+export interface AddProjectRemoteTarget {
+  readonly id: string;
+  readonly source: AddProjectRemoteSource;
+  readonly host: string | null;
+}
 
 export function canCreateProjectInEnvironment(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
@@ -35,8 +41,8 @@ export function canCreateProjectInEnvironment(
   return connectionPhase === "connected";
 }
 
-export type AddProjectRemoteSourceReadiness = Record<
-  AddProjectRemoteSource,
+export type AddProjectRemoteSourceReadiness = ReadonlyMap<
+  string,
   { readonly ready: boolean; readonly hint: string | null }
 >;
 
@@ -55,25 +61,12 @@ export type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
-  "url",
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
-
-const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
-
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
   switch (source) {
     case "github":
       return "GitHub";
+    case "github-enterprise":
+      return "GitHub Enterprise";
     case "gitlab":
       return "GitLab";
     case "bitbucket":
@@ -88,6 +81,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
 export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "github":
+      return "owner/repo";
+    case "github-enterprise":
       return "owner/repo";
     case "gitlab":
       return "group/project";
@@ -106,6 +101,48 @@ export function addProjectRemoteSourceProvider(
   return source === "url" ? null : source;
 }
 
+const URL_TARGET: AddProjectRemoteTarget = { id: "url", source: "url", host: null };
+
+const BASE_PROVIDER_KINDS: ReadonlyArray<AddProjectRemoteProviderKind> = [
+  "github",
+  "gitlab",
+  "bitbucket",
+  "azure-devops",
+];
+
+const BASE_PROVIDER_TARGETS: ReadonlyArray<AddProjectRemoteTarget> = BASE_PROVIDER_KINDS.map(
+  (kind) => ({ id: kind, source: kind, host: null }),
+);
+
+export function buildAddProjectRemoteTargets(
+  discovery: SourceControlDiscoveryResult | null,
+): ReadonlyArray<AddProjectRemoteTarget> {
+  if (!discovery) return [URL_TARGET, ...BASE_PROVIDER_TARGETS];
+  return [
+    URL_TARGET,
+    ...discovery.sourceControlProviders.flatMap((provider) =>
+      provider.kind === "unknown"
+        ? []
+        : [
+            {
+              id: provider.id,
+              source: provider.kind,
+              // Only an enterprise target needs to pin a host; the rest keep
+              // their requests host-free the way they always were.
+              host: provider.kind === "github-enterprise" ? Option.getOrNull(provider.host) : null,
+            },
+          ],
+    ),
+  ];
+}
+
+export function addProjectRemoteTargetLabel(target: AddProjectRemoteTarget): string {
+  if (target.source === "github-enterprise" && target.host) {
+    return target.host;
+  }
+  return addProjectRemoteSourceLabel(target.source);
+}
+
 const GITHUB_REPOSITORY_SHORTHAND =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
 
@@ -121,22 +158,25 @@ export function normalizePastedCloneUrl(input: string): string {
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" ? repository.url : repository.sshUrl;
+  return repository.provider === "github" || repository.provider === "github-enterprise"
+    ? repository.url
+    : repository.sshUrl;
 }
 
 export function sortAddProjectProviderSources(
   readinessBySource: AddProjectRemoteSourceReadiness,
-): ReadonlyArray<AddProjectRemoteProviderKind> {
+  targets: ReadonlyArray<AddProjectRemoteTarget>,
+): ReadonlyArray<AddProjectRemoteTarget> {
   return Arr.sort(
-    ADD_PROJECT_REMOTE_PROVIDER_SOURCES,
+    targets.filter((target) => target.source !== "url"),
     Order.mapInput(
       Order.Struct({
         ready: Order.flip(Order.Boolean),
         label: Order.String,
       }),
-      (source: AddProjectRemoteProviderKind) => ({
-        ready: readinessBySource[source].ready,
-        label: addProjectRemoteSourceLabel(source),
+      (target: AddProjectRemoteTarget) => ({
+        ready: addProjectRemoteTargetReadiness(readinessBySource, target.id).ready,
+        label: addProjectRemoteTargetLabel(target),
       }),
     ),
   );
@@ -145,49 +185,41 @@ export function sortAddProjectProviderSources(
 export function buildAddProjectRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
 ): AddProjectRemoteSourceReadiness {
-  const unavailable = {
-    ready: false,
-    hint: "Provider status unavailable. Open Source Control settings and rescan.",
-  } as const;
-  const readiness: AddProjectRemoteSourceReadiness = {
-    url: { ready: true, hint: null },
-    github: unavailable,
-    gitlab: unavailable,
-    bitbucket: unavailable,
-    "azure-devops": unavailable,
-  };
+  const readiness = new Map<string, { ready: boolean; hint: string | null }>([
+    ["url", { ready: true, hint: null }],
+  ]);
+  if (!discovery) return readiness;
 
-  if (!discovery) {
-    return readiness;
-  }
-
-  const providerByKind = new Map(
-    discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
-  );
-  for (const source of ADD_PROJECT_REMOTE_SOURCES) {
-    const kind = addProjectRemoteSourceProvider(source);
-    if (!kind) continue;
-    const provider = providerByKind.get(kind);
-    if (!provider) {
-      readiness[source] = unavailable;
-      continue;
-    }
+  for (const provider of discovery.sourceControlProviders) {
+    if (provider.kind === "unknown") continue;
     if (provider.status !== "available") {
-      readiness[source] = { ready: false, hint: provider.installHint };
+      readiness.set(provider.id, { ready: false, hint: provider.installHint });
       continue;
     }
     if (provider.auth.status === "unauthenticated") {
-      readiness[source] = {
+      readiness.set(provider.id, {
         ready: false,
         hint:
           Option.getOrNull(provider.auth.detail) ??
           `${provider.label} is not authenticated. Open Source Control settings for setup guidance.`,
-      };
+      });
       continue;
     }
-    readiness[source] = { ready: true, hint: null };
+    readiness.set(provider.id, { ready: true, hint: null });
   }
   return readiness;
+}
+
+export function addProjectRemoteTargetReadiness(
+  readiness: AddProjectRemoteSourceReadiness,
+  targetId: string,
+): { readonly ready: boolean; readonly hint: string | null } {
+  return (
+    readiness.get(targetId) ?? {
+      ready: false,
+      hint: "Provider status unavailable. Open Source Control settings and rescan.",
+    }
+  );
 }
 
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {

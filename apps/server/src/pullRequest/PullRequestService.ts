@@ -816,7 +816,7 @@ export const make = Effect.gen(function* () {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
       const api = withRateLimitBackoff(registered, host, rateLimits);
-      return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd }))).pipe(
+      return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
         Effect.map((viewer) => ({
           host,
           kind,

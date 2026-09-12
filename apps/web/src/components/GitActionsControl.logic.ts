@@ -1,9 +1,12 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  SourceControlProviderDiscoveryItem,
+  SourceControlProviderKind,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import * as Option from "effect/Option";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
   getChangeRequestTerminology,
@@ -411,6 +414,71 @@ export function resolveLiveThreadBranchUpdate(input: {
   return {
     branch: input.gitStatus.refName,
   };
+}
+
+export interface PublishProviderReadiness {
+  readonly ready: boolean;
+  readonly hint: string | null;
+}
+
+/**
+ * Resolves publish readiness from the discovery row backing a provider card.
+ * `host` disambiguates kinds that discovery reports once per host, so an
+ * enterprise card answers for its own connection rather than any enterprise one.
+ */
+export function getPublishProviderReadiness(input: {
+  provider: SourceControlProviderKind;
+  host?: string | null;
+  sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
+}): PublishProviderReadiness {
+  const discovered = input.sourceControlProviders.find(
+    (provider) =>
+      provider.kind === input.provider &&
+      (input.host == null || Option.getOrNull(provider.host) === input.host),
+  );
+  if (!discovered) {
+    return {
+      ready: false,
+      hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
+    };
+  }
+  if (discovered.status !== "available") {
+    return { ready: false, hint: discovered.installHint };
+  }
+  if (discovered.auth.status === "unauthenticated") {
+    return {
+      ready: false,
+      hint:
+        Option.getOrNull(discovered.auth.detail) ??
+        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
+    };
+  }
+  return { ready: true, hint: null };
+}
+
+/**
+ * Defaulting to the first host alphabetically strands the user when that host
+ * is the unauthenticated one: its card renders as "Setup Required" rather than
+ * a radio, and the host picker only exists once the card is selected. Prefer a
+ * ready host so there is always a way in.
+ */
+export function resolveSelectedEnterpriseHost(input: {
+  selectedHost: string | null;
+  availableHosts: ReadonlyArray<string>;
+  readyHosts: ReadonlyArray<string>;
+}): string | null {
+  const firstReadyHost = input.availableHosts.find((host) => input.readyHosts.includes(host));
+  // A host selected while it was authenticated can lose that state on a later
+  // discovery pass. Holding onto it strands the user the same way an
+  // unauthenticated default does, so give it up while another host still works.
+  const keepsSelection =
+    input.selectedHost !== null &&
+    input.availableHosts.includes(input.selectedHost) &&
+    (input.readyHosts.includes(input.selectedHost) || firstReadyHost === undefined);
+  if (keepsSelection) {
+    return input.selectedHost;
+  }
+  return firstReadyHost ?? input.availableHosts[0] ?? null;
 }
 
 // Re-export from shared for backwards compatibility in this module's exports
