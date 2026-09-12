@@ -116,14 +116,22 @@ of \`main\` for that work, never the tag-pinned diagnosis clone.
 - Match the structure of the \`via-triage\` issue template
   (\`.github/ISSUE_TEMPLATE/via-triage.yml\` in the repo): what happened, diagnosis,
   repro steps, environment, evidence, related issues.
-- Label it \`via-triage\`. Use a plain, specific title with no prefix.
+- Use a plain, specific title with no prefix.
+- The issue needs the \`via-triage\` label. \`gh issue create --label via-triage\`
+  drops it silently unless the account has triage or write permission; check with
+  \`gh api repos/pingdotgg/t3code --jq .permissions.triage\` before posting.
+- Without that permission, file through the issue form: it carries the template's
+  label whoever submits. Build \`issues/new?template=via-triage.yml\` with \`&title=\`
+  and one \`&<field-id>=\` per field in \`via-triage.yml\`, url-encoded. Never pass
+  \`labels\`; GitHub answers 404 when the reader cannot apply it.
+- When the report is too long to prefill in a URL, open the bare
+  \`issues/new?template=via-triage.yml\` form and have the user paste the approved
+  text into the fields. That path needs no \`gh\` and still carries the label.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- If \`gh\` is not authenticated, offer \`gh auth login\`, or build a prefilled
-  https://github.com/pingdotgg/t3code/issues/new URL with title and body query
-  parameters; print the URL, and open it in their browser only after they
-  approve.
+- If \`gh\` is not authenticated, offer \`gh auth login\`, or fall back to the issue
+  form; print the URL, and open it in their browser only after they approve.
 - If the user pasted screenshots, remind them to drag the images into the issue
   after it is created; they cannot be attached from here.
 
