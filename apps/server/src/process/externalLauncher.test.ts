@@ -754,8 +754,8 @@ it.effect.skipIf(windowsHost)(
 );
 
 // The handler probe carries its own timeout because the editor scan's outer
-// timeout in server.getConfig degrades to an EMPTY editor list: a wedged
-// xdg-mime must cost only the file manager, never the other editors. Runs on
+// timeout in server.getConfig returns editors found so far: a wedged xdg-mime
+// must cost only the file manager, never the other editors. Runs on
 // the live clock so the probe's real timeout fires.
 it.live.skipIf(windowsHost)("a stalled handler probe drops only the file manager", () =>
   Effect.gen(function* () {
@@ -883,6 +883,68 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
           ConfigProvider.fromEnv({
             env: {
               PATH: "C:\\t3-editor-discovery-cache-test",
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ),
+        TestClock.layer(),
+      ),
+    ),
+  );
+});
+
+it.effect("returns editors found before discovery times out", () => {
+  const fileInfo = { type: "File" } as FileSystem.File.Info;
+  let blockScan = true;
+  let statCalls = 0;
+  const launcherLayer = ExternalLauncher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          stat: () =>
+            Effect.gen(function* () {
+              statCalls += 1;
+              if (blockScan && statCalls > 1) {
+                return yield* Effect.never;
+              }
+              return fileInfo;
+            }),
+        }),
+        Path.layer,
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const fiber = yield* launcher
+      .resolveAvailableEditors({ timeout: "1 second" })
+      .pipe(Effect.forkChild);
+
+    yield* Effect.yieldNow;
+    yield* TestClock.adjust("1 second");
+
+    const partialEditors = yield* Fiber.join(fiber);
+    assert.lengthOf(partialEditors, 1);
+
+    blockScan = false;
+    statCalls = 0;
+    const completeEditors = yield* launcher.resolveAvailableEditors();
+    assert.isAbove(completeEditors.length, partialEditors.length);
+    assert.isAbove(statCalls, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        launcherLayer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              PATH: "C:\\t3-editor-discovery-timeout-test",
               PATHEXT: ".COM;.EXE;.BAT;.CMD",
             },
           }),
