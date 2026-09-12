@@ -183,11 +183,11 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
 const MARKDOWN_FENCE_PATTERN = /^(`{3,}|~{3,})/;
 
 /**
- * Splits buffered assistant text at the last blank line that is not inside
- * an open fenced code block. `ready` is safe to deliver now because the
- * markdown before it will not change shape as more text arrives. `rest` stays
- * buffered until the next boundary or completion. Only fully terminated lines
- * count, so a trailing partial line never leaks.
+ * Splits buffered assistant text at the last blank line or closing code fence
+ * that is not inside an open fenced code block. `ready` is safe to deliver now
+ * because the markdown before it will not change shape as more text arrives.
+ * `rest` stays buffered until the next boundary or completion. Only fully
+ * terminated lines count, so a trailing partial line never leaks.
  */
 export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
   let openFence: string | null = null;
@@ -198,13 +198,19 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
     if (newline === -1) {
       break;
     }
-    const line = text.slice(lineStart, newline).trimStart();
+    const line = text.slice(lineStart, newline).trim();
     const fence = MARKDOWN_FENCE_PATTERN.exec(line)?.[1];
-    if (fence) {
+    if (fence !== undefined) {
       if (openFence === null) {
         openFence = fence;
-      } else if (fence[0] === openFence[0] && fence.length >= openFence.length) {
+      } else if (
+        fence[0] === openFence[0] &&
+        fence.length >= openFence.length &&
+        line.length === fence.length
+      ) {
+        // CommonMark: a closing fence carries no info string.
         openFence = null;
+        boundary = newline + 1;
       }
     } else if (openFence === null && line.length === 0 && lineStart > 0) {
       boundary = newline + 1;
