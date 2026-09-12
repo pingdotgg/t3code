@@ -237,7 +237,7 @@ var x = 1;
 
   it("flags scoped external packages", () => {
     const result = findInlinedExternalPackages(
-      region("../../node_modules/@ff-labs/fff-node/dist/src/index.js"),
+      region("../../node_modules/@ff-labs/fff-node/dist/index.js"),
     );
     assert.deepStrictEqual(result.inlined, ["@ff-labs/fff-node"]);
   });

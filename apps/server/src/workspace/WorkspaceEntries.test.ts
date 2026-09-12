@@ -121,6 +121,34 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.truncated).toBe(false);
       }),
     );
+
+    it.effect("includes binary file extensions in non-git workspaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-non-git-binary-" });
+        for (const relativePath of [
+          "assets/photo.jpeg",
+          "assets/screenshot.png",
+          "archive.bin",
+          "document.pdf",
+          "README.md",
+        ]) {
+          yield* writeTextFile(cwd, relativePath);
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "assets/photo.jpeg", kind: "file" },
+            { path: "assets/screenshot.png", kind: "file" },
+            { path: "archive.bin", kind: "file" },
+            { path: "document.pdf", kind: "file" },
+            { path: "README.md", kind: "file" },
+          ]),
+        );
+      }),
+    );
   });
 
   describe("search", () => {

@@ -1,0 +1,67 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 20808e02591feb55e9a6e98acba67f2f9499471b..3f9475b613522059f7bdc7f61f0155e4a79b7ccc 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -153,6 +153,16 @@ function getPackageDir() {
+   }
+   return (0, import_node_path.dirname)(currentDir);
+ }
++function resolveUnpackedAsarPath(binaryPath) {
++  const pathSegments = binaryPath.split(import_node_path.sep);
++  const asarIndex = pathSegments.findLastIndex((segment) => segment.endsWith(".asar"));
++  if (asarIndex === -1) {
++    return binaryPath;
++  }
++  pathSegments[asarIndex] = `${pathSegments[asarIndex]}.unpacked`;
++  const unpackedPath = pathSegments.join(import_node_path.sep);
++  return (0, import_node_fs.existsSync)(unpackedPath) ? unpackedPath : binaryPath;
++}
+ function binaryExists() {
+   return findBinary() !== null;
+ }
+@@ -164,7 +174,7 @@ function resolveFromNpmPackage() {
+     const packageDir = (0, import_node_path.dirname)(packageJsonPath);
+     const binaryPath = (0, import_node_path.join)(packageDir, getLibFilename());
+     if ((0, import_node_fs.existsSync)(binaryPath)) {
+-      return binaryPath;
++      return resolveUnpackedAsarPath(binaryPath);
+     }
+   } catch {
+   }
+diff --git a/dist/index.js b/dist/index.js
+index 111d18eb594389165866323fb9f208e273c48469..bba7e21b2adfc84ab5488e2c1af691668d877c6e 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,5 +1,5 @@
+ // src/binary.ts
+ import { existsSync, readFileSync } from "fs";
+ import { createRequire } from "module";
+-import { dirname, join } from "path";
++import { dirname, join, sep } from "path";
+ import { fileURLToPath } from "url";
+@@ -117,6 +117,16 @@ function getPackageDir() {
+   }
+   return dirname(currentDir);
+ }
++function resolveUnpackedAsarPath(binaryPath) {
++  const pathSegments = binaryPath.split(sep);
++  const asarIndex = pathSegments.findLastIndex((segment) => segment.endsWith(".asar"));
++  if (asarIndex === -1) {
++    return binaryPath;
++  }
++  pathSegments[asarIndex] = `${pathSegments[asarIndex]}.unpacked`;
++  const unpackedPath = pathSegments.join(sep);
++  return existsSync(unpackedPath) ? unpackedPath : binaryPath;
++}
+ function binaryExists() {
+   return findBinary() !== null;
+ }
+@@ -128,7 +138,7 @@ function resolveFromNpmPackage() {
+     const packageDir = dirname(packageJsonPath);
+     const binaryPath = join(packageDir, getLibFilename());
+     if (existsSync(binaryPath)) {
+-      return binaryPath;
++      return resolveUnpackedAsarPath(binaryPath);
+     }
+   } catch {
+   }
