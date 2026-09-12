@@ -5,7 +5,7 @@ import UIKit
 @testable import T3Code
 
 @MainActor
-@Suite("Home row trailing swipe actions")
+@Suite("Home row swipe actions")
 struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
@@ -153,6 +153,73 @@ struct HomeThreadSwipeActionTests {
         }
     }
 
+    /// The leading edge is a dedicated pin toggle: it pins a pinnable row and
+    /// reverses on a pinned one, so the gesture and the context menu always
+    /// agree on what is available.
+    @Test
+    func theLeadingSwipeTogglesPinning() {
+        let pinnable = thread(id: "pinnable")
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinnable, isArchived: false) == [.pin]
+        )
+
+        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinned, isArchived: false) == [.unpin]
+        )
+
+        // Rows that cannot pin and archived rows offer nothing on this edge.
+        var unpinnable = thread(id: "unpinnable")
+        unpinnable.supportsPinning = false
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: unpinnable, isArchived: false).isEmpty
+        )
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinnable, isArchived: true).isEmpty
+        )
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinned, isArchived: true).isEmpty
+        )
+    }
+
+    /// The leading edge only ever carries the reversible pin toggle, so nothing
+    /// destructive or lifecycle-changing can run from a right swipe. This
+    /// sweeps the same state space as the trailing-edge test.
+    @Test
+    func theLeadingSwipeNeverOffersSettlementOrDelete() {
+        for isSettled in [false, true] {
+            for isPinned in [false, true] {
+                for supportsSettlement in [nil, true, false] as [Bool?] {
+                    for supportsPinning in [nil, true, false] as [Bool?] {
+                        for isArchived in [false, true] {
+                            var candidate = thread(
+                                id: "row",
+                                pinnedAt: isPinned ? now.addingTimeInterval(-30) : nil
+                            )
+                            candidate.isSettled = isSettled
+                            candidate.supportsSettlement = supportsSettlement
+                            candidate.supportsPinning = supportsPinning
+                            candidate.isArchived = isArchived
+
+                            let actions = HomeThreadSwipeAction.leadingActions(
+                                for: candidate,
+                                isArchived: isArchived
+                            )
+
+                            #expect(actions.count <= 1)
+                            #expect(!actions.contains(.delete))
+                            #expect(actions.allSatisfy { $0.isPinToggle })
+                            #expect(
+                                HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions)
+                                    == (actions.first?.isPinToggle ?? false)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Delete must never reach the edge slot, because the edge slot is what a
     /// full swipe runs. This sweeps every pinned/settled/capability/archived
     /// combination rather than trusting the branch order.
@@ -205,6 +272,7 @@ struct HomeThreadSwipeActionTests {
     func actionsRequestExactlyOneLifecycleMutationEach() {
         #expect(HomeThreadSwipeAction.settle.intent == .setSettled(true))
         #expect(HomeThreadSwipeAction.reopen.intent == .setSettled(false))
+        #expect(HomeThreadSwipeAction.pin.intent == .setPinned(true))
         #expect(HomeThreadSwipeAction.unpin.intent == .setPinned(false))
         #expect(HomeThreadSwipeAction.archive.intent == .setArchived(true))
         #expect(HomeThreadSwipeAction.restore.intent == .setArchived(false))
@@ -212,8 +280,13 @@ struct HomeThreadSwipeActionTests {
 
         #expect(HomeThreadSwipeAction.settle.isSettlement)
         #expect(HomeThreadSwipeAction.reopen.isSettlement)
+        #expect(!HomeThreadSwipeAction.pin.isSettlement)
         #expect(!HomeThreadSwipeAction.unpin.isSettlement)
         #expect(!HomeThreadSwipeAction.delete.isSettlement)
+        #expect(HomeThreadSwipeAction.pin.isPinToggle)
+        #expect(HomeThreadSwipeAction.unpin.isPinToggle)
+        #expect(!HomeThreadSwipeAction.settle.isPinToggle)
+        #expect(HomeThreadSwipeAction.pin.backgroundColor == .systemOrange)
 
         // The settlement actions keep the row's existing accent vocabulary and
         // never inherit the destructive style that arms a destructive swipe.
