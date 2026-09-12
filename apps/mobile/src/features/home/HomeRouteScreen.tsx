@@ -145,6 +145,7 @@ export function HomeRouteScreen() {
           options={{
             ...getConnectionAwareBrandHeaderOptions({
               headerWidth: windowWidth,
+              trailingItemCount: Platform.OS === "ios" ? 3 : 1,
               onOpenEnvironments: () =>
                 navigation.navigate("SettingsSheet", {
                   screen: "SettingsContent",

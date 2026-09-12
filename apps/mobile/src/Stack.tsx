@@ -10,7 +10,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -24,6 +24,8 @@ import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
+import { MobileNavigationHistoryProvider } from "./features/navigation/MobileNavigationHistoryProvider";
+import { normalizeMobileNavigationPath } from "./features/navigation/mobile-navigation-history";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -386,6 +388,15 @@ function workspacePathFromState(state: NavigationState): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
+function activeNavigationTransitionKey(state: NavigationState): string {
+  const route = state.routes[state.index];
+  if (!route) {
+    return "empty";
+  }
+  const nestedState = route.state as NavigationState | undefined;
+  return nestedState ? `${route.key}/${activeNavigationTransitionKey(nestedState)}` : route.key;
+}
+
 // The drain hook subscribes to the outbox, all thread shells, projects, and
 // connection statuses. Hosting it in a null-rendering leaf keeps those
 // updates from re-rendering RootStackLayout (and with it every screen) on
@@ -425,20 +436,27 @@ function RootStackLayout(props: {
   }, [navigation, pendingShare, props.state]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
-  const path = getPathFromState(props.state, navigationPathConfig);
+  const path = normalizeMobileNavigationPath(getPathFromState(props.state, navigationPathConfig));
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
+  const transitionKey = activeNavigationTransitionKey(props.state);
+  const navigationLocation = useMemo(
+    () => ({ pathname, transitionKey }),
+    [pathname, transitionKey],
+  );
 
   return (
-    <HardwareKeyboardCommandProvider pathname={pathname}>
-      <ThreadOutboxDrainWorker />
-      <ShowcaseCaptureCoordinator pathname={pathname} />
-      <ExistingThreadSettingsRouteProvider>
-        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
-          {props.children}
-        </AdaptiveWorkspaceLayout>
-      </ExistingThreadSettingsRouteProvider>
-    </HardwareKeyboardCommandProvider>
+    <MobileNavigationHistoryProvider location={navigationLocation}>
+      <HardwareKeyboardCommandProvider pathname={pathname}>
+        <ThreadOutboxDrainWorker />
+        <ShowcaseCaptureCoordinator pathname={pathname} />
+        <ExistingThreadSettingsRouteProvider>
+          <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+            {props.children}
+          </AdaptiveWorkspaceLayout>
+        </ExistingThreadSettingsRouteProvider>
+      </HardwareKeyboardCommandProvider>
+    </MobileNavigationHistoryProvider>
   );
 }
 
