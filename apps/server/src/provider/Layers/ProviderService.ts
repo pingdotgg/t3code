@@ -2399,7 +2399,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ),
   );
-
   const resolveCodexGoalRoute = Effect.fn("resolveCodexGoalRoute")(function* (input: {
     readonly threadId: ThreadId;
     readonly operation: "get" | "set" | "clear";
