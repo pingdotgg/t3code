@@ -112,6 +112,17 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {
+  // Filesystem paths can name distinct repositories by case, whitespace, or a
+  // .git suffix. Hosted repository aliases must not collapse those paths.
+  const colon = value.indexOf(":");
+  const separator = value.search(/[\\/]/);
+  if (
+    colon === -1 ||
+    (separator !== -1 && separator < colon) ||
+    /^(?:[a-z]:|file:\/\/)/i.test(value)
+  ) {
+    return value;
+  }
   const normalized = value
     .trim()
     .replace(/\/+$/g, "")
