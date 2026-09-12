@@ -31,6 +31,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { CreateShareInput, ShareCode, ShareSummary, SharedThread } from "./shares.ts";
 import {
   ClientOrchestrationCommand,
   DispatchResult,
@@ -191,7 +192,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "share_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -614,9 +618,43 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+class EnvironmentSharesHttpApi extends HttpApiGroup.make("shares")
+  .add(
+    HttpApiEndpoint.post("create", "/api/shares", {
+      headers: OptionalBearerHeaders,
+      payload: CreateShareInput,
+      success: ShareSummary,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("list", "/api/shares/thread/:threadId", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ threadId: ThreadId }),
+      success: Schema.Array(ShareSummary),
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.delete("revoke", "/api/shares/:code", {
+      headers: OptionalBearerHeaders,
+      params: Schema.Struct({ code: ShareCode }),
+      success: Schema.Struct({ revoked: Schema.Boolean }),
+      error: EnvironmentOrchestrationSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("read", "/api/shares/:code", {
+      params: Schema.Struct({ code: ShareCode }),
+      success: SharedThread,
+      error: [EnvironmentResourceNotFoundError, EnvironmentInternalError],
+    }),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
+  .add(EnvironmentSharesHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

@@ -63,6 +63,17 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Share a conversation
+
+On web and desktop, enter `/share` in an existing chat to create a read-only
+snapshot. Choose whether to include tool inputs, tool results, and proposed plans.
+Messages are always included; attached files and linked context are excluded.
+Anything quoted in a message remains visible regardless of those choices.
+
+Links are hosted by your environment, so recipients need network access to it
+and the server must stay running. Later messages do not change a snapshot.
+Open `/share` again to revoke an active link.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

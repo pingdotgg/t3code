@@ -33,26 +33,54 @@ import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-export const ProposedPlanCard = memo(function ProposedPlanCard({
+interface ProposedPlanCardProps {
+  planMarkdown: string;
+  threadRef?: ScopedThreadRef | undefined;
+  cwd?: string | undefined;
+  workspaceRoot?: string | undefined;
+}
+type PlanCardAccess =
+  | { readOnly: true; environmentId?: never }
+  | { readOnly?: false; environmentId: EnvironmentId };
+
+export const ProposedPlanCard = memo(function ProposedPlanCard(
+  props: ProposedPlanCardProps & PlanCardAccess,
+) {
+  return props.readOnly ? (
+    <ProposedPlanCardBody {...props} />
+  ) : (
+    <ConnectedProposedPlanCard {...props} />
+  );
+});
+
+function useWritePlanFile() {
+  return useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+}
+
+function ConnectedProposedPlanCard(
+  props: ProposedPlanCardProps & { environmentId: EnvironmentId },
+) {
+  const writeProjectFile = useWritePlanFile();
+  return <ProposedPlanCardBody {...props} writeProjectFile={writeProjectFile} />;
+}
+
+const ProposedPlanCardBody = memo(function ProposedPlanCardBody({
   planMarkdown,
   environmentId,
   threadRef,
   cwd,
   workspaceRoot,
-}: {
-  planMarkdown: string;
-  environmentId: EnvironmentId;
-  threadRef?: ScopedThreadRef | undefined;
-  cwd: string | undefined;
-  workspaceRoot: string | undefined;
+  readOnly = false,
+  writeProjectFile,
+}: ProposedPlanCardProps & {
+  environmentId?: EnvironmentId | undefined;
+  readOnly?: boolean | undefined;
+  writeProjectFile?: ReturnType<typeof useWritePlanFile> | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
-  const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
-    reportFailure: false,
-  });
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: "plan",
     onError: (error) => {
@@ -101,7 +129,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   const handleSaveToWorkspace = () => {
     const relativePath = savePath.trim();
-    if (!workspaceRoot) {
+    if (!workspaceRoot || !environmentId || !writeProjectFile) {
       return;
     }
     if (!relativePath) {
@@ -163,9 +191,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               {isCopied ? "Copied!" : "Copy to clipboard"}
             </MenuItem>
             <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
-            <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
-              Save to workspace
-            </MenuItem>
+            {!readOnly ? (
+              <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
+                Save to workspace
+              </MenuItem>
+            ) : null}
           </MenuPopup>
         </Menu>
       </div>
@@ -177,6 +207,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              readOnly={readOnly}
             />
           ) : (
             <ChatMarkdown
@@ -184,6 +215,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              readOnly={readOnly}
             />
           )}
           {canCollapse && !expanded ? (
@@ -204,53 +236,55 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         ) : null}
       </div>
 
-      <Dialog
-        open={isSaveDialogOpen}
-        onOpenChange={(open) => {
-          if (!isSavingToWorkspace) {
-            setIsSaveDialogOpen(open);
-          }
-        }}
-      >
-        <DialogPopup className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Save plan to workspace</DialogTitle>
-            <DialogDescription>
-              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-3">
-            <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Workspace path</span>
-              <Input
-                id={savePathInputId}
-                value={savePath}
-                onChange={(event) => setSavePath(event.target.value)}
-                placeholder={downloadFilename}
-                spellCheck={false}
+      {!readOnly ? (
+        <Dialog
+          open={isSaveDialogOpen}
+          onOpenChange={(open) => {
+            if (!isSavingToWorkspace) {
+              setIsSaveDialogOpen(open);
+            }
+          }}
+        >
+          <DialogPopup className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Save plan to workspace</DialogTitle>
+              <DialogDescription>
+                Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel className="space-y-3">
+              <label htmlFor={savePathInputId} className="grid gap-1.5">
+                <span className="text-xs font-medium text-foreground">Workspace path</span>
+                <Input
+                  id={savePathInputId}
+                  value={savePath}
+                  onChange={(event) => setSavePath(event.target.value)}
+                  placeholder={downloadFilename}
+                  spellCheck={false}
+                  disabled={isSavingToWorkspace}
+                />
+              </label>
+            </DialogPanel>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsSaveDialogOpen(false)}
                 disabled={isSavingToWorkspace}
-              />
-            </label>
-          </DialogPanel>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsSaveDialogOpen(false)}
-              disabled={isSavingToWorkspace}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void handleSaveToWorkspace()}
-              disabled={isSavingToWorkspace}
-            >
-              {isSavingToWorkspace ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void handleSaveToWorkspace()}
+                disabled={isSavingToWorkspace}
+              >
+                {isSavingToWorkspace ? "Saving..." : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      ) : null}
     </div>
   );
 });

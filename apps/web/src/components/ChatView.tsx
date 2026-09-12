@@ -341,6 +341,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ShareThreadDialog } from "./chat/ShareThreadDialog";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -5749,6 +5750,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, unsnoozeThreadMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
+  const [shareDialogThreadId, setShareDialogThreadId] = useState<ThreadId | null>(null);
   // Once revealed for a given mismatch, the banner stays mounted until the
   // mismatch changes or resolves, so clearing the draft doesn't flicker it.
   const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
@@ -6761,6 +6763,19 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    if (
+      isServerThread &&
+      activeThread &&
+      !directAnnotation &&
+      !composerHasNonPromptContent &&
+      /^\/share\s*$/i.test(promptRef.current.trim())
+    ) {
+      setShareDialogThreadId(activeThread.id);
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      return;
+    }
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -8661,6 +8676,7 @@ export default function ChatView(props: ChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             isServerThread={isServerThread}
+            onShare={isServerThread ? () => setShareDialogThreadId(activeThread.id) : undefined}
             activeProject={activeProject}
             openInCwd={gitCwd}
             activeProjectScripts={activeProjectScripts}
@@ -8681,6 +8697,15 @@ export default function ChatView(props: ChatViewProps) {
             onDeleteProjectScript={deleteProjectScript}
           />
         </WorkspacePageHeader>
+        {shareDialogThreadId === activeThread.id && isServerThread && (
+          <ShareThreadDialog
+            key={`${activeThread.environmentId}:${activeThread.id}`}
+            environmentId={activeThread.environmentId}
+            threadId={activeThread.id}
+            title={activeThread.title}
+            onClose={() => setShareDialogThreadId(null)}
+          />
+        )}
 
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -8914,6 +8939,11 @@ export default function ChatView(props: ChatViewProps) {
                               usageLimitsKey !== null &&
                               !composerHasNonPromptContent
                                 ? openUsageLimits
+                                : undefined
+                            }
+                            onShareCommand={
+                              isServerThread
+                                ? () => setShareDialogThreadId(activeThread.id)
                                 : undefined
                             }
                             environmentUnavailable={activeEnvironmentUnavailableState}

@@ -10,7 +10,9 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type SharedThread,
 } from "@t3tools/contracts";
+import { deriveSharedTimelineEntries } from "./SharedConversation.logic";
 import {
   applyThreadDetailEvent,
   createEnvironmentThreadDetailAtoms,
@@ -3146,5 +3148,115 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("shared chat native projection", () => {
+  const createdAt = "2026-09-12T10:00:00.000Z";
+  const share: SharedThread = {
+    code: "a".repeat(32),
+    title: "Commands",
+    createdAt,
+    options: { includeToolCalls: true, includeToolResults: true, includePlans: false },
+    provider: "codex",
+    messages: [],
+    plans: [],
+    tools: [
+      {
+        id: "tool-1",
+        name: "command_execution",
+        createdAt,
+        turnId: null,
+        input: '/bin/bash -lc "printf hello"',
+        result: "hello",
+      },
+    ],
+  };
+
+  it("uses the native command label and output for existing snapshots", () => {
+    const entries = deriveSharedTimelineEntries(share);
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row?.kind).toBe("work");
+    if (row?.kind !== "work") throw new Error("Expected native work row");
+    expect(row.displayLabel).toBe("printf hello");
+    expect(row.groupedEntries[0]).toMatchObject({ command: "printf hello", detail: "hello" });
+  });
+
+  it.each(["Bash", "bash", "run_terminal_cmd", "exec_command", "run_command"])(
+    "feeds %s structured commands through the native shell unwrapping",
+    (name) => {
+      const entries = deriveSharedTimelineEntries({
+        ...share,
+        tools: [
+          {
+            ...share.tools[0]!,
+            name,
+            itemType: "command_execution",
+            input: JSON.stringify({ command: '/bin/sh -c "echo hello"' }),
+          },
+        ],
+      });
+      const entry = entries[0];
+      expect(entry?.kind).toBe("work");
+      if (entry?.kind !== "work") throw new Error("Expected native work entry");
+      expect(workEntryDisplayLabel(entry.entry, undefined)).toBe("echo hello");
+      expect(entry.entry.detail).toBe("hello");
+    },
+  );
+
+  it.each([
+    ["true", "true"],
+    [JSON.stringify({ executable: "bun", args: ["run", "typecheck"] }), "bun run typecheck"],
+    [JSON.stringify({ executable: "pwd" }), "pwd"],
+  ])("preserves calls-only command %s", (input, label) => {
+    const [entry] = deriveSharedTimelineEntries({
+      ...share,
+      tools: [{ ...share.tools[0]!, input, result: undefined }],
+    });
+    if (entry?.kind !== "work") throw new Error("Expected native work entry");
+    expect(workEntryDisplayLabel(entry.entry, undefined)).toBe(label);
+  });
+
+  it.each(["dynamic_tool_call", "file_change", "web_search", "collab_agent_tool_call"] as const)(
+    "preserves selected input and output in expanded %s details",
+    (itemType) => {
+      const [entry] = deriveSharedTimelineEntries({
+        ...share,
+        tools: [
+          {
+            ...share.tools[0]!,
+            name: itemType,
+            itemType,
+            detail: "provider description",
+            input: '{"query":"needle"}',
+            result: "selected output or patch",
+          },
+        ],
+      });
+      if (entry?.kind !== "work") throw new Error("Expected native work entry");
+      expect(entry.entry.detail).toBe(
+        'provider description\n\n{"query":"needle"}\n\nselected output or patch',
+      );
+    },
+  );
+
+  it("keeps omitted input absent from the native result-only projection", () => {
+    const entries = deriveSharedTimelineEntries({
+      ...share,
+      options: { ...share.options, includeToolCalls: false },
+      tools: [
+        { id: "tool-1", name: "command_execution", createdAt, turnId: null, result: "hello" },
+      ],
+    });
+    expect(JSON.stringify(entries)).not.toContain("printf");
+    expect(entries[0]?.kind === "work" && entries[0].entry.command).toBeUndefined();
   });
 });

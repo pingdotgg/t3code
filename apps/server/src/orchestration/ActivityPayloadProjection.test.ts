@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import * as Schema from "effect/Schema";
+import { ProjectionThreadActivity } from "../persistence/Services/ProjectionThreadActivities.ts";
+import { projectSharedTools } from "../sharing/http.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -21,6 +24,109 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * assertions are the tripwire.
  */
 describe("projectActivityPayload", () => {
+  it.each([
+    [
+      "codex",
+      { item: { tool: "terminal", command: "echo input", aggregatedOutput: "private result" } },
+    ],
+    [
+      "codex dynamic tool",
+      {
+        item: {
+          tool: "lookup",
+          arguments: "echo input",
+          contentItems: [{ type: "inputText", text: "private result" }],
+        },
+      },
+    ],
+    ["codex web search", { item: { query: "echo input", results: [{ title: "private result" }] } }],
+    [
+      "codex collaboration",
+      { item: { prompt: "echo input", agentsStates: { agent: { message: "private result" } } } },
+    ],
+    [
+      "claude",
+      { toolName: "Bash", input: { command: "echo input" }, result: { content: "private result" } },
+    ],
+    [
+      "opencode",
+      { tool: "bash", state: { input: { command: "echo input" }, output: "private result" } },
+    ],
+    ["cursor", { rawInput: { command: "echo input" }, rawOutput: "private result" }],
+    [
+      "grok",
+      { rawInput: { command: "echo input" }, content: [{ type: "text", text: "private result" }] },
+    ],
+    [
+      "antigravity",
+      { rawInput: { command: "echo input" }, rawOutput: { content: "private result" } },
+    ],
+  ])("shares %s tool input and results only when selected", (_provider, data) => {
+    const source = Schema.decodeUnknownSync(ProjectionThreadActivity)({
+      activityId: "activity-share",
+      threadId: "thread-share",
+      turnId: null,
+      tone: "tool",
+      kind: "tool.completed",
+      summary: "private result must not leak through the summary",
+      payload: {
+        itemType: "command_execution",
+        detail: "private result",
+        title: "private result must not leak through the title",
+        status: "failed",
+        toolSurface: "computer",
+        data,
+        privateMetadata: "never-share",
+      },
+      createdAt: "2026-08-01T10:00:00.000Z",
+    });
+    expect(
+      projectSharedTools([source], {
+        includeToolCalls: false,
+        includeToolResults: false,
+        includePlans: false,
+      }),
+    ).toEqual([]);
+    const resultsOnly = projectSharedTools([source], {
+      includeToolCalls: false,
+      includeToolResults: true,
+      includePlans: false,
+    });
+    expect(resultsOnly[0]).not.toHaveProperty("input");
+    expect(resultsOnly[0]).not.toHaveProperty("toolSurface");
+    expect(resultsOnly[0]).not.toHaveProperty("title");
+    expect(resultsOnly[0]).not.toHaveProperty("detail");
+    expect(resultsOnly[0]).toMatchObject({ itemType: "command_execution", status: "failed" });
+    expect(resultsOnly[0]?.result).toContain("private result");
+    expect(JSON.stringify(resultsOnly)).not.toContain("echo input");
+    const calls = projectSharedTools([source], {
+      includeToolCalls: true,
+      includeToolResults: false,
+      includePlans: false,
+    });
+    expect(calls[0]?.input).toContain("echo input");
+    expect(calls[0]).not.toHaveProperty("result");
+    expect(calls[0]).not.toHaveProperty("status");
+    expect(calls[0]).not.toHaveProperty("title");
+    expect(calls[0]).not.toHaveProperty("detail");
+    expect(calls[0]).toMatchObject({ itemType: "command_execution", toolSurface: "computer" });
+    expect(JSON.stringify(calls)).not.toContain("private result");
+    const results = projectSharedTools([source], {
+      includeToolCalls: true,
+      includeToolResults: true,
+      includePlans: false,
+    });
+    expect(results[0]?.result).toContain("private result");
+    expect(results[0]).toMatchObject({
+      title: "private result must not leak through the title",
+      detail: "private result",
+    });
+    expect(JSON.stringify(results)).not.toContain(
+      "private result must not leak through the summary",
+    );
+    expect(JSON.stringify(results)).not.toContain("never-share");
+  });
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({
