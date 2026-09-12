@@ -48,15 +48,16 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
 );
 
 describe("remote helper lifecycle", () => {
-  it.effect("reuses its own healthy helpers and stops only its own runtime", () =>
+  it.effect.each(["linux", "darwin"] as const)("preserves helper ownership on %s", (platform) =>
     Effect.gen(function* () {
-      const hostPlatform = yield* HostProcessPlatform;
-      if (hostPlatform === "win32") return;
+      if ((yield* HostProcessPlatform) === "win32") return;
       yield* Effect.promise(async () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
-        await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", {
+          mode: 0o755,
+        });
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
@@ -98,7 +99,8 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
           await NodeFSP.writeFile(
             file,
-            `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
+            `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });\n` +
+              `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
               remoteDeviceScript(owner, mode)
                 .replace(DEVICE_HUB_VERSION, upgraded ? nextHubVersion : DEVICE_HUB_VERSION)
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
@@ -130,7 +132,7 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           const hubArgs = JSON.parse(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub-args.json"), "utf8"),
           );
-          if (hostPlatform === "darwin") {
+          if (platform === "darwin") {
             expect(hubArgs).not.toContain("--platform");
           } else {
             expect(hubArgs.slice(hubArgs.indexOf("--platform"))).toEqual(["--platform", "android"]);
