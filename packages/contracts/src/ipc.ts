@@ -1291,6 +1291,11 @@ export interface DesktopBridge {
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** Optional while older desktop shells can host a newer web client. */
+  setTaskbarUnreadIndicator?: (input: {
+    count: number;
+    badgeDataUrl: string | null;
+  }) => Promise<boolean>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

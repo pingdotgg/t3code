@@ -611,7 +611,11 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+export function hasUnseenCompletion<
+  T extends Pick<SidebarThreadSummary, "latestTurn"> & {
+    readonly lastVisitedAt?: string | undefined;
+  },
+>(thread: T): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;

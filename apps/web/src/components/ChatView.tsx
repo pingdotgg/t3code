@@ -143,6 +143,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
+import { useAcknowledgeThreadCompletion } from "./chat/useAcknowledgeThreadCompletion";
 import {
   latestWorkspaceMutationId,
   useWorkspaceMutationRefresh,
@@ -2013,24 +2014,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
-  useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
-    );
-  }, [
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
+  const completedThreadKey = serverThread?.id
+    ? scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id))
+    : null;
+  useAcknowledgeThreadCompletion(
+    completedThreadKey,
     serverThread?.latestTurn?.completedAt,
-  ]);
+    markThreadVisited,
+    isElectron,
+  );
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({

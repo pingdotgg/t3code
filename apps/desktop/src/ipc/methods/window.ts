@@ -34,6 +34,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { setDesktopUnreadBadge } from "../../electron/DesktopUnreadBadge.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
@@ -268,6 +269,26 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+  }),
+});
+
+export const setTaskbarUnreadIndicator = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_TASKBAR_UNREAD_INDICATOR_CHANNEL,
+  payload: Schema.Struct({
+    count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    badgeDataUrl: Schema.NullOr(Schema.String.check(Schema.isMaxLength(65_536))),
+  }),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.setTaskbarUnreadIndicator")(function* (input) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.main;
+    return setDesktopUnreadBadge({
+      platform: environment.platform,
+      window: Option.getOrNull(window),
+      count: input.count,
+      badgeDataUrl: input.badgeDataUrl,
+    });
   }),
 });
 

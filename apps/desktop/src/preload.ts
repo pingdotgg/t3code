@@ -146,6 +146,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
+  setTaskbarUnreadIndicator: (input) =>
+    ipcRenderer.invoke(IpcChannels.SET_TASKBAR_UNREAD_INDICATOR_CHANNEL, input),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
       items,
