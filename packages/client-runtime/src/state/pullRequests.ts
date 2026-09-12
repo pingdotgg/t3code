@@ -258,6 +258,25 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    filesViewed: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:files-viewed",
+      tag: WS_METHODS.pullRequestsFilesViewed,
+      staleTimeMs: 15_000,
+    }),
+    /**
+     * One write in flight per change request: the host applies these in order, and a reader
+     * ticking down a file list faster than the round trip would otherwise race their own presses.
+     */
+    setFilesViewed: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-files-viewed",
+      tag: WS_METHODS.pullRequestsSetFilesViewed,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.repository, input.number]),
+      },
+    }),
     runAction: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:run-action",
       tag: WS_METHODS.pullRequestsRunAction,

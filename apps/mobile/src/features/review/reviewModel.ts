@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { OrchestrationCheckpointSummary, ReviewDiffPreviewSource } from "@t3tools/contracts";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
@@ -126,14 +127,20 @@ function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   return "Base branch unavailable";
 }
 
+/**
+ * The file's own name, given the patch wrote it the way git writes one: a name holding a tab, a
+ * newline, a quote or a backslash arrives quoted and escaped, and the parser hands one of those
+ * back still escaped.
+ */
 function stripGitPrefix(pathValue: string | undefined): string | null {
   if (!pathValue) {
     return null;
   }
-  if (pathValue.startsWith("a/") || pathValue.startsWith("b/")) {
-    return pathValue.slice(2);
+  const named = unquoteGitPatchPath(pathValue);
+  if (named.startsWith("a/") || named.startsWith("b/")) {
+    return named.slice(2);
   }
-  return pathValue;
+  return named;
 }
 
 function stripTrailingNewline(value: string): string {

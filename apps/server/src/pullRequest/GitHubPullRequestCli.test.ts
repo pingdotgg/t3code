@@ -2655,11 +2655,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
+      // Its own pull request: a node id looked up once is remembered for the life of the service.
       yield* cli.setReaction({
         cwd: "/w",
         repository: "acme/web",
         host: "github.com",
-        number: 7,
+        number: 21,
         content: "rocket",
         reacted: true,
       });
@@ -2668,7 +2669,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const lookup = callAt(0).args;
       expect(lookup).toContain("owner=acme");
       expect(lookup).toContain("name=web");
-      expect(lookup).toContain("number=7");
+      expect(lookup).toContain("number=21");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const request = JSON.parse(callAt(1).stdin ?? "") as {
         query: string;
@@ -2729,7 +2730,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           cwd: "/w",
           repository: "acme/web",
           host: "github.com",
-          number: 7,
+          number: 22,
           ...fields,
         });
 
@@ -2737,21 +2738,21 @@ layer("GitHubPullRequestCli.layer", (it) => {
       yield* rewrite({ body: "A better description." });
       yield* rewrite({ title: "Both", body: "at once." });
 
-      // Each rewrite looks the pull request's node id up first, then mutates.
+      // One node id lookup for the pull request, then a mutation per rewrite.
       const variablesAt = (index: number) =>
         (JSON.parse(callAt(index).stdin ?? "") as { variables: Record<string, string> }).variables;
       expect(variablesAt(1)).toEqual({ pullRequestId: "PR_kwDOA", title: "A better title" });
-      expect(variablesAt(3)).toEqual({
+      expect(variablesAt(2)).toEqual({
         pullRequestId: "PR_kwDOA",
         body: "A better description.",
       });
-      expect(variablesAt(5)).toEqual({
+      expect(variablesAt(3)).toEqual({
         pullRequestId: "PR_kwDOA",
         title: "Both",
         body: "at once.",
       });
       // The reader's own words, so they travel the way every other body does.
-      expect(callAt(5).args.join(" ")).not.toContain("at once.");
+      expect(callAt(3).args.join(" ")).not.toContain("at once.");
     }),
   );
 
@@ -3470,6 +3471,254 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(callAt(0).args).toContain("repos/acme/web/issues/7/labels/good%20first%20issue");
       expect(callAt(0).args).toContain("DELETE");
       expect(callAt(1).args).toContain("repos/acme/web/issues/7/labels/area%2Fweb");
+    }),
+  );
+
+  it.effect("reads every page of viewed files, and says so when there are too many", () =>
+    Effect.gen(function* () {
+      const page = (index: number, hasNextPage: boolean) =>
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage, endCursor: `cursor-${index}` },
+                      nodes: [
+                        { path: `src/file${index}.ts`, viewerViewedState: "VIEWED" },
+                        { path: `src/other${index}.ts`, viewerViewedState: "UNVIEWED" },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      mockedExecute
+        .mockReturnValueOnce(page(0, true))
+        .mockReturnValueOnce(page(1, true))
+        .mockReturnValueOnce(page(2, false));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      // The first page asks from the start; each one after it carries the cursor before it.
+      assert.isFalse(callAt(0).args.some((arg) => arg.startsWith("after=")));
+      expect(callAt(1).args).toContain("after=cursor-0");
+      expect(callAt(2).args).toContain("after=cursor-1");
+      assert.isFalse(viewed.truncated);
+      expect(viewed.files.map((file) => [file.path, file.state])).toEqual([
+        ["src/file0.ts", "viewed"],
+        ["src/other0.ts", "unviewed"],
+        ["src/file1.ts", "viewed"],
+        ["src/other1.ts", "unviewed"],
+        ["src/file2.ts", "viewed"],
+        ["src/other2.ts", "unviewed"],
+      ]);
+    }),
+  );
+
+  it.effect("stops paging viewed files rather than following a change without end", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage: true, endCursor: "cursor" },
+                      nodes: [{ path: "src/file.ts", viewerViewedState: "VIEWED" }],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 5);
+      assert.isTrue(viewed.truncated);
+      assert.strictEqual(viewed.files.length, 5);
+    }),
+  );
+
+  it.effect("clears and restores a burst of files in one request", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_1" } } } })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 23,
+        files: [
+          { path: "src/a.ts", viewed: true },
+          { path: "src/b.ts", viewed: false },
+        ],
+      });
+
+      // One request to learn the pull request's node id, one for every press together.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const sent = JSON.parse(callAt(1).stdin ?? "") as {
+        query: string;
+        variables: Record<string, string>;
+      };
+      expect(sent.query).toContain("f0: markFileAsViewed");
+      expect(sent.query).toContain("f1: unmarkFileAsViewed");
+      expect(sent.variables).toEqual({
+        pullRequestId: "PR_1",
+        path0: "src/a.ts",
+        path1: "src/b.ts",
+      });
+    }),
+  );
+
+  it.effect("asks the host nothing when nothing was pressed", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        files: [],
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("looks a pull request's node id up once, however often it is written to", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_24" } } } })),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const pullRequest = { cwd: "/w", repository: "acme/web", host: "github.com", number: 24 };
+
+      yield* cli.setPullRequestFilesViewed({
+        ...pullRequest,
+        files: [{ path: "src/a.ts", viewed: true }],
+      });
+      yield* cli.setPullRequestFilesViewed({
+        ...pullRequest,
+        files: [{ path: "src/b.ts", viewed: true }],
+      });
+      yield* cli.updatePullRequest({ ...pullRequest, title: "Ticked through" });
+
+      // One lookup, then a mutation per write, every one of them addressed by the id it answered.
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      expect(callAt(0).args).toContain("number=24");
+      const idSentAt = (index: number) =>
+        (JSON.parse(callAt(index).stdin ?? "") as { variables: { pullRequestId: string } })
+          .variables.pullRequestId;
+      expect([idSentAt(1), idSentAt(2), idSentAt(3)]).toEqual(["PR_24", "PR_24", "PR_24"]);
+    }),
+  );
+
+  it.effect("does not remember a node id lookup that failed", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output('{"message":"not found"}')))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_25" } } } })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const write = () =>
+        cli.setPullRequestFilesViewed({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 25,
+          files: [{ path: "src/a.ts", viewed: true }],
+        });
+
+      const error = yield* Effect.flip(write());
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+
+      yield* write();
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      const idSentAt = (index: number) =>
+        (JSON.parse(callAt(index).stdin ?? "") as { variables: { pullRequestId: string } })
+          .variables.pullRequestId;
+      expect(idSentAt(2)).toEqual("PR_25");
+    }),
+  );
+  it.effect("keeps the pull request being ticked through, not the one looked up first", () =>
+    Effect.gen(function* () {
+      // Ordered by insertion alone, a hit does not renew its entry, so the review the reader is
+      // working down is the first thing evicted once a listing has walked a cache's worth of cold
+      // pull requests, and every press after that pays a round trip again.
+      // This block shares one cache, so these numbers are its own and it runs last.
+      const HOT = 9_000;
+      const lookupsOf = new Map<number, number>();
+      mockedExecute.mockImplementation((input) => {
+        const asked = input.args.find((arg) => arg.startsWith("number="));
+        if (asked === undefined) return Effect.succeed(output("{}"));
+        const number = Number(asked.slice("number=".length));
+        lookupsOf.set(number, (lookupsOf.get(number) ?? 0) + 1);
+        return Effect.succeed(
+          output(encodeJson({ data: { repository: { pullRequest: { id: `PR_${number}` } } } })),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const tick = (number: number) =>
+        cli.setPullRequestFilesViewed({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number,
+          files: [{ path: "src/a.ts", viewed: true }],
+        });
+
+      yield* tick(HOT);
+      // A cache's worth of cold pull requests, with the open one pressed in between each of them.
+      for (let filled = 0; filled < GitHubPullRequestCli.NODE_ID_CACHE_CAPACITY; filled += 1) {
+        yield* tick(HOT + 1 + filled);
+        yield* tick(HOT);
+      }
+
+      assert.strictEqual(lookupsOf.get(HOT), 1);
     }),
   );
 });

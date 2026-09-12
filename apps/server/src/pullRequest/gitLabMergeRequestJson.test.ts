@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   decodeAwardEmojiJson,
+  decodeRepositoryBlobsJson,
   decodeCommitsJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -628,5 +629,124 @@ describe("gitLabAwardName", () => {
     expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
     expect(gitLabAwardName("laugh")).toBe("laughing");
     expect(gitLabAwardName("hooray")).toBe("tada");
+  });
+});
+
+describe("decodeRepositoryBlobsJson", () => {
+  /** Null is the query going unanswered, which these cases are not about. */
+  function expectBlobs(result: Result.Result<ReadonlyMap<string, string> | null, unknown>) {
+    const blobs = expectSuccess(result);
+    expect(blobs).not.toBe(null);
+    if (blobs === null) throw new Error("expected an answered blobs query");
+    return blobs;
+  }
+
+  it("reads a blob id per path", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: "aaa111" },
+                    { path: "src/b.ts", oid: "bbb222" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      ["src/a.ts", "aaa111"],
+      ["src/b.ts", "bbb222"],
+    ]);
+  });
+
+  it("leaves out a node missing either half, which names no version", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: null },
+                    { path: null, oid: "bbb222" },
+                    null,
+                    { path: "src/c.ts", oid: "ccc333" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([["src/c.ts", "ccc333"]]);
+  });
+
+  it("keys a blob by the path the host spelled, spaces and all", () => {
+    // A leading or trailing space is a legal part of a file's name. Trimmed here, the id lands
+    // under a key the asked-for path is not spelled with, and the caller fills that path in as
+    // the empty revision: a mark on the file then never compares against the real head blob.
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: " leading.ts", oid: "aaa111" },
+                    { path: "trailing.ts ", oid: "bbb222" },
+                    { path: "   ", oid: "ccc333" },
+                    { path: "", oid: "ddd444" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      [" leading.ts", "aaa111"],
+      ["trailing.ts ", "bbb222"],
+      // A name that is only spaces is one Git carries too, so it is a path like any other.
+      ["   ", "ccc333"],
+    ]);
+  });
+
+  it("tells a project the reader cannot see from a revision with none of the files", () => {
+    // Null is the query going unanswered. Read as an empty answer it would say the head has none
+    // of the asked-for files, which reports every file a reader has cleared as changed.
+    expect(
+      expectSuccess(decodeRepositoryBlobsJson(JSON.stringify({ data: { project: null } }))),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(JSON.stringify({ data: { project: { repository: null } } })),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(
+          JSON.stringify({ data: { project: { repository: { blobs: { nodes: [] } } } } }),
+        ),
+      ),
+    ).toEqual(new Map());
+  });
+
+  it("fails on output that is not the query's shape", () => {
+    expect(Result.isSuccess(decodeRepositoryBlobsJson("not json"))).toBe(false);
+    expect(Result.isSuccess(decodeRepositoryBlobsJson(JSON.stringify({ errors: [] })))).toBe(false);
   });
 });

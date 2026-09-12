@@ -11,6 +11,7 @@ import {
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 
 function repositoryIdentity(
   provider: string,
@@ -412,6 +413,32 @@ describe("findProjectForChangeRequest", () => {
         number: 1,
       }),
     ).toBeUndefined();
+  });
+
+  it("matches an Azure repository cloned over SSH, whose remote shares no part with its URL", () => {
+    // Azure alone addresses one repository under two names: `ssh.dev.azure.com` and `v3/...` over
+    // SSH against `dev.azure.com` and `.../_git/...` everywhere a person sees it. The identity is
+    // recorded in the spelling a link arrives in, so both halves of this comparison line up.
+    //
+    // Derived from the SSH remote the way the server derives it rather than written out, so the
+    // day that normalization stops reaching the web spelling this fails here too.
+    const canonicalKey = normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code");
+    const projects = [
+      project({
+        canonicalKey,
+        provider: "azure-devops",
+        displayName: canonicalKey.split("/").slice(1).join("/"),
+        owner: "t3tools",
+        name: "t3code",
+      }),
+    ];
+    expect(
+      findProjectForChangeRequest(projects, {
+        host: "dev.azure.com",
+        repository: "t3tools/platform/_git/t3code",
+        number: 1,
+      }),
+    ).toBe(projects[0]);
   });
 
   it("claims nothing for a lookalike host, which is what keeps a link a link", () => {
