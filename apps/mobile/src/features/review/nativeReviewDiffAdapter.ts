@@ -19,7 +19,7 @@ import type { ReviewInlineComment } from "./reviewCommentSelection";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
-const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
+const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
 
@@ -44,15 +44,20 @@ export function buildNativeReviewSnippetRows(
 
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);
-  if (hex) return color;
+  if (hex && hex[4] === undefined) return color;
 
-  const rgba = NATIVE_RGBA_COLOR.exec(color);
+  const components = hex ?? NATIVE_RGBA_COLOR.exec(color);
   const backgroundHex = NATIVE_HEX_COLOR.exec(background);
-  if (!rgba || !backgroundHex) return background;
+  if (!components || !backgroundHex) return background;
 
-  const alpha = rgba[4] === undefined ? 1 : Math.min(1, Math.max(0, Number(rgba[4])));
+  const alpha =
+    components[4] === undefined
+      ? 1
+      : hex
+        ? Number.parseInt(components[4], 16) / 255
+        : Math.min(1, Math.max(0, Number(components[4])));
   const channels = [1, 2, 3].map((index) => {
-    const foreground = Number(rgba[index]);
+    const foreground = hex ? Number.parseInt(components[index], 16) : Number(components[index]);
     const behind = Number.parseInt(backgroundHex[index], 16);
     return Math.round(foreground * alpha + behind * (1 - alpha));
   });

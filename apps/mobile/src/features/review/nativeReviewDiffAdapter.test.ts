@@ -217,6 +217,23 @@ describe("getCachedNativeReviewDiffData", () => {
 });
 
 describe("createNativeReviewDiffTheme", () => {
+  it.each([
+    ["#00000000", "#ffffff"],
+    ["#00000080", "#7f7f7f"],
+    ["#000000ff", "#000000"],
+    ["#000000", "#000000"],
+    ["rgba(0, 0, 0, 0.5)", "#808080"],
+    ["rgb(0, 0, 0)", "#000000"],
+  ])("flattens %s over the screen color", (sheet, expected) => {
+    const theme = createNativeReviewDiffTheme("light", "material-you", {
+      ...appTheme("t3-code", "light"),
+      "--color-screen": "#FFFFFFFF",
+      "--color-sheet": sheet,
+    });
+
+    expect(theme.background).toBe(expected);
+  });
+
   it("serializes every native color as cross-platform opaque hex", () => {
     for (const themeId of MOBILE_THEME_IDS) {
       for (const appearance of ["light", "dark"] as const) {
