@@ -145,6 +145,7 @@ import {
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
+  stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
@@ -1033,8 +1034,22 @@ export function PullRequestDetailPanel({
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
     const key = composerTargetKey(target);
+    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
+    const repeatedCommentIds = new Set(
+      (task.reviewComments ?? [])
+        .filter((comment) => previousCommentIds.has(comment.id))
+        .map((comment) => comment.id),
+    );
+    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
+      draft?.prompt ?? "",
+      draft?.reviewComments ?? [],
+      repeatedCommentIds,
+    );
     const prompt = handoffPrompt(
-      { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByDraft.get(key) },
+      {
+        prompt: promptWithoutPreviousHandoff,
+        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+      },
       task.prompt,
     );
     lastHandoffPromptByDraft.set(key, task.prompt);
@@ -1043,6 +1058,13 @@ export function PullRequestDetailPanel({
       target,
       handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
     );
+    for (const comment of task.reviewComments ?? []) {
+      if (!repeatedCommentIds.has(comment.id)) continue;
+      store.addReviewComment(target, comment, {
+        allowDuplicateReference: true,
+        insertAtCaret: false,
+      });
+    }
   };
 
   /**
@@ -1253,6 +1275,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1266,6 +1290,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1280,6 +1306,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         comment: selection.comment,
         request: selection.request,
       }),

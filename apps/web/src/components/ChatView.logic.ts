@@ -8,6 +8,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
+  type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -42,13 +43,11 @@ import { type ComposerImageAttachment, type DraftThreadState } from "../composer
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
-import {
-  filterTerminalContextsWithText,
-  stripInlineTerminalContextPlaceholders,
-  type TerminalContextDraft,
-} from "../lib/terminalContext";
+import { stripInlineContextReferences } from "~/lib/composerContextReferences";
+import { filterTerminalContextsWithText, type TerminalContextDraft } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import type { ComposerSubmissionIntent } from "../composer-logic";
+import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
+import type { ReviewCommentContext } from "../reviewCommentContext";
 import type { TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
@@ -884,7 +883,7 @@ export function deriveComposerSendState(options: {
   expiredTerminalContextCount: number;
   hasSendableContent: boolean;
 } {
-  const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
+  const trimmedPrompt = stripInlineContextReferences(options.prompt).trim();
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
   const expiredTerminalContextCount =
     options.terminalContexts.length - sendableTerminalContexts.length;
@@ -1361,4 +1360,39 @@ export function shouldRefocusComposerOnWindowFocus(
       '[role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
+}
+
+export interface PlanFollowUpComposerSnapshot {
+  readonly prompt: string;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+}
+
+/**
+ * Puts back everything a plan follow-up send cleared when the send fails. The
+ * caller clears the composer before awaiting the send, so every field it held
+ * has to be written back here: a dropped field silently discards user context.
+ */
+export function restorePlanFollowUpComposer(input: {
+  readonly snapshot: PlanFollowUpComposerSnapshot;
+  readonly writePrompt: (prompt: string) => void;
+  readonly writeTerminalContexts: (contexts: ReadonlyArray<TerminalContextDraft>) => void;
+  readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
+  readonly writePreviewAnnotations: (annotations: ReadonlyArray<PreviewAnnotationPayload>) => void;
+  readonly resetCursor: (options: {
+    cursor: number;
+    prompt: string;
+    detectTrigger: boolean;
+  }) => void;
+}): void {
+  input.writePrompt(input.snapshot.prompt);
+  input.writeTerminalContexts(input.snapshot.terminalContexts);
+  input.writeReviewComments(input.snapshot.reviewComments);
+  input.writePreviewAnnotations(input.snapshot.previewAnnotations);
+  input.resetCursor({
+    cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
+    prompt: input.snapshot.prompt,
+    detectTrigger: true,
+  });
 }
