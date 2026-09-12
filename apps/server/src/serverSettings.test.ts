@@ -148,6 +148,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.deepEqual(
         yield* decodeSettingsPatch({
+          providers: { devin: { enabled: true, binaryPath: "/tmp/devin" } },
+        }),
+        {
+          providers: { devin: { enabled: true, binaryPath: "/tmp/devin" } },
+        },
+      );
+
+      assert.deepEqual(
+        yield* decodeSettingsPatch({
           textGenerationModelSelection: {
             options: [{ id: "fastMode", value: false }],
           },

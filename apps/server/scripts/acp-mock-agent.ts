@@ -15,6 +15,10 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+// Devin profile: `devin-browser` is the only advertised auth method, session
+// setup carries no `models` (Devin has no SessionModelState), and the catalog
+// rides the `category: "model"` config option.
+const devinProfile = process.env.T3_ACP_DEVIN === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -67,8 +71,12 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId = antigravityProfile ? "default" : devinProfile ? "smart" : "ask";
+let currentModelId = antigravityProfile
+  ? "gemini-test-low"
+  : devinProfile
+    ? "swe-2-high"
+    : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -114,6 +122,37 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (devinProfile) {
+    const devinModelValues = (process.env.T3_ACP_DEVIN_MODELS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options:
+          devinModelValues.length > 0
+            ? devinModelValues.map((value) => ({ value, name: value }))
+            : [
+                { value: "swe-2-high", name: "SWE-2 High" },
+                { value: "swe-2-medium", name: "SWE-2 Medium" },
+                { value: "swe-2-max", name: "SWE-2 Max" },
+              ],
+      },
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -304,23 +343,31 @@ const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
       { id: "auto_edit", name: "Auto edit" },
       { id: "yolo", name: "YOLO" },
     ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+  : devinProfile
+    ? [
+        { id: "accept-edits", name: "Accept Edits" },
+        { id: "smart", name: "Smart" },
+        { id: "ask", name: "Ask" },
+        { id: "plan", name: "Plan" },
+        { id: "bypass", name: "Bypass" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -404,6 +451,17 @@ const program = Effect.gen(function* () {
           authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
         };
       }
+      if (devinProfile) {
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "devin-acp", version: "mock" },
+          agentCapabilities: {
+            loadSession: true,
+            promptCapabilities: { image: true, embeddedContext: true },
+          },
+          authMethods: [{ id: "devin-browser", name: "Sign in with Devin" }],
+        };
+      }
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
@@ -417,15 +475,21 @@ const program = Effect.gen(function* () {
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
-    !antigravityProfile || request.methodId === "oauth-personal"
-      ? Effect.succeed({})
-      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
-        ? Effect.succeed({})
-        : Effect.fail(
-            AcpError.AcpRequestError.invalidParams(
-              `Mock Antigravity rejected auth method ${request.methodId}.`,
-            ),
+    devinProfile && request.methodId !== "devin-browser"
+      ? Effect.fail(
+          AcpError.AcpRequestError.invalidParams(
+            `Mock Devin rejected auth method ${request.methodId}.`,
           ),
+        )
+      : !antigravityProfile || request.methodId === "oauth-personal"
+        ? Effect.succeed({})
+        : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+          ? Effect.succeed({})
+          : Effect.fail(
+              AcpError.AcpRequestError.invalidParams(
+                `Mock Antigravity rejected auth method ${request.methodId}.`,
+              ),
+            ),
   );
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
@@ -439,7 +503,7 @@ const program = Effect.gen(function* () {
       return {
         sessionId,
         modes: modeState(),
-        models: modelState(),
+        ...(devinProfile ? {} : { models: modelState() }),
         configOptions: configOptions(),
       };
     }),
@@ -462,7 +526,7 @@ const program = Effect.gen(function* () {
       }
       return {
         modes: modeState(),
-        models: modelState(),
+        ...(devinProfile ? {} : { models: modelState() }),
         configOptions: configOptions(),
         _meta: { nativeResume: true },
       };
@@ -509,7 +573,7 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(loadSessionDelayMs);
         return {
           modes: modeState(),
-          models: modelState(),
+          ...(devinProfile ? {} : { models: modelState() }),
           configOptions: configOptions(),
         };
       }
@@ -525,7 +589,7 @@ const program = Effect.gen(function* () {
       });
       return {
         modes: modeState(),
-        models: modelState(),
+        ...(devinProfile ? {} : { models: modelState() }),
         configOptions: configOptions(),
       };
     }),

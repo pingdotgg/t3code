@@ -655,6 +655,20 @@ export const AntigravityIcon: Icon = (props) => (
   </svg>
 );
 
+export const DevinIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    className={cn("fill-[#171717] dark:fill-[#E5E5E5]", className)}
+  >
+    <path
+      fillRule="evenodd"
+      d="M5 4h7a8 8 0 0 1 0 16H5V4Zm3 3v10h4a5 5 0 0 0 0-10H8Z"
+      clipRule="evenodd"
+    />
+  </svg>
+);
+
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g clipPath="url(#opencode__clip0_1311_94969)">

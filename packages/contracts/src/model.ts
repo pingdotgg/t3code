@@ -148,6 +148,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -173,6 +174,9 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  // Devin's model catalog is account-scoped; "swe-2-high" is the flagship
+  // tier and the CLI's own `devin acp` default.
+  [DEVIN_DRIVER_KIND]: "swe-2-high",
 };
 
 /** Per-provider text generation model defaults. */
@@ -184,6 +188,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [DEVIN_DRIVER_KIND]: "swe-2-medium",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -210,6 +215,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
+  [DEVIN_DRIVER_KIND]: {
+    "swe-2": "swe-2-high",
+    swe2: "swe-2-high",
+  },
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -221,4 +230,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [DEVIN_DRIVER_KIND]: "Devin",
 };
