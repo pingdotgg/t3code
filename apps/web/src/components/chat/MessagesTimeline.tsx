@@ -3566,15 +3566,17 @@ function buildToolCallExpandedBody(
   workspaceRoot: string | undefined,
   visibleLabel: string,
   viewedImagePath: string | null,
+  includeVisibleLabel = false,
 ): string | null {
   const blocks: string[] = [];
-  const seen = new Set<string>([visibleLabel.trim()]);
+  const seen = new Set<string>(includeVisibleLabel ? [] : [visibleLabel.trim()]);
   const addBlock = (value: string | null | undefined) => {
     const text = value?.trim();
     if (!text || seen.has(text)) return;
     seen.add(text);
     blocks.push(text);
   };
+  if (includeVisibleLabel) addBlock(visibleLabel);
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
     addBlock(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
   }
@@ -3821,6 +3823,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         workspaceRoot,
         previewText,
         viewedImage ? viewedImagePath : null,
+        showDestructiveRowStyle,
       )
     : null;
   // Reserve destructive row styling for severe failures, not routine tool errors.
@@ -3868,12 +3871,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       className={cn(
         "flex flex-col rounded-md px-0.5 transition-colors",
         isExpandedToolGroupEntry ? "py-0" : "py-0.5",
-        canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
-      {...rowToggleProps}
     >
-      <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
+      <div
+        className={cn(
+          "flex select-none items-center gap-1.5 rounded-md transition-[opacity,translate] duration-200",
+          canExpand &&
+            "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        )}
+        {...rowToggleProps}
+      >
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
@@ -3892,11 +3899,15 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               <span
                 className={cn(
                   answerPreview ? "shrink-0" : "min-w-0 flex-1",
-                  expanded ? "whitespace-pre-wrap break-words select-text" : "truncate",
+                  expanded && !showDestructiveRowStyle
+                    ? "whitespace-pre-wrap break-words select-text"
+                    : "truncate",
                   headingClass,
                 )}
-                onClick={expanded ? stopRowToggleWhileSelectingText : undefined}
-                onPointerDown={expanded ? stopRowToggle : undefined}
+                onClick={
+                  expanded && !showDestructiveRowStyle ? stopRowToggleWhileSelectingText : undefined
+                }
+                onPointerDown={expanded && !showDestructiveRowStyle ? stopRowToggle : undefined}
               >
                 {previewText}
               </span>

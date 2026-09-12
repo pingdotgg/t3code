@@ -465,6 +465,50 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  it("keeps a provider error in a separate panel that can be collapsed from its header", async () => {
+    const error =
+      "ProviderAdapterProcessError: already has an active writer\n    at startSession\n    at processTurnStartRequested";
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "provider-error",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "provider-error",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: error,
+                  detail: error,
+                  tone: "error",
+                  sourceActivityKind: "runtime.error",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      expect(renderer!.root.findAllByType("pre")).toHaveLength(0);
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const header = renderer!.root.findByProps({ "aria-expanded": true });
+      expect(header.findAllByType("pre")).toHaveLength(0);
+      expect(renderer!.root.findByType("pre").children).toEqual([error]);
+      const label = header.findAllByType("span").find((node) => node.children.includes(error));
+      expect(label!.props.onClick).toBeUndefined();
+      const preventDefault = vi.fn();
+      await act(() => header.props.onKeyDown({ key: "Enter", preventDefault }));
+      expect(preventDefault).toHaveBeenCalledOnce();
+      expect(renderer!.root.findAllByType("pre")).toHaveLength(0);
+      expect(renderer!.root.findByProps({ "aria-expanded": false })).toBeDefined();
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("renders elapsed time for a completed turn", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");
