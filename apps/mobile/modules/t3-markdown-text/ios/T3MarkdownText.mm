@@ -33,6 +33,15 @@ using namespace facebook::react;
 @end
 
 @implementation T3ContextCopyTextView
+// Read-only text still supports selecting the entire document after selecting a word.
+- (BOOL)canPerformAction:(SEL)action withSender:(id)sender
+{
+  if (action == @selector(selectAll:)) {
+    return self.selectable && self.text.length > 0 && self.selectedRange.length < self.text.length;
+  }
+  return [super canPerformAction:action withSender:sender];
+}
+
 - (void)copy:(id)sender
 {
   NSRange selected = self.selectedRange;

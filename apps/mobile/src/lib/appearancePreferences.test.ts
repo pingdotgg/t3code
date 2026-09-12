@@ -18,7 +18,7 @@ describe("appearancePreferences", () => {
       baseFontSize: DEFAULT_BASE_FONT_SIZE,
       terminalFontSize: null,
       codeFontSize: null,
-      codeWordBreak: false,
+      codeWordBreak: true,
     });
   });
 
@@ -88,6 +88,15 @@ describe("appearancePreferences", () => {
 
   it("keeps explicit code word break enabled", () => {
     expect(resolveAppearancePreferences({ codeWordBreak: true }).codeWordBreak).toBe(true);
+  });
+
+  it("wraps by default, and honours a reader who turned wrapping off", () => {
+    // Matches web's `wordWrap`, which also defaults on. Only an explicit `false` opts out,
+    // so an existing no-wrap choice survives the change of default.
+    expect(resolveAppearancePreferences(undefined).codeWordBreak).toBe(true);
+    expect(resolveAppearancePreferences({}).codeWordBreak).toBe(true);
+    expect(resolveAppearancePreferences({ codeWordBreak: null }).codeWordBreak).toBe(true);
+    expect(resolveAppearancePreferences({ codeWordBreak: false }).codeWordBreak).toBe(false);
   });
 
   it("returns the authored text scale at the 16pt default", () => {

@@ -360,7 +360,14 @@ describe("prepareTurnAttachments", () => {
   });
 
   it("uploads generic file bytes directly and keeps mixed attachment order", async () => {
-    const prepared = await prepareTurnAttachments({ environmentId, attachments: [file, image] });
+    const pastedFile = {
+      ...file,
+      source: { _tag: "pasted-text" as const },
+    };
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [pastedFile, image],
+    });
 
     expect(mocks.upload).toHaveBeenCalledWith(
       "file:///documents/report.pdf",
@@ -379,11 +386,12 @@ describe("prepareTurnAttachments", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
+      source: { _tag: "pasted-text" },
     });
     expect(prepared.attachments[1]?.type).toBe("image");
     expect(prepared.pendingAttachmentIds).toEqual([MINTED_ID]);
     expect(prepared.draftAttachments[0]).toEqual({
-      ...file,
+      ...pastedFile,
       uploadedAttachmentId: MINTED_ID,
       uploadEnvironmentId: environmentId,
     });

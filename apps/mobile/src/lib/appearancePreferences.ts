@@ -83,8 +83,14 @@ function normalizeCodeFontSize(value: number | null | undefined): number {
   return Math.min(MAX_CODE_FONT_SIZE, Math.max(MIN_CODE_FONT_SIZE, Math.round(value)));
 }
 
+/**
+ * Wrapping is the default, matching web's `wordWrap` setting: a long line that runs off the
+ * side of a phone is unreadable without horizontal scrolling, and the reader has to discover
+ * the setting to find that out. Only an explicit `false` turns it off, so anyone who already
+ * chose no-wrap keeps it.
+ */
 function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
-  return value === true;
+  return value !== false;
 }
 
 /** Terminal size derived from base: 10.5pt at base 16, snapped to 0.5pt steps. */

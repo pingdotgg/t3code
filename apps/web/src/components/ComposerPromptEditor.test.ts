@@ -18,6 +18,7 @@ import {
 
 import {
   importPastedComposerText,
+  readPastedComposerContext,
   registerComposerInlineTokenPaste,
 } from "./composerInlineTokenPaste";
 import {
@@ -498,92 +499,103 @@ describe("registerComposerInlineTokenPaste", () => {
 });
 
 describe("context reference paste", () => {
-  it.each(["focused", "blurred"])("imports structured paste when %s", (focus) => {
-    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
-    const editor = createEditor({ nodes: [ComposerCitationNode] });
-    editor.update(
-      () => {
-        const paragraph = $createParagraphNode();
-        $getRoot().append(paragraph);
-        paragraph.selectEnd();
-      },
-      { discrete: true },
-    );
-    const imported: string[] = [];
-    const importFragment = (
-      fragment: import("@t3tools/contracts").ComposerContextClipboardFragment,
-    ) => {
-      imported.push(...fragment.records.map((record) => record.contextId));
-      return new Map([["img-old", "img-new"]]);
-    };
-    registerComposerInlineTokenPaste(editor, {
-      createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
-      createCitationNode: $createComposerCitationNode,
-      createContextReferenceNode: (reference) =>
-        $createTextNode(`<context:${reference.contextId}>`),
-      getExpandedAbsoluteOffsetForPoint: () => 0,
-      importContextFragment: importFragment,
-    });
-    const event = new TestClipboardEvent(
-      "![shot](t3-context://v1/image/img-old) and [T](t3-context://v1/terminal/ctx-t)",
-      {
-        "web application/x-t3-context-fragment+json": JSON.stringify({
-          version: 1,
-          source: { environmentId: "env-1" },
-          records: [
-            {
-              version: 1,
-              contextId: "img-old",
-              kind: "image",
-              label: "shot",
-              attachmentId: "a",
-              name: "shot.png",
-              mimeType: "image/png",
-              sizeBytes: 1,
-            },
-            {
-              version: 1,
-              contextId: "ctx-t",
-              kind: "terminal",
-              label: "T",
-              terminalId: "t",
-              terminalLabel: "T",
-              lineStart: 1,
-              lineEnd: 1,
-              text: "x",
-            },
-            {
-              version: 1,
-              contextId: "img-unrelated",
-              kind: "image",
-              label: "other",
-              attachmentId: "b",
-              name: "other.png",
-              mimeType: "image/png",
-              sizeBytes: 1,
-            },
-          ],
-        }),
-      },
-    );
-    if (focus === "blurred") {
-      expect(importPastedComposerText(event.clipboardData, importFragment)).toBe(
-        "![shot](t3-context://v1/image/img-new) and [T](t3-context://v1/terminal/ctx-t)",
+  it.each([
+    { focus: "focused", prefix: "" },
+    { focus: "blurred", prefix: "" },
+    { focus: "focused", prefix: "log ".repeat(10_000) },
+    { focus: "blurred", prefix: "log ".repeat(10_000) },
+  ])(
+    "imports structured paste when $focus with $prefix.length extra characters",
+    ({ focus, prefix }) => {
+      vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+      const editor = createEditor({ nodes: [ComposerCitationNode] });
+      editor.update(
+        () => {
+          const paragraph = $createParagraphNode();
+          $getRoot().append(paragraph);
+          paragraph.selectEnd();
+        },
+        { discrete: true },
+      );
+      const imported: string[] = [];
+      const importFragment = (
+        fragment: import("@t3tools/contracts").ComposerContextClipboardFragment,
+      ) => {
+        imported.push(...fragment.records.map((record) => record.contextId));
+        return new Map([["img-old", "img-new"]]);
+      };
+      registerComposerInlineTokenPaste(editor, {
+        createMentionNode: (path) => $createTextNode(`<mention:${path}>`),
+        createCitationNode: $createComposerCitationNode,
+        createContextReferenceNode: (reference) =>
+          $createTextNode(`<context:${reference.contextId}>`),
+        getExpandedAbsoluteOffsetForPoint: () => 0,
+        importContextFragment: importFragment,
+      });
+      const event = new TestClipboardEvent(
+        `${prefix}![shot](t3-context://v1/image/img-old) and [T](t3-context://v1/terminal/ctx-t)`,
+        {
+          "web application/x-t3-context-fragment+json": JSON.stringify({
+            version: 1,
+            source: { environmentId: "env-1" },
+            records: [
+              {
+                version: 1,
+                contextId: "img-old",
+                kind: "image",
+                label: "shot",
+                attachmentId: "a",
+                name: "shot.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+              },
+              {
+                version: 1,
+                contextId: "ctx-t",
+                kind: "terminal",
+                label: "T",
+                terminalId: "t",
+                terminalLabel: "T",
+                lineStart: 1,
+                lineEnd: 1,
+                text: "x",
+              },
+              {
+                version: 1,
+                contextId: "img-unrelated",
+                kind: "image",
+                label: "other",
+                attachmentId: "b",
+                name: "other.png",
+                mimeType: "image/png",
+                sizeBytes: 1,
+              },
+            ],
+          }),
+        },
+      );
+      expect(
+        readPastedComposerContext(event.clipboardData)?.records.map((record) => record.contextId),
+      ).toEqual(["img-old", "ctx-t"]);
+      if (focus === "blurred") {
+        expect(importPastedComposerText(event.clipboardData, importFragment)).toBe(
+          `${prefix}![shot](t3-context://v1/image/img-new) and [T](t3-context://v1/terminal/ctx-t)`,
+        );
+        expect(imported).toEqual(["img-old", "ctx-t"]);
+        return;
+      }
+      editor.update(
+        () => {
+          editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
+        },
+        { discrete: true },
       );
       expect(imported).toEqual(["img-old", "ctx-t"]);
-      return;
-    }
-    editor.update(
-      () => {
-        editor.dispatchCommand(PASTE_COMMAND, event as ClipboardEvent);
-      },
-      { discrete: true },
-    );
-    expect(imported).toEqual(["img-old", "ctx-t"]);
-    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
-      "<context:img-new> and <context:ctx-t>",
-    );
-  });
+      expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(
+        `${prefix}<context:img-new> and <context:ctx-t>`,
+      );
+    },
+  );
 
   it("converts a copied legacy element into a sendable annotation and rewrites its link", () => {
     const copied = upgradeLegacyContextMessage(

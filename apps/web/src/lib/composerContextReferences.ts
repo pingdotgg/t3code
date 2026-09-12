@@ -93,19 +93,34 @@ function isBoundaryWhitespace(char: string | undefined): boolean {
   return char === undefined || char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/** Replaces a selected range with chips, keeping word boundaries and the trailing caret space. */
+export function inlineContextReferenceReplacement(
+  prompt: string,
+  selection: { start: number; end: number },
+  references: ReadonlyArray<ComposerContextReference>,
+): { start: number; end: number; text: string } {
+  const start = Math.max(0, Math.min(prompt.length, Math.floor(selection.start)));
+  const end = Math.max(start, Math.min(prompt.length, Math.floor(selection.end)));
+  const needsLeadingSpace = !isBoundaryWhitespace(prompt[start - 1]);
+  return {
+    start,
+    end: prompt[end] === " " ? end + 1 : end,
+    text: `${needsLeadingSpace ? " " : ""}${references.map(formatInlineContextReference).join(" ")} `,
+  };
+}
+
 /** Inserts a link at the cursor, padding with spaces only where words would otherwise join. */
 export function insertInlineContextReference(
   prompt: string,
   cursorInput: number,
   reference: ComposerContextReference,
 ): { prompt: string; cursor: number } {
-  const cursor = Math.max(0, Math.min(prompt.length, Math.floor(cursorInput)));
-  const needsLeadingSpace = !isBoundaryWhitespace(prompt[cursor - 1]);
-  const replacement = `${needsLeadingSpace ? " " : ""}${formatInlineContextReference(reference)} `;
-  const rangeEnd = prompt[cursor] === " " ? cursor + 1 : cursor;
+  const edit = inlineContextReferenceReplacement(prompt, { start: cursorInput, end: cursorInput }, [
+    reference,
+  ]);
   return {
-    prompt: `${prompt.slice(0, cursor)}${replacement}${prompt.slice(rangeEnd)}`,
-    cursor: cursor + replacement.length,
+    prompt: `${prompt.slice(0, edit.start)}${edit.text}${prompt.slice(edit.end)}`,
+    cursor: edit.start + edit.text.length,
   };
 }
 

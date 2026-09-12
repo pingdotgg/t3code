@@ -9,17 +9,16 @@ import type { ComposerEditorProps as NativeComposerEditorProps } from "../native
 import {
   appendComposerDraftAttachments,
   createComposerDraftContextHistory,
+  getComposerDraftAfterSelection,
   getComposerDraftSnapshot,
   insertComposerDraftContext,
+  insertComposerDraftText,
   rememberComposerDraftSelection,
   setComposerDraftContext,
   setComposerContextImporting,
   useComposerDraft,
 } from "../state/use-composer-drafts";
-import {
-  importComposerContextClipboard,
-  type NativeContextClipboard,
-} from "../lib/composerContextClipboard";
+import { importComposerContextClipboard } from "../lib/composerContextClipboard";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./AppText";
 import {
@@ -34,6 +33,14 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly onOpenMention?: (path: string) => void;
   /** Documents open in the file screen; pictures, video and PDF keep their native viewers. */
   readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
+  /**
+   * A resting composer is a target to type in, not a document to navigate. Its chips go inert
+   * so a draft full of them can still be tapped anywhere to start writing; the caller focuses
+   * the editor instead. Chips become live again once the composer is open.
+   */
+  readonly chipsInert?: boolean;
+  /** Called instead of opening a chip while `chipsInert` is set. */
+  readonly onInertChipPress?: () => void;
 };
 
 export function ComposerEditor({
@@ -41,6 +48,8 @@ export function ComposerEditor({
   environmentId,
   onOpenMention,
   onOpenAttachment,
+  chipsInert,
+  onInertChipPress,
   ...props
 }: ComposerEditorProps) {
   const draft = useComposerDraft(draftKey ?? null);
@@ -68,40 +77,35 @@ export function ComposerEditor({
     },
     [draftKey],
   );
-  const pasteContext = async (clipboard: NativeContextClipboard) => {
+  const pasteContext = async (
+    clipboard: Parameters<NonNullable<NativeComposerEditorProps["onPasteContext"]>>[0],
+  ) => {
     if (!draftKey || importRef.current || props.readOnly || props.editable === false) return;
+    const insertion = { text: clipboard.value, ...clipboard.selection };
     const controller = new AbortController();
     importRef.current = controller;
     setImporting(true);
     setComposerContextImporting(draftKey, true);
     try {
+      const retained = getComposerDraftAfterSelection(draftKey, insertion);
       const result = await importComposerContextClipboard(
         clipboard,
-        getComposerDraftSnapshot(draftKey).attachments.length,
+        retained.attachments.length,
         controller.signal,
-        getComposerDraftSnapshot(draftKey).context?.records.length ?? 0,
+        retained.context?.records.length ?? 0,
       );
       if (!result) {
-        insertComposerDraftContext(draftKey, {
-          text: clipboard.text,
-          context: { version: 1, records: [] },
-        });
+        insertComposerDraftText(draftKey, clipboard.text, insertion);
         return;
       }
-      const rejected = appendComposerDraftAttachments(draftKey, result.attachments);
-      const ids = new Set(
-        getComposerDraftSnapshot(draftKey).attachments.map((attachment) => attachment.id),
-      );
-      insertComposerDraftContext(draftKey, {
-        text: result.text,
-        context: {
-          version: 1,
-          records: result.context.records.filter(
-            (record) => !("attachmentId" in record) || ids.has(record.attachmentId),
-          ),
-        },
-      });
-      if (result.failures.length > 0 || rejected > 0)
+      if (!insertComposerDraftContext(draftKey, result, insertion)) {
+        Alert.alert(
+          "Could not paste context",
+          "Remove some attachments or context items from the draft, then paste again.",
+        );
+        return;
+      }
+      if (result.failures.length > 0)
         Alert.alert(
           "Some attachments could not be copied",
           "Reconnect to the source environment and copy them again. References without their files are marked unavailable.",
@@ -161,6 +165,10 @@ export function ComposerEditor({
         onPasteContext={(clipboard) => void pasteContext(clipboard)}
         context={draft.context}
         onContextPress={(selection) => {
+          if (chipsInert) {
+            onInertChipPress?.();
+            return;
+          }
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {
             onOpenMention(path);
@@ -174,7 +182,12 @@ export function ComposerEditor({
           setSelected(selection);
         }}
         onSelectionChange={(selection) => {
-          if (draftKey) rememberComposerDraftSelection(draftKey, props.value, selection);
+          if (draftKey)
+            rememberComposerDraftSelection(
+              draftKey,
+              getComposerDraftSnapshot(draftKey).text,
+              selection,
+            );
           props.onSelectionChange?.(selection);
         }}
       />
@@ -229,4 +242,8 @@ export function ComposerEditor({
     </>
   );
 }
-export type { ComposerEditorHandle, ComposerEditorSelection } from "../native/T3ComposerEditor";
+export type {
+  ComposerEditorHandle,
+  ComposerEditorSelection,
+  ComposerTextPaste,
+} from "../native/T3ComposerEditor";

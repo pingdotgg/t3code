@@ -87,6 +87,9 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("interceptTextPastes") { (view: T3ComposerEditorView, intercept: Bool) in
+        view.setInterceptTextPastes(intercept)
+      }
 
       Events(
         "onComposerChange",
@@ -97,6 +100,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",
+        "onComposerPasteText",
         "onComposerContentSizeChange"
       )
 
