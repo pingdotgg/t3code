@@ -297,6 +297,9 @@ describe("CheckpointReactor", () => {
     readonly threadWorktreePath?: string | null;
     readonly threadBranch?: string | null;
     readonly secondThreadSharingWorktree?: boolean;
+    // Spells the shared worktree differently for the second thread, e.g. through
+    // a symlink to the first thread's directory.
+    readonly secondThreadWorktreePath?: (cwd: string) => string;
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
@@ -455,7 +458,8 @@ describe("CheckpointReactor", () => {
                   interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
                   runtimeMode: "approval-required",
                   branch: null,
-                  worktreePath: options?.threadWorktreePath ?? cwd,
+                  worktreePath:
+                    options?.secondThreadWorktreePath?.(cwd) ?? options?.threadWorktreePath ?? cwd,
                   createdAt,
                 }),
               )
@@ -1058,6 +1062,76 @@ describe("CheckpointReactor", () => {
       const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       expect(thread?.branch).toBe(threadBranch);
       expect(pullRequestRefreshCalls).toEqual([]);
+    },
+  );
+
+  it("does not adopt a drifted checkout when another thread spells the worktree via a symlink", async () => {
+    const linkParent = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-link-"));
+    tempDirs.push(linkParent);
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+      localStatusRefName: "t3code/renamed-by-agent",
+      secondThreadSharingWorktree: true,
+      secondThreadWorktreePath: (cwd) => {
+        const link = NodePath.join(linkParent, "worktree");
+        // A junction needs no symlink privilege on Windows; POSIX ignores the type.
+        NodeFS.symlinkSync(cwd, link, "junction");
+        return link;
+      },
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-drift-symlinked"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-drift-symlinked"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("t3code/original-branch");
+  });
+
+  it.each([false, true])(
+    "compares the session cwd with a symlinked worktree when shared=%s",
+    async (shared) => {
+      const linkParent = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-checkpoint-link-"));
+      tempDirs.push(linkParent);
+      const worktreePath = NodePath.join(linkParent, "worktree");
+      const pullRequestRefreshCalls: string[] = [];
+      const harness = await createHarness({
+        seedFilesystemCheckpoints: false,
+        threadWorktreePath: worktreePath,
+        threadBranch: "t3code/original-branch",
+        localStatusRefName: "t3code/renamed-by-agent",
+        secondThreadSharingWorktree: shared,
+        pullRequestRefreshCalls,
+      });
+      NodeFS.symlinkSync(harness.cwd, worktreePath, "junction");
+
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-turn-completed-symlinked-cwd"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-symlinked-cwd"),
+        payload: { state: "completed" },
+      });
+
+      await harness.drain();
+
+      const snapshot = await harness.readModel();
+      const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.branch).toBe(shared ? "t3code/original-branch" : "t3code/renamed-by-agent");
+      expect(thread?.worktreePath).toBe(worktreePath);
+      expect(pullRequestRefreshCalls).toEqual(shared ? [] : [harness.cwd]);
     },
   );
 
