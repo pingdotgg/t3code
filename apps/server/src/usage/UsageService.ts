@@ -1,9 +1,10 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
- * Grok Build) rather than T3 Code's orchestration projections, so usage covers
- * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * The scan reads the provider CLIs' own session files (Claude Code, Codex, Grok
+ * Build, and Antigravity) rather than T3 Code's orchestration projections, so
+ * usage covers turns driven outside T3 Code too. This is the approach `ccusage`
+ * takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -17,6 +18,7 @@ import * as NodeOS from "node:os";
 import {
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
+  type UsageBucket,
   type UsageProviderKind,
   type UsageSource,
   type UsagePricing,
@@ -50,6 +52,7 @@ import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  type ListTranscriptFilesOptions,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
@@ -78,6 +81,17 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
+
+/**
+ * Antigravity writes one SQLite database per conversation, in WAL mode. The
+ * `-wal` sibling is folded into the cache key so turns committed since the
+ * last checkpoint are not missed.
+ */
+const ANTIGRAVITY_LIST_OPTIONS: ListTranscriptFilesOptions = {
+  extension: ".db",
+  companionSuffixes: ["-wal"],
+  canonicalPaths: true,
+};
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -245,7 +259,23 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /** Resolves the transcript directory for each provider. */
+  /** `$VAR` when set to something non-blank, else `~/<fallback>`. */
+  const resolveEnvHome = (variable: string, fallback: string): string => {
+    const value = hostEnvironment[variable]?.trim() ?? "";
+    return value.length > 0
+      ? path.resolve(expandHomePath(value))
+      : path.join(NodeOS.homedir(), fallback);
+  };
+
+  /**
+   * Resolves the transcript directories for each provider.
+   *
+   * Antigravity has several: T3 Code runs the agent against a private profile
+   * per provider instance under the state directory, while the standalone CLI
+   * and a standalone ACP agent (Zed, for one) keep conversations under the
+   * user's own Gemini home. These are discovery roots and can overlap;
+   * collectDirs assigns each database to its canonical containing directory.
+   */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
   ) {
@@ -254,11 +284,9 @@ export const make = Effect.gen(function* () {
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
     // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
     // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
-    const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
-    const grokHome =
-      grokHomeEnv.length > 0
-        ? path.resolve(expandHomePath(grokHomeEnv))
-        : path.join(NodeOS.homedir(), ".grok");
+    const grokHome = resolveEnvHome("GROK_HOME", ".grok");
+    // Antigravity's home is `$GEMINI_HOME` or `~/.gemini`, shared with Gemini CLI.
+    const geminiHome = resolveEnvHome("GEMINI_HOME", ".gemini");
 
     return [
       { provider: "claude" as const, dir: claudeDir },
@@ -266,7 +294,22 @@ export const make = Effect.gen(function* () {
       {
         provider: "grok" as const,
         dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
+        listOptions: { fileName: "updates.jsonl" },
+      },
+      {
+        provider: "antigravity" as const,
+        dir: path.join(config.stateDir, "providers", "antigravity"),
+        listOptions: ANTIGRAVITY_LIST_OPTIONS,
+      },
+      {
+        provider: "antigravity" as const,
+        dir: path.join(geminiHome, "antigravity-acp", "conversations"),
+        listOptions: ANTIGRAVITY_LIST_OPTIONS,
+      },
+      {
+        provider: "antigravity" as const,
+        dir: path.join(geminiHome, "antigravity-cli", "conversations"),
+        listOptions: ANTIGRAVITY_LIST_OPTIONS,
       },
     ];
   });
@@ -388,7 +431,10 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
+    const walkedRoots: string[] = [];
+    const antigravityDirs = new Map<string, { path: string; records: readonly UsageRecord[] }[]>();
+    const antigravityPaths = new Set<string>();
+    for (const { provider, dir, listOptions } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
@@ -397,9 +443,33 @@ export const make = Effect.gen(function* () {
         scanned.push({ provider, dir, volumeId, files: null });
         continue;
       }
+      const root =
+        provider === "antigravity"
+          ? yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir))
+          : dir;
+      walkedRoots.push(root);
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+        listTranscriptFiles(root, windowStartMs, listOptions),
       );
+      if (provider === "antigravity") {
+        // Managed profiles and standalone homes can reach the same database.
+        // Canonical file paths prevent duplicate reads; containing directories
+        // give every environment the same source ownership boundary.
+        for (const file of files) {
+          const canonicalPath = file.path;
+          if (antigravityPaths.has(canonicalPath)) continue;
+          antigravityPaths.add(canonicalPath);
+          const records = yield* readFileRecords(canonicalPath, file.size, file.mtimeMs, provider);
+          const sourceDir = path.dirname(canonicalPath);
+          let sourceFiles = antigravityDirs.get(sourceDir);
+          if (sourceFiles === undefined) {
+            sourceFiles = [];
+            antigravityDirs.set(sourceDir, sourceFiles);
+          }
+          sourceFiles.push({ path: canonicalPath, records });
+        }
+        continue;
+      }
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
@@ -407,7 +477,12 @@ export const make = Effect.gen(function* () {
       }
       scanned.push({ provider, dir, volumeId, files: parsedFiles });
     }
-    return scanned;
+    for (const [dir, files] of antigravityDirs) {
+      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+      scanned.push({ provider: "antigravity", dir, volumeId, files });
+      walkedRoots.push(dir);
+    }
+    return { scanned, walkedRoots };
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
@@ -462,12 +537,12 @@ export const make = Effect.gen(function* () {
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all(
+    const [, { scanned: scannedDirs, walkedRoots }] = yield* Effect.all(
       [ensureRates(false), collectDirs(windowStartMs, settings)],
       { concurrency: 2 },
     );
 
-    const aggregator = new UsageAggregator({
+    const aggregateOptions = {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
@@ -475,11 +550,11 @@ export const make = Effect.gen(function* () {
       ...hourlyWindow,
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-    });
+    };
 
     const sources: UsageSource[] = [];
+    const buckets: UsageBucket[] = [];
     const livePaths = new Set<string>();
-    const walkedRoots: string[] = [];
 
     for (const { provider, dir, volumeId, files } of scannedDirs) {
       if (files === null) {
@@ -495,7 +570,9 @@ export const make = Effect.gen(function* () {
         continue;
       }
 
-      walkedRoots.push(dir);
+      // One aggregator per source directory. Antigravity discovery roots are
+      // already grouped by canonical database directory with each file counted once.
+      const aggregator = new UsageAggregator(aggregateOptions);
       let scannedFiles = 0;
       let skippedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
@@ -518,6 +595,7 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const source = sources.length;
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
         status: "ok",
@@ -527,6 +605,7 @@ export const make = Effect.gen(function* () {
         distinctSessions: sessionIds.size,
         message: null,
       });
+      for (const bucket of aggregator.finish().buckets) buckets.push({ ...bucket, source });
     }
 
     const pruned = pruneScanCache(fileCache, {
@@ -538,7 +617,6 @@ export const make = Effect.gen(function* () {
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
 
-    const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
 
@@ -548,7 +626,7 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
-      buckets: aggregated.buckets,
+      buckets,
       sources,
       pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),

@@ -119,7 +119,7 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
  * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
+ * directory's buckets dropped. Environments are sorted by id so the winner does
  * not change between renders.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
@@ -146,7 +146,14 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   return { ownerByFingerprint, duplicates };
 }
 
-/** Sources this environment owns after fingerprint claims, plus their buckets. */
+/**
+ * Sources this environment owns after fingerprint claims, plus their buckets.
+ *
+ * A bucket that names its source is kept only when that directory is owned.
+ * Older servers aggregate per provider and omit the index, so their buckets
+ * fall back to provider-level ownership; those servers only ever had one
+ * directory per provider, which makes the two rules equivalent for them.
+ */
 function ownedContribution(
   environment: EnvironmentUsage,
   ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
@@ -155,13 +162,15 @@ function ownedContribution(
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
 } {
   const ownedProviders = new Set<UsageProviderKind>();
+  const ownedSources = new Set<number>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
-  for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+  environment.summary.sources.forEach((source, index) => {
+    if (source.status === "missing") return;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
       ownedProviders.add(provider);
+      ownedSources.add(index);
       // Distinct within a directory. Summing per-bucket session counts instead
       // would count a session once per day and model it spans.
       sessionsByProvider.set(
@@ -169,9 +178,13 @@ function ownedContribution(
         (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
       );
     }
-  }
+  });
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter((bucket) =>
+      bucket.source === undefined
+        ? ownedProviders.has(bucket.provider)
+        : ownedSources.has(bucket.source),
+    ),
     sessionsByProvider,
   };
 }

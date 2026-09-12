@@ -13,6 +13,10 @@
  * parses only the appended bytes, which is what keeps a warm scan cheap while a
  * session is actively writing a multi-hundred-megabyte rollout.
  *
+ * Antigravity conversations are SQLite databases rather than JSONL and take a
+ * separate path in `usageAntigravity`; the listing and caching contract is the
+ * same.
+ *
  * @module usageTranscriptReader
  */
 import * as NodeFSP from "node:fs/promises";
@@ -20,6 +24,7 @@ import * as NodePath from "node:path";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
+import { readAntigravityConversation } from "./usageAntigravity.ts";
 import {
   initialCodexScanState,
   mightCarryUsage,
@@ -86,24 +91,42 @@ function fnv1a(buffer: Buffer): number {
   return hash >>> 0;
 }
 
+export interface ListTranscriptFilesOptions {
+  /**
+   * Restricts the walk to a single basename (Grok's `updates.jsonl`). Grok
+   * sessions also ship multi-megabyte `chat_history` and `events` logs that
+   * never carry usage, so the basename filter keeps a cold scan off those files.
+   */
+  readonly fileName?: string;
+  /** Extension to accept in place of `.jsonl`. */
+  readonly extension?: string;
+  /**
+   * Sibling files folded into each entry's size and mtime. SQLite in WAL mode
+   * appends committed rows to `<db>-wal` without touching the main file, so a
+   * cache keyed on the main file alone would miss every turn since the last
+   * checkpoint.
+   */
+  readonly companionSuffixes?: readonly string[];
+  /** Resolve aliases before statting the transcript and its companion files. */
+  readonly canonicalPaths?: boolean;
+}
+
 /**
- * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
+ * Lists transcripts under `root` last modified at or after `sinceMs`.
  *
  * Errors on individual entries are swallowed: session files rotate and get
  * removed while the walk is in flight, and a partial listing is far better than
  * failing the page.
- *
- * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
- * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
- * never carry usage, so the basename filter keeps a cold scan off those files.
  */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: ListTranscriptFilesOptions,
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
+  const extension = options?.extension ?? ".jsonl";
+  const companionSuffixes = options?.companionSuffixes ?? [];
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
@@ -120,14 +143,27 @@ export async function listTranscriptFiles(
       }
       if (fileName !== undefined) {
         if (entry.name !== fileName) continue;
-      } else if (!entry.name.endsWith(".jsonl")) {
+      } else if (!entry.name.endsWith(extension)) {
         continue;
       }
       try {
-        const stats = await NodeFSP.stat(child);
-        if (stats.mtimeMs >= sinceMs) {
-          found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
+        const filePath = options?.canonicalPaths ? await NodeFSP.realpath(child) : child;
+        const stats = await NodeFSP.stat(filePath);
+        let size = stats.size;
+        let mtimeMs = stats.mtimeMs;
+        for (const suffix of companionSuffixes) {
+          try {
+            const companion = await NodeFSP.stat(`${filePath}${suffix}`);
+            // Opening a WAL database, even read-only, recreates an empty `-wal`
+            // beside it; a companion with no content must not move the key.
+            if (companion.size === 0) continue;
+            size += companion.size;
+            mtimeMs = Math.max(mtimeMs, companion.mtimeMs);
+          } catch {
+            // No companion; the main file stands alone.
+          }
         }
+        if (mtimeMs >= sinceMs) found.push({ path: filePath, size, mtimeMs });
       } catch {
         // Vanished between readdir and stat.
       }
@@ -195,6 +231,19 @@ export async function readTranscriptRecords(
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
 ): Promise<TranscriptParseResult | null> {
+  if (provider === "antigravity") {
+    // A SQLite database has no append-only byte stream to resume; the whole
+    // conversation is re-read whenever the file or its WAL changes.
+    const records = await readAntigravityConversation(filePath);
+    if (records === null) return null;
+    return {
+      records,
+      tailRecords: [],
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null },
+      resumed: false,
+    };
+  }
+
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");

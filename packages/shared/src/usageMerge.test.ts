@@ -1,5 +1,6 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -146,6 +147,41 @@ describe("mergeUsage", () => {
     ).toEqual({ claude: 1, codex: 1 });
   });
 
+  it("drops only the duplicated directory when a provider has several", () => {
+    // Two servers on one machine each scan their own Antigravity profile plus
+    // the shared ~/.gemini directory. The shared one must count once.
+    const shared = { provider: "antigravity" as const, hostId: "mac", homePath: "/gemini" };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ provider: "antigravity", model: "gemini", costUsd: 1, source: 0 }),
+              bucket({ provider: "antigravity", model: "gemini", costUsd: 4, source: 1 }),
+            ],
+            [{ provider: "antigravity", hostId: "mac", homePath: "/a/providers" }, shared],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [
+              bucket({ provider: "antigravity", model: "gemini", costUsd: 2, source: 0 }),
+              bucket({ provider: "antigravity", model: "gemini", costUsd: 4, source: 1 }),
+            ],
+            [{ provider: "antigravity", hostId: "mac", homePath: "/b/providers" }, shared],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(7);
+    expect(merged.sessions).toBe(3);
+    expect(merged.duplicateSources).toEqual(["env-b: /gemini"]);
+  });
+
   it("excludes an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [
@@ -158,7 +194,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
