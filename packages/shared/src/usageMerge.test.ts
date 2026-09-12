@@ -1,5 +1,6 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
@@ -74,6 +75,41 @@ function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
 }
 
 describe("mergeUsage", () => {
+  it("counts a Cursor account once across servers while retaining each server's other providers", () => {
+    const account = {
+      provider: "cursor" as const,
+      hostId: "cursor.com",
+      homePath: "cursor-account:account-hash",
+      volumeId: "account-hash",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "mac",
+          summary([bucket({ provider: "cursor", sourcePath: account.homePath })], [account]),
+        ),
+        environment(
+          "linux",
+          summary(
+            [
+              bucket({ provider: "cursor", sourcePath: account.homePath }),
+              bucket({ provider: "opencode", sourcePath: "/opencode" }),
+            ],
+            [account, { provider: "opencode", hostId: "linux", homePath: "/opencode" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(
+      merged.providers.map((provider) => [provider.provider, provider.costUsd]).sort(),
+    ).toEqual([
+      ["cursor", 10],
+      ["opencode", 10],
+    ]);
+    expect(merged.duplicateSources).toHaveLength(1);
+  });
+
   it("sums environments that read different transcript directories", () => {
     const merged = mergeUsage(
       [
@@ -146,6 +182,31 @@ describe("mergeUsage", () => {
     ).toEqual({ claude: 1, codex: 1 });
   });
 
+  it("counts overlapping provider roots once while keeping each environment's unique root", () => {
+    const source = (homePath: string) => ({
+      provider: "opencode" as const,
+      hostId: "host",
+      homePath,
+    });
+    const usage = (sourcePath: string, costUsd: number) =>
+      bucket({ provider: "opencode", sourcePath, costUsd });
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([usage("/shared", 10), usage("/a", 2)], [source("/shared"), source("/a")]),
+        ),
+        environment(
+          "env-b",
+          summary([usage("/shared", 10), usage("/b", 3)], [source("/shared"), source("/b")]),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.costUsd).toBe(15);
+    expect(merged.sessions).toBe(3);
+  });
+
   it("excludes an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [
@@ -158,7 +219,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],

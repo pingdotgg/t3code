@@ -84,6 +84,21 @@ export function UsageRouteScreen() {
     selectedEnvironmentIds,
   );
   const limits = useRefreshLimits(selectedEnvironmentIds);
+  const sourceMessages = [
+    ...new Set(
+      selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources.flatMap((source) =>
+            source.message &&
+            (source.status === "partial" ||
+              source.status === "failed" ||
+              source.fingerprint.provider === "cursor")
+              ? [source.message]
+              : [],
+          ) ?? [],
+      ),
+    ),
+  ];
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -298,6 +313,11 @@ export function UsageRouteScreen() {
                 </Text>
               ) : (
                 <>
+                  {sourceMessages.map((message) => (
+                    <Text key={message} className="text-sm text-foreground-muted">
+                      {message}
+                    </Text>
+                  ))}
                   <ChartCard
                     merged={merged}
                     days={chartDays}

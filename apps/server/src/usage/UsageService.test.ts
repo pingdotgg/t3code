@@ -3,10 +3,11 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -16,12 +17,15 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
   return `${JSON.stringify({
@@ -74,6 +78,7 @@ const serviceLayers = (input: {
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.succeed(HostProcessPlatform, "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -89,7 +94,13 @@ const serviceLayers = (input: {
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+      Layer.succeed(HostProcessEnvironment, {
+        GROK_HOME: NodePath.join(input.home, "grok"),
+        OPENCODE_DATA_DIR: NodePath.join(input.home, "opencode"),
+        ANTIGRAVITY_DATA_DIR: NodePath.join(input.home, "antigravity"),
+        XDG_CONFIG_HOME: NodePath.join(input.home, "config"),
+        APPDATA: NodePath.join(input.home, "config"),
+      }),
     ),
   );
 
@@ -98,6 +109,67 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live(
+    "includes OpenCode history but does not substitute desktop usage for an unavailable Cursor account",
+    () =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        const root = NodePath.join(home, "opencode");
+        const message = yield* encodeUnknownJson({
+          id: "msg_1",
+          sessionID: "session-1",
+          role: "assistant",
+          modelID: "example-model",
+          time: { created: Date.parse("2026-08-01T10:00:00Z") },
+          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 20, write: 3 } },
+        });
+        const bubble = yield* encodeUnknownJson({
+          type: 2,
+          createdAt: "2026-08-01T10:00:00Z",
+          modelInfo: { modelName: "example-model" },
+          tokenCount: { inputTokens: 100, outputTokens: 20 },
+        });
+        yield* Effect.promise(async () => {
+          const directory = NodePath.join(root, "storage", "message", "session-1");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(directory, "msg_1.json"), message);
+          const desktop = NodePath.join(home, "config", "Cursor", "User", "globalStorage");
+          await NodeFSP.mkdir(desktop, { recursive: true });
+          const db = new NodeSqlite.DatabaseSync(NodePath.join(desktop, "state.vscdb"));
+          try {
+            db.exec("CREATE TABLE cursorDiskKV (key TEXT, value TEXT)");
+            db.prepare("INSERT INTO cursorDiskKV VALUES (?, ?)").run(
+              "bubbleId:session:assistant",
+              bubble,
+            );
+          } finally {
+            db.close();
+          }
+        });
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(serviceLayers({ prefix: "usage-service-opencode", home, settings })),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(summary.buckets[0]?.provider, "opencode");
+        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.status,
+          "missing",
+        );
+        assert.strictEqual(summary.buckets[0]?.sourcePath, root);
+        assert.strictEqual(summary.buckets[0]?.totals.outputTokens, 7);
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "opencode")
+            ?.distinctSessions,
+          1,
+        );
+        assert.include(
+          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.message ?? "",
+          "Cursor account history needs a Cursor CLI login",
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

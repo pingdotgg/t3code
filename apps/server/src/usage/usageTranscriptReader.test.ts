@@ -4,12 +4,39 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
+import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 
 let dir: string;
+
+function protoNumber(field: number, value: number): number[] {
+  const varint = (number: number) => {
+    const bytes: number[] = [];
+    do {
+      const byte = number % 128;
+      number = Math.floor(number / 128);
+      bytes.push(byte + (number > 0 ? 128 : 0));
+    } while (number > 0);
+    return bytes;
+  };
+  return [...varint(field * 8), ...varint(value)];
+}
+
+function protoBytes(field: number, bytes: readonly number[]): number[] {
+  const encoded = protoNumber(field, bytes.length);
+  encoded[0] = encoded[0]! + 2;
+  return [...encoded, ...bytes];
+}
+
+function protoText(field: number, value: string): number[] {
+  return protoBytes(field, [...Buffer.from(value)]);
+}
 
 beforeEach(async () => {
   dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-reader-test-"));
@@ -206,5 +233,447 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("SQLite usage readers", () => {
+  it("reads paginated Cursor account history including headless calls with separate cache tokens", async () => {
+    const authPath = NodePath.join(dir, "auth.json");
+    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
+    const pages: number[] = [];
+    const request = async (url: string, init: RequestInit) => {
+      assert.strictEqual(String(url), "https://cursor.com/api/dashboard/get-filtered-usage-events");
+      assert.strictEqual(init?.redirect, "error");
+      const headers = new Headers(init?.headers);
+      assert.strictEqual(headers.get("origin"), "https://cursor.com");
+      assert.include(headers.get("cookie") ?? "", "WorkosCursorSessionToken=demo%3A%3A");
+      const body = JSON.parse(String(init?.body));
+      pages.push(body.page);
+      return Response.json({
+        totalUsageEventsCount: 1001,
+        usageEventsDisplay: Array.from({ length: body.page === 1 ? 1000 : 1 }, (_, index) => ({
+          timestamp: String(1780000000000 + ((body.page - 1) * 1000 + index) * 1000),
+          model: "claude-sonnet-4-5",
+          conversationId: `conversation-${body.page}`,
+          isHeadless: body.page === 2,
+          chargedCents: 0,
+          tokenUsage: {
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 30,
+            cacheWriteTokens: 2,
+            totalCents: 25,
+          },
+        })),
+      });
+    };
+    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, request);
+    assert.isNull(result.error);
+    assert.deepStrictEqual(pages, [1, 2]);
+    assert.strictEqual(result.records.length, 1001);
+    assert.strictEqual(result.records.at(-1)?.sessionId, "conversation-2");
+    assert.deepStrictEqual(result.records[0]?.totals, {
+      uncachedInputTokens: 10,
+      cachedInputTokens: 30,
+      cacheCreationTokens: 2,
+      outputTokens: 5,
+      reasoningTokens: 0,
+    });
+    assert.strictEqual(result.records[0]?.reportedCostUsd, 0.25);
+    assert.isFalse(result.accountKey?.includes("demo") ?? true);
+  });
+
+  it("accepts confirmed empty Cursor usage but rejects error envelopes", async () => {
+    const authPath = NodePath.join(dir, "auth.json");
+    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
+    for (const body of [
+      {},
+      { totalUsageEventsCount: 0 },
+      { totalUsageEventsCount: 0, usageEventsDisplay: [] },
+    ]) {
+      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
+        Response.json(body),
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(result.records, []);
+      assert.isFalse(result.missing);
+    }
+    for (const body of [
+      { error: "upstream error" },
+      { detail: "unknown error envelope" },
+      { totalUsageEventsCount: 0, error: "upstream error" },
+      null,
+      [],
+      "invalid",
+      0,
+    ]) {
+      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
+        Response.json(body),
+      );
+      assert.isNotNull(result.error);
+      assert.deepStrictEqual(result.records, []);
+    }
+  });
+
+  it("requires a terminal Cursor page after a full page reaches the reported count", async () => {
+    const authPath = NodePath.join(dir, "auth.json");
+    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
+    let requests = 0;
+    const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+      requests++;
+      return Response.json(
+        requests === 1
+          ? {
+              totalUsageEventsCount: 1000,
+              usageEventsDisplay: Array.from({ length: 1000 }, (_, index) => ({
+                timestamp: String(1780000000000 + index),
+                model: "gpt-5",
+                tokenUsage: { inputTokens: 10, outputTokens: 5 },
+              })),
+            }
+          : { totalUsageEventsCount: 1000 },
+      );
+    });
+    assert.isNull(result.error);
+    assert.strictEqual(result.records.length, 1000);
+    assert.strictEqual(requests, 2);
+  });
+
+  it("removes only count-proven Cursor boundary copies and preserves identical billed events", async () => {
+    const authPath = NodePath.join(dir, "auth.json");
+    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
+    const event = (index: number) => ({
+      timestamp: String(1780000000000 + index),
+      model: "gpt-5",
+      tokenUsage: { inputTokens: 10, outputTokens: 5, totalCents: 1 },
+    });
+    for (const total of [2000, 2001]) {
+      let requests = 0;
+      const result = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+        requests++;
+        return Response.json({
+          totalUsageEventsCount: total,
+          usageEventsDisplay:
+            requests === 1
+              ? Array.from({ length: 1000 }, (_, index) => event(index))
+              : requests === 2
+                ? Array.from({ length: 1000 }, (_, index) => event(999 + index))
+                : [event(1999)],
+        });
+      });
+      assert.isNull(result.error);
+      assert.strictEqual(result.records.length, total);
+      assert.strictEqual(requests, 3);
+      assert.strictEqual(result.records.at(-1)?.timestampMs, 1780000001999);
+      assert.strictEqual(
+        result.records.filter((record) => record.timestampMs === 1780000000999).length,
+        total === 2000 ? 1 : 2,
+      );
+      assert.strictEqual(new Set(result.records.map((record) => record.dedupeKey)).size, total);
+    }
+    let requests = 0;
+    const inconsistent = await readCursorAccountUsage(authPath, 0, 1781000000000, async () => {
+      requests++;
+      return Response.json({
+        totalUsageEventsCount: 1001,
+        usageEventsDisplay:
+          requests === 1
+            ? Array.from({ length: 1000 }, (_, index) => event(index))
+            : [event(500), event(1000)],
+      });
+    });
+    assert.isNotNull(inconsistent.error);
+    assert.deepStrictEqual(inconsistent.records, []);
+  });
+
+  it("does not present truncated Cursor account pages or authentication failures as complete history", async () => {
+    const authPath = NodePath.join(dir, "auth.json");
+    const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
+    await NodeFSP.writeFile(authPath, JSON.stringify({ accessToken }));
+    const truncated = await readCursorAccountUsage(authPath, 0, 1781000000000, async () =>
+      Response.json({ totalUsageEventsCount: 101, usageEventsDisplay: [] }),
+    );
+    assert.isNotNull(truncated.error);
+    assert.deepStrictEqual(truncated.records, []);
+    const denied = await readCursorAccountUsage(
+      authPath,
+      0,
+      1781000000000,
+      async () => new Response(accessToken, { status: 401 }),
+    );
+    assert.isNotNull(denied.error);
+    assert.isFalse(denied.error?.includes(accessToken) ?? true);
+    assert.deepStrictEqual(denied.records, []);
+    let requested = false;
+    const missing = await readCursorAccountUsage(
+      NodePath.join(dir, "missing.json"),
+      0,
+      1781000000000,
+      async () => {
+        requested = true;
+        return Response.json({});
+      },
+    );
+    assert.isTrue(missing.missing);
+    assert.isFalse(requested);
+  });
+
+  it("counts migrated OpenCode messages once and sees subsequent WAL writes", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "opencode.db"));
+    try {
+      db.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)",
+      );
+      const message = {
+        id: "msg-1",
+        sessionID: "session-1",
+        role: "assistant",
+        modelID: "claude-sonnet-4-5",
+        time: { created: 1780000000000 },
+        cost: 0.25,
+        tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 10 } },
+      };
+      const insert = db.prepare("INSERT INTO message VALUES (?, ?, ?)");
+      insert.run(message.id, message.sessionID, JSON.stringify(message));
+      const legacy = NodePath.join(dir, "storage", "message", message.sessionID);
+      await NodeFSP.mkdir(legacy, { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(legacy, "msg-1.json"), JSON.stringify(message));
+      const first = await readOpenCodeUsage(dir, 0);
+      assert.isFalse(first.error);
+      const records = first.files.flatMap((file) => file.records);
+      assert.strictEqual(records.length, 1);
+      assert.deepStrictEqual(records[0]?.totals, {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 30,
+        cacheCreationTokens: 10,
+        outputTokens: 25,
+        reasoningTokens: 5,
+      });
+      assert.strictEqual(records[0]?.reportedCostUsd, 0.25);
+      insert.run(
+        "msg-2",
+        message.sessionID,
+        JSON.stringify({ ...message, id: "msg-2", time: { created: 1780000001000 } }),
+      );
+      const next = await readOpenCodeUsage(dir, 1780000001000);
+      assert.isFalse(next.error);
+      assert.deepStrictEqual(
+        next.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:msg-2"],
+      );
+      assert.isAbove((await NodeFSP.stat(NodePath.join(dir, "opencode.db-wal"))).size, 0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("deduplicates Antigravity generation and step usage while preserving retry model and token buckets", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "session-1.db"));
+    const stamp = protoNumber(1, 1780000000);
+    const usage = [
+      ...protoNumber(2, 100),
+      ...protoNumber(3, 40),
+      ...protoNumber(4, 5),
+      ...protoNumber(5, 20),
+      ...protoNumber(9, 10),
+      ...protoText(11, "response-1"),
+    ];
+    const retry = [
+      ...protoNumber(1, 1026),
+      ...protoNumber(2, 12),
+      ...protoNumber(3, 3),
+      ...protoText(11, "retry-1"),
+    ];
+    const generation = protoBytes(1, [
+      ...protoBytes(4, usage),
+      ...protoText(19, "Gemini 3 Pro"),
+      ...protoBytes(9, protoBytes(4, stamp)),
+    ]);
+    const step = [
+      ...protoBytes(9, usage),
+      ...protoBytes(8, stamp),
+      ...protoBytes(28, protoBytes(2, retry)),
+    ];
+    try {
+      db.exec(
+        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
+      );
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, new Uint8Array(generation));
+      db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, new Uint8Array(step));
+    } finally {
+      db.close();
+    }
+    const result = await readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    const records = result.files.flatMap((file) => file.records);
+    assert.strictEqual(records.length, 2);
+    const main = records.find((record) => record.model === "gemini-3-pro");
+    assert.isDefined(main);
+    assert.strictEqual(main?.timestampMs, 1780000000000);
+    assert.strictEqual(main?.sessionId, "session-1");
+    assert.deepStrictEqual(main?.totals, {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 5,
+      outputTokens: 40,
+      reasoningTokens: 10,
+    });
+    assert.strictEqual(
+      records.find((record) => record.model === "claude-opus-4-6")?.totals.uncachedInputTokens,
+      12,
+    );
+    assert.deepStrictEqual(
+      (await readAntigravityUsage(dir, 1780000000001)).files.flatMap((file) => file.records),
+      [],
+    );
+  });
+
+  it("merges Antigravity aliases that bridge previously separate step records", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "bridge.db"));
+    try {
+      db.exec(
+        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
+      );
+      const step = db.prepare("INSERT INTO steps VALUES (?, ?)");
+      step.run(
+        0,
+        new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
+      );
+      step.run(
+        1,
+        new Uint8Array(protoBytes(9, [...protoNumber(3, 40), ...protoText(12, "provider")])),
+      );
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
+        0,
+        new Uint8Array(
+          protoBytes(1, [
+            ...protoText(19, "Gemini 3 Pro"),
+            ...protoBytes(4, [
+              ...protoNumber(2, 50),
+              ...protoNumber(5, 20),
+              ...protoText(11, "response"),
+              ...protoText(12, "provider"),
+            ]),
+          ]),
+        ),
+      );
+    } finally {
+      db.close();
+    }
+    const result = await readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    const records = result.files.flatMap((file) => file.records);
+    assert.strictEqual(records.length, 1);
+    assert.deepStrictEqual(records[0]?.totals, {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 20,
+      cacheCreationTokens: 0,
+      outputTokens: 40,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("merges Antigravity provider and message aliases across configured roots while keeping original ownership", async () => {
+    const roots = [NodePath.join(dir, "first"), NodePath.join(dir, "second")];
+    for (const [index, root] of roots.entries()) {
+      await NodeFSP.mkdir(root);
+      const db = new NodeSqlite.DatabaseSync(NodePath.join(root, `session-${index}.db`));
+      try {
+        db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+        for (const identity of [7, 12]) {
+          const usage = [
+            ...protoNumber(1, 246),
+            ...protoNumber(2, index === 0 ? 100 : 150),
+            ...protoText(11, `response-${index}-${identity}`),
+            ...protoText(identity, `shared-${identity}`),
+          ];
+          db.prepare("INSERT INTO steps VALUES (?, ?)").run(
+            identity,
+            new Uint8Array(protoBytes(9, usage)),
+          );
+        }
+      } finally {
+        db.close();
+      }
+    }
+    const result = await readAntigravityUsage(roots, 0);
+    assert.deepStrictEqual(result.errors, []);
+    assert.strictEqual(result.files.length, 2);
+    assert.strictEqual(result.files[0]?.root, roots[0]);
+    assert.strictEqual(result.files[0]?.records.length, 2);
+    assert.strictEqual(result.files[1]?.records.length, 0);
+    assert.deepStrictEqual(
+      result.files[0]?.records.map((record) => record.totals.uncachedInputTokens),
+      [150, 150],
+    );
+    assert.isTrue(result.files[0]?.records.every((record) => record.sessionId === "session-0"));
+  });
+
+  it("upgrades Antigravity fallback timestamps before applying the date window", async () => {
+    for (const fallback of ["mtime", "trajectory"]) {
+      const path = NodePath.join(dir, `${fallback}.db`);
+      const db = new NodeSqlite.DatabaseSync(path);
+      try {
+        db.exec(
+          "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
+        );
+        if (fallback === "trajectory") {
+          db.exec("CREATE TABLE trajectory_metadata_blob (data BLOB)");
+          db.prepare("INSERT INTO trajectory_metadata_blob VALUES (?)").run(
+            new Uint8Array(protoBytes(2, protoNumber(1, 1780000200))),
+          );
+        }
+        for (const [index, seconds] of [1780000000, 1780000200].entries()) {
+          const usage = [...protoNumber(2, 10), ...protoText(11, `${fallback}-${index}`)];
+          db.prepare("INSERT INTO steps VALUES (?, ?)").run(
+            index,
+            new Uint8Array(protoBytes(9, usage)),
+          );
+          db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
+            index,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoBytes(4, usage),
+                ...protoBytes(9, protoBytes(4, protoNumber(1, seconds))),
+              ]),
+            ),
+          );
+        }
+      } finally {
+        db.close();
+      }
+      await NodeFSP.utimes(path, 1780000000, 1780000000);
+    }
+    const result = await readAntigravityUsage(dir, 1780000100000);
+    assert.deepStrictEqual(result.errors, []);
+    const records = result.files.flatMap((file) => file.records);
+    assert.strictEqual(records.length, 2);
+    assert.deepStrictEqual(
+      records.map((record) => record.timestampMs),
+      [1780000200000, 1780000200000],
+    );
+  });
+
+  it("reads Antigravity step-only stores and reports malformed databases", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "steps.db"));
+    try {
+      db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+      const usage = [...protoNumber(1, 246), ...protoNumber(2, 10), ...protoNumber(3, 5)];
+      db.prepare("INSERT INTO steps VALUES (?, ?)").run(
+        0,
+        new Uint8Array([...protoBytes(9, usage), ...protoBytes(8, protoNumber(1, 1780000000))]),
+      );
+    } finally {
+      db.close();
+    }
+    await NodeFSP.writeFile(NodePath.join(dir, "broken.db"), "not a sqlite database");
+    const result = await readAntigravityUsage(dir, 0);
+    assert.strictEqual(result.errors.length, 1);
+    assert.strictEqual(result.files.flatMap((file) => file.records)[0]?.model, "gemini-2.5-pro");
+    assert.strictEqual(result.files.flatMap((file) => file.records)[0]?.totals.outputTokens, 5);
   });
 });
