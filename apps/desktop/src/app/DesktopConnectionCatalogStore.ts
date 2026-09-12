@@ -52,6 +52,7 @@ const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-directory",
   "write-temporary-file",
   "replace-catalog-file",
+  "preserve-unreadable-catalog",
 ]);
 
 const DesktopConnectionCatalogStoreMigrationOperation = Schema.Literals([
@@ -395,6 +396,41 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  let needsBackup = false;
+  const preserveUnreadableCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.preserveUnreadableCatalog",
+  )(
+    function* () {
+      if (!needsBackup) {
+        return;
+      }
+      const backupDirectory = yield* fileSystem.makeTempDirectory({
+        directory: path.dirname(catalogPath),
+        prefix: "connection-catalog.json.unreadable-",
+      });
+      const backupPath = path.join(backupDirectory, "connection-catalog.json");
+      yield* fileSystem
+        .copyFile(catalogPath, backupPath)
+        .pipe(
+          Effect.onError(() =>
+            fileSystem.remove(backupDirectory, { recursive: true }).pipe(Effect.ignore),
+          ),
+        );
+      needsBackup = false;
+      yield* Effect.logWarning("Preserved an unreadable desktop connection catalog.", {
+        backupPath,
+      });
+    },
+    Effect.mapError(
+      (cause) =>
+        new DesktopConnectionCatalogStoreWriteError({
+          operation: "preserve-unreadable-catalog",
+          path: catalogPath,
+          cause,
+        }),
+    ),
+  );
+
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
@@ -420,6 +456,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     )).replace(/-/g, "");
+    yield* preserveUnreadableCatalog();
     yield* writeDocument({
       fileSystem,
       path,
@@ -479,21 +516,25 @@ export const make = Effect.gen(function* () {
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
+      const encryptedCatalog = yield* decodeSecretBytes(
+        catalogPath,
+        document.value.encryptedCatalog,
+      );
+      return yield* safeStorage.decryptString(encryptedCatalog).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            // The renderer caches this empty read and may save automatically.
+            // Preserve the encrypted document before any subsequent replacement.
+            needsBackup = true;
+            yield* Effect.logWarning("Ignoring an unreadable desktop connection catalog.", {
+              catalogPath,
+              errorTag: error._tag,
+            });
+            return Option.none<string>();
+          }),
         ),
       );
-      return Option.some(decrypted);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
@@ -502,7 +543,8 @@ export const make = Effect.gen(function* () {
       yield* writeCatalog(catalog);
       return true;
     }),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
+    clear: preserveUnreadableCatalog().pipe(
+      Effect.andThen(fileSystem.remove(catalogPath, { force: true })),
       Effect.catch((error) =>
         Effect.logWarning("Could not clear the desktop connection catalog.", {
           catalogPath,
