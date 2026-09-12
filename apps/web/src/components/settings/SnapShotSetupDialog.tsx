@@ -1,10 +1,11 @@
+import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
+import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import {
   isModifierPairShortcut,
   type DesktopSnapShotSetupAction,
   type DesktopSnapShotState,
 } from "@t3tools/contracts";
-import { CircleCheckIcon } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { CaptureShortcutConfig } from "./CaptureShortcutConfig";
 import { Button } from "../ui/button";
 import { Dialog, DialogDescription } from "../ui/dialog";
@@ -15,7 +16,6 @@ import {
   captureSetupCheckMessage,
   captureSetupDesktopName,
   captureSetupInitialStep,
-  captureSetupMacPermissionsReady,
   captureSetupShortcutReady,
   type CaptureSetupStep,
 } from "./SnapShotSetupDialog.logic";
@@ -127,42 +127,6 @@ function AccessibilityPermissionIcon() {
   );
 }
 
-function MacPermissionRow({
-  icon,
-  title,
-  description,
-  granted,
-  busy,
-  onAllow,
-}: {
-  icon: ReactNode;
-  title: string;
-  description: string;
-  granted: boolean;
-  busy: boolean;
-  onAllow: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-lg border px-3 py-2">
-      {icon}
-      <div className="min-w-0 flex-1">
-        <p className="font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      {granted ? (
-        <span className="flex items-center gap-1 text-xs text-success">
-          <CircleCheckIcon className="size-4" aria-hidden="true" />
-          Allowed
-        </span>
-      ) : (
-        <Button size="xs" variant="outline" disabled={busy} onClick={onAllow}>
-          Allow
-        </Button>
-      )}
-    </div>
-  );
-}
-
 export function SnapShotSetupDialog({
   state,
   initialStep,
@@ -212,17 +176,24 @@ export function SnapShotSetupDialog({
   const installHelper = backend === "hyprland" ? "install-hyprland-helper" : "install-kde-helper";
   const removeHelper = backend === "hyprland" ? "remove-hyprland-helper" : "remove-kde-helper";
   const accessReady = captureSetupAccessReady(state);
-  const macPermissions = state.macPermissions;
-  const macPermissionsReady = captureSetupMacPermissionsReady(state, includeAccessibility);
+  const permissionStatus = usePermissionStatus(
+    async () => {
+      const refreshed = await onRefresh();
+      if (!refreshed?.macPermissions) throw new Error("Permission status unavailable");
+      return refreshed.macPermissions;
+    },
+    state.macPermissions ?? { screenRecording: false, accessibility: false },
+    Boolean(state.macPermissions) && step === "access" && !busy,
+  );
+  const macPermissions = state.macPermissions ? permissionStatus.status : undefined;
+  const macPermissionsReady =
+    !macPermissions ||
+    permissionStatus.isReady(
+      includeAccessibility ? ["screenRecording", "accessibility"] : ["screenRecording"],
+    );
   const shortcutReady = captureSetupShortcutReady(state, shortcutChanged);
   const install = extension?.status === "not-installed" || extension?.status === "update-required";
   const enable = extension?.status === "disabled";
-  useEffect(() => {
-    if (!macPermissions || step !== "access") return;
-    const refresh = () => void onRefresh();
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [macPermissions, onRefresh, step]);
   const changeStep = (next: CaptureSetupStep) => {
     onLeaveStep();
     setChecked(false);
@@ -357,28 +328,34 @@ export function SnapShotSetupDialog({
                   {checked && !busy && !error ? captureSetupCheckMessage(state) : null}
                 </p>
                 {macPermissions ? (
-                  <div className="space-y-2">
-                    <MacPermissionRow
-                      icon={<ScreenRecordingIcon />}
-                      title="Screen Recording"
-                      description="Capture the window you're using."
-                      granted={macPermissions.screenRecording}
-                      busy={busy}
-                      onAllow={() => void onAction("allow-screen-recording")}
-                    />
-                    <MacPermissionRow
-                      icon={<AccessibilityPermissionIcon />}
-                      title="Accessibility"
-                      description={
-                        includeAccessibility
+                  <PermissionChecklist
+                    busy={busy}
+                    permissions={[
+                      {
+                        id: "screenRecording",
+                        icon: <ScreenRecordingIcon />,
+                        title: "Screen Recording",
+                        description: "Capture the window you're using.",
+                        granted: macPermissions.screenRecording,
+                        onAllow: () => void onAction("allow-screen-recording"),
+                      },
+                      {
+                        id: "accessibility",
+                        icon: <AccessibilityPermissionIcon />,
+                        title: "Accessibility",
+                        description: includeAccessibility
                           ? "Include text and controls from the captured app."
-                          : "Optional. Include text and controls from the captured app."
-                      }
-                      granted={macPermissions.accessibility}
-                      busy={busy}
-                      onAllow={() => void onAction("allow-accessibility")}
-                    />
-                  </div>
+                          : "Optional. Include text and controls from the captured app.",
+                        granted: macPermissions.accessibility,
+                        onAllow: () => void onAction("allow-accessibility"),
+                      },
+                    ]}
+                  />
+                ) : null}
+                {permissionStatus.error && macPermissions ? (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    {permissionStatus.error}
+                  </p>
                 ) : null}
                 {helperBackend && helper?.status === "error" ? (
                   <Button
@@ -527,8 +504,9 @@ export function SnapShotSetupDialog({
                         : "Check again"}
               </Button>
             ) : (
-              <Button
-                disabled={busy || !macPermissionsReady}
+              <PermissionContinueButton
+                ready={macPermissionsReady}
+                busy={busy}
                 onClick={async () => {
                   if (await onEnable()) changeStep("shortcut");
                 }}
@@ -542,7 +520,7 @@ export function SnapShotSetupDialog({
                       : !accessReady && !macPermissions
                         ? "Try again"
                         : "Continue"}
-              </Button>
+              </PermissionContinueButton>
             )
           ) : !configShortcut ? (
             <Button
