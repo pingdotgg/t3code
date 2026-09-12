@@ -37,7 +37,11 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  resolveReasoningTransition,
+} from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   Fragment,
@@ -63,6 +67,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
+  mapComposerCursorAcrossLeadingPromptChange,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -162,7 +167,11 @@ import {
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
+import {
+  reasoningCycleDirectionFromCommand,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -920,6 +929,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
+import { getProviderModelCapabilities } from "../../providerModels";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import {
   applyProviderInstanceSettings,
@@ -1669,6 +1679,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           })
       : null);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
@@ -2917,10 +2928,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Sync refs back to parent
   // ------------------------------------------------------------------
+  const restoreDraftAfterPendingRef = useRef(false);
   useEffect(() => {
+    // While a pending question is visible, promptRef is temporarily the
+    // custom-answer buffer. Restore the draft as soon as that editor state
+    // ends, even when the draft prompt itself did not change.
+    if (activePendingProgress !== null) {
+      restoreDraftAfterPendingRef.current = true;
+      return;
+    }
     promptRef.current = prompt;
+    if (restoreDraftAfterPendingRef.current) {
+      // The cursor and trigger still describe the custom-answer buffer, or a
+      // draft that changed while hidden behind an approval, so rebuild both
+      // from the restored draft instead of clamping them.
+      restoreDraftAfterPendingRef.current = false;
+      setComposerCursor(collapseExpandedComposerCursor(prompt, prompt.length));
+      setComposerTrigger(detectComposerTrigger(prompt, prompt.length));
+      return;
+    }
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [prompt, promptRef]);
+  }, [activePendingProgress, prompt, promptRef]);
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
@@ -4989,6 +5017,87 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsStashMenuOpen(false);
   }, [prompt]);
 
+  const applyReasoningCycle = useCallback(
+    (direction: "increase" | "decrease") => {
+      const editorShowsDraftPrompt = !isComposerApprovalState && activePendingProgress === null;
+      const currentPrompt = editorShowsDraftPrompt
+        ? promptRef.current
+        : (getComposerDraft(composerDraftTarget)?.prompt ?? "");
+      const currentModelOptions = composerModelOptions?.[selectedInstanceId];
+      const transition = resolveReasoningTransition({
+        capabilities: getProviderModelCapabilities(
+          selectedProviderModels,
+          selectedModel,
+          selectedProvider,
+          settings.planModeEnabled,
+        ),
+        modelOptions: currentModelOptions,
+        prompt: currentPrompt,
+        action: { type: "cycle", direction },
+      });
+      if (transition.status === "blocked") {
+        toastManager.add({
+          type: "info",
+          title: "Remove “ultrathink” from the prompt text to change reasoning.",
+        });
+        return;
+      }
+      if (transition.status === "unsupported") {
+        toastManager.add({
+          type: "info",
+          title: "This model has no reasoning levels to switch between.",
+        });
+        return;
+      }
+      if (transition.status !== "changed") return;
+      if (transition.prompt !== currentPrompt) {
+        setPrompt(transition.prompt);
+        // When a pending question or approval hides the editor, the draft
+        // is updated in the store only. The cursor and trigger belong to
+        // the visible editor state and are rebuilt from the draft by the
+        // sync effect once it is shown again.
+        if (!editorShowsDraftPrompt) {
+          restoreDraftAfterPendingRef.current = true;
+        } else {
+          // The editor is mounted whenever it shows the draft; the fallback
+          // only guards the ref during teardown.
+          const currentExpandedCursor =
+            composerEditorRef.current?.readSnapshot().expandedCursor ?? currentPrompt.length;
+          const nextExpandedCursor = mapComposerCursorAcrossLeadingPromptChange(
+            currentPrompt,
+            transition.prompt,
+            currentExpandedCursor,
+          );
+          promptRef.current = transition.prompt;
+          setComposerCursor(collapseExpandedComposerCursor(transition.prompt, nextExpandedCursor));
+          setComposerTrigger(detectComposerTrigger(transition.prompt, nextExpandedCursor));
+        }
+      }
+      if (transition.modelOptions !== currentModelOptions) {
+        setProviderModelOptions(composerDraftTarget, selectedProvider, transition.modelOptions, {
+          instanceId: selectedInstanceId,
+          model: selectedModel,
+          persistSticky: true,
+        });
+      }
+    },
+    [
+      activePendingProgress,
+      composerDraftTarget,
+      composerModelOptions,
+      getComposerDraft,
+      isComposerApprovalState,
+      promptRef,
+      selectedInstanceId,
+      selectedModel,
+      selectedProvider,
+      selectedProviderModels,
+      setPrompt,
+      setProviderModelOptions,
+      settings.planModeEnabled,
+    ],
+  );
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
@@ -4998,12 +5107,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           modelPickerOpen: isComposerModelPickerOpen,
         },
       });
-      if (command !== "composer.stash") return;
-      // Always claim the shortcut so the browser save dialog never opens,
-      // even when the composer is in a state that can't stash.
+      const reasoningDirection = reasoningCycleDirectionFromCommand(command);
+      if (command !== "composer.stash" && reasoningDirection === null) return;
+      // Always claim recognized composer shortcuts, including in states where
+      // the requested mutation is unavailable.
       event.preventDefault();
       event.stopPropagation();
+      if (reasoningDirection !== null && event.repeat) return;
       if (isCommandPaletteOpen() || isRevertingCheckpoint) {
+        return;
+      }
+      if (reasoningDirection !== null) {
+        applyReasoningCycle(reasoningDirection);
         return;
       }
       if (pendingUserInputs.length > 0 && !isComposerApprovalState) {
@@ -5019,6 +5134,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    applyReasoningCycle,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,

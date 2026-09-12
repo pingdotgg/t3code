@@ -102,6 +102,35 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+m");
   });
 
+  it("records macOS Option punctuation using portable key names", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "≤",
+          code: "Comma",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: true,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("alt+,");
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "≥",
+          code: "Period",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: true,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("alt+.");
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

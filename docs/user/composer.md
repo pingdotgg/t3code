@@ -44,6 +44,10 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+Step the reasoning level up or down with `Cmd+Option+.` and `Cmd+Option+,` (`Ctrl+Alt` on
+Windows and Linux). Remap them in Settings → Keybindings as `reasoning.increase` and
+`reasoning.decrease`.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
