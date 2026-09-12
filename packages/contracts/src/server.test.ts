@@ -46,8 +46,18 @@ describe("ServerProvider", () => {
 
     expect(parsed.slashCommands).toEqual([]);
     expect(parsed.skills).toEqual([]);
+    expect(parsed.modelInventory).toBeUndefined();
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+  });
+
+  it("decodes authoritative model inventories", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      modelInventory: "authoritative",
+    });
+
+    expect(parsed.modelInventory).toBe("authoritative");
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

@@ -11,10 +11,15 @@ correct model data before the next successful fetch. Bump `updatedAt` whenever t
 file changes. Fetch time cannot establish which copy contains the newer edit.
 
 Generic catalog data describes presentation and capabilities. Each provider owns
-its adapter schema and dispatch mappings. Claude uses the manifest for its entire
-built-in catalog. Adding a model with an existing capability profile is a JSON
-edit; a new profile is needed only for a new capability combination. Codex still
-gets its model list from its app server.
+its adapter schema and dispatch mappings. Claude gets current availability from
+its initialization inventory, while the manifest owns metadata and compatible
+legacy entries. Empty, unavailable, or `default`-only inventories fall back to the
+version-filtered manifest. Only concrete runtime inventories are authoritative,
+so reconciliation can remove models Claude omitted.
+
+Adding metadata for a model with an existing capability profile is a JSON edit;
+a new profile is needed only for a new capability combination. Codex gets its
+model list from its app server.
 
 `currentModels.claudeAgent` is frozen for releases that predate catalog discovery.
 Do not extend it when adding Claude models. Codex uses `currentModels.codex` as a
