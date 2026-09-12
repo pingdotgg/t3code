@@ -248,6 +248,40 @@ describe("resolveThreadPullRequestChains", () => {
 });
 
 describe("chain selection and badge state", () => {
+  it.each([
+    ["open", false, "open", false, "open"],
+    ["closed", false, "closed", false, "closed"],
+    ["open", true, "open", true, "draft"],
+    ["open", false, "open", true, "open"],
+    ["closed", false, "open", true, "open"],
+    ["merged", false, "merged", false, "merged"],
+    ["merged", false, "closed", true, "closed"],
+  ] as const)(
+    "aggregates %s (draft %s) and %s (draft %s) as %s",
+    (firstState, firstDraft, secondState, secondDraft, state) => {
+      for (const stacked of [false, true]) {
+        const links = [
+          link(1, {
+            snapshot: snapshot({ state: firstState, isDraft: firstDraft, headBranch: "base" }),
+          }),
+          link(2, {
+            snapshot: snapshot({
+              state: secondState,
+              isDraft: secondDraft,
+              baseBranch: stacked ? "base" : "main",
+            }),
+          }),
+          link(3, { source: "stack-dismissed" }),
+        ];
+        expect(resolveThreadPullRequestBadge(links)).toEqual(
+          stacked
+            ? { kind: "stack", layers: 2, state }
+            : { kind: "pull-request", others: 1, state },
+        );
+      }
+    },
+  );
+
   it.each(["open", "merged", "closed"] as const)(
     "targets the top of a derived %s chain despite a later bottom update and link",
     (state) => {
@@ -309,6 +343,7 @@ describe("chain selection and badge state", () => {
     expect(resolveThreadPullRequestBadge([bottom, top, link(3)])).toEqual({
       kind: "pull-request",
       others: 2,
+      state: "open",
     });
     expect(resolveThreadPullRequestBadge([link(3, { source: "stack-dismissed" })])).toBeNull();
   });
@@ -340,7 +375,11 @@ describe("chain selection and badge state", () => {
       kind: "stack",
       top: { number: 2 },
     });
-    expect(resolveThreadPullRequestBadge(links)).toEqual({ kind: "pull-request", others: 1 });
+    expect(resolveThreadPullRequestBadge(links)).toEqual({
+      kind: "pull-request",
+      others: 1,
+      state: "open",
+    });
   });
 
   it("does not guess a parent when a head branch was reused", () => {

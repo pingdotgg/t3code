@@ -1,9 +1,11 @@
+import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
 import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -240,6 +242,70 @@ function summarizeMcpResult(result: unknown): Record<string, unknown> | undefine
   return summary ? { content: summary } : undefined;
 }
 
+/** Reuse the page URL already returned by preview tools before slimming their output. */
+function projectPreviewToolMetadata(data: Record<string, unknown>, status: unknown) {
+  const item = asRecord(data.item);
+  const name = item ? `mcp__${item.server}__${item.tool}` : (data.toolName ?? data.tool);
+  if (
+    typeof name !== "string" ||
+    !/^(?:mcp__)?(?:t3-code|t3_code|t3code)_{1,2}preview_(?:open|navigate|status|snapshot|click|type|press|scroll|resize|set_appearance|evaluate|wait_for|recording_start|recording_stop)$/.test(
+      name,
+    )
+  )
+    return {};
+  const state = asRecord(data.state);
+  const result = item?.result ?? data.result ?? state?.output;
+  const record = asRecord(result);
+  if (
+    status === "failed" ||
+    status === "declined" ||
+    state?.status === "error" ||
+    item?.error != null ||
+    record?.isError === true ||
+    record?.is_error === true
+  )
+    return {};
+
+  let page = record;
+  let output: unknown = result;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (page?.isError === true || page?.is_error === true) return {};
+    const structured = asRecord(page?.structuredContent);
+    if (structured) {
+      page = structured;
+      break;
+    }
+    const text = extractMcpResultText(output)?.slice(0, 2 * 1024 * 1024);
+    if (!text) break;
+    try {
+      page = asRecord(JSON.parse(extractJsonObject(text)));
+    } catch {
+      // A truncated MCP envelope can still contain a complete first text block.
+      const firstBlock = /^\s*\{\s*"content"\s*:\s*\[\s*/.exec(text);
+      if (!firstBlock) return {};
+      try {
+        const block = asRecord(JSON.parse(extractJsonObject(text.slice(firstBlock[0].length))));
+        page = block?.type === "text" ? { content: [block] } : null;
+      } catch {
+        return {};
+      }
+    }
+    output = page;
+  }
+  const rawUrl = asTrimmedString(
+    asRecord(page?.toolIcon)?.pageUrl ??
+      (/preview_(?:open|navigate|status|snapshot)$/.test(name) ? page?.url : undefined),
+  );
+  if (!rawUrl || rawUrl.length > 4096) return {};
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return {};
+    return { toolIcon: { _tag: "website", pageUrl: url.href } };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * MCP tool calls carry full tool results (`data.item.result` on Codex,
  * `data.result` on Claude/OpenCode) that used to bypass slimming entirely to
@@ -366,22 +432,27 @@ export function projectActivityPayload(
   }
 
   const itemStatus = asRecord(data.item)?.status;
-  const projectedPayload =
+  const statusPayload =
     payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
       ? { ...payload, status: itemStatus }
       : payload;
+  const projectedPayload = {
+    ...projectPreviewToolMetadata(data, statusPayload.status),
+    ...statusPayload,
+  };
+  const questionInput = projectQuestionToolInput(data, payload.title);
 
   if (payload.itemType === "mcp_tool_call") {
     return {
       ...activity,
       payload: {
         ...projectedPayload,
-        data: projectMcpToolCallData(data),
+        data: { ...projectMcpToolCallData(data), ...questionInput },
       },
     };
   }
 
-  const projectedData: Record<string, unknown> = {};
+  const projectedData: Record<string, unknown> = { ...questionInput };
   const item = projectCommandData(data);
   if (item) {
     projectedData.item = item;

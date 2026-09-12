@@ -160,7 +160,7 @@ export function ThreadPullRequestBadgeControl({
     ? `Stack of ${badge.layers} pull requests, ${badge.state}`
     : `${status?.tooltip ?? `PR #${number}, status pending`}${
         badge?.kind === "pull-request" && badge.others > 0
-          ? `, and ${badge.others} more linked`
+          ? `, and ${badge.others} more linked; overall ${badge.state}`
           : ""
       }`;
   const className = cn(
@@ -170,11 +170,9 @@ export function ThreadPullRequestBadgeControl({
     "text-xs tabular-nums",
     variant === "ghost" &&
       "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
-    linkedCount !== null
-      ? "text-secondary-label"
-      : isStack
-        ? PR_STATE_COLOR_CLASS[badge.state]
-        : (status?.colorClass ?? "text-muted-foreground"),
+    badge !== null && (isStack || linkedCount !== null)
+      ? PR_STATE_COLOR_CLASS[badge.state]
+      : (status?.colorClass ?? "text-muted-foreground"),
   );
   const content = (
     <>
@@ -276,10 +274,11 @@ export function ThreadPullRequestsMiniList({
 }
 
 /** The ink each pull-request state wears in the sidebar, shared by the number and stack badges. */
-const PR_STATE_COLOR_CLASS: Record<NonNullable<ThreadPr>["state"], string> = {
+const PR_STATE_COLOR_CLASS: Record<ThreadPullRequestBadge["state"], string> = {
   open: "text-emerald-600 dark:text-emerald-300/90",
   merged: "text-violet-600 dark:text-violet-300/90",
   closed: "text-red-600 dark:text-red-300/90",
+  draft: "text-zinc-500 dark:text-zinc-400/80",
 };
 
 export function settledPrHoverColorClass(

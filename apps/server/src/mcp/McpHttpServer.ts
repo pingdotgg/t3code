@@ -410,6 +410,13 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                 isError: false,
                 structuredContent: metadata,
                 content: [
+                  // Keep the page identity readable even if a provider truncates the snapshot.
+                  {
+                    type: "text",
+                    text: encodeJsonText({
+                      url: cutText(snapshot.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+                    }),
+                  },
                   { type: "text", text: bounded.text },
                   ...(bounded.omitted.length === 0
                     ? []

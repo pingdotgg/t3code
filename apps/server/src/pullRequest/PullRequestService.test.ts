@@ -193,13 +193,12 @@ function makeService(input: {
             input.resolveHandle ?? (() => Effect.die("Unexpected provider refinement")),
         }),
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: 1,
-              projects: input.projects,
-              threads: [],
-              updatedAt: "2026-07-01T00:00:00Z",
-            }),
+          getProjectShells: (projectIds) =>
+            Effect.succeed(
+              input.projects.filter((project) => projectIds?.includes(project.id) ?? true),
+            ),
+          getProjectShellById: (projectId) =>
+            Effect.succeed(Option.fromNullishOr(input.projects.find((p) => p.id === projectId))),
         }),
         SourceControlRateLimit.layer,
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
