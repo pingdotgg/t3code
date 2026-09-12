@@ -293,6 +293,94 @@ describe("visible pull request line-count targets", () => {
       }),
     ).toEqual([]);
   });
+
+  it("requests only the newly appended row after a paginated scroll when earlier rows are cached", () => {
+    const loaded = Array.from({ length: 99 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
+    const cachedStats = mergePullRequestDiffStats(
+      new Map(),
+      loaded.map((item) => ({
+        environmentId: ENV_1,
+        projectId: item.projectId,
+        number: item.number,
+        additions: 4,
+        deletions: 2,
+      })),
+    );
+    const scrolled = [...loaded, entry({ additions: 0, deletions: 0, number: 100 })];
+    const scrolledByKey = new Map(scrolled.map((item) => [pullRequestEntryKey(item), item]));
+    const hundredthKey = pullRequestEntryKey(scrolled[99]!);
+
+    // Eager sorts (ready/largest/smallest) scan every loaded row: the cache filters 1..99.
+    const eagerDelta = pullRequestStatsRequestBatches({
+      entriesByKey: scrolledByKey,
+      candidateKeys: new Set(),
+      policy: "eager",
+      activeBatches: [],
+      statsByRow: cachedStats,
+    });
+    expect(eagerDelta).toHaveLength(1);
+    expect(eagerDelta.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([100]);
+
+    // Date sorts only observe the entered viewport row.
+    const visibleDelta = pullRequestStatsRequestBatches({
+      entriesByKey: scrolledByKey,
+      candidateKeys: new Set([hundredthKey]),
+      policy: "visible",
+      activeBatches: [],
+      statsByRow: cachedStats,
+    });
+    expect(visibleDelta).toHaveLength(1);
+    expect(visibleDelta.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([
+      100,
+    ]);
+  });
+
+  it("skips rows already requested in flight after a paginated scroll before their counts arrive", () => {
+    const loaded = Array.from({ length: 99 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
+    const loadedByKey = new Map(loaded.map((item) => [pullRequestEntryKey(item), item]));
+    const active = pullRequestStatsRequestBatches({
+      entriesByKey: loadedByKey,
+      candidateKeys: new Set(),
+      policy: "eager",
+      activeBatches: [],
+      statsByRow: new Map(),
+    });
+    expect(active.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual(
+      loaded.map((item) => item.number),
+    );
+
+    const scrolled = [...loaded, entry({ additions: 0, deletions: 0, number: 100 })];
+    const scrolledByKey = new Map(scrolled.map((item) => [pullRequestEntryKey(item), item]));
+    const hundredthKey = pullRequestEntryKey(scrolled[99]!);
+
+    // The in-flight request covers 1..99, so only row 100 is new even with an empty cache.
+    const eagerDelta = pullRequestStatsRequestBatches({
+      entriesByKey: scrolledByKey,
+      candidateKeys: new Set(),
+      policy: "eager",
+      activeBatches: active,
+      statsByRow: new Map(),
+    });
+    expect(eagerDelta).toHaveLength(1);
+    expect(eagerDelta.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([100]);
+
+    // The entered viewport row 100 is not in flight, so it is still requested.
+    const visibleDelta = pullRequestStatsRequestBatches({
+      entriesByKey: scrolledByKey,
+      candidateKeys: new Set([hundredthKey]),
+      policy: "visible",
+      activeBatches: active,
+      statsByRow: new Map(),
+    });
+    expect(visibleDelta).toHaveLength(1);
+    expect(visibleDelta.flatMap((batch) => batch.input.refs.map((ref) => ref.number))).toEqual([
+      100,
+    ]);
+  });
 });
 
 describe("pull request involvement filtering", () => {
