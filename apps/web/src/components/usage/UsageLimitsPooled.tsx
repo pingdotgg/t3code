@@ -10,7 +10,7 @@ import {
   type LimitPoolWindow,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { TicketIcon } from "lucide-react";
+import { ChevronDownIcon, TicketIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -20,6 +20,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   PaceIcon,
@@ -148,10 +149,6 @@ function SegmentPopover({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const where =
-    account.environments.length > 0
-      ? account.environments.map((environment) => environment.label).join(", ")
-      : account.sourceLabel;
   const credits =
     redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
   return (
@@ -175,9 +172,12 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         {account.plan ? <Row label="Plan">{account.plan}</Row> : null}
-        {where ? (
-          <Row label={account.environments.length > 0 ? "Signed in" : "Via"}>{where}</Row>
+        {account.environments.length > 0 ? (
+          <Row label="Signed in">
+            {account.environments.map((environment) => environment.label).join(", ")}
+          </Row>
         ) : null}
+        {account.sourceLabel ? <Row label="Via">{account.sourceLabel}</Row> : null}
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
@@ -508,8 +508,15 @@ function PoolWindowCard({
 }
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+  const [expanded, setExpanded] = useState(false);
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+  const fableWindow =
+    pool.driver === "claudeAgent"
+      ? pool.windows.find((window) => window.id === "seven_day_fable")
+      : undefined;
+  const primaryWindows = fableWindow ? [fableWindow] : pool.windows;
+  const otherWindows = fableWindow ? pool.windows.filter((window) => window !== fableWindow) : [];
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -521,10 +528,41 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           iconClassName="size-4 text-foreground/80"
         />
         {label}
+        {pool.accounts.some((account) => account.sourceLabel) ? (
+          <span className="text-xs font-normal text-muted-foreground">CLIProxy</span>
+        ) : null}
       </h2>
-      {pool.windows.map((window) => (
+      {primaryWindows.map((window) => (
         <PoolWindowCard key={`${window.kind}:${window.id}`} pool={window} color={color} now={now} />
       ))}
+      {otherWindows.length > 0 ? (
+        <Collapsible open={expanded} onOpenChange={setExpanded}>
+          <CollapsibleTrigger
+            render={<Button variant="ghost" size="xs" className="w-fit text-muted-foreground" />}
+          >
+            {expanded ? "Hide other limits" : `Show all limits (${otherWindows.length})`}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3 transition-transform motion-reduce:transition-none",
+                expanded && "rotate-180",
+              )}
+            />
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            <div className="flex flex-col gap-3 pt-3">
+              {otherWindows.map((window) => (
+                <PoolWindowCard
+                  key={`${window.kind}:${window.id}`}
+                  pool={window}
+                  color={color}
+                  now={now}
+                />
+              ))}
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      ) : null}
     </section>
   );
 }

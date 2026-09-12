@@ -652,8 +652,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  // Custom providers can expose cached ChatGPT quotas without using that subscription.
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    snapshot.account.account?.type === "apiKey" ||
+    (!snapshot.account.account && !snapshot.account.requiresOpenaiAuth)
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({

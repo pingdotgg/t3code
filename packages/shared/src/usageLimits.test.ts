@@ -377,7 +377,7 @@ describe("pools", () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0]).toMatchObject({
       key: "env-a:claude",
-      sourceLabel: null,
+      sourceLabel: "Desktop · hub",
       // Desktop's read is fresher, so its credits and its redeem are the ones on show.
       redeem: { environmentId: "env-b", input: { instanceId: "claude" } },
       environments: [
@@ -385,7 +385,7 @@ describe("pools", () => {
         { environmentId: "env-b", label: "Desktop" },
       ],
     });
-    // The fresher native snapshot wins; the hub row is pre-filtered by email.
+    // The freshest quota wins while the account retains its hub provenance.
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
@@ -886,6 +886,47 @@ describe("collectLimitNotices", () => {
     checkedAt,
     accounts: [],
   };
+
+  it("reports failed hub accounts once even when another account in the hub has limits", () => {
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            usageLimitSources: [
+              {
+                ...hub,
+                accounts: [
+                  {
+                    id: "healthy",
+                    driver: ProviderDriverKind.make("codex"),
+                    usageLimits: { checkedAt, windows: [window] },
+                  },
+                  ...["failed-a", "failed-b"].map((id) => ({
+                    id,
+                    driver: claude,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: {
+                        reason: "probeFailed" as const,
+                        message: "The hub could not read this account's usage.",
+                      },
+                    },
+                  })),
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+    expect(collectLimitNotices(input)).toEqual([
+      "hub · Claude: The hub could not read this account's usage.",
+    ]);
+  });
 
   it("names failures and silence, skips unsupported accounts, and labels environments only when several", () => {
     const failed = provider({

@@ -1,6 +1,59 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CodexSettings } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
+  mapCodexModelCapabilities,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
+
+const staleRateLimits = {
+  snapshot: { primary: { usedPercent: 100, windowDurationMins: 10_080 } },
+  resetCredits: { availableCount: 0 },
+};
+const codexSettings = Schema.decodeSync(CodexSettings)({});
+
+function quotaProbe(account: CodexAppServerProviderSnapshot["account"]) {
+  return Effect.succeed({
+    account,
+    rateLimits: staleRateLimits,
+    version: "0.154.0",
+    models: [],
+    skills: [],
+  });
+}
+
+it.effect("does not publish native subscription limits for a proxy without an OpenAI account", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus(codexSettings, () =>
+      quotaProbe({ account: null, requiresOpenaiAuth: false }),
+    );
+
+    assert.equal(status.status, "ready");
+    assert.deepStrictEqual(status.usageLimits?.windows, []);
+    assert.equal(status.usageLimits?.unavailable?.reason, "unsupported");
+    assert.equal(status.usageLimits?.resetCredits, undefined);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps exhausted native ChatGPT limits even when the account has no email", () =>
+  Effect.gen(function* () {
+    const status = yield* checkCodexProviderStatus(codexSettings, () =>
+      quotaProbe({
+        account: { type: "chatgpt", email: null, planType: "pro" },
+        requiresOpenaiAuth: false,
+      }),
+    );
+
+    assert.equal(status.status, "ready");
+    assert.equal(status.usageLimits?.windows[0]?.usedPercent, 100);
+    assert.equal(status.usageLimits?.unavailable, undefined);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({

@@ -169,7 +169,7 @@ export interface LimitAccount {
     readonly environmentId: EnvironmentId;
     readonly label: string;
   }>;
-  /** The hub that reported it, when no environment has it natively. */
+  /** The hub that reports the account, including accounts also signed in natively. */
   readonly sourceLabel: string | null;
   /** Where the displayed reset credit can be redeemed. */
   readonly redeem: {
@@ -236,8 +236,7 @@ export function collectLimitAccounts(
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
-      // A hub only names the account when no environment has it natively.
-      sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
+      sourceLabel: previous.sourceLabel ?? next.sourceLabel,
       redeem:
         hubRedeems.get(key)?.redeem ??
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
@@ -336,6 +335,20 @@ export function collectLimitNotices(
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
       } else if (source.accounts.length === 0) {
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
+      } else {
+        for (const account of source.accounts) {
+          if (account.usageLimits.unavailable?.reason === "unsupported") continue;
+          const notice = limitsNotice(account.usageLimits);
+          if (!notice) continue;
+          const driverLabel =
+            account.driver === "claudeAgent"
+              ? "Claude"
+              : account.driver === "codex"
+                ? "Codex"
+                : String(account.driver);
+          const message = `${label(environmentLabel, source.label)} · ${driverLabel}: ${notice}`;
+          if (!notices.includes(message)) notices.push(message);
+        }
       }
     }
   }
