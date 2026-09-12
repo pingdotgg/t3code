@@ -353,6 +353,8 @@ describe("OrchestrationEngine", () => {
           }),
         ),
       hasEventAfter: () => Effect.succeed(false),
+      readEventsOfTypes: () => Stream.empty,
+      getHead: () => Effect.succeedNone,
       readAggregateRange: () => Stream.die("unused aggregate replay"),
       getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
@@ -1499,6 +1501,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readEventsOfTypes: () => Stream.empty,
+      getHead: () => Effect.succeedNone,
       readAggregateRange: () => Stream.die("unused aggregate replay"),
       getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
@@ -1739,6 +1743,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readEventsOfTypes: () => Stream.empty,
+      getHead: () => Effect.succeedNone,
       readAggregateRange: () => Stream.die("unused aggregate replay"),
       getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };

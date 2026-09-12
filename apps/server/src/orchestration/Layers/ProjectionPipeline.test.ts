@@ -2068,6 +2068,136 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
   },
 );
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-typed-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("cleanup bootstrap never decodes unrelated history and advances to the head", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sql = yield* SqlClient.SqlClient;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const projectionState = yield* ProjectionStateRepository;
+        const { attachmentsDir } = yield* ServerConfig;
+        const now = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("project-typed");
+        const threadId = ThreadId.make("thread-typed-gone");
+        const attachmentPath = path.join(
+          attachmentsDir,
+          "thread-typed-gone-00000000-0000-4000-8000-000000000001.png",
+        );
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-typed-project"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-typed-project"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-typed-project"),
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Typed",
+            workspaceRoot: "/tmp/project-typed",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-typed-create"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-typed-create"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-typed-create"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Thread typed",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-typed-delete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-typed-delete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-typed-delete"),
+          metadata: {},
+          payload: { threadId, deletedAt: now },
+        });
+        // A caught-up profile whose history holds a row the schema cannot decode.
+        // It stands in for the oversized records a full replay would materialize:
+        // cleanup must reach the head without ever reading it.
+        const headAt = "2026-01-01T00:00:01.000Z";
+        yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+            actor_kind, payload_json, metadata_json
+          ) VALUES (
+            'evt-typed-broken', 'thread', 'thread-typed-broken', 0, 'thread.message-sent',
+            ${headAt}, 'provider', '{', '{}'
+          )
+        `;
+        const head = Option.getOrThrow(yield* eventStore.getHead());
+        yield* projectionState.upsertMany(
+          Object.values(ORCHESTRATION_PROJECTOR_NAMES).map((projector) => ({
+            projector,
+            lastAppliedSequence: head.sequence,
+            updatedAt: headAt,
+          })),
+        );
+        yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(attachmentPath, "gone");
+
+        yield* projectionPipeline.bootstrap;
+
+        assert.isFalse(yield* exists(attachmentPath));
+        const cleanupCursor = projectionState.getByProjector({
+          projector: "projection.attachment-cleanup",
+        });
+        assert.deepEqual(
+          yield* cleanupCursor,
+          Option.some({
+            projector: "projection.attachment-cleanup",
+            lastAppliedSequence: head.sequence,
+            updatedAt: headAt,
+          }),
+        );
+
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(
+          yield* cleanupCursor,
+          Option.some({
+            projector: "projection.attachment-cleanup",
+            lastAppliedSequence: head.sequence,
+            updatedAt: headAt,
+          }),
+        );
+      }),
+    );
+  },
+);
+
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect("replays a bootstrap backlog larger than the event store default limit", () =>
     Effect.gen(function* () {
