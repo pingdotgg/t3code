@@ -205,6 +205,7 @@ import {
   findThreadWorkspaceRightSidebar,
   findSurfaceTabs,
   selectVisibleThreadWorkspacePaneTree,
+  selectNavigableThreadWorkspacePaneTree,
   threadWorkspaceTabBarDropTransition,
   threadWorkspaceTabDropTransition,
   transitionThreadWorkspaceTabs,
@@ -1235,6 +1236,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
 interface PersistentThreadTerminalPanelProps {
   visible: boolean;
+  focused: boolean;
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
   launchContext: PersistentTerminalLaunchContext | null;
@@ -1255,6 +1257,7 @@ interface PersistentThreadTerminalPanelProps {
 
 const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   visible,
+  focused,
   threadRef,
   surface,
   launchContext,
@@ -1372,6 +1375,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     <ThreadTerminalDrawer
       mode="panel"
       visible={visible}
+      autoFocus={focused}
       threadRef={threadRef}
       threadId={threadRef.threadId}
       cwd={cwd}
@@ -1703,6 +1707,7 @@ export default function ChatView(props: ChatViewProps) {
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
+  const [panelTerminalFocusRequestId, setPanelTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -2036,13 +2041,7 @@ export default function ChatView(props: ChatViewProps) {
       _tag: "ReconcileSurfaceTabs",
       surfaceIds: rightPanelState.surfaces.map((surface) => surface.id),
     });
-    if (rightPanelState.activeSurfaceId) {
-      transitionThreadWorkspaceLayout(activeThreadRef, {
-        _tag: "ActivateSurfaceTab",
-        surfaceId: rightPanelState.activeSurfaceId,
-      });
-    }
-  }, [activeThreadRef, rightPanelState.activeSurfaceId, rightPanelState.surfaces, workspaceMode]);
+  }, [activeThreadRef, rightPanelState.surfaces, workspaceMode]);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -4533,7 +4532,7 @@ export default function ChatView(props: ChatViewProps) {
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
+    setPanelTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId: activeThreadRef.environmentId,
       input: {
@@ -4574,7 +4573,7 @@ export default function ChatView(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, surface.id, terminalId, direction);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
         input: {
@@ -4610,7 +4609,7 @@ export default function ChatView(props: ChatViewProps) {
     (surface: Extract<RightPanelSurface, { kind: "terminal" }>, terminalId: string) => {
       if (!activeThreadRef) return;
       useRightPanelStore.getState().activateTerminal(activeThreadRef, surface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeThreadRef],
   );
@@ -4623,7 +4622,7 @@ export default function ChatView(props: ChatViewProps) {
       });
       storeCloseTerminal(activeThreadRef, terminalId);
       useRightPanelStore.getState().closeTerminal(activeThreadRef, surface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
@@ -4660,7 +4659,7 @@ export default function ChatView(props: ChatViewProps) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
       if (surface.kind === "terminal") {
-        setTerminalFocusRequestId((value) => value + 1);
+        setPanelTerminalFocusRequestId((value) => value + 1);
       }
       if (surface.kind === "diff" && !diffOpen) {
         onDiffPanelOpen?.();
@@ -4699,7 +4698,7 @@ export default function ChatView(props: ChatViewProps) {
         useThreadWorkspaceLayoutStore.getState().byThreadKey,
         activeThreadRef,
       );
-      const visiblePaneTree = selectVisibleThreadWorkspacePaneTree(current);
+      const visiblePaneTree = selectNavigableThreadWorkspacePaneTree(current);
       const targetPaneId = findAdjacentPanes(visiblePaneTree, visiblePaneTree.focusedPaneId)[
         direction
       ];
@@ -4780,6 +4779,9 @@ export default function ChatView(props: ChatViewProps) {
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
       for (const surface of surfaces) {
+        if (surface.kind === "diff") {
+          useDiffPanelStore.getState().removeSurface({ ...activeThreadRef, surfaceId: surface.id });
+        }
         if (surface.kind === "preview" && surface.resourceId) {
           void closePreviewSession({
             closePreview,
@@ -4850,47 +4852,44 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
   );
-  const closeRightPanelSurface = useCallback(
-    (surface: RightPanelSurface) => {
-      if (!activeThreadRef) return;
-      const finishClose = () => finishRightPanelSurfaceClose([surface]);
-      if (surface.kind === "preview") {
-        closeAfterAgentBrowserConfirmation([surface], finishClose);
+  const closeAfterSurfaceConfirmation = useCallback(
+    (surfaces: readonly RightPanelSurface[], closeSurfaces: () => void) => {
+      const terminalLabels = surfaces.flatMap((surface) =>
+        surface.kind === "terminal"
+          ? [
+              surface.activeTerminalId,
+              ...surface.terminalIds.filter((id) => id !== surface.activeTerminalId),
+            ].map((id) => activeTerminalLabelsById.get(id) ?? getTerminalLabel(id))
+          : [],
+      );
+      const confirmBrowsers = () => closeAfterAgentBrowserConfirmation(surfaces, closeSurfaces);
+      const [firstTerminalLabel, ...otherTerminalLabels] = terminalLabels;
+      if (firstTerminalLabel === undefined) {
+        confirmBrowsers();
         return;
       }
-      if (surface.kind !== "terminal") {
-        finishClose();
-        return;
-      }
-      const activeLabel =
-        activeTerminalLabelsById.get(surface.activeTerminalId) ??
-        getTerminalLabel(surface.activeTerminalId);
-      const otherLabels = surface.terminalIds
-        .filter((terminalId) => terminalId !== surface.activeTerminalId)
-        .map(
-          (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-        );
-      void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-        if (confirmed) finishClose();
+      void confirmTerminalClose([firstTerminalLabel, ...otherTerminalLabels]).then((confirmed) => {
+        if (confirmed) confirmBrowsers();
       });
     },
-    [
-      activeThreadRef,
-      activeTerminalLabelsById,
-      closeAfterAgentBrowserConfirmation,
-      finishRightPanelSurfaceClose,
-    ],
+    [activeTerminalLabelsById, closeAfterAgentBrowserConfirmation],
+  );
+  const closeRightPanelSurface = useCallback(
+    (surface: RightPanelSurface) => {
+      closeAfterSurfaceConfirmation([surface], () => finishRightPanelSurfaceClose([surface]));
+    },
+    [closeAfterSurfaceConfirmation, finishRightPanelSurfaceClose],
   );
   const closeOtherRightPanelSurfaces = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
       const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
       const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-      closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+      closeAfterSurfaceConfirmation(surfaces, finishClose);
     },
     [
       activeThreadRef,
-      closeAfterAgentBrowserConfirmation,
+      closeAfterSurfaceConfirmation,
       finishRightPanelSurfaceClose,
       rightPanelState.surfaces,
     ],
@@ -4902,11 +4901,11 @@ export default function ChatView(props: ChatViewProps) {
       if (surfaceIndex < 0) return;
       const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
       const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-      closeAfterAgentBrowserConfirmation(surfaces, finishClose);
+      closeAfterSurfaceConfirmation(surfaces, finishClose);
     },
     [
       activeThreadRef,
-      closeAfterAgentBrowserConfirmation,
+      closeAfterSurfaceConfirmation,
       finishRightPanelSurfaceClose,
       rightPanelState.surfaces,
     ],
@@ -4914,13 +4913,57 @@ export default function ChatView(props: ChatViewProps) {
   const closeAllRightPanelSurfaces = useCallback(() => {
     if (!activeThreadRef) return;
     const finishClose = () => finishRightPanelSurfaceClose(rightPanelState.surfaces);
-    closeAfterAgentBrowserConfirmation(rightPanelState.surfaces, finishClose);
+    closeAfterSurfaceConfirmation(rightPanelState.surfaces, finishClose);
   }, [
     activeThreadRef,
-    closeAfterAgentBrowserConfirmation,
+    closeAfterSurfaceConfirmation,
     finishRightPanelSurfaceClose,
     rightPanelState.surfaces,
   ]);
+  const syncFocusedWorkspaceSurface = useCallback(
+    (layout: typeof threadWorkspaceLayout) => {
+      if (!activeThreadRef) return;
+      const focusedPane = findPane(layout.paneTree.root, layout.paneTree.focusedPaneId);
+      const activeTab = focusedPane?.activeTabId ? layout.tabsById[focusedPane.activeTabId] : null;
+      if (activeTab?._tag !== "Surface") return;
+      const surface = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      ).surfaces.find((entry) => entry.id === activeTab.surfaceId);
+      if (surface) activateRightPanelSurface(surface);
+    },
+    [activeThreadRef, activateRightPanelSurface],
+  );
+  const mutateWorkspaceLayout = useCallback(
+    (transition: ThreadWorkspaceLayoutTransition) => {
+      if (!activeThreadRef) return;
+      const current = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        activeThreadRef,
+      );
+      const preview = transitionThreadWorkspaceTabs(current, transition);
+      if (preview === current) return;
+      const removedSurfaces = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      ).surfaces.filter(
+        (surface) =>
+          findSurfaceTabs(current, surface.id).length > 0 &&
+          findSurfaceTabs(preview, surface.id).length === 0,
+      );
+      closeAfterSurfaceConfirmation(removedSurfaces, () => {
+        const next = transitionThreadWorkspaceLayout(activeThreadRef, transition);
+        if (removedSurfaces.length > 0) finishRightPanelSurfaceClose(removedSurfaces);
+        syncFocusedWorkspaceSurface(next);
+      });
+    },
+    [
+      activeThreadRef,
+      closeAfterSurfaceConfirmation,
+      finishRightPanelSurfaceClose,
+      syncFocusedWorkspaceSurface,
+    ],
+  );
   const closeFocusedWorkspaceSurfaceTab = useCallback(() => {
     if (!workspaceMode || !activeThreadRef) return false;
     const current = selectThreadWorkspaceLayout(
@@ -4930,24 +4973,13 @@ export default function ChatView(props: ChatViewProps) {
     const focusedPane = findPane(current.paneTree.root, current.paneTree.focusedPaneId);
     const activeTab = focusedPane?.activeTabId ? current.tabsById[focusedPane.activeTabId] : null;
     if (!focusedPane || activeTab?._tag !== "Surface") return false;
-    const surface = rightPanelState.surfaces.find(
-      (candidate) => candidate.id === activeTab.surfaceId,
-    );
-    if (!surface) return false;
-
-    const transition = {
+    mutateWorkspaceLayout({
       _tag: "CloseSurfaceTab",
       paneId: focusedPane.id,
       tabId: activeTab.id,
-    } as const;
-    const preview = transitionThreadWorkspaceTabs(current, transition);
-    if (findSurfaceTabs(preview, surface.id).length > 0) {
-      transitionThreadWorkspaceLayout(activeThreadRef, transition);
-    } else {
-      closeRightPanelSurface(surface);
-    }
+    });
     return true;
-  }, [activeThreadRef, closeRightPanelSurface, rightPanelState.surfaces, workspaceMode]);
+  }, [activeThreadRef, mutateWorkspaceLayout, workspaceMode]);
   const copyRightPanelFilePath = useCallback((relativePath: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
@@ -8373,7 +8405,7 @@ export default function ChatView(props: ChatViewProps) {
       <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
     </div>
   );
-  const renderRightPanelContent = (surface: RightPanelSurface, visible: boolean) =>
+  const renderRightPanelContent = (surface: RightPanelSurface, visible: boolean, focused = true) =>
     activeThreadRef ? (
       surface?.kind === "preview" ? (
         <Suspense fallback={null}>
@@ -8391,10 +8423,11 @@ export default function ChatView(props: ChatViewProps) {
       ) : surface?.kind === "terminal" ? (
         <PersistentThreadTerminalPanel
           visible={visible}
+          focused={focused}
           threadRef={activeThreadRef}
           surface={surface}
           launchContext={activeTerminalLaunchContext ?? null}
-          focusRequestId={terminalFocusRequestId}
+          focusRequestId={panelTerminalFocusRequestId}
           keybindings={keybindings}
           workspaceShortcutsEnabled={workspaceMode}
           onAddTerminalContext={addTerminalContextToDraft}
@@ -8411,7 +8444,8 @@ export default function ChatView(props: ChatViewProps) {
       ) : surface?.kind === "diff" ? (
         <Suspense fallback={null}>
           <DiffPanel
-            key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
+            key={`${activeThreadKey}:${surface.id}:${diffPanelGitStatusResolutionKey}`}
+            surfaceId={surface.id}
             mode="embedded"
             composerDraftTarget={composerDraftTarget}
             initialGitScope={initialDiffPanelGitScope}
@@ -9003,28 +9037,6 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelSurfaceById = new Map<string, RightPanelSurface>(
     rightPanelState.surfaces.map((surface) => [surface.id, surface] as const),
   );
-  const syncFocusedWorkspaceSurface = (layout: typeof threadWorkspaceLayout) => {
-    const focusedPane = findPane(layout.paneTree.root, layout.paneTree.focusedPaneId);
-    const activeTab = focusedPane?.activeTabId ? layout.tabsById[focusedPane.activeTabId] : null;
-    if (activeTab?._tag !== "Surface") return;
-    const surface = rightPanelSurfaceById.get(activeTab.surfaceId);
-    if (surface) activateRightPanelSurface(surface);
-  };
-  const mutateWorkspaceLayout = (transition: ThreadWorkspaceLayoutTransition) => {
-    if (!activeThreadRef) return;
-    const preview = transitionThreadWorkspaceTabs(threadWorkspaceLayout, transition);
-    const removedSurfaces = rightPanelState.surfaces.filter(
-      (surface) =>
-        findSurfaceTabs(threadWorkspaceLayout, surface.id).length > 0 &&
-        findSurfaceTabs(preview, surface.id).length === 0,
-    );
-    const apply = () => {
-      const next = transitionThreadWorkspaceLayout(activeThreadRef, transition);
-      if (removedSurfaces.length > 0) finishRightPanelSurfaceClose(removedSurfaces);
-      syncFocusedWorkspaceSurface(next);
-    };
-    closeAfterAgentBrowserConfirmation(removedSurfaces, apply);
-  };
   const activateWorkspacePaneTab = (
     paneId: PaneId,
     tabId: PaneTabId,
@@ -9036,11 +9048,15 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusWorkspacePane = (paneId: PaneId) => {
     if (!activeThreadRef) return;
+    const current = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      activeThreadRef,
+    );
     const next = transitionThreadWorkspaceLayout(activeThreadRef, {
       _tag: "FocusPane",
       paneId,
     });
-    syncFocusedWorkspaceSurface(next);
+    if (next !== current) syncFocusedWorkspaceSurface(next);
   };
 
   const visibleWorkspaceRoot = visibleWorkspacePaneTree.root;
@@ -9100,17 +9116,6 @@ export default function ChatView(props: ChatViewProps) {
       const tabId = tabIdForTarget({ _tag: "Surface", surface });
       if (tabId) mutateWorkspaceLayout(transitionForTab(tabId));
     };
-    const closeSurfaceTab = (surface: RightPanelSurface) => {
-      const tabId = tabIdForTarget({ _tag: "Surface", surface });
-      if (!tabId) return;
-      const transition = { _tag: "CloseSurfaceTab", paneId: pane.id, tabId } as const;
-      const preview = transitionThreadWorkspaceTabs(threadWorkspaceLayout, transition);
-      if (findSurfaceTabs(preview, surface.id).length > 0) {
-        transitionThreadWorkspaceLayout(activeThreadRef, transition);
-      } else {
-        closeRightPanelSurface(surface);
-      }
-    };
     const focusThen = (action: () => void) => {
       transitionThreadWorkspaceLayout(activeThreadRef, { _tag: "FocusPane", paneId: pane.id });
       action();
@@ -9160,7 +9165,13 @@ export default function ChatView(props: ChatViewProps) {
             activateWorkspacePaneTab(pane.id, tabId, { _tag: "Surface", surface });
           }
         }}
-        onCloseSurface={closeSurfaceTab}
+        onCloseSurface={(surface) =>
+          mutateSurfaceTab(surface, (tabId) => ({
+            _tag: "CloseSurfaceTab",
+            paneId: pane.id,
+            tabId,
+          }))
+        }
         onCloseOtherSurfaces={(surface) =>
           mutateSurfaceTab(surface, (tabId) => ({
             _tag: "CloseOtherSurfaceTabs",
@@ -9182,6 +9193,7 @@ export default function ChatView(props: ChatViewProps) {
         onMoveTabToSplit={(target, direction) => splitTab(target, direction, "move")}
         onMoveTabToPane={moveTabToPane}
         paneId={pane.id}
+        focused={pane.id === threadWorkspaceLayout.paneTree.focusedPaneId}
         tabDragDataForTarget={(target) => {
           const tabId = tabIdForTarget(target);
           return tabId ? { sourcePaneId: pane.id, sourceTabId: tabId } : null;
@@ -9216,7 +9228,11 @@ export default function ChatView(props: ChatViewProps) {
         {activeTab?._tag === "Thread"
           ? chatColumnContent
           : activeSurface
-            ? renderRightPanelContent(activeSurface, true)
+            ? renderRightPanelContent(
+                activeSurface,
+                true,
+                pane.id === threadWorkspaceLayout.paneTree.focusedPaneId,
+              )
             : null}
       </RightPanelTabs>
     );

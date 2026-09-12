@@ -44,6 +44,38 @@ beforeEach(() => {
 });
 
 describe("thread workspace defaults", () => {
+  test("keeps an unopened browser default through session reconciliation", () => {
+    const layout = transitionThreadWorkspaceTabs(
+      createThreadWorkspaceTabFields(["browser:original"]),
+      {
+        _tag: "SplitTab",
+        paneId: "pane:root",
+        tabId: "pane-tab:1",
+        direction: "right",
+        mode: "move",
+      },
+    );
+    const template = createThreadWorkspaceDefault(layout, {
+      isOpen: true,
+      activeSurfaceId: "browser:original",
+      surfaces: [{ id: "browser:original", kind: "preview", resourceId: "original" }],
+    });
+    useThreadWorkspaceDefaultStore.getState().saveGlobal(template);
+    initializeNewThreadWorkspace(THREAD_REF, PROJECT_KEY);
+    useRightPanelStore.getState().reconcileBrowserSurfaces(THREAD_REF, []);
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      THREAD_REF,
+    ).surfaces;
+    const restored = useThreadWorkspaceLayoutStore.getState().transition(THREAD_REF, {
+      _tag: "ReconcileSurfaceTabs",
+      surfaceIds: surfaces.map((surface) => surface.id),
+    });
+
+    expect(surfaces).toEqual([{ id: "browser:new", kind: "preview", resourceId: null }]);
+    expect(restored).toEqual(template.layout);
+    expect(getPanes(restored.paneTree.root)).toHaveLength(2);
+  });
   test("captures reusable tools while replacing runtime-bound resources", () => {
     let layout = createThreadWorkspaceTabFields([
       "files",

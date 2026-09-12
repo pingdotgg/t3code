@@ -19,6 +19,10 @@ Drag a divider to resize panes, use the arrow keys while its resize handle is fo
 double-click the divider to restore a 50/50 split. Closing the last tab in a non-root pane collapses
 that split. Empty panes show a close button.
 
+The right panel toggle hides and restores the right-hand tool panes when the conversation is on
+the left. Opening a tool in a hidden pane reveals it. When a pane is maximized, directional focus
+shortcuts switch to neighboring panes while keeping the workspace maximized.
+
 ## Keyboard navigation
 
 The default pane shortcuts use Vim directions. `mod` means Command on macOS and Control elsewhere.
@@ -29,5 +33,5 @@ The default pane shortcuts use Vim directions. `mod` means Command on macOS and 
 | Focus the pane left, down, up, or right | `mod+alt+h/j/k/l`   |
 | Maximize or restore the focused pane    | `mod+shift+enter`   |
 
-Customize any of these under **Settings → Keybindings**. Pane shortcuts do not intercept input while
-a terminal is focused.
+Customize any of these under **Settings → Keybindings**. Pane focus, maximize/restore, and the
+right panel toggle also work while a terminal is focused.

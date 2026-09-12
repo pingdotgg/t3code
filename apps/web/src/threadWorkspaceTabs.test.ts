@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 
-import { findPane, type PaneTabId } from "./splitPaneTree";
+import { findAdjacentPanes, findPane, getPanes, type PaneTabId } from "./splitPaneTree";
 import {
   createThreadWorkspaceTabFields,
   findThreadWorkspaceRightSidebar,
@@ -9,6 +9,7 @@ import {
   parsePersistedThreadWorkspaceTabs,
   revealThreadWorkspaceSurfaceBesideThread,
   selectVisibleThreadWorkspacePaneTree,
+  selectNavigableThreadWorkspacePaneTree,
   threadWorkspaceTabBarDropTransition,
   transitionThreadWorkspaceTabs,
   threadWorkspaceTabDropTransition,
@@ -25,6 +26,58 @@ function activeTabId(state: ReturnType<typeof createThreadWorkspaceTabFields>): 
 }
 
 describe("thread workspace tabs", () => {
+  test("reveals a selected tool in a hidden sidebar without moving its tab", () => {
+    const split = revealThreadWorkspaceSurfaceBesideThread(
+      createThreadWorkspaceTabFields(["diff"]),
+      "diff",
+    );
+    const sidebarId = split.paneTree.focusedPaneId;
+    const closed = transitionThreadWorkspaceTabs(split, {
+      _tag: "SetRightSidebarVisibility",
+      visibility: "closed",
+    });
+    const revealed = transitionThreadWorkspaceTabs(closed, {
+      _tag: "RevealSurface",
+      surfaceIds: ["diff"],
+      surfaceId: "diff",
+    });
+
+    expect(revealed.rightSidebarVisibility).toBe("open");
+    expect(revealed.paneTree.focusedPaneId).toBe(sidebarId);
+    expect(getPanes(selectVisibleThreadWorkspacePaneTree(revealed).root)).toHaveLength(2);
+    expect(findSurfaceTabs(revealed, "diff")).toEqual(findSurfaceTabs(split, "diff"));
+  });
+
+  test("navigates between maximized panes but excludes a hidden sidebar", () => {
+    const split = revealThreadWorkspaceSurfaceBesideThread(
+      createThreadWorkspaceTabFields(["diff"]),
+      "diff",
+    );
+    const sidebarId = split.paneTree.focusedPaneId;
+    const maximized = transitionThreadWorkspaceTabs(split, {
+      _tag: "TogglePaneMaximized",
+      paneId: sidebarId,
+    });
+    const leftId = findAdjacentPanes(
+      selectNavigableThreadWorkspacePaneTree(maximized),
+      sidebarId,
+    ).left;
+    expect(leftId).toBe("pane:root");
+    if (!leftId) throw new Error("Expected the conversation beside the maximized pane");
+    const focused = transitionThreadWorkspaceTabs(maximized, { _tag: "FocusPane", paneId: leftId });
+    expect(focused.paneTree.maximizedPaneId).toBe(leftId);
+    expect(
+      getPanes(selectVisibleThreadWorkspacePaneTree(focused).root).map((pane) => pane.id),
+    ).toEqual([leftId]);
+
+    const hidden = transitionThreadWorkspaceTabs(focused, {
+      _tag: "SetRightSidebarVisibility",
+      visibility: "closed",
+    });
+    expect(
+      findAdjacentPanes(selectNavigableThreadWorkspacePaneTree(hidden), leftId).right,
+    ).toBeNull();
+  });
   test("starts with the always-on thread tab and opens surfaces in the focused group", () => {
     const state = createThreadWorkspaceTabFields(["files", "diff"]);
     const group = state.paneTree.root;

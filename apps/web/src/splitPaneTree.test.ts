@@ -2,11 +2,8 @@ import { describe, expect, test } from "vite-plus/test";
 
 import {
   activatePaneTab,
-  closeAllPaneTabs,
   closeEmptyPane,
   closePaneTab,
-  closePaneTabsToRight,
-  closeOtherPaneTabs,
   createPaneTree,
   findAdjacentPanes,
   findPane,
@@ -14,7 +11,6 @@ import {
   getTopPanes,
   getVisiblePaneTreeRoot,
   focusPane,
-  getPanes,
   moveTabToPane,
   moveTabToPaneSplit,
   openPaneTab,
@@ -325,49 +321,6 @@ describe("split pane tree", () => {
     expect(closePaneTab(initial, group("one"), tab("thread"))).toEqual(
       createPaneTree({ paneId: group("one") }),
     );
-  });
-
-  test("supports group-scoped close others and close to right", () => {
-    const initial = createPaneTree({
-      paneId: group("one"),
-      tabIds: [tab("thread"), tab("file"), tab("diff")],
-      activeTabId: tab("diff"),
-    });
-    const closedRight = closePaneTabsToRight(initial, group("one"), tab("file"));
-    expect(findPane(closedRight.root, group("one"))).toMatchObject({
-      tabIds: [tab("thread"), tab("file")],
-      activeTabId: tab("thread"),
-    });
-    const closedOthers = closeOtherPaneTabs(initial, group("one"), tab("file"));
-    expect(findPane(closedOthers.root, group("one"))).toMatchObject({
-      tabIds: [tab("file")],
-      activeTabId: tab("file"),
-    });
-  });
-
-  test("close all collapses a split group and clears the only root group", () => {
-    const splitWorkspace = splitPaneTab(
-      createPaneTree({ paneId: group("source"), tabIds: [tab("thread")] }),
-      {
-        sourcePaneId: group("source"),
-        sourceTabId: tab("thread"),
-        targetTabId: tab("copy"),
-        targetPaneId: group("target"),
-        splitId: split("one"),
-        direction: "right",
-        mode: "copy",
-      },
-    );
-    expect(getPanes(closeAllPaneTabs(splitWorkspace, group("target")).root)).toHaveLength(1);
-    expect(
-      findPane(
-        closeAllPaneTabs(
-          createPaneTree({ paneId: group("only"), tabIds: [tab("thread")] }),
-          group("only"),
-        ).root,
-        group("only"),
-      ),
-    ).toMatchObject({ tabIds: [], activeTabId: null });
   });
 
   test("resizes nested splits and clamps unsafe ratios", () => {

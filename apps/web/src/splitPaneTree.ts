@@ -171,6 +171,12 @@ export function findAdjacentPanes(tree: PaneTree, paneId: PaneId): AdjacentPanes
 }
 
 export function focusPane(tree: PaneTree, paneId: PaneId): PaneTree {
+  if (
+    tree.focusedPaneId === paneId &&
+    (tree.maximizedPaneId === null || tree.maximizedPaneId === paneId)
+  ) {
+    return tree;
+  }
   return findPane(tree.root, paneId)
     ? {
         ...tree,
@@ -205,6 +211,7 @@ export function openPaneTab(
 export function activatePaneTab(tree: PaneTree, paneId: PaneId, tabId: PaneTabId): PaneTree {
   const group = findPane(tree.root, paneId);
   if (!group?.tabIds.includes(tabId)) return tree;
+  if (group.activeTabId === tabId) return focusPane(tree, paneId);
   return {
     ...updatePane(tree, paneId, (current) => ({
       ...current,
@@ -412,39 +419,6 @@ export function closePaneTab(tree: PaneTree, paneId: PaneId, tabId: PaneTabId): 
     return updatePane(tree, paneId, (current) => removeTabFromGroup(current, tabId));
   }
   return removePane(tree, paneId);
-}
-
-export function closeOtherPaneTabs(tree: PaneTree, paneId: PaneId, tabId: PaneTabId): PaneTree {
-  const group = findPane(tree.root, paneId);
-  if (!group?.tabIds.includes(tabId) || group.tabIds.length === 1) return tree;
-  return updatePane(tree, paneId, (current) => ({
-    ...current,
-    tabIds: [tabId],
-    activeTabId: tabId,
-  }));
-}
-
-export function closePaneTabsToRight(tree: PaneTree, paneId: PaneId, tabId: PaneTabId): PaneTree {
-  const group = findPane(tree.root, paneId);
-  const tabIndex = group?.tabIds.indexOf(tabId) ?? -1;
-  if (!group || tabIndex < 0 || tabIndex === group.tabIds.length - 1) return tree;
-  const tabIds = group.tabIds.slice(0, tabIndex + 1);
-  return updatePane(tree, paneId, (current) => ({
-    ...current,
-    tabIds,
-    activeTabId: resolveActiveTabId(tabIds, current.activeTabId),
-  }));
-}
-
-export function closeAllPaneTabs(tree: PaneTree, paneId: PaneId): PaneTree {
-  const group = findPane(tree.root, paneId);
-  if (!group || group.tabIds.length === 0) return tree;
-  if (tree.root._tag !== "Group") return removePane(tree, paneId);
-  return updatePane(tree, paneId, (current) => ({
-    ...current,
-    tabIds: [],
-    activeTabId: null,
-  }));
 }
 
 /** Collapses an unused split without allowing populated or root groups to disappear. */

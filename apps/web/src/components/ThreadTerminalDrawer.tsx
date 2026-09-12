@@ -999,6 +999,7 @@ interface ThreadTerminalDrawerProps {
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
+  autoFocus?: boolean;
   height: number;
   terminalIds: string[];
   activeTerminalId: string;
@@ -1061,6 +1062,7 @@ export default function ThreadTerminalDrawer({
   worktreePath,
   runtimeEnv,
   visible = true,
+  autoFocus = true,
   height,
   terminalIds,
   activeTerminalId,
@@ -1550,7 +1552,7 @@ export default function ThreadTerminalDrawer({
                           onSessionExited={() => onCloseTerminal(terminalId)}
                           onAddTerminalContext={onAddTerminalContext}
                           focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
+                          autoFocus={autoFocus && terminalId === resolvedActiveTerminalId}
                           visible={visible}
                           resizeEpoch={resizeEpoch}
                           drawerHeight={drawerHeight}
@@ -1581,7 +1583,7 @@ export default function ThreadTerminalDrawer({
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}
                   focusRequestId={focusRequestId}
-                  autoFocus
+                  autoFocus={autoFocus}
                   visible={visible}
                   resizeEpoch={resizeEpoch}
                   drawerHeight={drawerHeight}

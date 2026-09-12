@@ -44,6 +44,12 @@ export interface ThreadWorkspaceTabFields {
 
 export type ThreadWorkspaceTabTransition =
   | { readonly _tag: "ReconcileSurfaceTabs"; readonly surfaceIds: readonly string[] }
+  | {
+      readonly _tag: "RevealSurface";
+      readonly surfaceIds: readonly string[];
+      readonly surfaceId: string;
+      readonly replacedSurfaceId?: string;
+    }
   | { readonly _tag: "ActivateThread" }
   | { readonly _tag: "ActivateSurfaceTab"; readonly surfaceId: string }
   | { readonly _tag: "OpenSurfaceTab"; readonly surfaceId: string }
@@ -121,6 +127,7 @@ export type ThreadWorkspaceLayoutTransition = Exclude<
   {
     readonly _tag:
       | "ReconcileSurfaceTabs"
+      | "RevealSurface"
       | "ActivateSurfaceTab"
       | "OpenSurfaceTab"
       | "ReplaceSurfaceTabs";
@@ -340,15 +347,20 @@ export function findThreadWorkspaceRightSidebar(
 
 /** Selects the pane tree rendered by the workspace without mutating the saved split layout. */
 export function selectVisibleThreadWorkspacePaneTree(current: ThreadWorkspaceTabFields): PaneTree {
-  const focusViewRoot = getVisiblePaneTreeRoot(current.paneTree);
+  const tree = selectNavigableThreadWorkspacePaneTree(current);
+  const root = getVisiblePaneTreeRoot(tree);
+  return root === tree.root ? tree : { ...tree, root };
+}
+
+/** Maximization follows keyboard focus; a deliberately hidden sidebar does not. */
+export function selectNavigableThreadWorkspacePaneTree(
+  current: ThreadWorkspaceTabFields,
+): PaneTree {
   if (
-    focusViewRoot !== current.paneTree.root ||
     current.rightSidebarVisibility === "open" ||
     findThreadWorkspaceRightSidebar(current) === null
   ) {
-    return focusViewRoot === current.paneTree.root
-      ? current.paneTree
-      : { ...current.paneTree, root: focusViewRoot };
+    return current.paneTree;
   }
 
   const root = current.paneTree.root;
@@ -360,7 +372,10 @@ export function selectVisibleThreadWorkspacePaneTree(current: ThreadWorkspaceTab
   return {
     root: root.first,
     focusedPaneId,
-    maximizedPaneId: null,
+    maximizedPaneId:
+      current.paneTree.maximizedPaneId && findPane(root.first, current.paneTree.maximizedPaneId)
+        ? current.paneTree.maximizedPaneId
+        : null,
   };
 }
 
@@ -399,6 +414,15 @@ export function transitionThreadWorkspaceTabs(
   input: ThreadWorkspaceTabTransition,
 ): ThreadWorkspaceTabFields {
   switch (input._tag) {
+    case "RevealSurface": {
+      const replaced = input.replacedSurfaceId
+        ? replaceSurfaceWorkspaceTabs(current, input.replacedSurfaceId, input.surfaceId)
+        : current;
+      return activateSurfaceWorkspaceTab(
+        reconcileThreadWorkspaceTabFields(replaced, input.surfaceIds),
+        input.surfaceId,
+      );
+    }
     case "ReconcileSurfaceTabs":
       return reconcileThreadWorkspaceTabFields(current, input.surfaceIds);
     case "ActivateThread":
@@ -839,7 +863,17 @@ function activateWorkspaceTab(
   const paneId = findThreadWorkspaceTabGroup(current, tabId);
   if (!paneId) return current;
   const workspace = activatePaneTab(current.paneTree, paneId, tabId);
-  return workspace === current.paneTree ? current : { ...current, paneTree: workspace };
+  const sidebar =
+    current.rightSidebarVisibility === "closed" ? findThreadWorkspaceRightSidebar(current) : null;
+  const rightSidebarVisibility =
+    sidebar && findPane(sidebar, paneId) ? "open" : current.rightSidebarVisibility;
+  if (workspace === current.paneTree && rightSidebarVisibility === current.rightSidebarVisibility)
+    return current;
+  return {
+    ...current,
+    paneTree: workspace,
+    rightSidebarVisibility,
+  };
 }
 
 function closeWorkspaceTab(

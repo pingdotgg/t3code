@@ -134,6 +134,7 @@ export interface RightPanelTabsProps {
   onMoveTabToSplit?: (target: WorkspaceTabContextTarget, direction: PaneSplitDirection) => void;
   onMoveTabToPane?: (target: WorkspaceTabContextTarget, direction: PaneSplitDirection) => void;
   paneId?: PaneId;
+  focused?: boolean;
   tabDragDataForTarget?: (target: WorkspaceTabContextTarget) => PaneTabDragData | null;
   tabDropPreview?: PaneTabBarDropPreview | null;
   adjacentGroups?: AdjacentPanes;
@@ -372,6 +373,7 @@ function SurfaceMenuItem(props: {
  * surfaces stay visible with a one-line reason.
  */
 function RightPanelEmptyState(props: {
+  shortcutsEnabled: boolean;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -486,6 +488,7 @@ function RightPanelEmptyState(props: {
     shortcutActionsRef.current = availableActions;
   });
   useEffect(() => {
+    if (!props.shortcutsEnabled) return;
     const handler = (event: KeyboardEvent) => {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
@@ -498,7 +501,7 @@ function RightPanelEmptyState(props: {
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [shortcutActionsRef]);
+  }, [props.shortcutsEnabled, shortcutActionsRef]);
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -1636,6 +1639,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null && !props.threadTab?.active ? (
           <RightPanelEmptyState
+            shortcutsEnabled={props.focused ?? true}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

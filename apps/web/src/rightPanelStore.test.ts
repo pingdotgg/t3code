@@ -32,7 +32,7 @@ beforeEach(() => {
   useThreadWorkspaceLayoutStore.setState({ byThreadKey: {} });
 });
 
-function splitSurfaceIntoSoleTabPane(surfaceId: string): string {
+function splitSurfaceIntoSoleTabPane(surfaceId: string) {
   const initial = createThreadWorkspaceTabFields([surfaceId]);
   const surfaceTab = findSurfaceTabs(initial, surfaceId)[0];
   if (!surfaceTab) throw new Error(`Expected ${surfaceId} surface tab`);
@@ -71,6 +71,72 @@ function expectSurfaceReplacementPreservedPane(
 }
 
 describe("rightPanelStore", () => {
+  it("does not republish the layout when focusing or revealing its already active pane", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "files");
+    const paneId = splitSurfaceIntoSoleTabPane("files");
+    const layouts = useThreadWorkspaceLayoutStore.getState();
+    let updates = 0;
+    const unsubscribe = useThreadWorkspaceLayoutStore.subscribe(() => updates++);
+    try {
+      for (let i = 0; i < 2; i++) {
+        layouts.transition(refA, { _tag: "FocusPane", paneId });
+        panels.activateSurface(refA, "files");
+        layouts.transition(refA, { _tag: "TogglePaneMaximized", paneId });
+      }
+      expect(updates).toBe(2);
+      const restored = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        refA,
+      );
+      expect(restored.paneTree.maximizedPaneId).toBeNull();
+      expect(getPanes(restored.paneTree.root)).toHaveLength(2);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("preserves the conversation selection through resource updates and restoration", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "files");
+    const layouts = useThreadWorkspaceLayoutStore.getState();
+    layouts.transition(refA, { _tag: "ActivateThread" });
+    panels.reconcileBrowserSurfaces(refA, []);
+    const surfaceIds = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.map((surface) => surface.id);
+    const restored = layouts.transition(refA, { _tag: "ReconcileSurfaceTabs", surfaceIds });
+    expect(getPanes(restored.paneTree.root)[0]?.activeTabId).toBe("pane-tab:thread");
+
+    panels.open(refA, "files");
+    const reopened = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      refA,
+    );
+    expect(getPanes(reopened.paneTree.root)[0]?.activeTabId).toBe(
+      findSurfaceTabs(reopened, "files")[0]?.id,
+    );
+  });
+
+  it("reveals an existing hidden tool even when it remains the selected surface", () => {
+    const panels = useRightPanelStore.getState();
+    panels.open(refA, "diff");
+    const paneId = splitSurfaceIntoSoleTabPane("diff");
+    useThreadWorkspaceLayoutStore
+      .getState()
+      .transition(refA, { _tag: "SetRightSidebarVisibility", visibility: "closed" });
+
+    panels.open(refA, "diff");
+
+    const layout = selectThreadWorkspaceLayout(
+      useThreadWorkspaceLayoutStore.getState().byThreadKey,
+      refA,
+    );
+    expect(layout.rightSidebarVisibility).toBe("open");
+    expect(layout.paneTree.focusedPaneId).toBe(paneId);
+    expect(findSurfaceTabs(layout, "diff")).toHaveLength(1);
+  });
   it("keeps a selected file in a sole-tab Files pane", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "files");
@@ -188,7 +254,14 @@ describe("rightPanelStore", () => {
         JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
       );
       useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+      const layoutBeforeAutomaticOpen = selectThreadWorkspaceLayout(
+        useThreadWorkspaceLayoutStore.getState().byThreadKey,
+        refA,
+      );
       store.openDevice(refA, target, true);
+      expect(
+        selectThreadWorkspaceLayout(useThreadWorkspaceLayoutStore.getState().byThreadKey, refA),
+      ).toBe(layoutBeforeAutomaticOpen);
       expect(
         selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
           (surface) => surface.kind === "device",

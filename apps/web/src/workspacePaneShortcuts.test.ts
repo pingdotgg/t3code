@@ -1,13 +1,57 @@
 import { describe, expect, it } from "vite-plus/test";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 
 import {
-  isWorkspacePaneFocusShortcut,
   isWorkspaceShortcutReleasedFromTerminal,
   workspacePaneShortcutAction,
 } from "./workspacePaneShortcuts";
 
 describe("workspacePaneShortcutAction", () => {
+  it.each(["MacIntel", "Win32", "Linux x86_64"])(
+    "releases maximize and restore while the terminal owns focus on %s",
+    (platform) => {
+      expect(
+        isWorkspaceShortcutReleasedFromTerminal(
+          {
+            key: "Enter",
+            metaKey: platform === "MacIntel",
+            ctrlKey: platform !== "MacIntel",
+            shiftKey: true,
+            altKey: false,
+          },
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform, context: { terminalFocus: true, terminalOpen: true } },
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["pane.toggleMaximized", "rightPanel.toggleMaximized"] as const)(
+    "releases a custom %s binding from the terminal",
+    (command) => {
+      expect(
+        isWorkspaceShortcutReleasedFromTerminal(
+          { key: "m", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false },
+          compileResolvedKeybindingsConfig([{ key: "mod+shift+m", command }]),
+          { platform: "MacIntel", context: { terminalFocus: true, terminalOpen: true } },
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("keeps ordinary Enter in the terminal", () => {
+    expect(
+      isWorkspaceShortcutReleasedFromTerminal(
+        { key: "Enter", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false },
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: true, terminalOpen: true } },
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     ["pane.splitLeft", "left"],
     ["pane.splitDown", "down"],
@@ -35,7 +79,7 @@ describe("workspacePaneShortcutAction", () => {
 
   it("recognizes directional pane focus while the terminal owns focus", () => {
     expect(
-      isWorkspacePaneFocusShortcut(
+      isWorkspaceShortcutReleasedFromTerminal(
         {
           key: "l",
           metaKey: true,
@@ -54,7 +98,7 @@ describe("workspacePaneShortcutAction", () => {
 
   it("does not release pane split shortcuts from the terminal", () => {
     expect(
-      isWorkspacePaneFocusShortcut(
+      isWorkspaceShortcutReleasedFromTerminal(
         {
           key: "l",
           metaKey: true,

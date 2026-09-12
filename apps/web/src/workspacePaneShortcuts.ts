@@ -40,16 +40,6 @@ export function workspacePaneShortcutAction(
   }
 }
 
-export function isWorkspacePaneFocusShortcut(
-  event: ShortcutEventLike,
-  keybindings: ResolvedKeybindingsConfig,
-  options?: ShortcutMatchOptions,
-): boolean {
-  const command = resolveShortcutCommand(event, keybindings, options);
-  if (command === null) return false;
-  return workspacePaneShortcutAction(command)?._tag === "Focus";
-}
-
 /** Workspace commands that must bubble past the terminal's input handler. */
 export function isWorkspaceShortcutReleasedFromTerminal(
   event: ShortcutEventLike,
@@ -58,5 +48,11 @@ export function isWorkspaceShortcutReleasedFromTerminal(
 ): boolean {
   const command = resolveShortcutCommand(event, keybindings, options);
   if (command === null) return false;
-  return command === "rightPanel.toggle" || workspacePaneShortcutAction(command)?._tag === "Focus";
+  const paneAction = workspacePaneShortcutAction(command);
+  return (
+    command === "rightPanel.toggle" ||
+    command === "rightPanel.toggleMaximized" ||
+    paneAction?._tag === "Focus" ||
+    paneAction?._tag === "ToggleMaximized"
+  );
 }

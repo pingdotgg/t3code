@@ -53,7 +53,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+j", command: "pane.focusDown" },
   { key: "mod+alt+k", command: "pane.focusUp" },
   { key: "mod+alt+l", command: "pane.focusRight" },
-  { key: "mod+shift+enter", command: "pane.toggleMaximized", when: "!terminalFocus" },
+  { key: "mod+shift+enter", command: "pane.toggleMaximized" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
