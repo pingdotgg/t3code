@@ -286,7 +286,7 @@ export function AddProviderInstanceDialog({
                     value={option.value}
                     disabled
                     className={cn(
-                      "relative flex cursor-not-allowed items-center gap-3 rounded-lg bg-card/60 px-3 py-3 text-left opacity-55 outline-none ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
+                      "relative flex cursor-not-allowed items-center gap-3 rounded-lg bg-card/60 px-3 py-3 text-left opacity-64 outline-none ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
                     )}
                   >
                     <IconComponent className="size-4 shrink-0 text-muted-foreground" aria-hidden />
