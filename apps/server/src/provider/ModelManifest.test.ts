@@ -38,6 +38,20 @@ const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => 
 });
 
 describe("classifyModels", () => {
+  it("classifies qualified Codex families without changing their wire ids", () => {
+    const manifest: ModelManifestData = { version: 1, currentModels: { codex: ["gpt-test"] } };
+    const models = [
+      model({ slug: "openai.gpt-test", isLegacy: true }),
+      model({ slug: "openai.gpt-old" }),
+    ];
+    assert.deepStrictEqual(
+      classifyModels(models, manifest, CODEX).map((entry) => [entry.slug, entry.isLegacy ?? false]),
+      [
+        ["openai.gpt-test", false],
+        ["openai.gpt-old", true],
+      ],
+    );
+  });
   it("flags non-current models, clears stale flags, and skips custom models", () => {
     const manifest: ModelManifestData = {
       version: 1,
@@ -64,6 +78,21 @@ describe("classifyModels", () => {
 });
 
 describe("applyManifestDefault", () => {
+  it("resolves the manifest default to the qualified live model", () => {
+    const manifest: ModelManifestData = {
+      version: 1,
+      currentModels: {},
+      providers: { codex: { models: [], profiles: {}, defaults: { chat: "gpt-test" } } },
+    };
+    const models = [
+      model({ slug: "openai.gpt-old", isDefault: true }),
+      model({ slug: "openai.gpt-test" }),
+    ];
+    assert.strictEqual(
+      applyManifestDefault(models, manifest, CODEX).find((entry) => entry.isDefault)?.slug,
+      "openai.gpt-test",
+    );
+  });
   it("moves the default flag and its aliases to the manifest's chat default", () => {
     const driver = ProviderDriverKind.make("antigravity");
     const manifest: ModelManifestData = {

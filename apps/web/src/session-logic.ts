@@ -326,8 +326,9 @@ export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  const allPlanActivities = activities
+    .filter((activity) => activity.kind === "turn.plan.updated")
+    .sort(compareActivitiesByOrder);
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
   const latest = Option.firstSomeOf([
