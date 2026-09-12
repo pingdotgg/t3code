@@ -2453,6 +2453,26 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads the viewer login through the GraphQL viewer", () =>
+    Effect.gen(function* () {
+      // REST GET /user refuses GitHub App installation tokens; the GraphQL viewer answers them.
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("acme-app[bot]\n")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w" });
+
+      assert.strictEqual(login, "acme-app[bot]");
+      expect(callAt(0).args).toEqual([
+        "api",
+        "graphql",
+        "-f",
+        "query={viewer{login}}",
+        "--jq",
+        ".data.viewer.login",
+      ]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
@@ -2461,6 +2481,22 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
+    }),
+  );
+
+  it.effect("propagates a viewer read failure unchanged", () =>
+    Effect.gen(function* () {
+      const failure = new GitHubCli.GitHubCliCommandError({
+        command: "gh",
+        cwd: "/w",
+        cause: new Error("HTTP 403"),
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
+
+      assert.strictEqual(error, failure);
     }),
   );
 
