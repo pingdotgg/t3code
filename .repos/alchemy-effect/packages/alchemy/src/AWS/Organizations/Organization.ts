@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
-import { retryOrganizations } from "./common.ts";
+import { retryOrganizations, unredact } from "./common.ts";
 
 export type OrganizationId = string;
 export type OrganizationArn = string;
@@ -45,9 +45,7 @@ export interface Organization extends Resource<
     /**
      * Email address of the management account.
      */
-    managementAccountEmail:
-      | organizations.Organization["MasterAccountEmail"]
-      | undefined;
+    managementAccountEmail: string | undefined;
     /**
      * Policy types available to the organization.
      */
@@ -163,7 +161,7 @@ const toAttrs = (
   featureSet: org.FeatureSet,
   managementAccountArn: org.MasterAccountArn,
   managementAccountId: org.MasterAccountId,
-  managementAccountEmail: org.MasterAccountEmail,
+  managementAccountEmail: unredact(org.MasterAccountEmail),
   availablePolicyTypes: org.AvailablePolicyTypes ?? [],
 });
 

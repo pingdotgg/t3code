@@ -261,3 +261,7 @@ adapter system itself) and waku is in beta — `waku` is pinned exactly
 (`1.0.0-beta.7`). Treat version bumps as deliberate migrations: re-verify
 the adapter fork against upstream's `packages/waku/src/adapters/cloudflare.ts`,
 the two-input rsc environment merge, and the preview-server global.
+
+## Upstream references
+
+- Waku: [`39e868f2638c27de9635c68ebf965e14a4112e9b`](https://github.com/wakujs/waku/tree/39e868f2638c27de9635c68ebf965e14a4112e9b)

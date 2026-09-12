@@ -51,6 +51,7 @@ import {
   observeReplicaSet,
   reconcileReplicas,
   resolveCount,
+  toFlyService,
   volumeIdsOf,
   type Replica,
   type ReplicaSet,
@@ -359,6 +360,49 @@ export type ServiceRuntimeContext = FlyHostRuntimeContext;
  * TLS on 443, picks one started Machine that published this service,
  * and forwards to `port` where `fetch` runs.
  *
+ * ### Configure routing health checks
+ * The generated service includes a TCP check on `port`. To customize
+ * it, provide `services` and configure each service's `checks` property.
+ *
+ * **Example:** HTTP readiness check
+ * ```typescript
+ * export default class Api extends Fly.Service<Api>()(
+ *   "Api",
+ *   {
+ *     app: Site,
+ *     main: import.meta.url,
+ *     port: 3000,
+ *     services: [
+ *       {
+ *         protocol: "tcp",
+ *         internalPort: 3000,
+ *         ports: [
+ *           { port: 80, handlers: ["http"], forceHttps: true },
+ *           { port: 443, handlers: ["tls", "http"] },
+ *         ],
+ *         checks: [
+ *           {
+ *             type: "http",
+ *             port: 3000,
+ *             method: "GET",
+ *             path: "/health",
+ *             protocol: "http",
+ *             interval: "15s",
+ *             timeout: "2s",
+ *             gracePeriod: "30s",
+ *           },
+ *         ],
+ *       },
+ *     ],
+ *   },
+ *   Effect.gen(function* () {
+ *     return {
+ *       fetch: Effect.succeed(HttpServerResponse.text("hello")),
+ *     };
+ *   }),
+ * ) {}
+ * ```
+ *
  * ### An address so it answers
  * `{app}.fly.dev` does not answer over IPv4 until the App has an
  * {@link IpAssignment}. Allocate a shared Anycast IPv4 on the same
@@ -404,14 +448,14 @@ export type ServiceRuntimeContext = FlyHostRuntimeContext;
  * whoever deploys and writes it onto the Machine. Do not pass
  * `env: { ... }` on a Service.
  *
- * `Config.redacted("API_KEY")` is `Redacted<string>`. Unwrap with
+ * `Config.Redacted("API_KEY")` is `Redacted<string>`. Unwrap with
  * `Redacted.value` only where you need the raw string.
  *
  * Alchemy also injects `PORT` (when `port` is set) and stack metadata.
  * For a secret Fly should own and inject into every Machine on the
  * App, use {@link Secret}.
  *
- * **Example:** Config.redacted
+ * **Example:** Config.Redacted
  * ```typescript
  * import * as Config from "effect/Config";
  * import * as Redacted from "effect/Redacted";
@@ -420,7 +464,7 @@ export type ServiceRuntimeContext = FlyHostRuntimeContext;
  *   "Api",
  *   { app: Site, main: import.meta.url, port: 3000 },
  *   Effect.gen(function* () {
- *     const apiKey = yield* Config.redacted("API_KEY");
+ *     const apiKey = yield* Config.Redacted("API_KEY");
  *
  *     return {
  *       fetch: Effect.gen(function* () {
@@ -727,26 +771,6 @@ const toFlyGuest = (guest: MachineGuest | undefined): FlyMachineGuest => {
   if (guest?.gpus !== undefined) fly.gpus = guest.gpus;
   return fly;
 };
-
-const toFlyService = (service: MachineService): FlyMachineService => ({
-  protocol: service.protocol,
-  internal_port: service.internalPort,
-  autostart: service.autostart,
-  autostop:
-    typeof service.autostop === "boolean"
-      ? service.autostop
-        ? "stop"
-        : "off"
-      : service.autostop,
-  min_machines_running: service.minMachinesRunning,
-  ports: service.ports?.map((port) => ({
-    port: port.port,
-    handlers: port.handlers,
-    force_https: port.forceHttps,
-    start_port: port.startPort,
-    end_port: port.endPort,
-  })),
-});
 
 const desiredEnv = (
   props: ServiceProps,

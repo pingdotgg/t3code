@@ -1,5 +1,5 @@
 import { sanitizeLockKey, withLock } from "@/Auth/Lock.ts";
-import { rootDir } from "@/Auth/Profile.ts";
+import { rootDir } from "@/Auth/Paths.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
@@ -42,7 +42,7 @@ describe("sanitizeLockKey", () => {
 layer(NodeServices.layer, { excludeTestServices: true })("withLock", (it) => {
   const lockPathOf = Effect.fn(function* (key: string) {
     const path = yield* Path.Path;
-    return path.join(rootDir, "lock", `${sanitizeLockKey(key)}.lock`);
+    return path.join(rootDir(), "lock", `${sanitizeLockKey(key)}.lock`);
   });
 
   /** Create a foreign lock as another process would have left it. */

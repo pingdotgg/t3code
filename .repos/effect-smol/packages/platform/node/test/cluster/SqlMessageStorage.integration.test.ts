@@ -56,7 +56,9 @@ describe("SqlMessageStorage", () => {
     ["mysql", Layer.orDie(MysqlContainer.layerClient)],
     ["sqlite", Layer.orDie(SqliteLayer)]
   ] as const).forEach(([label, layer]) => {
+    // Tests truncate this backend's shared tables.
     it.layer(StorageLayer.pipe(Layer.provideMerge(layer)), {
+      concurrent: false,
       timeout: 120000
     })(label, (it) => {
       if (label === "pg") {
@@ -472,10 +474,25 @@ describe("SqlMessageStorage", () => {
           yield* truncate
 
           const storage = yield* MessageStorage.MessageStorage
-          const request = yield* makeRequest()
+          const request = yield* makeRequest({
+            rpc: StreamRpc,
+            payload: StreamRpc.payloadSchema.make({ id: 123 })
+          })
           yield* storage.saveRequest(request)
           let messages = yield* storage.unprocessedMessagesById([request.envelope.requestId])
           expect(messages).toHaveLength(1)
+
+          const chunk = yield* makeChunkReply(request)
+          yield* storage.saveReply(chunk)
+          const ack = yield* makeAckChunk(request, chunk)
+          yield* storage.saveEnvelope(ack)
+
+          const encoded = yield* SqlMessageStorage.makeEncoded().pipe(Effect.provide(NodeCrypto.layer))
+          const acknowledgements = yield* encoded.unprocessedMessagesById([ack.envelope.id], 0)
+          expect(acknowledgements).toHaveLength(1)
+          assert(acknowledgements[0].envelope._tag === "AckChunk")
+          expect(acknowledgements[0].envelope.replyId).toEqual(String(chunk.reply.id))
+
           yield* storage.saveReply(yield* makeReply(request))
           messages = yield* storage.unprocessedMessagesById([request.envelope.requestId])
           expect(messages).toHaveLength(0)

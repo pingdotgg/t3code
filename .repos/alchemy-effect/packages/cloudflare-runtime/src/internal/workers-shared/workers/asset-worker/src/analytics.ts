@@ -13,6 +13,38 @@ export enum EntrypointType {
   Inner = 1,
 }
 
+export type ServedBy =
+  | "asset"
+  | "spa"
+  | "404-page"
+  | "none"
+  | "redirect"
+  | "not-modified"
+  | "method-not-allowed"
+  | "error";
+
+export type RequestKind = "navigation" | "subresource";
+
+export function getRequestKind(request: Request): RequestKind {
+  const dest = request.headers.get("Sec-Fetch-Dest");
+  if (dest) {
+    return dest === "document" || dest === "iframe"
+      ? "navigation"
+      : "subresource";
+  }
+
+  const { pathname } = new URL(request.url);
+  const lastSegment = pathname.slice(pathname.lastIndexOf("/") + 1);
+  const dotIndex = lastSegment.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    // No extension, or a dotfile with no other extension.
+    return "navigation";
+  }
+  return lastSegment.slice(dotIndex + 1).toLowerCase() === "html"
+    ? "navigation"
+    : "subresource";
+}
+
 // When adding new columns please update the schema
 type Data = {
   // -- Indexes --
@@ -54,6 +86,10 @@ type Data = {
   cacheStatus?: string;
   // blob9 - Account cohort ("ent", "paid", "free", "employee", or "unknown")
   cohort?: string;
+  // blob10 - What produced the served response (see ServedBy)
+  servedBy?: ServedBy;
+  // blob11 - Whether the request was a navigation or a subresource
+  requestKind?: RequestKind;
 };
 
 const COMPATIBILITY_FLAG_MASKS: Record<ENABLEMENT_COMPATIBILITY_FLAGS, number> =
@@ -76,7 +112,7 @@ export class Analytics {
     this.data = { ...this.data, ...newData };
   }
 
-  getData(key: keyof Data) {
+  getData<Key extends keyof Data>(key: Key): Data[Key] {
     return this.data[key];
   }
 
@@ -119,6 +155,8 @@ export class Analytics {
         this.data.coloRegion, // blob7
         this.data.cacheStatus, // blob8
         this.data.cohort, // blob9
+        this.data.servedBy, // blob10
+        this.data.requestKind, // blob11
       ],
     });
   }

@@ -18,7 +18,9 @@
   },
   "devDependencies": {
     "@playwright/test": "catalog:testing",
+    "@types/node": "catalog:tooling",
     "rolldown": "catalog:build",
+    "typescript": "catalog:build",
     "vite": "catalog:build"
   },
   "exports": {

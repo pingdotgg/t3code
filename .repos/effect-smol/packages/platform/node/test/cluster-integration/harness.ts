@@ -380,7 +380,7 @@ export const socketRunnerLayer = (
       ...config,
       runnerAddress: Option.some(address)
     })),
-    Layer.provide(RpcSerialization.layerMsgPack)
+    Layer.provide(RpcSerialization.layerSchemaBinary())
   )
 
 export type RunnerLayer = typeof socketRunnerLayer
@@ -392,7 +392,7 @@ const clientLayer = (
   SocketRunner.layerClientOnly.pipe(
     Layer.provide(clientProtocol),
     Layer.provide(ShardingConfig.layer(config)),
-    Layer.provide(RpcSerialization.layerMsgPack)
+    Layer.provide(RpcSerialization.layerSchemaBinary())
   )
 
 const parseReply = (payload: MessageRow["reply_payload"]): Record<string, unknown> | undefined => {
@@ -465,7 +465,7 @@ export const make = Effect.fnUntraced(function*(options: MakeOptions) {
       Layer.buildWithScope(scope)
     )
     const socketServer = Context.get(serverContext, SocketServer.SocketServer)
-    if (socketServer.address._tag !== "TcpAddress") {
+    if (socketServer.address._tag === "UnixPathAddress") {
       return yield* Effect.die("Expected a TCP socket server")
     }
     const address = RunnerAddress.make("127.0.0.1", socketServer.address.port)

@@ -51,7 +51,7 @@ export default Alchemy.Stack(
     // proxies PostHog Cloud for first-party browser analytics.
     const relay = yield* Ingester;
 
-    // const posthogProjectKey = yield* Config.string("POSTHOG_PROJECT_KEY")
+    // const posthogProjectKey = yield* Config.String("POSTHOG_PROJECT_KEY")
     //   .pipe(Config.option)
     //
     //   .pipe(Effect.orDie);

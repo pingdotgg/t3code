@@ -19,7 +19,6 @@ import * as csr from "./internal/graphCsr.ts"
 import * as MutableHashMap from "./MutableHashMap.ts"
 import * as Option from "./Option.ts"
 import type { Pipeable } from "./Pipeable.ts"
-import { hasProperty } from "./Predicate.ts"
 import type { Covariant, Invariant } from "./Types.ts"
 
 const TypeId = internal.TypeId
@@ -148,22 +147,6 @@ export interface Snapshot<out N, out E, out T extends Kind> {
 }
 
 /**
- * Common public protocol for graph values.
- *
- * **Details**
- *
- * Contains only the runtime marker and shared protocols. Graph storage is kept
- * internal; use module functions such as `nodes`, `edges`, `getNode`, and
- * `getEdge` to inspect graph contents.
- *
- * @category protocols
- * @since 3.18.0
- */
-export interface Proto<out N, out E> extends Iterable<readonly [NodeIndex, N]>, Equal.Equal, Pipeable, Inspectable {
-  readonly [TypeId]: Graph.Variance<N, E>
-}
-
-/**
  * Immutable graph interface.
  *
  * **When to use**
@@ -181,7 +164,10 @@ export interface Proto<out N, out E> extends Iterable<readonly [NodeIndex, N]>, 
  * @category models
  * @since 3.18.0
  */
-export interface Graph<out N, out E, T extends Kind = "directed"> extends Proto<N, E> {
+export interface Graph<out N, out E, T extends Kind = "directed">
+  extends Iterable<readonly [NodeIndex, N]>, Equal.Equal, Pipeable, Inspectable
+{
+  readonly [TypeId]: Graph.Variance<N, E>
   readonly type: T
   readonly mutable: false
 }
@@ -415,9 +401,9 @@ const withMutationGuard = <N, E, T extends Kind, A>(
  * @category guards
  * @since 4.0.0
  */
-export const isGraph = <N = unknown, E = unknown, T extends Kind = Kind, U = never>(
+export const isGraph: <N = unknown, E = unknown, T extends Kind = Kind, U = never>(
   u: U | Graph<N, E, T> | MutableGraph<N, E, T>
-): u is Graph<N, E, T> | MutableGraph<N, E, T> => hasProperty(u, TypeId)
+) => u is Graph<N, E, T> | MutableGraph<N, E, T> = internal.isGraph
 
 /**
  * Reconstructs an immutable graph from its indexed active structure.
@@ -777,7 +763,7 @@ const mutateScoped = <N, E, T extends Kind>(
  *
  * **When to use**
  *
- * Use for the usual immutable update workflow when several node or edge
+ * Use when several node or edge
  * mutations should be applied together.
  *
  * **Details**
@@ -3031,6 +3017,8 @@ export const edgeCount = <N, E, T extends Kind = "directed">(
 /**
  * Returns the indices of all edges incident to a node.
  *
+ * **Details**
+ *
  * Each edge is returned once in graph edge order, including self-loops.
  * Throws a `GraphError` when the node does not exist.
  *
@@ -3093,6 +3081,8 @@ export const incidentEdges: {
 /**
  * Returns the indices of outgoing edges for a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges and self-loops are returned separately in adjacency order.
  * Throws a `GraphError` for an undirected graph or missing node.
  *
@@ -3124,6 +3114,8 @@ export const outgoingEdges: {
 /**
  * Returns the indices of incoming edges for a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges and self-loops are returned separately in reverse-adjacency
  * order. Throws a `GraphError` for an undirected graph or missing node.
  *
@@ -3154,6 +3146,8 @@ export const incomingEdges: {
 
 /**
  * Returns all edge indices connecting the supplied nodes.
+ *
+ * **Details**
  *
  * Directed graphs only include edges from `source` to `target`; undirected
  * graphs include either stored orientation. Parallel edges are retained.
@@ -3202,6 +3196,8 @@ export const edgesBetween: {
 /**
  * Returns the degree of a node in an undirected graph.
  *
+ * **Details**
+ *
  * Parallel edges count separately and a self-loop contributes two. Throws a
  * `GraphError` for a directed graph or missing node.
  *
@@ -3230,6 +3226,8 @@ export const degree: {
 /**
  * Returns the out-degree of a node in a directed graph.
  *
+ * **Details**
+ *
  * Parallel edges count separately and a self-loop contributes one. Throws a
  * `GraphError` for an undirected graph or missing node.
  *
@@ -3257,6 +3255,8 @@ export const outDegree: {
 
 /**
  * Returns the in-degree of a node in a directed graph.
+ *
+ * **Details**
  *
  * Parallel edges count separately and a self-loop contributes one. Throws a
  * `GraphError` for an undirected graph or missing node.
@@ -6927,7 +6927,7 @@ export const bellmanFord: {
   const edges = csr.getEdges(cache)
   const edgeIds = csr.getEdgeIds(cache)
   const edgeCache = csr.getEdgeEndpoints(cache)
-  const outgoing = csr.getOutgoing(cache)
+  const outgoing = csr.getOutgoingWithEdges(cache)
   const source = csr.getNodeIndex(cache, config.source)!
   const target = csr.getNodeIndex(cache, config.target)!
   const weights = new Float64Array(edges.length)
@@ -7020,7 +7020,9 @@ export const bellmanFord: {
     while (head < tail) {
       const node = queue[head++]
       for (let i = outgoing.rowOffsets[node]; i < outgoing.rowOffsets[node + 1]; i++) {
-        markAffected(outgoing.columnIndices[i])
+        if (weights[outgoing.edgeIndices[i]] !== Infinity) {
+          markAffected(outgoing.columnIndices[i])
+        }
       }
     }
   }

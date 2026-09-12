@@ -325,13 +325,11 @@ export interface FunctionZipProps extends FunctionCommonProps {
    */
   layers?: LayerRef[];
   /**
-   * Bundler configuration for {@link main}: rolldown input options (flat),
-   * `output` overrides, `install` for native packages, plus pure-annotation
-   * options (`pure`) and the bundle analyzer. Top-level calls in `effect`,
-   * `@effect/*`, `alchemy`, `@alchemy.run/*`, and `@distilled.cloud/*` are
-   * annotated as pure by default so unused code from those packages is
-   * tree-shaken; list additional packages via `pure.packages`, or disable
-   * with `pure: false`.
+   * Bundler configuration for {@link main}: rolldown input options, `output`
+   * overrides, `install` for native packages, `pure`, and the bundle analyzer.
+   * Unused code is tree-shaken. `effect`, alchemy, and `@distilled.cloud`
+   * are marked pure so unused parts prune more aggressively. List extra
+   * packages with `pure.packages`, or disable with `pure: false`.
    */
   build?: FunctionBuildOptions;
   uploadSourceMap?: boolean;
@@ -597,7 +595,7 @@ export const normalizeFunctionUrl = (
  * - **Async** — plain handler export, no Effect runtime in the bundle.
  * - **Effect** — Effect implementation with typed bindings and event sources.
  *
- * See [Effect handlers vs async handlers](/infrastructure-as-effects/functions-and-servers#effect-handlers-vs-async-handlers)
+ * See [Effect handlers vs async handlers](/infrastructure-as-effects/runtime#effect-handlers-vs-async-handlers)
  * for plain handler patterns, or the
  * [Lambda guide](/aws/compute/lambda)
  * for the full Effect-based approach with bindings, event sources, and sinks.
@@ -784,20 +782,13 @@ export const normalizeFunctionUrl = (
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the function doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults. Listing a package that also
- * declares `"sideEffects": false` (or `[]`) in its `package.json` opts it
- * into full annotation — top-level calls whose result is discarded are
- * deleted under minification when unused — so only list packages whose
- * modules really are free of meaningful top-level side effects.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * const func = yield* AWS.Lambda.Function("ApiFunction", {
  *   main: "./src/handler.ts",
@@ -807,7 +798,7 @@ export const normalizeFunctionUrl = (
  * });
  * ```
  *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * const func = yield* AWS.Lambda.Function("ApiFunction", {
  *   main: "./src/handler.ts",
@@ -1021,7 +1012,7 @@ export const Function: Platform<
       get: <T>(key: string) =>
         // Key is already canonical (see RuntimeContext.sanitizeKey). Read
         // straight from `process.env` — see `unpackEnvValue` for why this
-        // must never resolve through `Config.string`.
+        // must never resolve through `Config.String`.
         Effect.sync(() => unpackEnvValue<T>(process.env[key])),
       serve: (handler: HttpEffect) =>
         // @ts-ignore
@@ -1652,9 +1643,15 @@ export const FunctionProvider = () =>
             (e.message?.includes("KMS key is invalid for CreateGrant") &&
               e.message?.includes("ARN does not refer to a valid principal")));
 
-        const noteRolePropagationWait = () =>
+        const isSecurityGroupPropagationError = (
+          e: Lambda.CreateFunctionError,
+        ) =>
+          e._tag === "InvalidParameterValueException" &&
+          e.message?.includes("InvalidGroup.NotFound");
+
+        const noteCreateDependencyWait = () =>
           session.note(
-            `Waiting for Lambda execution role to become assumable: ${functionName} (${Math.ceil((Date.now() - waitStartedAt) / 1000)}s)`,
+            `Waiting for Lambda creation dependencies to propagate: ${functionName} (${Math.ceil((Date.now() - waitStartedAt) / 1000)}s)`,
           );
 
         const tags = yield* createInternalTags(id);
@@ -1772,7 +1769,7 @@ export const FunctionProvider = () =>
               }).pipe(
                 Effect.tapError((e) =>
                   isRolePropagationError(e)
-                    ? noteRolePropagationWait()
+                    ? noteCreateDependencyWait()
                     : Effect.void,
                 ),
                 Effect.retry({
@@ -1807,7 +1804,7 @@ export const FunctionProvider = () =>
               }).pipe(
                 Effect.tapError((e) =>
                   isRolePropagationError(e)
-                    ? noteRolePropagationWait()
+                    ? noteCreateDependencyWait()
                     : Effect.void,
                 ),
                 Effect.retry({
@@ -1829,9 +1826,10 @@ export const FunctionProvider = () =>
             }),
           ),
           Effect.retry({
-            while: (e) => isRolePropagationError(e),
+            while: (e) =>
+              isRolePropagationError(e) || isSecurityGroupPropagationError(e),
             schedule: Schedule.fixed(1000).pipe(
-              Schedule.tap(() => noteRolePropagationWait()),
+              Schedule.tap(() => noteCreateDependencyWait()),
             ),
           }),
           Effect.catchTags({

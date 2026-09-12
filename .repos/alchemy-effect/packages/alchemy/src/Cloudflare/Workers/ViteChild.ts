@@ -11,14 +11,15 @@ import { fileURLToPath } from "node:url";
 import * as NodeV8 from "node:v8";
 import { AlchemyContext } from "../../AlchemyContext.ts";
 import { BundleError } from "../../Bundle/Bundle.ts";
+import { pipedColorEnv } from "../../Util/Terminal.ts";
 import {
   fromProcessEnv,
   RPC_SERVER_ENVIRONMENT_KEY,
   type RpcServerEnvironment,
 } from "../../Local/RpcServerEnvironment.ts";
 import { Stack } from "../../Stack.ts";
-import { transformTypesFlags } from "../../Util/Node.ts";
 import { unwrapRedacted } from "../../Util/index.ts";
+import { nodeLoaderArgs } from "../../Util/Node.ts";
 import {
   type ViteBuildChildConfig,
   type ViteBuildChildResult,
@@ -47,7 +48,7 @@ const resolveRunner = (basename: string) =>
 
 export const startViteChild = (
   config: ViteChildConfig,
-  onOutput: (channel: "stdout" | "stderr", line: string) => void,
+  onOutput: (channel: "stdout" | "stderr", line: string) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -96,21 +97,28 @@ export const startViteChild = (
         () => base.stack as { name: string; stage: string },
       ),
     };
+    const childEnv = {
+      ...process.env,
+      [RPC_SERVER_ENVIRONMENT_KEY]: JSON.stringify(childEnvironment),
+    };
+    // The parent CLI process sets NODE_ENV for its own React/renderer
+    // needs; that hack must not leak into the user's dev server (Vite
+    // derives its default mode from NODE_ENV, so an inherited value would
+    // silently override the project's own mode).
+    delete childEnv.NODE_ENV;
     const child = yield* spawner.spawn(
       ChildProcess.make(
         nodeExecPath ?? process.execPath,
         isBun && nodeExecPath === undefined
           ? ["run", runner]
-          : [...(runner.endsWith(".ts") ? transformTypesFlags() : []), runner],
+          : [...nodeLoaderArgs(runner), runner],
         {
           cwd: config.rootDir,
           stdin: Stream.succeed(serializedConfig),
           stdout: "pipe",
           stderr: "pipe",
-          env: {
-            [RPC_SERVER_ENVIRONMENT_KEY]: JSON.stringify(childEnvironment),
-          },
-          extendEnv: true,
+          env: childEnv,
+          extendEnv: false,
           killSignal: "SIGKILL",
         },
       ),
@@ -127,14 +135,14 @@ export const startViteChild = (
           const value = line.slice(start + VITE_CHILD_READY_PREFIX.length, end);
           return Deferred.succeed(ready, new URL(value));
         }
-        return Effect.sync(() => onOutput("stdout", line));
+        return onOutput("stdout", line);
       }),
       Effect.forkScoped,
     );
     yield* child.stderr.pipe(
       Stream.decodeText,
       Stream.splitLines,
-      Stream.runForEach((line) => Effect.sync(() => onOutput("stderr", line))),
+      Stream.runForEach((line) => onOutput("stderr", line)),
       Effect.forkScoped,
     );
 
@@ -170,7 +178,7 @@ const BUILD_ERROR_TAIL = 50;
  */
 export const runViteBuildChild = (
   config: Omit<ViteBuildChildConfig, "outputPath">,
-  onOutput: (channel: "stdout" | "stderr", line: string) => void,
+  onOutput: (channel: "stdout" | "stderr", line: string) => Effect.Effect<void>,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -191,12 +199,7 @@ export const runViteBuildChild = (
       const child = yield* spawner.spawn(
         ChildProcess.make(
           process.execPath,
-          isBun
-            ? ["run", runner]
-            : [
-                ...(runner.endsWith(".ts") ? transformTypesFlags() : []),
-                runner,
-              ],
+          isBun ? ["run", runner] : [...nodeLoaderArgs(runner), runner],
           {
             cwd: config.rootDir,
             stdin: Stream.succeed(serializedConfig),
@@ -208,7 +211,7 @@ export const runViteBuildChild = (
             // NODE_ENV=test) would otherwise bake `import.meta.env.DEV`
             // into the server bundle (e.g. SolidStart then ships its
             // dev-only manifest and every SSR request 500s).
-            env: { NODE_ENV: "production" },
+            env: { ...pipedColorEnv(), NODE_ENV: "production" },
             killSignal: "SIGKILL",
           },
         ),
@@ -219,8 +222,7 @@ export const runViteBuildChild = (
         Effect.sync(() => {
           tail.push(line);
           if (tail.length > BUILD_ERROR_TAIL) tail.shift();
-          onOutput(channel, line);
-        });
+        }).pipe(Effect.andThen(onOutput(channel, line)));
       const stdoutFiber = yield* Effect.forkChild(
         child.stdout.pipe(
           Stream.decodeText,

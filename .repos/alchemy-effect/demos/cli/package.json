@@ -1,0 +1,19 @@
+{
+  "name": "alchemy-cli-demo",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "demo": "tcut demo.video.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  }
+}

@@ -8,7 +8,7 @@
 # Cloudflare.Email.Address alchemy-list-test@: standing test address — Cloudflare
 # refuses to delete an address for ~15 min after creation (code 2032), so the
 # EmailAddress test retains and re-adopts it instead of create/destroy churn.
-bun alchemy unsafe nuke ./stacks/nuke.ts  \
+bun alchemy unsafe nuke --config ./stacks/nuke.ts  \
   --exclude 'AWS.BackupSearch.SearchJob' \
   --exclude 'Cloudflare.Zone*' \
   --exclude 'Cloudflare.Account*' \

@@ -1,155 +1,95 @@
 ---
 title: state
-description: Inspect and manage the state store — list stacks, stages, and resources, print persisted state, and clear entries.
+description: Browse, read, and delete entries in the state store.
 ---
 
 ```sh
-alchemy state <subcommand> [file] [options]
+alchemy state [subcommand] [options]
 ```
 
 Inspect and manage the state store — the record of which resources
 alchemy thinks exist for each stack/stage. Reads from whatever state
 layer the stack file configures (e.g. `Cloudflare.state(...)`), or
-from the on-disk `.alchemy/state` directory with `--local`. See
-[State Store](/state-store).
+from the on-disk `.alchemy/state` directory with `--backend local`.
+See [State Store](/state-store).
+
+Run `alchemy state` with no subcommand in an interactive terminal to
+open the **state explorer**. It shows stacks, stages, resources, and a YAML
+preview of the selected resource's persisted state. Mark
+entries with Space and delete them with `d`; a confirm dialog lists the
+exact records before anything is removed. The subcommands below are the
+scriptable equivalents.
 
 The stack file is imported only to resolve its configured state layer
-— pass it via the standard `[file]` positional (defaults to
-`alchemy.run.ts`). There is no deploy-style `--stage` here: state
-commands address what they inspect explicitly, so `--stack`,
-`--stage`, and `--fqn` are addressing flags that appear only on the
-subcommands that need them.
+Pass it with `--config`, which defaults to `alchemy.run.ts`. There is no
+deploy-style `--stage` flag here: state commands address what they
+inspect explicitly through positional arguments.
 
-All seven subcommands share these options:
+All subcommands share these options:
 
 | Option              | Description                                                                                                                                    |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--local`           | Read from local `.alchemy/state` instead of the stack's configured state store — e.g. to inspect orphaned local state after a partially-failed bootstrap |
-| `--profile <name>`  | Auth profile to use (defaults to `default` or `$ALCHEMY_PROFILE`)                                                                              |
+| `--backend <configured\|local>` | `configured` uses the stack's state layer; `local` reads `.alchemy/state`, including orphaned state after a failed bootstrap |
+| `--profile <name>`  | Auth profile to use (defaults to `$ALCHEMY_PROFILE` or `default`)                                                                        |
 | `--env-file <path>` | Load environment variables from a file                                                                                                         |
+| `--config, -c <file>` | Stack entrypoint to resolve the state layer from (defaults to `alchemy.run.ts`)                                                              |
 
-## `state stacks`
-
-```sh
-alchemy state stacks [file] [options]
-```
-
-List every stack name present in the state store.
-
-## `state stages`
+## `state list`
 
 ```sh
-alchemy state stages --stack <stack> [file] [options]
+alchemy state list [path] [options]      # alias: ls
 ```
 
-List every stage that has state recorded under `--stack`.
-
-## `state resources`
+State is addressed like a filesystem: `<stack>/<stage>/<namespace…>/
+<resource>`, plus one `output` entry per stage holding the stack's
+evaluated outputs. `list` prints one directory level; `--recursive`/`-r`
+walks the whole subtree.
 
 ```sh
-alchemy state resources --stack <stack> --stage <stage> [file] [options]
+alchemy state list                       # every stack
+alchemy state list my-app                # stages under my-app
+alchemy state list my-app/prod           # resource entries under my-app/prod
+alchemy state list my-app -r             # every path under my-app
 ```
 
-List the fully-qualified resource names (FQNs) tracked under a given
-stack/stage.
-
-## `state get`
+## `state read`
 
 ```sh
-alchemy state get --stack <stack> --stage <stage> --fqn <fqn>
+alchemy state read [path] [options]      # alias: cat
 ```
 
-Print a single resource's persisted state as JSON. Output uses the
-same encoding the store persists: redacted secrets are unwrapped into
-`{ __redacted__: ... }` and Resources are flattened. If no entry
-exists, it prints `(not found: <stack>/<stage>/<fqn>)`.
+Print persisted state as JSON. A resource path prints that record; a
+directory path with `--recursive` prints every record beneath it, keyed
+by path. Output uses the same encoding the store persists: redacted
+secrets are unwrapped into `{ __redacted__: ... }` and Resources are
+flattened.
 
 ```sh
-# get the FQN from `state resources`, then:
-alchemy state get --stack MyApp --stage prod --fqn Bucket
-```
+# one resource record
+alchemy state read my-app/prod/Bucket
 
-## `state export`
-
-```sh
-alchemy state export [--stack <stack>] [--stage <stage>] [file] [options]
-```
-
-Bulk state read: print every matching resource record as **one JSON
-document**, so a whole estate is read in a single invocation instead
-of `state resources` + one `state get` per FQN per stack/stage.
-
-- Omit `--stack` to export **all stacks** in the store.
-- Pass `--stack` to export every stage under that stack.
-- Pass `--stack` and `--stage` to export a single stage.
-- `--stage` without `--stack` is an error.
-
-The output is a flat `resources` array; each entry carries its
-`stack`, `stage`, and `fqn` alongside the same encoded record
-`state get` prints (`props` and `attr` intact, secrets as
-`{ __redacted__: ... }`):
-
-```json
-{
-  "resources": [
-    {
-      "stack": "my-app",
-      "stage": "prod",
-      "fqn": "WebServer",
-      "state": {
-        "resourceType": "AWS.EC2.Instance",
-        "props": { "instanceType": "t3.large" },
-        "attr": { "instanceId": "i-0456" }
-      }
-    }
-  ]
-}
-```
-
-The flat shape is made for local filtering — one call, then `jq`:
-
-```sh
-# every EC2 instance across all stacks and stages
-alchemy state export | jq '.resources[] | select(.state.resourceType == "AWS.EC2.Instance")'
+# a whole stage as one JSON document for jq
+alchemy state read my-app/prod -r | jq 'to_entries[] | select(.value.resourceType == "AWS.EC2.Instance")'
 
 # diff two stages
-diff <(alchemy state export --stack my-app --stage dev) \
-     <(alchemy state export --stack my-app --stage prod)
+diff <(alchemy state read my-app/dev -r) \
+     <(alchemy state read my-app/prod -r)
 ```
 
-Entries are ordered deterministically (stack, then stage, then FQN),
-so exports are stable across runs and safe to diff or assert on in
-CI.
-
-## `state tree`
+## `state delete`
 
 ```sh
-alchemy state tree [file] [options]
+alchemy state delete <path> [options]    # alias: rm
 ```
 
-Render the entire state store as a tree of stacks → stages →
-resources. See [Inspecting State](/cli/inspecting-state) for a worked
-example.
+Delete state records. Deleting a stack or stage path removes everything
+beneath it; a directory path below stage level needs `--recursive`.
+`output` cannot be deleted independently. Alchemy removes it with its
+stage.
 
-## `state clear`
-
-```sh
-alchemy state clear [--stack <stack>] [--stage <stage>] [file] [options]
-```
-
-Delete state entries from the store.
-
-- Omit `--stack` to clear **all stacks** in the store.
-- Pass `--stack` to clear every stage under that stack.
-- Pass `--stack` and `--stage` to clear a single stage.
-- `--stage` without `--stack` is an error.
-
-A confirmation prompt lists the exact scope before anything is
-deleted.
-
-| Option  | Description                  |
-| ------- | ---------------------------- |
-| `--yes` | Skip the confirmation prompt |
+| Option              | Description                        |
+| ------------------- | ---------------------------------- |
+| `--recursive`, `-r` | Operate recursively on directories |
 
 :::caution
 **Destructive but local-only** — the actual cloud resources are not

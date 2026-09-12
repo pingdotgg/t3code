@@ -403,7 +403,7 @@ const upsertVariable = (input: {
   value: string;
   serviceId?: string;
 }) =>
-  railway.variableUpsert({
+  railway.upsertVariable({
     input: {
       projectId: input.projectId,
       environmentId: input.environmentId,
@@ -635,7 +635,7 @@ export const VariableProvider = () =>
         return;
       }
       yield* railway
-        .variableDelete({
+        .deleteVariable({
           input: {
             projectId: output.projectId,
             environmentId: output.environmentId,

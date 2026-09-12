@@ -263,3 +263,7 @@ generated `_redirects` and `_headers` files). No `wrangler.json`, no
   endpoints, content collections, prerendered pages, public assets, ASSETS
   404 fallback. (A `base !== "/"` fixture app is not yet part of the suite —
   the behavior is unit-tested in `test/parity.test.ts`.)
+
+## Upstream references
+
+- Astro: [`a2240c43830e29c1d85667f4c610655d6b10253f`](https://github.com/withastro/astro/tree/a2240c43830e29c1d85667f4c610655d6b10253f)

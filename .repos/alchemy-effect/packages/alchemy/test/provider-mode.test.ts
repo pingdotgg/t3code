@@ -16,8 +16,8 @@
  * instanceId-guarded delete, invalidate, stop hook) by driving the generated
  * provider service directly.
  */
-import { Cli } from "@/Cli/Cli.ts";
-import type { AnnotateEvent, StatusChangeEvent } from "@/Cli/Event.ts";
+import { Cli } from "@/Report.ts";
+import type { ResourceAnnotated, ResourceStatusChanged } from "@/Report.ts";
 import * as LocalProvider from "@/Local/LocalProvider.ts";
 import * as Provider from "@/Provider.ts";
 import { remote, type ProviderMode } from "@/ProviderMode.ts";
@@ -380,10 +380,17 @@ describe("provider modes", () => {
     "status events carry the resolved mode, the plan carries the run default, and mode switches carry the transition",
     (stack) =>
       Effect.gen(function* () {
-        const events: StatusChangeEvent[] = [];
-        const notes: AnnotateEvent[] = [];
+        const events: ResourceStatusChanged[] = [];
+        const notes: ResourceAnnotated[] = [];
         let planDefaultMode: ProviderMode | undefined;
         const cli = Cli.of({
+          startPlanningSession: () =>
+            Effect.succeed({
+              update: () => Effect.void,
+              succeed: () => Effect.void,
+              fail: () => Effect.void,
+              close: Effect.void,
+            }),
           approvePlan: () => Effect.succeed(true),
           displayPlan: () => Effect.void,
           startApplySession: (plan) =>
@@ -393,8 +400,9 @@ describe("provider modes", () => {
                 done: () => Effect.void,
                 emit: (event) =>
                   Effect.sync(() => {
-                    if (event.kind === "status-change") events.push(event);
-                    if (event.kind === "annotate") notes.push(event);
+                    if (event._tag === "apply.resource.status")
+                      events.push(event);
+                    if (event._tag === "apply.resource.note") notes.push(event);
                   }),
               };
             }),
@@ -434,7 +442,8 @@ describe("provider modes", () => {
         ).toBe(true);
         // A local instance whose attrs carry a `url` announces it.
         expect(notes).toContainEqual({
-          kind: "annotate",
+          _tag: "apply.resource.note",
+          fqn: "A",
           id: "A",
           message: "ready at http://localhost:1337",
         });

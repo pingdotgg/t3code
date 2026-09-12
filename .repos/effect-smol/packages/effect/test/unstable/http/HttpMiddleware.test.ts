@@ -6,11 +6,113 @@ import * as Exit from "effect/Exit"
 import * as Logger from "effect/Logger"
 import * as References from "effect/References"
 import * as Tracer from "effect/Tracer"
+import * as Headers from "effect/unstable/http/Headers"
+import * as HttpEffect from "effect/unstable/http/HttpEffect"
 import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware"
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 
 describe("HttpMiddleware", () => {
+  describe("cors", () => {
+    it.effect.each([
+      {
+        name: "adds Origin when Vary is absent",
+        vary: undefined,
+        expected: "Origin"
+      },
+      {
+        name: "preserves existing Vary dimensions when adding Origin",
+        vary: "Accept-Language",
+        expected: "Accept-Language, Origin"
+      },
+      {
+        name: "preserves other dimensions without duplicating a mixed-case Origin",
+        vary: "Accept-Language, oRiGiN",
+        expected: "Accept-Language, oRiGiN"
+      },
+      {
+        name: "preserves wildcard Vary",
+        vary: "*",
+        expected: "*"
+      }
+    ])("$name", ({ expected, vary }) =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.text("hello", {
+            headers: vary === undefined ? {} : { Vary: vary }
+          })).pipe(HttpMiddleware.cors({
+            allowedOrigins: ["https://client.example", "https://other.example"]
+          }))
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              headers: { Origin: "https://client.example" }
+            })
+          )
+        )
+        assert.strictEqual(response.headers.get("access-control-allow-origin"), "https://client.example")
+        assert.strictEqual(response.headers.get("vary"), expected)
+      }))
+
+    it.effect("preserves both Vary dimensions for preflight requests", () =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({
+            allowedOrigins: ["https://client.example", "https://other.example"]
+          }))
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              method: "OPTIONS",
+              headers: {
+                Origin: "https://client.example",
+                "Access-Control-Request-Headers": "X-Test"
+              }
+            })
+          )
+        )
+        const vary = response.headers.get("vary")?.split(",").map((member) => member.trim().toLowerCase()).sort()
+        assert.deepStrictEqual(vary, ["access-control-request-headers", "origin"])
+      }))
+
+    it.effect("varies by Origin when the request origin is rejected", () =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({
+            allowedOrigins: ["https://client.example", "https://other.example"]
+          }))
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              headers: { Origin: "https://rejected.example" }
+            })
+          )
+        )
+        assert.strictEqual(response.headers.get("vary"), "Origin")
+      }))
+
+    it.effect("preserves Vary when allowing all origins", () =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.text("hello", {
+            headers: { Vary: "Accept-Language" }
+          })).pipe(HttpMiddleware.cors())
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              headers: { Origin: "https://client.example" }
+            })
+          )
+        )
+        assert.strictEqual(response.headers.get("access-control-allow-origin"), "*")
+        assert.strictEqual(response.headers.get("vary"), "Accept-Language")
+      }))
+  })
+
   describe("logger", () => {
     it.effect("annotates method, path, and status without query or hash", () =>
       Effect.gen(function*() {
@@ -94,17 +196,22 @@ describe("HttpMiddleware", () => {
             method: "POST",
             headers: {
               "user-agent": "test-agent",
-              "x-request": "request"
+              "x-request": "request",
+              "x-request-secret": "request-secret"
             }
           })
         )
         const response = HttpServerResponse.empty({
           status: 201,
-          headers: { "x-response": "response" }
+          headers: {
+            "x-response": "response",
+            "x-response-secret": "response-secret"
+          }
         })
 
         yield* HttpMiddleware.tracer(Effect.succeed(response)).pipe(
           Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+          Effect.provideService(Headers.CurrentRedactedNames, ["x-request-secret", "x-response-secret"]),
           Effect.provideService(Tracer.Tracer, tracer)
         )
         yield* Effect.yieldNow
@@ -116,8 +223,10 @@ describe("HttpMiddleware", () => {
         assert.strictEqual(serverSpan.attributes.get("url.query"), "foo=bar")
         assert.strictEqual(serverSpan.attributes.get("user_agent.original"), "test-agent")
         assert.strictEqual(serverSpan.attributes.get("http.request.header.x-request"), "request")
+        assert.strictEqual(serverSpan.attributes.get("http.request.header.x-request-secret"), "<redacted>")
         assert.strictEqual(serverSpan.attributes.get("http.response.status_code"), 201)
         assert.strictEqual(serverSpan.attributes.get("http.response.header.x-response"), "response")
+        assert.strictEqual(serverSpan.attributes.get("http.response.header.x-response-secret"), "<redacted>")
       }))
 
     it.effect("skips attributes for unsampled spans", () =>

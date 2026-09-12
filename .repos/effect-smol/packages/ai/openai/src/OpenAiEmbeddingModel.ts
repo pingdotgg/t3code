@@ -101,7 +101,7 @@ export const model = (
  *
  * **When to use**
  *
- * Use to construct the `EmbeddingModel.Service` effectfully when
+ * Use to construct the `EmbeddingModel` effectfully when
  * `OpenAiClient` is already available in the environment.
  *
  * **Details**
@@ -127,7 +127,7 @@ export const model = (
 export const make = Effect.fnUntraced(function*({ model, config: providerConfig }: {
   readonly model: (string & {}) | Model
   readonly config?: Omit<typeof Config.Service, "model"> | undefined
-}): Effect.fn.Return<EmbeddingModel.Service, never, OpenAiClient> {
+}): Effect.fn.Return<EmbeddingModel.EmbeddingModel, never, OpenAiClient> {
   const client = yield* OpenAiClient
 
   const makeConfig = Effect.contextWith((services: Context.Context<never>) =>

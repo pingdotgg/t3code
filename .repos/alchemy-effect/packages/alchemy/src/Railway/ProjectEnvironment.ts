@@ -1,6 +1,6 @@
 import type {
-  EnvironmentCreateResponse,
-  EnvironmentRenameResponse,
+  CreateEnvironmentResponse,
+  RenameEnvironmentResponse,
   EnvironmentResponse,
   EnvironmentsResponseEdgesItemNode,
 } from "@distilled.cloud/railway";
@@ -169,8 +169,8 @@ export class EnvironmentProjectRequired extends Data.TaggedError(
 
 type CloudEnvironment =
   | EnvironmentResponse
-  | EnvironmentCreateResponse
-  | EnvironmentRenameResponse
+  | CreateEnvironmentResponse
+  | RenameEnvironmentResponse
   | EnvironmentsResponseEdgesItemNode;
 
 const toAttrs = (
@@ -323,7 +323,7 @@ export const EnvironmentProvider = () =>
 
       if (current === undefined) {
         const created = yield* waitOutCreateRateLimit(
-          railway.environmentCreate({
+          railway.createEnvironment({
             input: {
               name,
               projectId,
@@ -345,7 +345,7 @@ export const EnvironmentProvider = () =>
       }
 
       if (current.name !== name) {
-        current = yield* railway.environmentRename({
+        current = yield* railway.renameEnvironment({
           id: current.id,
           input: { name },
         });
@@ -358,7 +358,7 @@ export const EnvironmentProvider = () =>
       const environmentId = output.environmentId;
       if (environmentId.length === 0) return;
       yield* railway
-        .environmentDelete({ id: environmentId })
+        .deleteEnvironment({ id: environmentId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

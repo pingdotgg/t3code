@@ -226,7 +226,7 @@ scope to, so it's bound with no argument and its implementation is
 provided as `SES.SendBounceHttp`:
 
 ```typescript
-// init — inside the Lambda's Effect.gen body
+// Construction — inside the Lambda's Effect.gen body
 const sendBounce = yield* SES.SendBounce();
 ```
 

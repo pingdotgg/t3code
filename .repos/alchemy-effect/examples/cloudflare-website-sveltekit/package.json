@@ -18,7 +18,7 @@
     "@sveltejs/kit": "catalog:frontend",
     "@sveltejs/vite-plugin-svelte": "catalog:frontend",
     "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
+    "@types/node": "catalog:node24",
     "svelte": "catalog:frontend",
     "tailwindcss": "catalog:frontend",
     "typescript": "catalog:build",

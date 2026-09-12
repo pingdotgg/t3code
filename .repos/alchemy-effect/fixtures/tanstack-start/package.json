@@ -15,17 +15,14 @@
   },
   "dependencies": {
     "@effect/sql-pg": "catalog:effect",
-    "@tailwindcss/vite": "^4.1.18",
+    "@tailwindcss/vite": "catalog:frontend",
     "@tanstack/react-devtools": "latest",
-    "@tanstack/react-router": "latest",
+    "@tanstack/react-router": "catalog:frontend",
     "@tanstack/react-router-devtools": "latest",
-    "@tanstack/react-router-ssr-query": "latest",
-    "@tanstack/react-start": "latest",
-    "@tanstack/router-plugin": "^1.132.0",
-    "lucide-react": "^0.545.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.18"
+    "@tanstack/react-start": "catalog:frontend",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend",
+    "tailwindcss": "catalog:frontend"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:cloudflare-runtime",
@@ -36,8 +33,8 @@
     "@tailwindcss/typography": "^0.5.16",
     "@tanstack/devtools-vite": "latest",
     "@types/node": "^22.10.2",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
     "@vitejs/plugin-react": "^5.1.4",
     "effect": "catalog:effect",
     "vite": "catalog:build"

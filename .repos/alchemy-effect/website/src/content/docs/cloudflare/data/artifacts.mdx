@@ -25,7 +25,7 @@ export const Repos = Cloudflare.Artifacts.Namespace("Repos");
 
 ## Create a repo from the Worker
 
-Bind the namespace in the Worker's init phase, then call
+Bind the namespace in the Worker's Construction phase, then call
 `artifacts.create(name)` inside `fetch`. It returns the repo's
 `remote` URL and a clone `token`:
 

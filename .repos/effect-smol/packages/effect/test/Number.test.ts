@@ -219,6 +219,10 @@ describe("clamp", () => {
   it("supports the data-last form", () => {
     assert.strictEqual(pipe(3, N.clamp({ minimum: 1, maximum: 5 })), 3)
   })
+
+  it("clamps NaN to the minimum according to Number.Order", () => {
+    assert.strictEqual(N.clamp(Number.NaN, { minimum: 1, maximum: 5 }), 1)
+  })
 })
 
 describe("min", () => {
@@ -292,6 +296,7 @@ describe("remainder", () => {
   it("preserves the dividend sign, including negative zero", () => {
     assert.strictEqual(N.remainder(-5, 2), -1)
     assertNegativeZero(N.remainder(-4, 2))
+    assertNegativeZero(N.remainder(-0, 2))
   })
 
   it("preserves the dividend sign with negative divisors", () => {

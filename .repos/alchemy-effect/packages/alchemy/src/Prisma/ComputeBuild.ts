@@ -1,3 +1,4 @@
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
@@ -1351,8 +1352,8 @@ const accountStagingEntry = (
   return Effect.void;
 };
 
-const safeFileSize = (source: string, rawSize: FileSystem.Size) => {
-  const size = Number(rawSize);
+const safeFileSize = (source: string, rawSize: ByteSize.ByteSize) => {
+  const size = ByteSize.toNumberUnsafe(rawSize);
   return Number.isSafeInteger(size) && size >= 0
     ? Effect.succeed(size)
     : Effect.fail(

@@ -66,12 +66,11 @@ const SECTIONS: Section[] = [
         "cli/deploy",
         "cli/plan",
         "cli/destroy",
+        "cli/drift",
         "cli/nuke",
         "cli/adopting-resources",
         "cli/dev",
-        "cli/tail",
         "cli/logs",
-        "cli/login",
         "cli/profile",
         "cli/state",
         "cli/inspecting-state",
@@ -100,16 +99,16 @@ const SECTIONS: Section[] = [
   {
     heading: "Infrastructure as Effects",
     intro:
-      "How app code and infrastructure compose: Functions & Servers, Bindings, the init/runtime Phases, and Layers.",
+      "How app code and infrastructure compose: Runtime, Bindings, the Construction and Runtime Phases, and Layers.",
     pages: {
       slugs: [
         "infrastructure-as-effects/index",
-        "infrastructure-as-effects/functions-and-servers",
+        "infrastructure-as-effects/runtime",
         "infrastructure-as-effects/binding",
+        "infrastructure-as-effects/layers",
         "infrastructure-as-effects/event-sources",
         "infrastructure-as-effects/sinks",
         "infrastructure-as-effects/phases",
-        "infrastructure-as-effects/layers",
         "infrastructure-as-effects/circular-bindings",
         "infrastructure-as-effects/custom-runtime",
       ],

@@ -1,12 +1,8 @@
 import type * as cf from "@cloudflare/workers-types";
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FiberSet from "effect/FiberSet";
 import { pipe } from "effect/Function";
-import * as Latch from "effect/Latch";
 import * as Schedule from "effect/Schedule";
-import * as Scope from "effect/Scope";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import {
@@ -235,177 +231,28 @@ export const toHttpClient = (fetcher: {
 
 export const fromCloudflareSocket = (
   cfSocket: globalThis.Socket | cf.Socket,
-): Socket.Socket => {
-  const latch = Latch.makeUnsafe(false);
-  let currentFiberSet: FiberSet.FiberSet<any, any> | undefined;
-  let writerRef: WritableStreamDefaultWriter<Uint8Array> | undefined;
-  const encoder = new TextEncoder();
-  const closeError = (code: number, closeReason?: string) =>
-    new Socket.SocketError({
-      reason: new Socket.SocketCloseError({ code, closeReason }),
-    });
-
-  const runRaw = <_, E, R>(
-    handler: (_: string | Uint8Array) => Effect.Effect<_, E, R> | void,
-    opts?: { readonly onOpen?: Effect.Effect<void> | undefined },
-  ): Effect.Effect<void, Socket.SocketError | E, R> =>
-    Effect.scopedWith(
-      Effect.fn(function* (scope) {
-        // Cloudflare exposes connection establishment as a promise rather than an
-        // event emitter, so we normalize that into the same SocketOpenError shape
-        // Effect uses for the official adapters.
-        yield* Effect.tryPromise({
-          try: () => cfSocket.opened,
-          catch: (cause) =>
-            new Socket.SocketError({
-              reason: new Socket.SocketOpenError({
-                kind: "Unknown",
-                cause,
-              }),
-            }),
-        });
-
-        const reader = cfSocket.readable.getReader();
-        // Mirror `fromTransformStream`: the reader is scoped to a single `runRaw`
-        // invocation and is always cancelled when that scope closes.
-        yield* Scope.addFinalizer(
-          scope,
-          Effect.promise(() => reader.cancel()),
-        );
-
-        const fiberSet = yield* FiberSet.make<
-          any,
-          E | Socket.SocketError
-        >().pipe(Scope.provide(scope));
-        const runFork = yield* FiberSet.runtime(fiberSet)<R>();
-
-        // Keep the remote-close watcher inside the FiberSet instead of attaching a
-        // raw `.then(...)` callback. That matches Effect's pattern of keeping all
-        // background work scoped and lets `FiberSet.join` observe close outcomes.
-        yield* Effect.tryPromise({
-          try: async () => {
-            await cfSocket.closed;
-            throw closeError(1000);
-          },
-          catch: (cause) =>
-            Socket.isSocketError(cause) ? cause : closeError(1006),
-        }).pipe(FiberSet.run(fiberSet));
-
-        // The read loop itself follows `fromTransformStream`: fork the loop into
-        // the FiberSet so handler effects can run concurrently while `join`
-        // remains the single completion point for the socket session.
-        yield* Effect.tryPromise({
-          try: async () => {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                throw closeError(1000);
-              }
-              const result = handler(value);
-              if (Effect.isEffect(result)) {
-                runFork(result);
-              }
-            }
-          },
-          catch: (cause) =>
-            Socket.isSocketError(cause)
-              ? cause
-              : new Socket.SocketError({
-                  reason: new Socket.SocketReadError({ cause }),
-                }),
-        }).pipe(FiberSet.run(fiberSet));
-
-        currentFiberSet = fiberSet;
-        // Writers are gated on the latch exactly like the official adapters so a
-        // caller cannot send data before the read side has been fully installed.
-        latch.openUnsafe();
-        if (opts?.onOpen) yield* opts.onOpen;
-
-        return yield* Effect.catchFilter(
-          FiberSet.join(fiberSet),
-          Socket.SocketCloseError.filterClean(
-            (code) => code === 1000 || code === 1006,
+): Socket.Socket =>
+  // `fromTransformStream` snapshots fiber context, then waits to acquire
+  // the streams until a consumer opens the reader. `runSync` is only that
+  // snapshot — connection still happens on first `socket.reader`.
+  Effect.runSync(
+    Socket.fromTransformStream(
+      Effect.tryPromise({
+        try: () =>
+          Promise.resolve(cfSocket.opened).then(
+            () =>
+              ({
+                readable: cfSocket.readable,
+                writable: cfSocket.writable,
+              }) as Socket.InputTransformStream,
           ),
-          () => Effect.void,
-        );
-      }),
-    ).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          latch.closeUnsafe();
-          currentFiberSet = undefined;
-        }),
-      ),
-    );
-
-  const run = <_, E, R>(
-    handler: (_: Uint8Array) => Effect.Effect<_, E, R> | void,
-    opts?: { readonly onOpen?: Effect.Effect<void> | undefined },
-  ): Effect.Effect<void, Socket.SocketError | E, R> =>
-    runRaw(
-      (data) =>
-        typeof data === "string"
-          ? handler(encoder.encode(data))
-          : handler(data),
-      opts,
-    );
-
-  const decoder = new TextDecoder();
-  const runString = <_, E, R>(
-    handler: (_: string) => Effect.Effect<_, E, R> | void,
-    opts?: { readonly onOpen?: Effect.Effect<void> | undefined },
-  ): Effect.Effect<void, Socket.SocketError | E, R> =>
-    runRaw(
-      (data) =>
-        typeof data === "string"
-          ? handler(data)
-          : handler(decoder.decode(data)),
-      opts,
-    );
-
-  const write = (
-    chunk: Uint8Array | string | Socket.CloseEvent,
-  ): Effect.Effect<void, Socket.SocketError> =>
-    latch.whenOpen(
-      Effect.suspend(() => {
-        if (Socket.isCloseEvent(chunk)) {
-          // `fromTransformStream` signals a local close by completing the
-          // FiberSet's deferred rather than trying to force stream semantics that
-          // don't exist. We do the same here so `runRaw` unwinds through `join`.
-          return Deferred.fail(
-            currentFiberSet!.deferred,
-            closeError(chunk.code, chunk.reason),
-          );
-        }
-        if (!writerRef) {
-          writerRef = cfSocket.writable.getWriter();
-        }
-        const data = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
-        return Effect.tryPromise({
-          try: () => writerRef!.write(data),
-          catch: (cause) =>
-            new Socket.SocketError({
-              reason: new Socket.SocketWriteError({ cause }),
+        catch: (cause) =>
+          new Socket.SocketError({
+            reason: new Socket.SocketOpenError({
+              kind: "Unknown",
+              cause,
             }),
-        });
+          }),
       }),
-    );
-
-  const writer = Effect.acquireRelease(Effect.succeed(write), () =>
-    // Treat writer shutdown as best-effort cleanup. Cloudflare may already have
-    // closed the writable side by the time the scope releases.
-    Effect.promise(async () => {
-      if (writerRef) {
-        await writerRef.close().catch(() => {});
-      }
-    }),
+    ),
   );
-
-  return Socket.Socket.of({
-    [Socket.TypeId]: Socket.TypeId,
-    run,
-    runRaw,
-    runString,
-    writer,
-  });
-};

@@ -41,9 +41,10 @@ import * as SchemaIssue from "./SchemaIssue.ts"
  * @since 4.0.0
  */
 export function makeEffect<S extends Schema.Constraint>(schema: S) {
-  const parser = runWithCompiler<S["Type"], never>(constructorCompiler, SchemaAST.toType(schema.ast))
+  const ast = schema.ast
+  let parser: ReturnType<typeof runWithCompiler<S["Type"], never>>
   return (input: S["~type.make.in"], options?: Schema.MakeOptions): Effect.Effect<S["Type"], SchemaIssue.Issue> => {
-    return parser(
+    return (parser ??= runWithCompiler<S["Type"], never>(constructorCompiler, SchemaAST.toType(ast)))(
       input,
       options?.disableChecks
         ? options?.parseOptions ? { ...options.parseOptions, disableChecks: true } : { disableChecks: true }
@@ -1093,13 +1094,8 @@ function makeParser(
     ? ast.encoding ? [...ast.encoding, constructorDefault] : [constructorDefault]
     : ast.encoding
   const encodingChecks = (ast as any).encodingChecks
-  const astOptions = (checks ? checks[checks.length - 1].annotations : ast.annotations)
-    ?.["parseOptions"]
   if (!links && !checks && !encodingChecks) {
-    if (!astOptions) {
-      return parser
-    }
-    return (input, options) => parser(input, mergeParseOptions(options, astOptions))
+    return parser
   }
   let encodingParsers: ReadonlyArray<Parser> | undefined
   const parseLocal = (
@@ -1161,17 +1157,12 @@ function makeParser(
     return result
   }
   if (!links) {
-    return astOptions
-      ? (input, options) => parseLocal(input, mergeParseOptions(options, astOptions))
-      : parseLocal
+    return parseLocal
   }
   return (
     input: unknown,
     options: SchemaAST.ParseOptions
   ) => {
-    if (astOptions) {
-      options = mergeParseOptions(options, astOptions)
-    }
     const parsers = encodingParsers ??= links.map((link) => compile(link.to))
     let current = input
     let result = parsers[parsers.length - 1](input, options)

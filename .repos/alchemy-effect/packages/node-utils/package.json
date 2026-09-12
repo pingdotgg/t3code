@@ -1,7 +1,7 @@
 {
   "name": "@alchemy.run/node-utils",
-  "version": "2.0.0-beta.76",
-  "description": "Gitignore-compatible path matching for Alchemy packages.",
+  "version": "2.0.0-beta.77",
+  "description": "Runtime utilities for Alchemy packages.",
   "homepage": "https://alchemy.run",
   "author": "Sam Goodwin <sam@alchemy.run>",
   "keywords": [
@@ -37,7 +37,31 @@
       "types": "./lib/ignore.d.ts",
       "bun": "./src/ignore.ts",
       "import": "./lib/ignore.js"
+    },
+    "./import-loader": {
+      "types": "./lib/import-loader.d.ts",
+      "bun": "./src/import-loader.ts",
+      "import": "./lib/import-loader.js"
+    },
+    "./register-oxc": {
+      "types": "./lib/register-oxc.d.ts",
+      "bun": "./src/register-oxc.ts",
+      "import": "./lib/register-oxc.js"
+    },
+    "./watch-import": {
+      "types": "./lib/watch-import.d.ts",
+      "bun": "./src/watch-import.ts",
+      "import": "./lib/watch-import.js"
+    },
+    "./watch-import-bun": {
+      "types": "./lib/watch-import-bun.d.ts",
+      "bun": "./src/watch-import-bun.ts",
+      "import": "./lib/watch-import-bun.js"
     }
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "rolldown": "catalog:build"
   },
   "publishConfig": {
     "access": "public"

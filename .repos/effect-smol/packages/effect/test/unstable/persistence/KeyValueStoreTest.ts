@@ -3,8 +3,9 @@ import type { Layer } from "effect"
 import { Effect, Encoding } from "effect"
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
 
+// Tests clear the shared store.
 export const suite = (name: string, layer: Layer.Layer<KeyValueStore.KeyValueStore, unknown>) =>
-  it.layer(layer, { timeout: { seconds: 30 } })(`KeyValueStore (${name})`, (it) => {
+  it.layer(layer, { timeout: { seconds: 30 }, concurrent: false })(`KeyValueStore (${name})`, (it) => {
     it.effect("set + get + size", () =>
       Effect.gen(function*() {
         const kv = yield* KeyValueStore.KeyValueStore

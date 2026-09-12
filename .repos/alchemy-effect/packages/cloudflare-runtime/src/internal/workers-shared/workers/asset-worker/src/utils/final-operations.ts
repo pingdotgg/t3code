@@ -18,6 +18,7 @@ export function handleError(
       sentry.captureException(err);
     }
 
+    analytics.setData({ servedBy: "error" });
     if (err instanceof Error) {
       analytics.setData({ error: err.message });
     }

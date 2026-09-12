@@ -131,7 +131,7 @@ const wrapWorkflowEvent = (event: any): WorkflowEventService["Service"] => ({
       : new Date(event.timestamp),
   instanceId: event.instanceId ?? "",
   workflowName: event.workflowName ?? "",
-  schedule: event.schedule,
+  schedule: event.schedule ?? undefined,
 });
 
 export const wrapWorkflowStep = (step: any): WorkflowStep["Service"] => ({
@@ -192,6 +192,8 @@ export const wrapWorkflowStep = (step: any): WorkflowStep["Service"] => ({
 const toWorkflowStepConfig = (
   options: WorkflowTaskOptions<any, any, any>,
 ): WorkflowStepConfig | undefined => {
-  if (!options.retries && !options.timeout) return undefined;
-  return { retries: options.retries, timeout: options.timeout };
+  const config: WorkflowStepConfig = {};
+  if (options.retries) config.retries = options.retries;
+  if (options.timeout !== undefined) config.timeout = options.timeout;
+  return Object.keys(config).length > 0 ? config : undefined;
 };

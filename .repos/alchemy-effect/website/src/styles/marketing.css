@@ -2419,8 +2419,6 @@ body.alc-root,
   display: flex;
   justify-content: center;
   margin: 0 auto 18px;
-  color: var(--alc-fg-3);
-  opacity: 0.65;
 }
 .alc-hero__mark svg {
   display: block;

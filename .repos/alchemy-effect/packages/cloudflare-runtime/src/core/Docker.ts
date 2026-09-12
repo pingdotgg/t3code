@@ -84,11 +84,11 @@ const DEFAULT_DOCKER_HOST =
     : "unix:///var/run/docker.sock";
 const DEV_CONTAINER_PREFIX = "alchemy-dev";
 
-const DockerHost = Config.string("DOCKER_HOST");
-const DockerBin = Config.string("DOCKER_BIN").pipe(
+const DockerHost = Config.String("DOCKER_HOST");
+const DockerBin = Config.String("DOCKER_BIN").pipe(
   Config.orElse(() => Config.succeed("docker")),
 );
-const ContainerEgressInterceptorImage = Config.string(
+const ContainerEgressInterceptorImage = Config.String(
   "CONTAINER_EGRESS_INTERCEPTOR_IMAGE",
 ).pipe(
   Config.orElse(() =>

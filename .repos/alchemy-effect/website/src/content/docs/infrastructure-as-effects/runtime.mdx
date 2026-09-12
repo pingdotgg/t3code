@@ -1,0 +1,438 @@
+---
+title: Runtime
+description: A Runtime is a Resource that carries the code it runs — a Worker, Lambda Function, Container, or Server declared with the Effectful Constructor pattern. Bind what you need, return what you expose.
+---
+
+In Alchemy, a **Runtime** is a [Resource](/infrastructure-as-code/resource)
+that carries the code it runs: a Cloudflare Worker, Lambda Function,
+ECS Task, Container, or Server. The props are the cloud configuration. The
+Effect is the code:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("hello.txt");
+        return obj
+          ? HttpServerResponse.text(yield* obj.text())
+          : HttpServerResponse.text("Not found", { status: 404 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
+);
+```
+
+One deploy ships both. `main: import.meta.url` tells Alchemy where the
+code lives. At deploy time Alchemy bundles this file's default export,
+which by convention is the Worker itself, and uploads that bundle as
+the Worker's script. Most Runtimes need no other props, because
+everything else they depend on comes in through bindings.
+
+The rest of this page follows that Effect. Alchemy also supports the
+traditional two-file shape, a config file pointing at a plain
+`async fetch` handler, compared in
+[Effect handlers vs async handlers](#effect-handlers-vs-async-handlers).
+
+## The Effectful Constructor
+
+Every Runtime is declared with the same Effect. It binds
+the resources it needs, then returns the interface it exposes:
+
+```typescript
+Effect.gen(function* () {
+  // bind what you need
+  const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+
+  // return what you expose
+  return {
+    fetch: Effect.gen(function* () {
+      /* use bucket */
+    }),
+  };
+});
+```
+
+This is the **Effectful Constructor**. The outer Effect is the
+**Construction phase**, which runs at deploy time and again at cold
+start. What it returns is the **Runtime phase**, which runs per
+request inside the deployed Runtime. A Worker or Lambda Function
+returns its handlers. A Durable Object returns its RPC methods. A
+Workflow returns its run function. A
+[Layer](/infrastructure-as-effects/layers) returns a service. Learn it
+once and every Runtime in Alchemy is a variation on it.
+
+## Fetch
+
+`fetch` serves HTTP. It is a per-request Effect. Yield
+`HttpServerRequest` to read the request and return an
+`HttpServerResponse`:
+
+```typescript
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+Effect.gen(function* () {
+  return {
+    fetch: Effect.gen(function* () {
+      const request = yield* HttpServerRequest;
+      return HttpServerResponse.text(`hello from ${request.url}`);
+    }),
+  };
+});
+```
+
+It runs inside the deployed Runtime, once per request.
+[Phases](/infrastructure-as-effects/phases) covers exactly when.
+
+## RPC
+
+The interface isn't limited to `fetch`. Add methods that return an
+`Effect` or a `Stream`, and any resource that binds this Worker calls
+them through a typed client:
+
+```typescript
+export default class Greeter extends Cloudflare.Worker<Greeter>()(
+  "Greeter",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }),
+) {}
+```
+
+Another Worker binds `Greeter` and calls `greet` as if it were local:
+
+```typescript
+import Greeter from "./Greeter.ts";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const greeter = yield* Cloudflare.Workers.bindWorker(Greeter);
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text(yield* greeter.greet("world"));
+      }),
+    };
+  }),
+);
+```
+
+No schema, no runtime validation. Serialization is automatic and
+`greeter.greet` is typed from the class. This is
+[Schemaless RPC](/apis/schemaless), the default for internal calls. The
+[APIs](/apis) section adds the schema'd surfaces for trust boundaries.
+
+## Bindings
+
+The `yield*` lines at the top of the constructor are Bindings. Each one
+connects a resource to this Runtime and hands back a client:
+
+```typescript
+const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+const kv = yield* Cloudflare.KV.ReadWriteNamespace(Sessions);
+
+// inside fetch
+yield* bucket.put("key", "value");
+yield* kv.get("session-id");
+```
+
+A Cloudflare R2 binding and an AWS S3 binding look the same from here.
+What differs is what they generate at deploy time: a native Worker
+binding on one, an IAM statement and an environment variable on the
+other. See [Bindings](/infrastructure-as-effects/binding) for how they
+work.
+
+## Layers
+
+A Binding is infrastructure the Runtime uses directly. A Layer packages
+infrastructure behind a service of your own. Declare a
+`Context.Service` for what the handler needs, then implement it with a
+Layer that owns its own resources and bindings:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
+
+export class JobService extends Context.Service<
+  JobService,
+  { getJob(id: string): Effect.Effect<Job, JobError, Alchemy.RuntimeContext> }
+>()("JobService") {}
+
+export const JobServiceKV = Layer.effect(
+  JobService,
+  Effect.gen(function* () {
+    const Jobs = yield* Cloudflare.KV.Namespace("Jobs");
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(Jobs);
+
+    return {
+      getJob: (id: string) => kv.get<Job>(id, "json"),
+    };
+  }),
+);
+```
+
+The Runtime yields the service and provides the Layer:
+
+```typescript
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const jobs = yield* JobService;
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.json(yield* jobs.getJob("job-1"));
+      }),
+    };
+  }).pipe(
+    Effect.provide(
+      JobServiceKV.pipe(Layer.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+    ),
+  ),
+);
+```
+
+Providing the Layer is what brings the infrastructure in. On the next
+deploy the `Jobs` namespace is created and bound to this Worker, and
+the handler only ever sees `JobService`. Swap `JobServiceKV` for a Layer
+backed by DynamoDB and the handler doesn't change. This is the
+fundamental building block of Infrastructure as Effects.
+
+:::note
+[Layers](/infrastructure-as-effects/layers) builds one from scratch and
+shows the swap across clouds.
+:::
+
+## Three ways to declare one
+
+The inline form above is enough when nothing else needs to reference
+the Worker by name:
+
+```typescript
+export default Cloudflare.Worker("Api", { main: import.meta.url }, effect);
+```
+
+Wrap it in a class and the type becomes nominal. Hovers, errors, and
+Stack outputs say `Api` instead of an anonymous shape:
+
+```typescript
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  effect,
+) {}
+```
+
+The third form splits identity from implementation. The class declares
+only a **Tag**. `.make(props, effect)` produces the implementation
+**Layer**:
+
+```typescript
+// src/Api.ts
+export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
+
+export default Api.make(
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    /* the Effectful Constructor */
+  }),
+);
+```
+
+The Layer is provided to the Stack, not to another Worker:
+
+```typescript
+// alchemy.run.ts
+import ApiLive, { Api } from "./src/Api.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }).pipe(Effect.provide(ApiLive)),
+);
+```
+
+Other Runtimes bind to the Tag, never the implementation. Importing a
+Tag pulls in no runtime code, so a Worker that binds `Api` doesn't
+bundle `Api`'s implementation, which may not even target the same
+runtime. One Tag can also have several implementations, each consumer
+providing the one that fits. This split is what makes
+[Circular Bindings](/infrastructure-as-effects/circular-bindings)
+possible.
+
+## Effect handlers vs async handlers
+
+The Effect style gives handlers typed errors, composable retries, and
+bindings resolved through Effect's context:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+    return {
+      fetch: Effect.gen(function* () {
+        /* ... */
+      }),
+    };
+  }),
+);
+```
+
+Because bindings are context, a handler can depend on a service of
+your own instead of a resource. With the `JobService` contract and
+`JobServiceKV` Layer from [Layers](#layers) above, the Worker yields
+the service and provides the Layer. The namespace comes with it, and
+swapping in a Layer backed by DynamoDB changes nothing in the handler:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const jobs = yield* JobService;
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.json(yield* jobs.getJob("job-1"));
+      }),
+    };
+  }).pipe(Effect.provide(JobServiceKV)),
+);
+```
+
+The async style is a standard `async fetch`. Bindings go on the
+resource's `env` prop and are typed with `InferEnv`:
+
+```typescript
+// alchemy.run.ts
+export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { Uploads },
+});
+```
+
+```typescript
+// src/worker.ts
+import type { WorkerEnv } from "../alchemy.run.ts";
+
+export default {
+  async fetch(request: Request, env: WorkerEnv) {
+    const obj = await env.Uploads.get("hello.txt");
+    return obj
+      ? new Response(await obj.text())
+      : new Response("Not found", { status: 404 });
+  },
+};
+```
+
+There is no service boundary here. The handler reaches for `env.Uploads`
+directly, so a different storage backend means a different handler.
+
+Both styles deploy through the same provider and produce the same
+artifact. The Effect style unlocks [Layers](#layers), structured
+retries, and fine-grained testing. The async style fits existing
+handler code.
+
+## Instance scope vs request scope
+
+The constructor runs once per instance: a Worker isolate, a Lambda
+sandbox, a server process. Each event runs the handler in a fresh
+`Scope`:
+
+```typescript
+Effect.gen(function* () {
+  // instance scope: runs once, reused by every event
+  const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+
+  return {
+    fetch: Effect.gen(function* () {
+      // request scope: runs per event, closed when the event settles
+    }),
+  };
+});
+```
+
+Build things at instance scope. Use things at request scope:
+
+```typescript
+Effect.gen(function* () {
+  const secret = yield* fetchSecret;
+  // ✓ one-shot I/O producing a plain value, cached for every event
+
+  const conn = yield* acquireConnection;
+  // ✗ disposable. The instance scope may never close, so the
+  //   connection may never be released
+
+  return {
+    fetch: Effect.gen(function* () {
+      const conn = yield* acquireConnection;
+      // ✓ acquired per event, released when the event settles
+    }),
+  };
+});
+```
+
+Anything shared across calls within one event is memoized on the
+request scope. `Drizzle.Postgres` opens its pool on the first query of
+an event, every query in that event reuses it, and the pool closes when
+the event settles. The
+[SQL connection lifecycle](/sql/effect-sql/lifecycle) is the canonical
+statement of this contract.
+
+A finalizer added inside a handler runs when the event settles:
+
+```typescript
+fetch: Effect.gen(function* () {
+  yield* Effect.addFinalizer(() => flushMetrics.pipe(Effect.ignore));
+  return HttpServerResponse.text("ok");
+}),
+```
+
+On workerd it runs after the response, via `ctx.waitUntil`. On Lambda
+it runs before the response leaves, so keep it cheap and put anything
+that must not be lost in the handler itself.
+
+Instance finalizers are best effort. On workerd they never run, because
+isolates are frozen or evicted without a teardown hook. On Lambda they
+get a 500 ms `SIGTERM` window at spin-down, skipped on hard failures.
+On servers they run on graceful process exit. Design so nothing needs
+instance-level cleanup.
+
+## Where next
+
+- [Bindings](/infrastructure-as-effects/binding) — what
+  `yield* ReadWriteBucket(Uploads)` generates: IAM, env injection, a
+  typed client.
+- [APIs](/apis) — how bound resources call the methods you return.
+- [Phases](/infrastructure-as-effects/phases) — when the constructor
+  runs vs the interface it returns, and why.
+- [Custom Runtime](/infrastructure-as-effects/custom-runtime) — bring
+  the Runtime model to a new compute target.

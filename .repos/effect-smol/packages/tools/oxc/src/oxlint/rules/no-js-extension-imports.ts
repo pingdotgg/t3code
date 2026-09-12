@@ -44,7 +44,7 @@ const rule: CreateRule = {
       context.report({
         node: source,
         message: `Use "${tsExt}" extension instead of "${ext}" for relative imports`,
-        fix: (fixer: Fixer) => fixer.replaceTextRange(source.range, `"${fixedSource}"`)
+        fix: (fixer: Fixer) => fixer.replaceTextRange(source.range, JSON.stringify(fixedSource))
       })
     }
 

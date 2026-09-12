@@ -10,7 +10,7 @@ import { SingleShotGen } from "../Utils.ts"
 import { PipeInspectableProto } from "./core.ts"
 import * as option from "./option.ts"
 
-const TypeId = "~effect/data/Result"
+const TypeId = "~effect/Result"
 
 const CommonProto = {
   [TypeId]: {
@@ -80,18 +80,22 @@ export const isSuccess = <A, E>(result: Result.Result<A, E>): result is Result.S
   result._tag === "Success"
 
 /** @internal */
-export const fail = <E>(failure: E): Result.Result<never, E> => {
-  const a = Object.create(FailureProto)
-  a.failure = failure
-  return a
-}
+const FailureImpl = function(this: any, failure: unknown) {
+  this.failure = failure
+} as unknown as { new<E>(failure: E): Result.Result<never, E>; prototype: any }
+FailureImpl.prototype = FailureProto
 
 /** @internal */
-export const succeed = <A>(success: A): Result.Result<A> => {
-  const a = Object.create(SuccessProto)
-  a.success = success
-  return a
-}
+export const fail = <E>(failure: E): Result.Result<never, E> => new FailureImpl(failure)
+
+/** @internal */
+const SuccessImpl = function(this: any, success: unknown) {
+  this.success = success
+} as unknown as { new<A>(success: A): Result.Result<A>; prototype: any }
+SuccessImpl.prototype = SuccessProto
+
+/** @internal */
+export const succeed = <A>(success: A): Result.Result<A> => new SuccessImpl(success)
 
 /** @internal */
 export const getFailure = <A, E>(self: Result.Result<A, E>): Option<E> =>

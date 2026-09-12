@@ -1,4 +1,5 @@
 import { defineConfig, type UserConfig } from "tsdown";
+import { DEFAULT_COMPATIBILITY_DATE } from "./src/core/internal/constants.ts";
 import {
   InternalWorkerExportPlugin,
   RuntimeSubpathExportPlugin,
@@ -31,8 +32,9 @@ const workerConfig = (
   // depth limit, so bridge through `unknown`.
   plugins: [
     cloudflare({
-      compatibilityDate: "2026-03-10",
+      compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
       compatibilityFlags: options.compatibilityFlags,
+      externalRequire: false,
     }),
     InternalWorkerExportPlugin(),
   ] as unknown as UserConfig["plugins"],
@@ -69,7 +71,8 @@ export default defineConfig([
     "!src/core/internal/shared.worker.ts",
     "!src/core/**/R2Bucket.worker.ts",
   ]),
-  // The R2 worker uses `node:crypto` and runs with `nodejs_compat`. Don't
+  // The R2 worker uses `node:crypto`; the 2026-08-31 date enables Node.js
+  // compatibility without a redundant flag. Don't
   // clean the shared `dist/workers` directory, which the previous config
   // already populated. The entry is named explicitly to keep the output at
   // the path `worker:` imports resolve to.
@@ -78,7 +81,7 @@ export default defineConfig([
       "bindings/r2-bucket/R2Bucket.worker":
         "src/core/bindings/r2-bucket/R2Bucket.worker.ts",
     },
-    { compatibilityFlags: ["nodejs_compat"], clean: false },
+    { clean: false },
   ),
   {
     cwd: ".",
@@ -123,7 +126,12 @@ export default defineConfig([
       mangle: false,
     },
     plugins: [
-      cloudflare({ compatibilityDate: "2026-03-10" }),
+      cloudflare({
+        compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+        // These workers are exported as single modules, so they cannot carry
+        // the helper chunk emitted by the external-require rewrite.
+        externalRequire: false,
+      }),
       InternalWorkerExportPlugin(),
     ],
     deps: {

@@ -2,6 +2,9 @@ import { assert, describe, it } from "@effect/vitest"
 import { Duration, Effect } from "effect"
 import { TestClock } from "effect/testing"
 import { RateLimiter } from "effect/unstable/persistence"
+import * as RateLimiterTest from "./RateLimiterTest.ts"
+
+RateLimiterTest.suite("memory", RateLimiter.layerStoreMemory)
 
 describe(`RateLimiter`, () => {
   it.effect("supports partially applied sleep", () =>
@@ -36,6 +39,89 @@ describe(`RateLimiter`, () => {
     ))
 
   describe("fixed-window", () => {
+    it.effect("reports a full-window reset for an exact reservation", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        const result = yield* limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "delay",
+          key: "exact",
+          limit: 5,
+          window: "1 minute",
+          tokens: 5
+        })
+
+        assert.strictEqual(result.limit, 5)
+        assert.strictEqual(result.remaining, 0)
+        assert.deepStrictEqual(result.delay, Duration.zero)
+        assert.strictEqual(Duration.toMillis(result.resetAfter), 60_000)
+      }).pipe(Effect.provide(RateLimiter.layerStoreMemory)))
+
+    it.effect("reports a fresh partial reset lifetime without rounding", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        const result = yield* limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "delay",
+          key: "partial",
+          limit: 5,
+          window: "1 minute",
+          tokens: 1
+        })
+
+        assert.strictEqual(result.limit, 5)
+        assert.strictEqual(result.remaining, 4)
+        assert.deepStrictEqual(result.delay, Duration.zero)
+        assert.strictEqual(Duration.toMillis(result.resetAfter), 12_000)
+      }).pipe(Effect.provide(RateLimiter.layerStoreMemory)))
+
+    it.effect("subtracts elapsed time from reset metadata", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        yield* limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "delay",
+          key: "elapsed",
+          limit: 5,
+          window: "1 minute",
+          tokens: 4
+        })
+        yield* TestClock.adjust("10 seconds")
+        const result = yield* limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "delay",
+          key: "elapsed",
+          limit: 5,
+          window: "1 minute",
+          tokens: 1
+        })
+
+        assert.strictEqual(result.limit, 5)
+        assert.strictEqual(result.remaining, 0)
+        assert.deepStrictEqual(result.delay, Duration.zero)
+        assert.strictEqual(Duration.toMillis(result.resetAfter), 50_000)
+      }).pipe(Effect.provide(RateLimiter.layerStoreMemory)))
+
+    it.effect("reports the exact reserved lifetime without changing overflow delay", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        const consume = limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "delay",
+          key: "overflow",
+          limit: 5,
+          window: "1 minute",
+          tokens: 1
+        })
+        for (let i = 0; i < 5; i++) yield* consume
+        const result = yield* consume
+
+        assert.strictEqual(result.limit, 5)
+        assert.strictEqual(result.remaining, -1)
+        assert.deepStrictEqual(result.delay, Duration.minutes(1))
+        assert.strictEqual(Duration.toMillis(result.resetAfter), 72_000)
+      }).pipe(Effect.provide(RateLimiter.layerStoreMemory)))
+
     it.effect("returns accumulated delays after the fixed window is exceeded", () =>
       Effect.gen(function*() {
         const limiter = yield* RateLimiter.make

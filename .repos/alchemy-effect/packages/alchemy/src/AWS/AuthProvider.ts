@@ -1,126 +1,174 @@
 import * as Floci from "@alchemy.run/floci";
 import * as DistilledAuth from "@distilled.cloud/aws/Auth";
-import { Credentials } from "@distilled.cloud/aws/Credentials";
+import type { CredentialsError } from "@distilled.cloud/aws/Credentials";
+import {
+  Credentials,
+  ExpiredSSOToken,
+  InvalidSSOToken,
+} from "@distilled.cloud/aws/Credentials";
 import * as STS from "@distilled.cloud/aws/sts";
-import * as Console from "effect/Console";
+import * as EffectConsole from "effect/Console";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import type * as HttpClient from "effect/unstable/http/HttpClient";
 import { ChildProcess } from "effect/unstable/process";
+import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOs from "node:os";
 import {
   AuthError,
   AuthProviderLayer,
-  type ConfigureContext,
+  NeedsReauth,
+  reconfigureHint,
+  refreshHint,
+  type ConfigureField,
+  type ConfigureMethod,
+  type ProviderDetailLine,
 } from "../Auth/AuthProvider.ts";
-import { CredentialsStore, displayRedacted } from "../Auth/Credentials.ts";
+import { displayRedacted } from "../Auth/Credentials.ts";
 import {
   getEnv,
   getEnvRedacted,
   getEnvRedactedRequired,
   getEnvRequired,
-  retryOnce,
+  mapPromptCancellation,
 } from "../Auth/Env.ts";
-import * as Clank from "../Util/Clank.ts";
+import {
+  storedSecret,
+  storedValueText,
+  validateFieldValues,
+} from "../Auth/StoredAuthProvider.ts";
+import * as Interaction from "../Interaction.ts";
 import * as Endpoint from "./Endpoint.ts";
 import * as Region from "./Region.ts";
 
 export const AWS_AUTH_PROVIDER_NAME = "AWS";
-
-/** Default endpoint of a local AWS emulator (floci / LocalStack). */
 export const DEFAULT_LOCAL_ENDPOINT = `http://localhost:${Floci.DEFAULT_FLOCI_PORT}`;
 
 /**
- * Dummy account stamped on every floci / `{ method: "local" }` environment.
+ * Dummy account stamped on every floci environment.
  * A custom `AWS_ENDPOINT_URL` on env/sso credentials does NOT use this —
  * those keep the real account from STS / `AWS_ACCOUNT_ID`.
  */
 export const LOCAL_ACCOUNT_ID = "000000000000";
 
-export type AwsAuthConfig =
-  | { method: "sso"; ssoProfile: string }
-  | { method: "stored" }
-  | { method: "env" }
-  | {
-      /**
-       * Local AWS emulator (floci, LocalStack, or any endpoint-compatible
-       * emulator). Resolves dummy credentials and points every AWS call at
-       * the configured endpoint — no AWS account required.
-       */
-      method: "local";
-      /** @default "http://localhost:4566" */
-      endpoint?: string;
-      /** @default "us-east-1" */
-      region?: string;
-      /** @default "000000000000" */
-      accountId?: string;
-      /**
-       * Ensure the floci container is running (via `@alchemy.run/floci`'s
-       * `ensureFloci`) when nothing is listening on the endpoint. Defaults to
-       * true for the default endpoint only.
-       * @default endpoint === "http://localhost:4566"
-       */
-      autoStart?: boolean;
-    };
+/**
+ * distilled's SSO credential loader `Console.log`s its expired-token
+ * diagnostic in addition to failing with the typed `ExpiredSSOToken`. The
+ * typed error already carries the same message (and the profile UI surfaces
+ * it as a reauth diagnostic), so the raw console write only smears over the
+ * Interaction renderer. Provide this no-op Console on every distilled
+ * `loadProfileCredentials` call so distilled has nowhere to print.
+ */
+const noop = () => {};
+export const silentConsole: EffectConsole.Console = {
+  assert: noop,
+  clear: noop,
+  count: noop,
+  countReset: noop,
+  debug: noop,
+  dir: noop,
+  dirxml: noop,
+  error: noop,
+  group: noop,
+  groupCollapsed: noop,
+  groupEnd: noop,
+  info: noop,
+  log: noop,
+  table: noop,
+  time: noop,
+  timeEnd: noop,
+  timeLog: noop,
+  trace: noop,
+  warn: noop,
+};
+
+/** Typed values stored in an AWS provider profile document. */
+export const AwsAuthConfigSchema = Schema.Union([
+  Schema.Struct({
+    method: Schema.Literal("sso"),
+    ssoProfile: Schema.String,
+    authorizationMethod: Schema.optional(
+      Schema.Union([Schema.Literal("oauth"), Schema.Literal("device")]),
+    ),
+  }),
+  Schema.Struct({
+    method: Schema.Literal("stored"),
+    accountId: Schema.optional(Schema.String),
+    accessKeyId: Schema.String,
+    secretAccessKey: Schema.String,
+    sessionToken: Schema.optional(Schema.String),
+    region: Schema.String,
+  }),
+]);
+export type AwsAuthConfig = typeof AwsAuthConfigSchema.Type;
 
 const options: Array<{
   value: AwsAuthConfig["method"];
   label: string;
-  hint?: string;
+  description?: string;
 }> = [
   {
     value: "sso",
     label: "SSO",
-    hint: "aws sso login — credentials loaded from AWS SSO cache",
-  },
-  {
-    value: "env",
-    label: "Environment Variables",
-    hint: "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY",
+    description: "sign in with an AWS IAM Identity Center profile",
   },
   {
     value: "stored",
-    label: "Stored",
-    hint: "stored in ~/.alchemy/credentials",
-  },
-  {
-    value: "local",
-    label: "Local emulator",
-    hint: "floci / LocalStack on localhost:4566 — no AWS account",
+    label: "Access Keys",
+    description: "enter an access key and secret directly",
   },
 ];
 
-export interface AwsStoredCredentials {
-  accountId: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  sessionToken?: string;
-  region: string;
-}
+/** `--set` fields for `--method stored` (static access keys, persisted). */
+const keysFields: ReadonlyArray<ConfigureField> = [
+  { name: "accessKeyId", label: "AWS Access Key ID" },
+  { name: "secretAccessKey", label: "AWS Secret Access Key", secret: true },
+  {
+    name: "sessionToken",
+    label: "AWS Session Token",
+    secret: true,
+    optional: true,
+  },
+  { name: "region", label: "AWS Region", placeholder: "us-east-1" },
+];
+
+/** `--set` fields for `--method sso` (nothing persisted; profile validated). */
+const ssoFields: ReadonlyArray<ConfigureField> = [
+  { name: "ssoProfile", label: "AWS profile name (from ~/.aws/config)" },
+];
+
+const configureMethods: ReadonlyArray<ConfigureMethod> = [
+  { method: "stored", fields: keysFields },
+  { method: "sso", fields: ssoFields },
+];
 
 export interface AwsResolvedCredentials {
   accountId: string;
-  credentials: Effect.Effect<{
-    accessKeyId: Redacted.Redacted<string>;
-    secretAccessKey: Redacted.Redacted<string>;
-    sessionToken: Redacted.Redacted<string> | undefined;
-    region: string;
-  }>;
+  credentials: Effect.Effect<AwsCredentials, CredentialsError>;
   region: string;
-  /**
-   * Custom AWS endpoint (local emulator). Flows into
-   * `AWSEnvironment.endpoint`, which `Endpoint.fromEnvironment` applies to
-   * every AWS SDK call.
-   */
   endpoint?: string;
   source: {
-    type: AwsAuthConfig["method"];
+    type: AwsAuthConfig["method"] | "env";
     details?: string;
   };
+}
+
+interface AwsCredentials {
+  accessKeyId: Redacted.Redacted<string>;
+  secretAccessKey: Redacted.Redacted<string>;
+  sessionToken: Redacted.Redacted<string> | undefined;
+  region: string;
 }
 
 /**
@@ -131,7 +179,7 @@ export interface AwsResolvedCredentials {
  */
 export const applyEnvRegionOverride = <C extends { region: string }>(
   creds: C,
-): Effect.Effect<C> =>
+): Effect.Effect<C, AuthError> =>
   getEnv("AWS_REGION").pipe(
     Effect.map((envRegion) =>
       envRegion ? { ...creds, region: envRegion } : creds,
@@ -141,7 +189,7 @@ export const applyEnvRegionOverride = <C extends { region: string }>(
 /**
  * Layer that registers the AWS {@link AuthProvider} into the
  * {@link AuthProviders} registry when built. Include this in the AWS
- * `providers()` layer so `alchemy login` can discover it.
+ * `providers()` layer so the alchemy CLI can discover it.
  */
 export const AwsAuth = AuthProviderLayer<
   AwsAuthConfig,
@@ -149,20 +197,17 @@ export const AwsAuth = AuthProviderLayer<
 >()(
   AWS_AUTH_PROVIDER_NAME,
   Effect.gen(function* () {
-    const store = yield* CredentialsStore;
-
+    const interaction = Interaction.accessors;
     const getAccountId = ({
       accessKeyId,
       secretAccessKey,
       sessionToken,
       region,
-      endpoint,
     }: {
       accessKeyId: Redacted.Redacted<string>;
       secretAccessKey: Redacted.Redacted<string>;
       sessionToken?: Redacted.Redacted<string>;
       region: string;
-      endpoint?: string;
     }) =>
       STS.getCallerIdentity({}).pipe(
         Effect.provide(
@@ -181,15 +226,13 @@ export const AwsAuth = AuthProviderLayer<
             // deadlock: it derives the region from AWSEnvironment, which is the
             // very service still being constructed by this STS call.
             Region.of(region),
-            // A custom endpoint (local emulator) must apply to this STS call
-            // too — the default resolver would call real AWS. When there is
-            // no custom endpoint we must still provide `Endpoint.none`
-            // rather than leaving it unset: falling through to the ambient
-            // `Endpoint.fromEnvironment` reads it off AWSEnvironment — the
-            // very service this STS call is constructing — and deadlocks
-            // the fiber on its own in-flight cache (no I/O, no timer, no
-            // output). Same reason as `Region.of` above.
-            endpoint ? Endpoint.of(endpoint) : Endpoint.none,
+            // Provide `Endpoint.none` rather than leaving it unset: falling
+            // through to the ambient `Endpoint.fromEnvironment` reads it off
+            // AWSEnvironment — the very service this STS call is
+            // constructing — and deadlocks the fiber on its own in-flight
+            // cache (no I/O, no timer, no output). Same reason as
+            // `Region.of` above.
+            Endpoint.none,
           ),
         ),
         Effect.flatMap((self) =>
@@ -200,26 +243,34 @@ export const AwsAuth = AuthProviderLayer<
       );
 
     const loginStored = Effect.fn(function* (profileName: string) {
-      const accessKeyId = yield* Clank.text({
-        message: "AWS Access Key ID",
-        validate: (v) => (v.length === 0 ? "Required" : undefined),
-      }).pipe(retryOnce);
+      const accessKeyId = yield* interaction.prompt
+        .text({
+          message: "AWS Access Key ID",
+          validate: (v) => (v.length === 0 ? "Required" : undefined),
+        })
+        .pipe(mapPromptCancellation);
 
-      const secretAccessKey = yield* Clank.password({
-        message: "AWS Secret Access Key",
-        validate: (v) => (v.length === 0 ? "Required" : undefined),
-      }).pipe(retryOnce);
+      const secretAccessKey = yield* interaction.prompt
+        .password({
+          message: "AWS Secret Access Key",
+          validate: (v) => (v.length === 0 ? "Required" : undefined),
+        })
+        .pipe(mapPromptCancellation);
 
-      const sessionToken = yield* Clank.text({
-        message: "AWS Session Token (optional — press Enter or Esc to skip)",
-        placeholder: "(none)",
-      }).pipe(Effect.catch(() => Effect.succeed("")));
+      const sessionToken = yield* interaction.prompt
+        .password({
+          message: "AWS Session Token (optional; press Enter to skip)",
+          placeholder: "(none)",
+        })
+        .pipe(mapPromptCancellation);
 
-      const region = yield* Clank.text({
-        message: "AWS Region",
-        placeholder: "us-east-1",
-        defaultValue: "us-east-1",
-      }).pipe(retryOnce);
+      const region = yield* interaction.prompt
+        .text({
+          message: "AWS Region",
+          placeholder: "us-east-1",
+          defaultValue: "us-east-1",
+        })
+        .pipe(mapPromptCancellation);
 
       const accountId = yield* getAccountId({
         accessKeyId: Redacted.make(accessKeyId),
@@ -228,372 +279,402 @@ export const AwsAuth = AuthProviderLayer<
         region,
       });
 
-      yield* store.write<AwsStoredCredentials>(profileName, "aws", {
+      yield* interaction.output.success("AWS credentials saved.");
+
+      return {
+        method: "stored" as const,
         accountId,
         accessKeyId,
         secretAccessKey,
-        sessionToken,
+        sessionToken: sessionToken || undefined,
         region,
-      });
-      yield* Clank.success("AWS credentials saved.");
-
-      return { method: "stored" as const };
+      };
     });
 
     const configureInteractive = (profileName: string) =>
-      Clank.select({
-        message: "AWS authentication method",
-        options,
-      }).pipe(
-        Effect.flatMap((method) =>
-          Match.value(method).pipe(
-            Match.when("env", () => Effect.succeed({ method: "env" as const })),
-            Match.when("sso", () =>
-              Effect.gen(function* () {
-                const ssoProfile = yield* Clank.text({
-                  message: "AWS profile name (from ~/.aws/config)",
-                  placeholder: "default",
-                  defaultValue: "default",
-                });
-
-                const config = {
-                  method: "sso" as const,
-                  ssoProfile: ssoProfile ?? "default",
-                };
-
-                yield* loginSSO(config);
-
-                return config;
-              }),
-            ),
-            Match.when("stored", () => loginStored(profileName)),
-            Match.when("local", () =>
-              Effect.gen(function* () {
-                const endpoint = yield* Clank.text({
-                  message: "Emulator endpoint",
-                  placeholder: DEFAULT_LOCAL_ENDPOINT,
-                  defaultValue: DEFAULT_LOCAL_ENDPOINT,
-                });
-                const region = yield* Clank.text({
-                  message: "Region",
-                  placeholder: "us-east-1",
-                  defaultValue: "us-east-1",
-                });
-                return {
-                  method: "local" as const,
-                  endpoint: endpoint || DEFAULT_LOCAL_ENDPOINT,
-                  region: region || "us-east-1",
-                };
-              }),
-            ),
-            Match.exhaustive,
-          ),
-        ),
-      );
-
-    const configureCredentials = (profileName: string, ctx: ConfigureContext) =>
-      Effect.gen(function* () {
-        if (ctx.ci) {
-          return { method: "env" as const };
-        }
-        if (ctx.reason) {
-          // e.g. the credential-demand seam (`Auth/Demand.ts`) explaining
-          // which dev-plan resources require real AWS credentials.
-          yield* Clank.info(ctx.reason);
-        }
-        return yield* configureInteractive(profileName);
-      }).pipe(
-        Effect.mapError(
-          (e) =>
-            new AuthError({
-              message: "failed to configure credentials",
-              cause: e,
-            }),
-        ),
-      );
-
-    const resolveCredentials = (profileName: string, config: AwsAuthConfig) =>
-      Match.value(config)
+      interaction.prompt
+        .select({
+          message: "AWS authentication method",
+          options,
+        })
         .pipe(
-          Match.when(
-            { method: "env" },
-            Effect.fn(function* () {
-              const accessKeyId =
-                yield* getEnvRedactedRequired("AWS_ACCESS_KEY_ID");
-              const secretAccessKey = yield* getEnvRedactedRequired(
-                "AWS_SECRET_ACCESS_KEY",
+          Effect.flatMap((method) =>
+            Match.value(method).pipe(
+              Match.when("sso", () =>
+                Effect.gen(function* () {
+                  const ssoProfile = yield* interaction.prompt.text({
+                    message: "AWS profile name (from ~/.aws/config)",
+                    placeholder: "default",
+                    defaultValue: "default",
+                  });
+                  const authorizationMethod = yield* interaction.prompt.select({
+                    message: "AWS SSO authorization method",
+                    options: [
+                      {
+                        value: "oauth" as const,
+                        label: "Browser OAuth",
+                        description: "authorize in this device's browser",
+                      },
+                      {
+                        value: "device" as const,
+                        label: "Device code",
+                        description:
+                          "authorize with a short code on any device",
+                      },
+                    ],
+                  });
+
+                  const config = {
+                    method: "sso" as const,
+                    ssoProfile: ssoProfile ?? "default",
+                    authorizationMethod,
+                  };
+
+                  yield* loginSSO(config, authorizationMethod);
+
+                  return config;
+                }),
+              ),
+              Match.when("stored", () => loginStored(profileName)),
+              Match.exhaustive,
+            ),
+          ),
+        );
+
+    // The declared requirements are the union of the interactive path
+    // (ChildProcessSpawner for `aws sso login`) and `configureWith`'s
+    // (FileSystem/Path for ~/.aws/config probing) — the contract shares one
+    // ConfigureReq type parameter between the two entry points.
+    const configureCredentials = (
+      profileName: string,
+    ): Effect.Effect<
+      AwsAuthConfig,
+      AuthError,
+      | ChildProcessSpawner
+      | HttpClient.HttpClient
+      | FileSystem.FileSystem
+      | Path.Path
+      | Interaction.Interaction
+    > =>
+      configureInteractive(profileName).pipe(
+        Effect.mapError((e) =>
+          e instanceof AuthError
+            ? e
+            : new AuthError({
+                message: "failed to configure credentials",
+                cause: e,
+              }),
+        ),
+      );
+
+    const configureWith = (
+      profileName: string,
+      input: {
+        readonly method: string;
+        readonly values: Record<string, string>;
+      },
+    ) =>
+      Match.value(input.method).pipe(
+        Match.when("stored", () =>
+          Effect.gen(function* () {
+            const values = yield* validateFieldValues(
+              AWS_AUTH_PROVIDER_NAME,
+              keysFields,
+              input.values,
+            );
+            // validateFieldValues guarantees the required fields are present.
+            const accessKeyId = storedSecret(values.accessKeyId);
+            const secretAccessKey = storedSecret(values.secretAccessKey);
+            const sessionToken = storedSecret(values.sessionToken);
+            const region = storedValueText(values.region) ?? "";
+            if (accessKeyId === undefined || secretAccessKey === undefined) {
+              return yield* Effect.fail(
+                new AuthError({
+                  message: "AWS: required key fields are missing.",
+                }),
               );
-              const sessionToken = yield* getEnvRedacted("AWS_SESSION_TOKEN");
-              const region = yield* getEnv("AWS_REGION").pipe(
-                Effect.flatMap((region) =>
-                  region
-                    ? Effect.succeed(region)
-                    : getEnv("AWS_DEFAULT_REGION"),
-                ),
-              );
-              if (!region) {
-                return yield* Effect.fail(
+            }
+            const accountId = yield* getAccountId({
+              accessKeyId,
+              secretAccessKey,
+              sessionToken,
+              region,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
                   new AuthError({
                     message:
-                      "AWS region not found. Set AWS_REGION or AWS_DEFAULT_REGION.",
+                      "AWS: failed to verify credentials via STS GetCallerIdentity.",
+                    cause,
                   }),
-                );
-              }
-              // LocalStack-standard endpoint override: with
-              // AWS_ENDPOINT_URL set, every AWS call (including the STS
-              // account lookup below) targets the emulator.
-              const endpoint = yield* getEnv("AWS_ENDPOINT_URL");
-              const accountId = yield* getEnvRequired("AWS_ACCOUNT_ID").pipe(
-                Effect.catch(() =>
-                  getAccountId({
-                    accessKeyId,
-                    secretAccessKey,
-                    sessionToken,
-                    region,
-                    endpoint,
-                  }),
-                ),
-              );
-              return {
-                accountId,
-                credentials: Effect.succeed({
-                  accessKeyId,
-                  secretAccessKey,
-                  sessionToken,
-                  region,
+              ),
+            );
+            return {
+              method: "stored" as const,
+              accountId,
+              accessKeyId: Redacted.value(accessKeyId),
+              secretAccessKey: Redacted.value(secretAccessKey),
+              sessionToken:
+                sessionToken === undefined
+                  ? undefined
+                  : Redacted.value(sessionToken),
+              region,
+            };
+          }),
+        ),
+        Match.when("sso", () =>
+          Effect.gen(function* () {
+            const values = yield* validateFieldValues(
+              AWS_AUTH_PROVIDER_NAME,
+              ssoFields,
+              input.values,
+            );
+            const ssoProfile = storedValueText(values.ssoProfile) ?? "";
+            const auth = yield* DistilledAuth.Default;
+            const profile = yield* auth
+              .loadProfile(ssoProfile)
+              .pipe(Effect.catch(() => Effect.succeed(undefined)));
+            if (profile == null) {
+              return yield* Effect.fail(
+                new AuthError({
+                  message: `AWS SSO profile '${ssoProfile}' was not found in ~/.aws/config. Configure it with \`aws configure sso\` first, then log in. ${refreshHint(AWS_AUTH_PROVIDER_NAME, profileName)}`,
                 }),
-                region,
-                endpoint,
-                source: { type: "env" as const },
-              } satisfies AwsResolvedCredentials;
+              );
+            }
+            // Nothing is persisted for SSO — credentials come from the AWS
+            // SSO cache. `aws sso login` is interactive, so it is NOT run
+            // here; the user runs `alchemy profile refresh` afterwards.
+            return { method: "sso" as const, ssoProfile };
+          }),
+        ),
+        Match.orElse(() =>
+          Effect.fail(
+            new AuthError({
+              message: `AWS: unknown method '${input.method}'. Valid methods: stored, sso.`,
             }),
           ),
-          Match.when(
-            { method: "local" },
-            Effect.fn(function* (config) {
-              const endpoint = config.endpoint ?? DEFAULT_LOCAL_ENDPOINT;
-              const autoStart =
-                config.autoStart ?? endpoint === DEFAULT_LOCAL_ENDPOINT;
-              if (autoStart) {
-                const port = yield* Effect.try({
-                  try: () =>
-                    Number.parseInt(new URL(endpoint).port, 10) ||
-                    Floci.DEFAULT_FLOCI_PORT,
-                  catch: () =>
-                    new AuthError({
-                      message: `invalid local emulator endpoint: ${endpoint}`,
-                    }),
-                });
-                // Reuses anything already serving on the endpoint (dev-mode
-                // JVM, hand-run container, previous session's container);
-                // otherwise starts the managed floci container and waits for
-                // health.
-                yield* Floci.ensureFloci({ port }).pipe(
-                  Effect.mapError(
-                    (e) => new AuthError({ message: e.message, cause: e }),
-                  ),
-                );
-              } else {
-                const serving = yield* Floci.isServing(endpoint);
-                if (!serving) {
+        ),
+      );
+
+    const resolveCredentials = (
+      profileName: string,
+      config: AwsAuthConfig,
+      updateConfig?: (config: AwsAuthConfig) => Effect.Effect<void, AuthError>,
+    ) =>
+      Effect.gen(function* () {
+        const reauth = refreshHint(AWS_AUTH_PROVIDER_NAME, profileName);
+        return yield* Match.value(config)
+          .pipe(
+            Match.when({ method: "stored" }, (config) =>
+              Effect.gen(function* () {
+                const credentials: AwsCredentials = {
+                  accessKeyId: Redacted.make(config.accessKeyId),
+                  secretAccessKey: Redacted.make(config.secretAccessKey),
+                  sessionToken:
+                    config.sessionToken === undefined
+                      ? undefined
+                      : Redacted.make(config.sessionToken),
+                  region: config.region,
+                };
+                const accountId =
+                  config.accountId ?? (yield* getAccountId(credentials));
+                if (
+                  config.accountId === undefined &&
+                  updateConfig !== undefined
+                ) {
+                  yield* updateConfig({ ...config, accountId });
+                }
+                return {
+                  accountId,
+                  credentials: Effect.succeed(credentials),
+                  region: config.region,
+                  source: { type: "stored" as const },
+                } satisfies AwsResolvedCredentials;
+              }),
+            ),
+            Match.when({ method: "sso" }, (config) =>
+              Effect.gen(function* () {
+                const auth = yield* DistilledAuth.Default;
+                const profile = yield* auth
+                  .loadProfile(config.ssoProfile)
+                  .pipe(Effect.catch(() => Effect.succeed(undefined)));
+                if (profile?.sso_account_id == null) {
+                  const reconfigure = reconfigureHint(
+                    AWS_AUTH_PROVIDER_NAME,
+                    profileName,
+                  );
                   return yield* Effect.fail(
                     new AuthError({
-                      message: `no local AWS emulator is listening at ${endpoint} — start one, or omit \`endpoint\` to auto-start floci on ${DEFAULT_LOCAL_ENDPOINT}`,
+                      message:
+                        profile == null
+                          ? `AWS SSO profile '${config.ssoProfile}' was not found in ~/.aws/config. Configure it with \`aws configure sso\`. ${reconfigure}`
+                          : `AWS SSO profile '${config.ssoProfile}' has no sso_account_id in ~/.aws/config. Add it. ${reconfigure}`,
                     }),
                   );
                 }
-              }
-              const region = config.region ?? "us-east-1";
-              return {
-                // Fixed dummy account — emulators accept any non-empty
-                // credentials, and calling STS here would be pure overhead.
-                accountId: config.accountId ?? LOCAL_ACCOUNT_ID,
-                credentials: Effect.succeed({
-                  accessKeyId: Redacted.make("test"),
-                  secretAccessKey: Redacted.make("test"),
-                  sessionToken: undefined,
+                // `applyEnvRegionOverride` below only overrides an existing
+                // region, so an env-provided region must be consulted here for
+                // profiles that don't record one.
+                const region = profile.region ?? (yield* getEnv("AWS_REGION"));
+                if (!region) {
+                  return yield* Effect.fail(
+                    new AuthError({
+                      message: `AWS SSO profile '${config.ssoProfile}' has no region in ~/.aws/config and AWS_REGION is not set.`,
+                    }),
+                  );
+                }
+                return {
+                  accountId: profile.sso_account_id,
+                  // Rewrite the message of an expired/invalid SSO token to the
+                  // alchemy refresh hint, but PRESERVE the error tags: the inner
+                  // effect must stay a `CredentialsError` for downstream
+                  // consumers (AWSEnvironment), while `details` and other
+                  // in-provider consumers match these tags to surface a typed
+                  // `NeedsReauth` instead of a generic failure.
+                  credentials: auth
+                    .loadProfileCredentials(config.ssoProfile)
+                    .pipe(
+                      Effect.provideService(
+                        EffectConsole.Console,
+                        silentConsole,
+                      ),
+                      Effect.mapError((error) => {
+                        if (error._tag === "Alchemy::AWS::ExpiredSSOToken") {
+                          return new ExpiredSSOToken({
+                            message: `AWS SSO credentials need to be refreshed. ${reauth}`,
+                            profile: error.profile,
+                          });
+                        }
+                        if (error._tag === "Alchemy::AWS::InvalidSSOToken") {
+                          return new InvalidSSOToken({
+                            message: `AWS SSO credentials need to be refreshed. ${reauth}`,
+                            sso_session: error.sso_session,
+                          });
+                        }
+                        return error;
+                      }),
+                    ),
                   region,
-                }),
-                region,
-                endpoint,
-                source: { type: "local" as const, details: endpoint },
-              } satisfies AwsResolvedCredentials;
-            }),
-          ),
-          Match.when({ method: "stored" }, () =>
-            store.read<AwsStoredCredentials>(profileName, "aws").pipe(
-              Effect.flatMap((creds) =>
-                creds == null
-                  ? Effect.fail(
-                      new AuthError({
-                        message:
-                          "AWS stored credentials not found. Run: alchemy login --configure",
-                      }),
-                    )
-                  : Effect.succeed({
-                      accountId: creds.accountId,
-                      credentials: Effect.succeed({
-                        accessKeyId: Redacted.make(creds.accessKeyId),
-                        secretAccessKey: Redacted.make(creds.secretAccessKey),
-                        sessionToken: creds.sessionToken
-                          ? Redacted.make(creds.sessionToken)
-                          : undefined,
-                        region: creds.region,
-                      }),
-                      region: creds.region,
-                      source: { type: "stored" as const },
-                    } satisfies AwsResolvedCredentials),
-              ),
-              // an older verson of the stored credentials didn't include the account ID, so we patch it hre
-              Effect.flatMap((creds) =>
-                creds.accountId
-                  ? Effect.succeed(creds)
-                  : creds.credentials.pipe(
-                      Effect.flatMap((resolved) =>
-                        getAccountId({
-                          accessKeyId: resolved.accessKeyId,
-                          secretAccessKey: resolved.secretAccessKey,
-                          sessionToken: resolved.sessionToken,
-                          region: creds.region,
-                        }),
-                      ),
-                      Effect.map(
-                        (accountId) =>
-                          ({
-                            ...creds,
-                            accountId,
-                          }) satisfies AwsResolvedCredentials,
-                      ),
-                      // re-write the stored credentials
-                      Effect.tap((creds) =>
-                        creds.credentials.pipe(
-                          Effect.tap(
-                            ({ accessKeyId, secretAccessKey, sessionToken }) =>
-                              store.write<AwsStoredCredentials>(
-                                profileName,
-                                "aws",
-                                {
-                                  accessKeyId: Redacted.value(accessKeyId),
-                                  secretAccessKey:
-                                    Redacted.value(secretAccessKey),
-                                  sessionToken: sessionToken
-                                    ? Redacted.value(sessionToken)
-                                    : undefined,
-                                  region: creds.region,
-                                  accountId: creds.accountId,
-                                },
-                              ),
-                          ),
-                        ),
-                      ),
-                    ),
-              ),
+                  source: { type: "sso" as const, details: config.ssoProfile },
+                } satisfies AwsResolvedCredentials;
+              }),
             ),
-          ),
-          Match.when({ method: "sso" }, (config) =>
-            Effect.gen(function* () {
-              const auth = yield* DistilledAuth.Default;
-              const profile = yield* auth
-                .loadProfile(config.ssoProfile)
-                .pipe(Effect.catch(() => Effect.succeed(undefined)));
-              return {
-                accountId: profile?.sso_account_id!,
-                credentials: auth
-                  .loadProfileCredentials(config.ssoProfile)
-                  .pipe(
-                    Effect.mapError(
-                      (e) =>
-                        new AuthError({
-                          message: "failed to load credentials",
-                          cause: e,
-                        }),
-                    ),
-                    Effect.orDie,
-                  ),
-                region: profile?.region!,
-                source: { type: "sso" as const, details: config.ssoProfile },
-              } satisfies AwsResolvedCredentials;
-            }),
-          ),
-          Match.exhaustive,
-        )
-        .pipe(
-          Effect.mapError(
-            (e) => new AuthError({ message: "login failed", cause: e }),
-          ),
-          Effect.flatMap(applyEnvRegionOverride),
+            Match.exhaustive,
+          )
+          .pipe(
+            // Pass diagnosable failures through untouched: NeedsReauth (stored
+            // credentials missing) and the specific AuthErrors raised above
+            // (missing SSO profile / sso_account_id / region) carry the real
+            // diagnosis. Only genuinely unexpected failures (store I/O, the
+            // STS accountId backfill) get wrapped.
+            Effect.mapError((e) =>
+              e._tag === "AuthError"
+                ? e
+                : new AuthError({
+                    message: "failed to resolve AWS credentials",
+                    cause: e,
+                  }),
+            ),
+            Effect.flatMap(applyEnvRegionOverride),
+            Effect.map((creds): AwsResolvedCredentials => ({
+              ...creds,
+              credentials: creds.credentials.pipe(
+                Effect.map((credentials) => ({
+                  ...credentials,
+                  region: creds.region,
+                })),
+              ),
+            })),
+          );
+      });
+
+    const details = (
+      profileName: string,
+      config: AwsAuthConfig,
+      updateConfig?: (config: AwsAuthConfig) => Effect.Effect<void, AuthError>,
+    ) =>
+      Effect.gen(function* () {
+        const creds = yield* resolveCredentials(
+          profileName,
+          config,
+          updateConfig,
         );
+        const reauth = refreshHint(AWS_AUTH_PROVIDER_NAME, profileName);
+        // Resolve the live credentials. An expired/invalid SSO token only
+        // surfaces here (the inner effect is lazy), so convert those tags
+        // into a typed NeedsReauth instead of a generic error line.
+        const { accessKeyId, secretAccessKey, sessionToken } =
+          yield* creds.credentials.pipe(
+            Effect.mapError((error) =>
+              error._tag === "Alchemy::AWS::ExpiredSSOToken" ||
+              error._tag === "Alchemy::AWS::InvalidSSOToken"
+                ? new NeedsReauth({
+                    provider: AWS_AUTH_PROVIDER_NAME,
+                    profile: profileName,
+                    message: `AWS SSO credentials need to be refreshed. ${reauth}`,
+                    cause: error,
+                  })
+                : new AuthError({
+                    message: "failed to load AWS credentials",
+                    cause: error,
+                  }),
+            ),
+          );
+        const lines: Array<ProviderDetailLine> = [
+          { key: "accessKeyId", value: displayRedacted(accessKeyId) },
+          { key: "secretAccessKey", value: displayRedacted(secretAccessKey) },
+        ];
+        if (sessionToken) {
+          lines.push({
+            key: "sessionToken",
+            value: displayRedacted(sessionToken),
+          });
+        }
+        if (creds.region) {
+          lines.push({ key: "region", value: creds.region });
+        }
+        const source = creds.source;
+        lines.push({
+          key: "source",
+          value:
+            "details" in source
+              ? `${source.type} - ${source.details}`
+              : source.type,
+        });
+        return { lines };
+      });
 
-    const prettyPrint = (profileName: string, config: AwsAuthConfig) =>
-      resolveCredentials(profileName, config).pipe(
-        Effect.tap(
-          Effect.fn(function* (creds) {
-            const { accessKeyId, secretAccessKey, sessionToken } =
-              yield* creds.credentials;
-            yield* Console.log(
-              `  accessKeyId:     ${displayRedacted(accessKeyId)}`,
-            );
-            yield* Console.log(
-              `  secretAccessKey: ${displayRedacted(secretAccessKey)}`,
-            );
-            if (sessionToken) {
-              yield* Console.log(
-                `  sessionToken:    ${displayRedacted(sessionToken)}`,
-              );
-            }
-            if (creds.region) {
-              yield* Console.log(`  region:          ${creds.region}`);
-            }
-            yield* Console.log(
-              //@ts-expect-error
-              `  source: ${creds.source.details ? `${creds.source.type} - ${creds.source.details}` : creds.source.type}`,
-            );
-          }),
-        ),
-      );
-
-    const logout = (profileName: string, config: AwsAuthConfig) =>
+    const logout = (_profileName: string, config: AwsAuthConfig) =>
       Match.value(config).pipe(
-        Match.when({ method: "env" }, () => Effect.void),
-        Match.when({ method: "local" }, () => Effect.void),
         Match.when({ method: "sso" }, (config) =>
-          Clank.info(
-            `AWS: running 'aws sso logout --profile ${config.ssoProfile}'...`,
-          ).pipe(
-            Effect.zip(runSsoCommand("logout", config.ssoProfile)),
-            Effect.zip(clearDistilledSsoCache(config.ssoProfile)),
-            Effect.match({
-              onSuccess: () => Clank.success("AWS: SSO logout complete"),
-              onFailure: (e) =>
-                Clank.warn(`AWS: SSO logout failed: \`${e.message}\``),
-            }),
-          ),
-        ),
-        Match.when({ method: "stored" }, () =>
-          store
-            .delete(profileName, "aws")
+          interaction.output
+            .info(
+              `AWS: running 'aws sso logout --profile ${config.ssoProfile}'...`,
+            )
             .pipe(
-              Effect.andThen(Clank.success("AWS: stored credentials removed")),
+              Effect.zip(runSsoCommand("logout", config.ssoProfile)),
+              Effect.zip(clearDistilledSsoCache(config.ssoProfile)),
+              Effect.match({
+                onSuccess: () =>
+                  interaction.output.success("AWS: SSO logout complete"),
+                onFailure: (e) =>
+                  interaction.output.warning(
+                    `AWS: SSO logout failed: \`${e.message}\``,
+                  ),
+              }),
             ),
         ),
+        Match.when({ method: "stored" }, () => Effect.void),
         Match.exhaustive,
       );
 
     const login = (profileName: string, config: AwsAuthConfig) =>
       Match.value(config)
         .pipe(
-          Match.when({ method: "env" }, () => Effect.void),
-          Match.when({ method: "local" }, () => Effect.void),
-          Match.when({ method: "sso" }, loginSSO),
-          Match.when({ method: "stored" }, () =>
-            store
-              .read<AwsStoredCredentials>(profileName, "aws")
-              .pipe(
-                Effect.flatMap((creds) =>
-                  creds == null ? loginStored(profileName) : Effect.void,
-                ),
-              ),
+          Match.when({ method: "sso" }, (config) =>
+            loginSSO(config, config.authorizationMethod ?? "oauth"),
           ),
+          Match.when({ method: "stored" }, (config) => Effect.succeed(config)),
           Match.exhaustive,
         )
         .pipe(
@@ -602,12 +683,95 @@ export const AwsAuth = AuthProviderLayer<
           ),
         );
 
+    const readEnvironment = Effect.gen(function* () {
+      const accessKeyId = yield* getEnvRedactedRequired("AWS_ACCESS_KEY_ID");
+      const secretAccessKey = yield* getEnvRedactedRequired(
+        "AWS_SECRET_ACCESS_KEY",
+      );
+      const sessionToken = yield* getEnvRedacted("AWS_SESSION_TOKEN");
+      const region = yield* getEnv("AWS_REGION").pipe(
+        Effect.flatMap((value) =>
+          value ? Effect.succeed(value) : getEnv("AWS_DEFAULT_REGION"),
+        ),
+      );
+      if (!region) {
+        return yield* new AuthError({
+          message:
+            "AWS CI region not found. Set AWS_REGION or AWS_DEFAULT_REGION.",
+        });
+      }
+      const accountId = yield* getEnvRequired("AWS_ACCOUNT_ID").pipe(
+        Effect.catch(() =>
+          getAccountId({
+            accessKeyId,
+            secretAccessKey,
+            sessionToken,
+            region,
+          }),
+        ),
+      );
+      return {
+        accountId,
+        credentials: Effect.succeed({
+          accessKeyId,
+          secretAccessKey,
+          sessionToken,
+          region,
+        }),
+        region,
+        source: { type: "env" as const },
+      } satisfies AwsResolvedCredentials;
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof AuthError
+          ? cause
+          : new AuthError({
+              message:
+                "Failed to resolve AWS credentials from the CI environment.",
+              cause,
+            }),
+      ),
+    );
+
     return {
+      configSchema: AwsAuthConfigSchema,
       configure: configureCredentials,
+      configureWith,
+      configureMethods,
       login,
       logout,
-      prettyPrint,
+      details,
       read: resolveCredentials,
+      readEnvironment,
+      environment: [
+        {
+          name: "AWS_ACCESS_KEY_ID",
+          required: true,
+          secret: true,
+        },
+        {
+          name: "AWS_SECRET_ACCESS_KEY",
+          required: true,
+          secret: true,
+        },
+        {
+          name: "AWS_SESSION_TOKEN",
+          required: false,
+          secret: true,
+          description: "Required when the access key is a temporary STS key.",
+        },
+        {
+          name: "AWS_REGION",
+          required: true,
+          alternatives: ["AWS_DEFAULT_REGION"],
+          description: "Region the stack deploys into.",
+        },
+        {
+          name: "AWS_ACCOUNT_ID",
+          required: false,
+          description: "Derived via STS GetCallerIdentity when unset.",
+        },
+      ],
     };
   }),
 );
@@ -632,14 +796,169 @@ const runSsoCommand = (command: "login" | "logout", ssoProfile: string) =>
     }
   }).pipe(Effect.scoped);
 
-const loginSSO = (config: Extract<AwsAuthConfig, { method: "sso" }>) =>
-  Clank.info(
-    `AWS SSO: running 'aws sso login --profile ${config.ssoProfile}'...`,
-  ).pipe(
-    Effect.andThen(runSsoCommand("login", config.ssoProfile)),
-    Effect.matchEffect({
-      onSuccess: () => Clank.success("AWS SSO: login complete"),
-      onFailure: (e) => Clank.warn(`AWS SSO: login faield: \`${e.message}\``),
+const AwsSsoLoginOutput = Schema.Struct({
+  url: Schema.optional(Schema.String),
+  authUrl: Schema.optional(Schema.String),
+  authorizationUrl: Schema.optional(Schema.String),
+  verificationUri: Schema.optional(Schema.String),
+  verificationUriComplete: Schema.optional(Schema.String),
+  code: Schema.optional(Schema.String),
+  userCode: Schema.optional(Schema.String),
+});
+
+export const parseAwsSsoLoginOutput = (output: string) => {
+  try {
+    const decoded = Schema.decodeUnknownOption(AwsSsoLoginOutput)(
+      JSON.parse(output) as unknown,
+    );
+    if (Option.isSome(decoded)) {
+      const event = decoded.value;
+      return {
+        url:
+          event.authorizationUrl ??
+          event.authUrl ??
+          event.verificationUriComplete ??
+          event.verificationUri ??
+          event.url,
+        code: event.userCode ?? event.code,
+      };
+    }
+  } catch {
+    // `sso login` accepts the global `--output json` option but current AWS
+    // CLI releases still render this custom command's authorization prompt as
+    // text. Keep accepting structured output if AWS starts honoring the flag.
+  }
+  return {
+    url: output.match(/https?:\/\/[^\s]+/)?.[0],
+    code: output.match(/Then enter the code:\s*([A-Z0-9-]+)/i)?.[1],
+  };
+};
+
+const loginSSO = (
+  config: Extract<AwsAuthConfig, { method: "sso" }>,
+  authorizationMethod: "oauth" | "device" = "oauth",
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const interaction = yield* Interaction.Interaction;
+      const services = yield* Effect.context<ChildProcessSpawner>();
+      const runOpenUrl = Effect.runPromiseWith(services);
+      const authorizationUrl = yield* Deferred.make<string>();
+      const deviceCode = yield* Deferred.make<string>();
+      const stdout = yield* Ref.make("");
+      const stderr = yield* Ref.make("");
+      const handle = yield* ChildProcess.make(
+        "aws",
+        [
+          "sso",
+          "login",
+          "--profile",
+          config.ssoProfile,
+          "--no-browser",
+          "--output",
+          "json",
+          ...(authorizationMethod === "device" ? ["--use-device-code"] : []),
+        ],
+        {
+          shell: false,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const collectStdout = handle.stdout.pipe(
+        Stream.decodeText(),
+        Stream.runForEach((chunk) =>
+          Effect.gen(function* () {
+            const combined = yield* Ref.updateAndGet(
+              stdout,
+              (current) => current + chunk,
+            );
+            const { url, code } = parseAwsSsoLoginOutput(combined);
+            if (url !== undefined) {
+              yield* Deferred.succeed(authorizationUrl, url);
+            }
+            if (code !== undefined) {
+              yield* Deferred.succeed(deviceCode, code);
+            }
+          }),
+        ),
+      );
+      const collectStderr = handle.stderr.pipe(
+        Stream.decodeText(),
+        Stream.runForEach((chunk) =>
+          Ref.update(stderr, (current) => current + chunk),
+        ),
+      );
+      const process = Effect.gen(function* () {
+        const [exitCode] = yield* Effect.all(
+          [handle.exitCode, collectStdout, collectStderr],
+          { concurrency: 3 },
+        );
+        if (exitCode !== 0) {
+          const detail = (yield* Ref.get(stderr)).trim();
+          return yield* Effect.fail(
+            new AuthError({
+              message: `aws sso login exited with code ${exitCode}${detail === "" ? "" : `: ${detail}`}`,
+            }),
+          );
+        }
+      });
+      const processFiber = yield* Effect.forkScoped(process);
+      const url = yield* Deferred.await(authorizationUrl).pipe(
+        Effect.raceFirst(
+          Fiber.join(processFiber).pipe(
+            Effect.flatMap(() =>
+              Effect.fail(
+                new AuthError({
+                  message:
+                    "AWS SSO login completed without providing an authorization URL.",
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const code =
+        authorizationMethod === "device"
+          ? yield* Deferred.await(deviceCode).pipe(
+              Effect.raceFirst(
+                Fiber.join(processFiber).pipe(
+                  Effect.flatMap(() =>
+                    Effect.fail(
+                      new AuthError({
+                        message:
+                          "AWS SSO device login completed without providing an authorization code.",
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          : undefined;
+      const openFailed = yield* Interaction.openUrl(url).pipe(
+        Effect.as(false),
+        Effect.catch(() => Effect.succeed(true)),
+      );
+      yield* Fiber.join(processFiber).pipe(
+        Effect.raceFirst(
+          interaction.prompt
+            .awaitExternal({
+              message: "AWS authorization",
+              waitingLabel:
+                authorizationMethod === "device"
+                  ? "waiting for device authorization (up to 5 minutes)…"
+                  : "waiting for browser authorization (up to 5 minutes)…",
+              url,
+              code,
+              openFailed,
+              onOpen: () => runOpenUrl(Interaction.openUrl(url)),
+              allowManualInput: false,
+            })
+            .pipe(Effect.asVoid),
+        ),
+      );
+      yield* interaction.output.success("AWS SSO: login complete");
     }),
   );
 

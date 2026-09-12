@@ -1,3 +1,4 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
 import { loadInternalWorker } from "../internal/internal-worker.ts";
 /**
  * Node-side platform proxy: our reimplementation of wrangler's
@@ -78,8 +79,6 @@ export type {
   PlatformProxyCacheStorage,
 } from "./connect.ts";
 
-const DEFAULT_COMPATIBILITY_DATE = "2026-03-10";
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -91,7 +90,7 @@ export interface PlatformProxyOptions<B extends BindingHooks = BindingHooks> {
    * @default "platform-proxy"
    */
   readonly name?: string;
-  /** @default "2026-03-10" */
+  /** @default "2026-08-31" */
   readonly compatibilityDate?: string;
   readonly compatibilityFlags?: Array<string>;
   /**

@@ -22,6 +22,12 @@
 "@effect/typeclass/Semigroup#make":
   replacement: "Combiner.make"
   note: "Combiner replaces Semigroup. V4 accepts only the binary combine function and has no combineMany override."
+"@effect/typeclass/Semigroup#max":
+  replacement: "Combiner.max"
+  note: "Combiner replaces Semigroup; pass the same Order to retain last-maximum tie behavior."
+"@effect/typeclass/Semigroup#min":
+  replacement: "Combiner.min"
+  note: "Combiner replaces Semigroup; pass the same Order to retain last-minimum tie behavior."
 "@effect/typeclass/Semigroup#Product":
   replacement: "none"
   note: "The @effect/typeclass package was removed in v4 with no generic typeclass layer replacement. Rewrite this abstraction against the concrete v4 data type and its module functions."

@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Redacted from "effect/Redacted";
 import { makeExecutionMemo } from "../Runtime/ExecutionMemo.ts";
+import { resolveSsl } from "../SQL/PostgresTls.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
 
 /**
@@ -64,8 +65,9 @@ export const Postgres = <
             import("drizzle-orm/effect-postgres"),
           ]),
         );
+        const url = yield* connectionString;
         const pgCtx = yield* Layer.build(
-          PgClient.layer({ url: yield* connectionString }),
+          PgClient.layer({ url, ssl: resolveSsl(url, undefined) }),
         );
         return yield* PgDrizzle.makeWithDefaults(config).pipe(
           Effect.provideContext(pgCtx),

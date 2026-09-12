@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/floci",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.77",
   "description": "Effect-native manager for the floci local cloud emulator: ensure the container is running, health-gate it, and resolve the endpoint for alchemy's AWS local dev.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",

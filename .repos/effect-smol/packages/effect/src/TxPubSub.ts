@@ -21,7 +21,7 @@ import type * as Scope from "./Scope.ts"
 import * as TxQueue from "./TxQueue.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxPubSub"
+const TypeId = "~effect/TxPubSub"
 
 /**
  * A TxPubSub represents a transactional publish/subscribe hub that broadcasts messages

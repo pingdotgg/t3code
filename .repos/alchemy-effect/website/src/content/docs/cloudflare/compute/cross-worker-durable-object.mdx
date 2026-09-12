@@ -78,7 +78,7 @@ export class Counter extends Cloudflare.DurableObject<
 ```
 
 :::note
-The `state` *reference* is resolved in the outer (init) Effect, but
+The `state` *reference* is resolved in the outer (Construction) Effect, but
 `state.storage` is
 [colored with `RuntimeContext`](/infrastructure-as-effects/layers#runtime-as-a-colored-function)
 — so the storage reads/writes stay in the inner (runtime) Effect.
@@ -152,7 +152,7 @@ export class WorkerA extends Cloudflare.Worker<WorkerA, {}, Counter>()(
 +);
 ```
 
-`yield* Counter` inside WorkerA's init binds the DO _locally_ —
+`yield* Counter` inside WorkerA's constructor binds the DO _locally_ —
 WorkerA's `env.Counter` is wired up at deploy time and the class
 ships in the bundle.
 

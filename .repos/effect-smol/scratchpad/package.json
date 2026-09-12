@@ -22,7 +22,6 @@
     "@effect/sql-sqlite-node": "workspace:*",
     "@effect/sql-sqlite-react-native": "workspace:*",
     "@effect/sql-sqlite-wasm": "workspace:*",
-    "@js-temporal/polyfill": "^0.5.1",
     "effect": "workspace:*"
   }
 }

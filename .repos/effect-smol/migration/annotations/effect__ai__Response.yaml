@@ -67,3 +67,6 @@
 "@effect/ai/Response#urlSourcePart":
   replacement: "Response.makePart(\"source\", { ...params, sourceType: \"url\" })"
   note: "The lowercase convenience constructor was removed. The UrlSourcePart model remains, and the generic constructor now requires the URL source discriminator."
+"@effect/ai/Response#ToolResultPart":
+  replacement: "Response.ToolResultPart"
+  note: "The schema selects success or failure using isFailure rather than trying both result schemas. It returns Schema.Codec; supply decoding services when decoding and encoding services when encoding."

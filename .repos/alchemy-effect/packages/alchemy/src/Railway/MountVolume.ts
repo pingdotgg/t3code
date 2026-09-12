@@ -33,10 +33,11 @@ export interface MountSpec {
   path: string;
 }
 
-const volumeIdOf = (volume: Volume): string => {
-  const value = (volume as { volumeId?: unknown }).volumeId;
-  return typeof value === "string" ? value : "";
-};
+// Pass `volume.volumeId` through as-is. At bind time it is an Output,
+// never a materialized string — `typeof === "string"` would store `""`
+// and every downstream guard would skip the mount. `Input<Binding>`
+// resolves the Output before reconcile.
+const volumeIdOf = (volume: Volume) => volume.volumeId ?? "";
 
 const RAILWAY_BIND_HOST_TYPES = new Set([
   "Railway.Service",

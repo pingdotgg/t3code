@@ -42,7 +42,11 @@ export const layerHttpApi = <
   api: HttpApi.HttpApi<ApiId, Groups>,
   identifier: Identifier,
   entity: Entity.Entity<Type, Rpcs>
-): Layer.Layer<HttpApiGroup.Service<ApiId, Identifier>, never, Sharding | Rpc.ServicesServer<Rpcs>> =>
+): Layer.Layer<
+  HttpApiGroup.Service<ApiId, Identifier>,
+  never,
+  Sharding | Rpc.ServicesServer<Rpcs> | Rpc.ServicesClient<Rpcs>
+> =>
   HttpApiBuilder.group(
     api,
     identifier,
@@ -102,7 +106,7 @@ export const layerRpcHandlers = <
   Rpcs extends Rpc.Any
 >(
   entity: Entity.Entity<Type, Rpcs>
-): Layer.Layer<RpcHandlers<Rpcs, Type>, never, Sharding | Rpc.ServicesServer<Rpcs>> =>
+): Layer.Layer<RpcHandlers<Rpcs, Type>, never, Sharding | Rpc.ServicesServer<Rpcs> | Rpc.ServicesClient<Rpcs>> =>
   Layer.effectContext(Effect.gen(function*() {
     const context = yield* Effect.context<never>()
     const client = yield* entity.client

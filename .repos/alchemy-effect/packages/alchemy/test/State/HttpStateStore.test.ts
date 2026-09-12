@@ -74,7 +74,7 @@ describe("describeStateStoreFailure", () => {
     }
     const message = describeStateStoreFailure(new Unauthorized());
     expect(message).toContain("unauthorized");
-    expect(message).toContain("alchemy login");
+    expect(message).toContain("alchemy profile edit");
   });
 
   it("appends the HTTP status when the error carries a response", () => {
@@ -162,7 +162,7 @@ describe("makeHttpStateStore", () => {
       expect(error._tag).toBe("StateStoreError");
       expect(error.message.trim().length).toBeGreaterThan(0);
       expect(error.message).toContain("unauthorized");
-      expect(error.message).toContain("alchemy login");
+      expect(error.message).toContain("alchemy profile edit");
     }).pipe(Effect.provide(stubHttpClient(stub)));
   });
 

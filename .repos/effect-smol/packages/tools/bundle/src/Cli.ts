@@ -30,12 +30,12 @@ import * as Prompt from "effect/unstable/cli/Prompt"
 import { Fixtures } from "./Fixtures.ts"
 import { Reporter } from "./Reporter.ts"
 
-const baseDirectory = Flag.directory("base-dir", { mustExist: true }).pipe(
+const baseDirectory = Flag.Directory("base-dir", { mustExist: true }).pipe(
   Flag.withAlias("b"),
   Flag.withDescription("The base directory to use for bundle size comparisons")
 )
 
-const outputPath = Flag.file("output-path").pipe(
+const outputPath = Flag.File("output-path").pipe(
   Flag.withAlias("o"),
   Flag.withDescription("The name of the file to write the bundle size report to"),
   Flag.withDefault("stats.txt"),
@@ -55,7 +55,7 @@ const compare = Command.make("compare", { baseDirectory, outputPath }).pipe(
   }))
 )
 
-const outputDirectory = Flag.directory("output-dir").pipe(
+const outputDirectory = Flag.Directory("output-dir").pipe(
   Flag.withAlias("o"),
   Flag.withDescription("The name of the directory to write the bundle size visualizations to"),
   Flag.mapEffect(Effect.fnUntraced(function*(outputPath) {
@@ -70,7 +70,7 @@ const visualize = Command.make("visualize", { outputDirectory }).pipe(
     const { fixtures, fixturesDir } = yield* Fixtures
     const reporter = yield* Reporter
 
-    const paths = yield* Prompt.multiSelect({
+    const paths = yield* Prompt.MultiSelect({
       message: "Select files whose bundle size you would like to visualize",
       choices: fixtures.map((fixture) => ({
         title: fixture,
@@ -83,7 +83,7 @@ const visualize = Command.make("visualize", { outputDirectory }).pipe(
   }))
 )
 
-const reportPaths = Argument.file("paths", { mustExist: true }).pipe(
+const reportPaths = Argument.File("paths", { mustExist: true }).pipe(
   Argument.withDescription("Fixture files to include in the report"),
   Argument.variadic({ min: 1 })
 )

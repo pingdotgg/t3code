@@ -22,13 +22,13 @@
     "@tanstack/solid-start": "^1.168.6",
     "alchemy": "workspace:*",
     "effect": "catalog:effect",
-    "solid-js": "^1.9.12"
+    "solid-js": "catalog:frontend"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:cloudflare-runtime",
     "@types/bun": "catalog:tooling",
     "typescript": "catalog:build",
     "vite": "catalog:build",
-    "vite-plugin-solid": "^2.11.12"
+    "vite-plugin-solid": "catalog:frontend"
   }
 }

@@ -216,5 +216,13 @@ export const makeDurableObjectBridge =
             ) ?? Effect.void,
         );
       }
+
+      async webSocketError(ws: WebSocket, error: unknown) {
+        return this.#execute(
+          (instance) =>
+            instance.webSocketError?.(fromWebSocket(ws as any), error) ??
+            Effect.void,
+        );
+      }
     } as any;
   };

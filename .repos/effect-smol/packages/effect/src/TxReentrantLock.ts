@@ -21,7 +21,7 @@ import { hasProperty } from "./Predicate.ts"
 import type * as Scope from "./Scope.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxReentrantLock"
+const TypeId = "~effect/TxReentrantLock"
 
 /**
  * @category models
@@ -282,6 +282,20 @@ const releaseReadFor = (self: TxReentrantLock, fiberId: number): Effect.Effect<n
     return newCount
   }).pipe(Effect.tx)
 
+/**
+ * Releases one read lock held by the current fiber.
+ *
+ * **When to use**
+ *
+ * Use to leave a manually acquired read lock.
+ *
+ * **Details**
+ *
+ * Returns the remaining number of read locks held by this fiber.
+ *
+ * @category mutations
+ * @since 2.0.0
+ */
 export const releaseRead = (self: TxReentrantLock): Effect.Effect<number> =>
   Effect.withFiber((fiber) => releaseReadFor(self, fiber.id))
 
@@ -328,6 +342,20 @@ const releaseWriteFor = (self: TxReentrantLock, fiberId: number): Effect.Effect<
     return newCount
   }).pipe(Effect.tx)
 
+/**
+ * Releases one write lock held by the current fiber.
+ *
+ * **When to use**
+ *
+ * Use to leave a manually acquired write lock.
+ *
+ * **Details**
+ *
+ * Returns the remaining number of write locks held by this fiber.
+ *
+ * @category mutations
+ * @since 2.0.0
+ */
 export const releaseWrite = (self: TxReentrantLock): Effect.Effect<number> =>
   Effect.withFiber((fiber) => releaseWriteFor(self, fiber.id))
 

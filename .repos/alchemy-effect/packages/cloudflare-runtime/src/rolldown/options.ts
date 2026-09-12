@@ -15,10 +15,17 @@ export interface BasePluginOptions {
    * @default []
    * @example
    * ```ts
-   * cloudflare({ compatibilityDate: "2026-04-01", compatibilityFlags: ["nodejs_compat"] });
+   * cloudflare({ compatibilityDate: "2026-08-31" });
    * ```
    */
   compatibilityFlags?: Array<string>;
+  /**
+   * Whether external CommonJS `require()` calls should be rewritten as ESM.
+   * Internal single-module Workers disable this because they cannot carry the
+   * generated helper chunk; user bundles should leave it enabled.
+   * @default true
+   */
+  externalRequire?: boolean;
   /**
    * The exports to include in the bundle.
    * By default, all exports are included. However, if you only want to include certain exports, you can use this option.

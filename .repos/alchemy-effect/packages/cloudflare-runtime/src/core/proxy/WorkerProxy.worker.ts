@@ -1,7 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 
+import {
+  BINDING_PROXY_SHARED_SECRET,
+  HEADER_ORIGINAL_URL,
+  HEADER_PROXY_SHARED_SECRET,
+} from "./ProxyHeaders.shared.ts";
+
 interface Env {
+  [BINDING_PROXY_SHARED_SECRET]: string;
   PROXY: ColoLocalActorNamespace;
   PROXY_TOKEN: string;
 }
@@ -103,6 +110,11 @@ export class WorkerProxy extends DurableObject<Env> {
       proxied.pathname = original.pathname;
       proxied.search = original.search;
       const headers = new Headers(request.headers);
+      headers.set(HEADER_ORIGINAL_URL, original.href);
+      headers.set(
+        HEADER_PROXY_SHARED_SECRET,
+        this.env[BINDING_PROXY_SHARED_SECRET],
+      );
       headers.set("x-forwarded-host", original.host);
       headers.set("x-forwarded-proto", original.protocol.replace(/:$/, ""));
       return await fetch(proxied, {

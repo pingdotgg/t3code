@@ -111,8 +111,8 @@ export const layerFromEnv = (
   Layer.effect(
     Resource,
     Effect.gen(function*() {
-      const serviceName = yield* Config.option(Config.string("OTEL_SERVICE_NAME"))
-      const attributes = yield* Config.string("OTEL_RESOURCE_ATTRIBUTES").pipe(
+      const serviceName = yield* Config.option(Config.String("OTEL_SERVICE_NAME"))
+      const attributes = yield* Config.String("OTEL_RESOURCE_ATTRIBUTES").pipe(
         Config.withDefault(""),
         Config.map((s) => {
           const attrs = s.split(",")

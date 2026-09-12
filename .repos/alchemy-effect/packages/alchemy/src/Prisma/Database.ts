@@ -145,13 +145,18 @@ export interface DatabaseProps {
    */
   source?: DatabaseSourceInput;
   /**
-   * Branch ID to attach the database to. Mutually exclusive with branchGitName.
+   * Branch ID to attach the database to. Mutually exclusive with
+   * branchGitName. Every Prisma database belongs to a Branch: omit both
+   * fields to let the Management API attach it to the project's default
+   * Branch, which Alchemy then leaves unmanaged.
    */
-  branchId?: string | null;
+  branchId?: string;
   /**
-   * Branch git name to attach the database to. Mutually exclusive with branchId.
+   * Branch git name to attach the database to (the Branch is created when it
+   * does not exist). Mutually exclusive with branchId. Omit both fields to
+   * attach to the project's default Branch.
    */
-  branchGitName?: string | null;
+  branchGitName?: string;
   /**
    * Local database settings for `alchemy dev`. Set to `false` to keep only
    * placeholder IDs.
@@ -443,10 +448,10 @@ const branchNeedsSync = Effect.fn(function* (
     return database.branchId !== props.branchId;
   }
   if (props.branchGitName === undefined) {
-    return database.branchId !== null;
-  }
-  if (props.branchGitName === null) {
-    return database.branchId !== null;
+    // No attachment requested: the Management API attaches every database to
+    // a Branch (the project default when omitted) and rejects detaching, so
+    // the observed attachment is left alone.
+    return false;
   }
   const branchId = yield* branchIdForGitName(
     client,
@@ -484,6 +489,16 @@ const validateDatabaseProps = (props: DatabaseProps) =>
     if (props.branchId !== undefined && props.branchGitName !== undefined) {
       return yield* Effect.fail(
         new Error("branchId and branchGitName are mutually exclusive."),
+      );
+    }
+    if (
+      (props.branchId as unknown) === null ||
+      (props.branchGitName as unknown) === null
+    ) {
+      return yield* Effect.fail(
+        new Error(
+          "Every Prisma database belongs to a Branch; the Management API rejects detaching (null). Omit both branchId and branchGitName to attach to the project's default branch, or provide one of them.",
+        ),
       );
     }
   });
@@ -584,6 +599,9 @@ const ProviderLive = () =>
           const desiredName = yield* createName(id, news.name);
           const observedName =
             output?.databaseName ?? (yield* createName(id, olds.name));
+          // Omitting both branch fields leaves the observed attachment
+          // unmanaged (every database belongs to a Branch; detaching is not
+          // an API operation), so only an explicit target can mismatch.
           let branchMismatch = false;
           if (isResolved(news.branchId) && news.branchId !== undefined) {
             branchMismatch =
@@ -593,10 +611,7 @@ const ProviderLive = () =>
             isResolved(news.branchGitName) &&
             news.branchGitName !== undefined
           ) {
-            if (news.branchGitName === null) {
-              branchMismatch =
-                (output?.branchId ?? olds.branchId ?? null) !== null;
-            } else if (output && newProjectId !== undefined) {
+            if (output && newProjectId !== undefined) {
               const desiredBranchId = yield* branchIdForGitName(
                 client,
                 newProjectId,
@@ -608,12 +623,6 @@ const ProviderLive = () =>
             } else {
               branchMismatch = news.branchGitName !== olds.branchGitName;
             }
-          } else if (
-            isResolved(news.branchId) &&
-            isResolved(news.branchGitName)
-          ) {
-            branchMismatch =
-              (output?.branchId ?? olds.branchId ?? null) !== null;
           }
           if (desiredName !== observedName || branchMismatch) {
             return { action: "update" } as const;
@@ -798,15 +807,12 @@ const ProviderLive = () =>
             database.name !== name ||
             (yield* branchNeedsSync(client, projectId, database, desired));
           if (needsPatch) {
-            const updateAttachment =
-              attach.branchId === undefined &&
-              attach.branchGitName === undefined
-                ? { branchId: null, branchGitName: undefined }
-                : attach;
+            // With no attachment requested only the name is patched; sending
+            // `branchId: null` is a detach, which the API rejects (422).
             database = yield* client.updateDatabase(database.id, {
               name,
-              branchId: updateAttachment.branchId,
-              branchGitName: updateAttachment.branchGitName,
+              branchId: attach.branchId,
+              branchGitName: attach.branchGitName,
             });
           }
 

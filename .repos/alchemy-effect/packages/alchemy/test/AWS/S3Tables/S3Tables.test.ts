@@ -1,6 +1,6 @@
 import * as AWS from "@/AWS";
 import { Namespace, Table, TableBucket } from "@/AWS/S3Tables";
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import * as s3tables from "@distilled.cloud/aws/s3tables";

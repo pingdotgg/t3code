@@ -4,6 +4,21 @@ import cloudflare from "../plugin.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
 
 describe("nodejs_compat", () => {
+  it("rewrites external CommonJS requires when compatibility enables Node by date", () => {
+    const plugins = cloudflare({ compatibilityDate: "2026-08-31" });
+
+    expect(plugins[0]?.name).toBe("builtin:esm-external-require");
+  });
+
+  it("can omit the external require rewrite for single-module internal workers", () => {
+    const plugins = cloudflare({
+      compatibilityDate: "2026-08-31",
+      externalRequire: false,
+    });
+
+    expect(plugins[0]?.name).not.toBe("builtin:esm-external-require");
+  });
+
   it("runs node builtin imports with nodejs_compat enabled", async () => {
     const built = await buildFixture({
       fixture: "node-compat/index.ts",

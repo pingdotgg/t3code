@@ -65,6 +65,8 @@ describe("Iterable", () => {
     it("take", () => {
       deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(2), toArray), [1, 2])
       deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(0), toArray), [])
+      deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(1.5), toArray), [1])
+      deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(Number.NaN), toArray), [])
       // out of bounds
       deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(-10), toArray), [])
       deepStrictEqual(pipe([1, 2, 3, 4], Iter.take(10), toArray), [1, 2, 3, 4])
@@ -92,6 +94,8 @@ describe("Iterable", () => {
     it("drop", () => {
       deepStrictEqual(pipe(Iter.empty(), Iter.drop(0), toArray), [])
       deepStrictEqual(pipe([1, 2], Iter.drop(0), toArray), [1, 2])
+      deepStrictEqual(pipe([1, 2, 3], Iter.drop(1.5), toArray), [2, 3])
+      deepStrictEqual(pipe([1, 2], Iter.drop(Number.NaN), toArray), [1, 2])
       deepStrictEqual(pipe([1, 2], Iter.drop(1), toArray), [2])
       deepStrictEqual(pipe([1, 2], Iter.drop(2), toArray), [])
       // out of bound
@@ -377,6 +381,7 @@ describe("Iterable", () => {
     // out of bounds
     deepStrictEqual(toArray(Iter.chunksOf(0)([1, 2, 3, 4, 5])), [[1], [2], [3], [4], [5]])
     deepStrictEqual(toArray(Iter.chunksOf(-1)([1, 2, 3, 4, 5])), [[1], [2], [3], [4], [5]])
+    deepStrictEqual(toArray(Iter.chunksOf(Number.NaN)([1, 2, 3])), [[1], [2], [3]])
 
     const assertSingleChunk = (
       input: Iterable<number>,
@@ -483,6 +488,7 @@ describe("Iterable", () => {
     )
     deepStrictEqual(toArray(Iter.makeBy((n) => n * 2, { length: 5 })), [0, 2, 4, 6, 8])
     deepStrictEqual(toArray(Iter.makeBy((n) => n * 2, { length: 2.2 })), [0, 2])
+    deepStrictEqual(toArray(Iter.makeBy((n) => n, { length: Number.NaN })), [0])
   })
 
   it("replicate", () => {
@@ -490,6 +496,11 @@ describe("Iterable", () => {
     deepStrictEqual(toArray(Iter.replicate("a", -1)), ["a"])
     deepStrictEqual(toArray(Iter.replicate("a", 3)), ["a", "a", "a"])
     deepStrictEqual(toArray(Iter.replicate("a", 2.2)), ["a", "a"])
+    deepStrictEqual(toArray(Iter.replicate("a", Number.NaN)), ["a"])
+  })
+
+  it("repeat", () => {
+    deepStrictEqual(toArray(Iter.repeat([1, 2], Number.NaN)), [1, 2])
   })
 
   it("range", () => {

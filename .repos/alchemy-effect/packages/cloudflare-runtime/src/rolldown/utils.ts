@@ -13,7 +13,19 @@ export function toPosixPath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-export function hasNodejsCompat(flags?: ReadonlyArray<string>): boolean {
+export function hasNodejsCompat(
+  flags?: ReadonlyArray<string>,
+  compatibilityDate?: string,
+): boolean {
+  // Both nodejs_compat modes are runtime defaults from 2026-08-04, so builds
+  // for newer dates must enable the same transforms without a redundant flag.
+  if (
+    compatibilityDate !== undefined &&
+    compatibilityDate >= "2026-08-04" &&
+    !flags?.includes("no_nodejs_compat")
+  ) {
+    return true;
+  }
   return (
     flags?.some(
       (flag) => flag === "nodejs_compat" || flag === "nodejs_compat_v2",

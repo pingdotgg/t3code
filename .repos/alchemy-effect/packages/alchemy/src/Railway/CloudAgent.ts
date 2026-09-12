@@ -1,5 +1,5 @@
 import type {
-  CloudAgentCreateResponse,
+  CreateCloudAgentResponse,
   CloudAgentResponse,
   CloudAgentSleepResponse,
   CloudAgentStatus,
@@ -190,7 +190,7 @@ export class CloudAgentEnvironmentRequired extends Data.TaggedError(
 
 type CloudRow =
   | CloudAgentResponse
-  | CloudAgentCreateResponse
+  | CreateCloudAgentResponse
   | CloudAgentSleepResponse
   | CloudAgentWakeResponse
   | CloudAgentsResultItem;
@@ -425,7 +425,7 @@ export const CloudAgentProvider = () =>
 
       if (current === undefined || isGone(current)) {
         const created = yield* railway
-          .cloudAgentCreate({
+          .createCloudAgent({
             input: {
               environmentId,
               name,
@@ -456,7 +456,7 @@ export const CloudAgentProvider = () =>
       const cloudAgentId = output.cloudAgentId;
       if (cloudAgentId.length === 0) return;
       yield* railway
-        .cloudAgentDelete({ id: cloudAgentId })
+        .deleteCloudAgent({ id: cloudAgentId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

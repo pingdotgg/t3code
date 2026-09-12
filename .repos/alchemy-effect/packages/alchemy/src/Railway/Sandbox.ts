@@ -1,8 +1,8 @@
 import type {
   SandboxCheckpointsResultItem,
-  SandboxCreateResponse,
+  CreateSandboxResponse,
   SandboxDestroyResponse,
-  SandboxExecResponse,
+  ExecSandboxResponse,
   SandboxHeartbeatResponse,
   SandboxNetworkIsolation,
   SandboxResponse,
@@ -289,7 +289,7 @@ class SandboxPending extends Data.TaggedError("Railway.SandboxPending")<{
 
 type CloudSandbox =
   | SandboxResponse
-  | SandboxCreateResponse
+  | CreateSandboxResponse
   | SandboxDestroyResponse
   | SandboxHeartbeatResponse
   | SandboxesResponseEdgesItemNode;
@@ -455,7 +455,7 @@ export const execSandbox = Effect.fn(function* (input: {
   command: string;
   timeoutSec?: number;
 }) {
-  return yield* railway.sandboxExec({
+  return yield* railway.execSandbox({
     command: input.command,
     environmentId: input.environmentId,
     id: input.sandboxId,
@@ -486,7 +486,7 @@ export const createSandboxCheckpoint = Effect.fn(function* (input: {
   environmentId: string;
   name: string;
 }) {
-  return yield* railway.sandboxCheckpointCreate({
+  return yield* railway.createSandboxCheckpoint({
     environmentId: input.environmentId,
     name: input.name,
     sandboxId: input.sandboxId,
@@ -527,7 +527,7 @@ export const renameSandboxCheckpoint = Effect.fn(function* (input: {
       name: input.name,
     });
   }
-  return yield* railway.sandboxCheckpointRename({
+  return yield* railway.renameSandboxCheckpoint({
     environmentId: input.environmentId,
     id: found.id,
     name: input.newName,
@@ -547,7 +547,7 @@ export const deleteSandboxCheckpoint = Effect.fn(function* (input: {
   const found = findCheckpoint(items, input.name);
   if (found === undefined) return;
   yield* railway
-    .sandboxCheckpointDelete({
+    .deleteSandboxCheckpoint({
       environmentId: input.environmentId,
       id: found.id,
     })
@@ -559,7 +559,7 @@ export type ExecRequest = {
   timeoutSec?: number;
 };
 
-export type ExecResult = SandboxExecResponse;
+export type ExecResult = ExecSandboxResponse;
 
 /**
  * Run a command inside a {@link Sandbox}. Control-plane GraphQL —
@@ -589,7 +589,7 @@ export const Exec = Binding.Service<Exec>("Railway.Sandbox.Exec");
 export interface ExecClient {
   (
     request: ExecRequest,
-  ): Effect.Effect<ExecResult, railway.SandboxExecError, RuntimeContext>;
+  ): Effect.Effect<ExecResult, railway.ExecSandboxError, RuntimeContext>;
 }
 
 /**
@@ -717,7 +717,7 @@ export const SandboxProvider = () =>
           : undefined;
 
       if (current === undefined) {
-        const created = yield* railway.sandboxCreate({
+        const created = yield* railway.createSandbox({
           input: {
             environmentId,
             ...(props.idleTimeoutMinutes !== undefined

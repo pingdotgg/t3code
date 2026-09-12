@@ -1,7 +1,7 @@
 import type {
-  BucketCreateResponse,
+  CreateBucketResponse,
   BucketS3CredentialsResultItem,
-  BucketUpdateResponse,
+  UpdateBucketResponse,
   ProjectResponseBucketsEdgesItemNode,
 } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
@@ -294,8 +294,8 @@ class BucketDeployPending extends Data.TaggedError(
 
 type CloudBucket =
   | ProjectResponseBucketsEdgesItemNode
-  | BucketCreateResponse
-  | BucketUpdateResponse;
+  | CreateBucketResponse
+  | UpdateBucketResponse;
 
 type BucketInstanceConfig = {
   region?: string | null;
@@ -708,7 +708,7 @@ export const BucketProvider = () =>
 
       if (current === undefined) {
         const created = yield* railway
-          .bucketCreate({
+          .createBucket({
             input: {
               projectId,
               name,
@@ -735,7 +735,7 @@ export const BucketProvider = () =>
       }
 
       if (current.name !== name) {
-        current = yield* railway.bucketUpdate({
+        current = yield* railway.updateBucket({
           id: current.id,
           input: { name },
         });

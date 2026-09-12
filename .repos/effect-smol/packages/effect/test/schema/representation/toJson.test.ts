@@ -69,7 +69,7 @@ describe("SchemaRepresentation.toJson", () => {
     )
   })
 
-  it("removes live callbacks from a custom filter", () => {
+  it("removes live callbacks and preserves JSON annotations from a custom filter", () => {
     const filter = Schema.makeFilter<string>(() => true, {
       description: "custom",
       callback: () => "live",
@@ -79,7 +79,8 @@ describe("SchemaRepresentation.toJson", () => {
         schemas: [Schema.Number.ast]
       },
       toCode: () => ({ runtime: "Custom" }),
-      toJsonSchema: () => ({ minLength: 1 })
+      toJsonSchema: () => ({ minLength: 1 }),
+      arbitraryConstraint: { minLength: 1 }
     }).abort()
 
     assert.deepStrictEqual(
@@ -95,7 +96,8 @@ describe("SchemaRepresentation.toJson", () => {
               schemas: [{ _tag: "Number", checks: [] }]
             },
             annotations: {
-              description: "custom"
+              description: "custom",
+              arbitraryConstraint: { minLength: 1 }
             },
             aborted: true
           }]
@@ -179,7 +181,7 @@ describe("SchemaRepresentation.toJson", () => {
           },
           checks: []
         }],
-        mode: "anyOf",
+        options: { mode: "anyOf" },
         checks: []
       },
       {
@@ -189,7 +191,7 @@ describe("SchemaRepresentation.toJson", () => {
           annotations: { title: "nested" },
           checks: []
         }],
-        mode: "anyOf",
+        options: { mode: "anyOf" },
         checks: []
       }
     )

@@ -10,12 +10,14 @@
  * recreated.
  */
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import { Credentials } from "@/Cloudflare/Credentials.ts";
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import { spawn } from "node:child_process";
 import * as pathe from "pathe";
 import {
@@ -41,11 +43,12 @@ const run = (options: {
   cmd: string;
   args: string[];
   cwd: string;
+  env?: Record<string, string>;
 }): Effect.Effect<string, Error> =>
   Effect.callback<string, Error>((resume) => {
     const child = spawn(options.cmd, options.args, {
       cwd: options.cwd,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -92,6 +95,29 @@ test.provider.skipIf(!!process.env.FAST)(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { accountId } = yield* yield* CloudflareEnvironment;
+
+      // The published beta.67 predates the per-provider profile store, so
+      // it cannot read the credentials this process resolved from the
+      // profile. Environment credentials are the contract that is stable
+      // across versions: hand it the resolved credentials under `CI=1`.
+      const credentials = yield* yield* Credentials;
+      const legacyCliEnv: Record<string, string> = {
+        CI: "1",
+        CLOUDFLARE_ACCOUNT_ID: accountId,
+        ...(credentials.type === "apiKey"
+          ? {
+              CLOUDFLARE_API_KEY: Redacted.value(credentials.apiKey),
+              CLOUDFLARE_EMAIL: credentials.email,
+            }
+          : {
+              // An OAuth access token is a bearer token like an API token.
+              CLOUDFLARE_API_TOKEN: Redacted.value(
+                credentials.type === "apiToken"
+                  ? credentials.apiToken
+                  : credentials.accessToken,
+              ),
+            }),
+      };
 
       const dir = yield* fs.makeTempDirectory({ prefix: "alchemy-b67-mig-" });
       const stateFile = (fqn: string) =>
@@ -158,6 +184,7 @@ test.provider.skipIf(!!process.env.FAST)(
           "--yes",
         ],
         cwd: dir,
+        env: legacyCliEnv,
       });
 
       // beta.67 persisted the Worker at the legacy `Site/Worker` FQN.

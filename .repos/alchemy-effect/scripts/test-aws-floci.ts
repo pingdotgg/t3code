@@ -10,6 +10,7 @@
  * Extra alchemy-test args are forwarded (`-t`, `--retry`, paths, …).
  */
 import { Glob } from "bun";
+import { preferLocalFlociImage } from "./floci-image.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
@@ -94,25 +95,7 @@ for (const root of requestedRoots) {
 
 process.env.ALCHEMY_TEST_DEV = "1";
 
-// Prefer a locally built `floci:dev` (pnpm floci:build) when it exists —
-// that's how unreleased emulator patches get exercised by this suite. When
-// it doesn't, leave the env unset so the floci package resolves the pinned
-// release image; hard-defaulting to a missing image fails every suite's
-// `docker run` before a single test can run.
-if (!process.env.ALCHEMY_FLOCI_IMAGE) {
-  const devImage = Bun.spawnSync(
-    ["docker", "image", "inspect", "floci:dev"],
-    { stdout: "ignore", stderr: "ignore" },
-  );
-  if (devImage.exitCode === 0) {
-    process.env.ALCHEMY_FLOCI_IMAGE = "floci:dev";
-    console.log("test:aws:floci: using locally built floci:dev image");
-  } else {
-    console.log(
-      "test:aws:floci: no local floci:dev image (pnpm floci:build) — using the pinned release image",
-    );
-  }
-}
+preferLocalFlociImage("test:aws:floci");
 
 if (!flags.includes("--profile")) {
   flags.unshift("--profile", "testing");
@@ -140,8 +123,7 @@ if (!flags.includes("--concurrency") && !flags.includes("-c")) {
 // loop"). Set `ALCHEMY_FLOCI_NO_RESET=1` to keep state across runs while
 // iterating on a single suite.
 if (!process.env.ALCHEMY_FLOCI_NO_RESET) {
-  const endpoint =
-    process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566";
+  const endpoint = process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566";
   try {
     const res = await fetch(`${endpoint}/_floci/state/reset`, {
       method: "POST",

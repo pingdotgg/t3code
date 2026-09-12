@@ -3,6 +3,7 @@ import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import Stack from "../alchemy.run.ts";
 
 const { getWhenReady } = Test;
@@ -36,17 +37,20 @@ test(
   "serves documentation pages",
   Effect.gen(function* () {
     const url = yield* base;
-    const home = yield* getWhenReady(url);
-    expect(home.status).toBe(200);
-    expect(yield* home.text).toContain("Alchemy with Vocs");
-
-    const guide = yield* getWhenReady(`${url}/guide`);
-    expect(guide.status).toBe(200);
-    expect(yield* guide.text).toContain("Deployment guide");
-
-    const counter = yield* getWhenReady(`${url}/counter`);
-    expect(counter.status).toBe(200);
-    expect(yield* counter.text).toContain("Interactive component");
+    for (const [pathname, content] of [
+      ["/", "Alchemy with Vocs"],
+      ["/guide", "Deployment guide"],
+      ["/counter", "Interactive component"],
+    ] as const) {
+      const response = yield* Test.executeWhenReady(
+        HttpClientRequest.get(`${url}${pathname}`, {
+          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toContain("text/html");
+      expect(yield* response.text).toContain(content);
+    }
   }),
   { timeout: 180_000 },
 );

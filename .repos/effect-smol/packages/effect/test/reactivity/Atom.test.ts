@@ -8,6 +8,7 @@ import {
   Latch,
   Layer,
   Option,
+  Queue,
   Result,
   Schema,
   Stream,
@@ -15,13 +16,13 @@ import {
 } from "effect"
 import { TestClock } from "effect/testing"
 import { KeyValueStore } from "effect/unstable/persistence"
-import { AsyncResult, Atom, AtomRegistry, Hydration } from "effect/unstable/reactivity"
+import { AsyncResult, Atom, AtomRegistry, Hydration, Reactivity } from "effect/unstable/reactivity"
 
 declare const global: any
 
 addEqualityTesters()
 
-describe.sequential("Atom", () => {
+describe("Atom", { concurrent: false }, () => {
   beforeEach(async () => {
     vitest.useFakeTimers({
       toFake: [
@@ -1147,6 +1148,35 @@ describe.sequential("Atom", () => {
     expect(r.get(state3)).toEqual(0)
   })
 
+  it("releases a stream-backed atom consumed through a derived atom after idleTTL", async () => {
+    let released = false
+    const source = Stream.callback<number>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => setInterval(() => Queue.offerUnsafe(queue, Date.now()), 100)),
+        (handle) =>
+          Effect.sync(() => {
+            released = true
+            clearInterval(handle)
+          })
+      ).pipe(Effect.asVoid)
+    )
+    const feed = Atom.make(() => source)
+    const derived = Atom.make((get) => AsyncResult.isSuccess(get(feed)) ? "ready" : "initial")
+    const r = AtomRegistry.make({ defaultIdleTTL: 400 })
+
+    try {
+      const unsubscribe = r.subscribe(derived, () => {}, { immediate: true })
+      await vitest.advanceTimersByTimeAsync(600)
+      unsubscribe()
+
+      await vitest.advanceTimersByTimeAsync(2000)
+
+      expect(released).toEqual(true)
+    } finally {
+      r.dispose()
+    }
+  })
+
   it("idleTTL fn", async () => {
     const fn = Atom.fn((n: number) => Effect.succeed(n + 1)).pipe(
       Atom.setIdleTTL(0)
@@ -1219,6 +1249,20 @@ describe.sequential("Atom", () => {
 
     await vitest.advanceTimersByTimeAsync(100)
     assert.deepEqual(r.get(count), AsyncResult.success(1))
+  })
+
+  it("withFallback forwards writes to the primary atom", () => {
+    const primary = Atom.make<AsyncResult.AsyncResult<number>>(AsyncResult.success(1))
+    const fallback = AsyncResult.success(2)
+    const atom = Atom.withFallback(primary, Atom.make(fallback))
+    const r = AtomRegistry.make()
+
+    r.set(atom, AsyncResult.initial())
+
+    assert.deepEqual([r.get(primary), r.get(atom)], [
+      AsyncResult.initial(),
+      AsyncResult.waiting(fallback)
+    ])
   })
 
   it("failure with previousSuccess", async () => {
@@ -2403,6 +2447,13 @@ describe.sequential("Atom", () => {
   })
 
   describe("Reactivity", () => {
+    it.effect("cleans up queries with duplicate keys", () =>
+      Effect.gen(function*() {
+        const reactivity = yield* Reactivity.make
+        const results = yield* reactivity.query(["todos", "todos"], Effect.succeed(42))
+        assert.strictEqual(yield* Queue.take(results), 42)
+      }).pipe(Effect.scoped))
+
     it("does not broadcast mutations across registries", () => {
       let reads = 0
       const query = Atom.make(() => ++reads).pipe(
@@ -2497,7 +2548,7 @@ describe.sequential("Atom", () => {
         { reactivityKeys: ["counter"] }
       )
       const dehydratedState: Array<Hydration.DehydratedAtomValue> = [{
-        "~effect/reactivity/DehydratedAtom": true,
+        "~effect/reactivity/Hydration/DehydratedAtom": true,
         key: "hydrated-counter",
         value: 10,
         dehydratedAt: 0

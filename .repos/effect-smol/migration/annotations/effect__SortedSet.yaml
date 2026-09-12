@@ -58,3 +58,6 @@
 "effect/SortedSet#some":
   replacement: "HashSet.some"
   note: "Run the predicate against the replacement HashSet; sort first only if traversal order has observable effects."
+"effect/SortedSet#toggle":
+  replacement: "HashSet.has + HashSet.add / HashSet.remove"
+  note: "HashSet has no toggle; branch on membership and add or remove the element."

@@ -7,7 +7,7 @@
  *
  *   bun scripts/generate-iam-actions.ts
  *
- * Source of truth: `distilled/packages/aws/src/services/*.ts`. For each
+ * Source of truth: `submodules/distilled/packages/aws/src/services/*.ts`. For each
  * service module we extract
  *
  *   - the sigv4 signing name (`T.AwsAuthSigv4({ name: "..." })`), which is the
@@ -29,7 +29,7 @@
  */
 
 const SERVICES_DIR = new URL(
-  "../distilled/packages/aws/src/services/",
+  "../submodules/distilled/packages/aws/src/services/",
   import.meta.url,
 ).pathname;
 const OUT_FILE = new URL(
@@ -89,7 +89,7 @@ const lines: string[] = [
   "//",
   "// Regenerate with: bun scripts/generate-iam-actions.ts",
   "//",
-  `// Source: distilled/packages/aws/src/services/*.ts (${files.length - skipped.length} service modules,`,
+  `// Source: submodules/distilled/packages/aws/src/services/*.ts (${files.length - skipped.length} service modules,`,
   `// ${prefixes.length} IAM action prefixes, ${totalOps} operations).`,
   "//",
   "// A SHALLOW literal union (no template-literal type computation) of",

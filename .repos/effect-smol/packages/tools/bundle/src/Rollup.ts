@@ -20,7 +20,6 @@ import * as NodeStream from "@effect/platform-node/NodeStream"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
-import * as FiberSet from "effect/FiberSet"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
@@ -131,8 +130,6 @@ export class Rollup extends Context.Service<Rollup>()(
             }),
             (bundle) => Effect.promise(() => bundle.close())
           )
-          const fibers = yield* FiberSet.make()
-
           const { output } = yield* Effect.tryPromise({
             try: () => bundle.generate({ format: "esm" }),
             catch: (cause) => new RollupError({ cause })
@@ -145,31 +142,29 @@ export class Rollup extends Context.Service<Rollup>()(
             Stream.broadcast({ capacity: 8, replay: 8 })
           )
 
-          if (options.outputDirectory) {
-            const outputPath = pathService.join(
-              options.outputDirectory,
-              `${pathService.parse(options.path).name}.min.js`
+          const writeOutput = options.outputDirectory
+            ? stream.pipe(
+              Stream.run(fs.sink(pathService.join(
+                options.outputDirectory,
+                `${pathService.parse(options.path).name}.min.js`
+              ))),
+              Effect.mapError((cause) => new RollupError({ cause }))
             )
-            yield* FiberSet.run(
-              fibers,
-              stream.pipe(
-                Stream.run(fs.sink(outputPath))
+            : Effect.void
+
+          const [, sizeInBytes] = yield* Effect.all([
+            writeOutput,
+            stream.pipe(
+              NodeStream.pipeThroughDuplex({
+                evaluate: () => createGzip({ level: 9 }),
+                onError: (cause) => new RollupError({ cause })
+              }),
+              Stream.runFold(
+                () => 0,
+                (totalBytes, chunkBytes) => chunkBytes.length + totalBytes
               )
             )
-          }
-
-          const sizeInBytes = yield* stream.pipe(
-            NodeStream.pipeThroughDuplex({
-              evaluate: () => createGzip({ level: 9 }),
-              onError: (cause) => new RollupError({ cause })
-            }),
-            Stream.runFold(
-              () => 0,
-              (totalBytes, chunkBytes) => chunkBytes.length + totalBytes
-            )
-          )
-
-          yield* FiberSet.awaitEmpty(fibers)
+          ], { concurrency: 2 })
 
           yield* Effect.log(`Bundled ${options.path}`).pipe(
             Effect.annotateLogs({ size: `${(sizeInBytes / 1000).toFixed(2)} kB` })
@@ -185,7 +180,9 @@ export class Rollup extends Context.Service<Rollup>()(
           return yield* Effect.forEach(
             options.paths,
             (path) => bundle({ path, visualize: options.visualize, outputDirectory: options.outputDirectory }),
-            { concurrency: options.paths.length }
+            // Rollup retains a module graph for each active bundle, so unbounded
+            // concurrency can exhaust the Node.js heap on CI runners.
+            { concurrency: 4 }
           )
         }
       )

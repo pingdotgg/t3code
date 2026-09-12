@@ -105,6 +105,7 @@ type WalkEntry = {
   rel: string;
   abs: string;
   dir: boolean;
+  mode: number;
 };
 
 const walkDirectory = (
@@ -123,10 +124,20 @@ const walkDirectory = (
           const posixRel = childRel.replaceAll("\\", "/");
           const stat = yield* fs.stat(abs);
           if (stat.type === "Directory") {
-            files.push({ rel: posixRel, abs, dir: true });
+            files.push({
+              rel: posixRel,
+              abs,
+              dir: true,
+              mode: stat.mode & 0o7777,
+            });
             yield* walk(abs, posixRel);
           } else if (stat.type === "File") {
-            files.push({ rel: posixRel, abs, dir: false });
+            files.push({
+              rel: posixRel,
+              abs,
+              dir: false,
+              mode: stat.mode & 0o7777,
+            });
           }
         }
       });
@@ -159,17 +170,34 @@ const fileBlocks = (
  * Pack `root` into a gzipped tar (ustar + GNU long-name). Paths are
  * relative to `root` with POSIX separators.
  */
-export const tarGzipDirectory = Effect.fn(function* (root: string) {
+export const tarGzipDirectory = Effect.fn(function* (
+  root: string,
+  options?: { preserveMode?: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const files = yield* walkDirectory(root);
   const chunks: Uint8Array[] = [];
   for (const file of files) {
     if (file.dir) {
-      chunks.push(...fileBlocks(`${file.rel}/`, 0, "5", 0o755));
+      chunks.push(
+        ...fileBlocks(
+          `${file.rel}/`,
+          0,
+          "5",
+          options?.preserveMode ? file.mode : 0o755,
+        ),
+      );
       continue;
     }
     const content = yield* fs.readFile(file.abs);
-    chunks.push(...fileBlocks(file.rel, content.byteLength, "0", 0o644));
+    chunks.push(
+      ...fileBlocks(
+        file.rel,
+        content.byteLength,
+        "0",
+        options?.preserveMode ? file.mode : 0o644,
+      ),
+    );
     chunks.push(content);
     const pad = pad512(content.byteLength);
     if (pad > 0) chunks.push(new Uint8Array(pad));

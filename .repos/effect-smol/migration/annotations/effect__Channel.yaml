@@ -173,11 +173,11 @@
   replacement: "Channel.forever"
   note: "Use forever for infinite repetition. Channel.repeat takes a Schedule and may terminate, so it is not equivalent."
 "effect/Channel#run":
-  replacement: "Channel.runDone"
-  note: "Renamed to runDone for an inputless, outputless channel. Use runDrain if emitted elements should be discarded."
+  replacement: "Channel.runDrain"
+  note: "Use runDrain to consume all emitted elements and return the channel's done value."
 "effect/Channel#runScoped":
   replacement: "Channel.toPull"
-  note: "No direct scoped runner remains. Use toPull in the caller scope and recover Cause.Done; use runDone or runDrain when an internally managed scope is acceptable."
+  note: "No direct scoped runner remains. Use toPull in the caller scope and recover Cause.Done; use runDrain when an internally managed scope is acceptable."
 "effect/Channel#scopedWith":
   replacement: "Channel.unwrap"
   note: "Use Channel.unwrap(Effect.map(Effect.scope, (scope) => Channel.fromEffect(f(scope)))) so the effect uses the active channel scope."

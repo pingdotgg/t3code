@@ -64,7 +64,7 @@ providers: Layer.mergeAll(Cloudflare.providers(), Stripe.providers()),
 ```
 
 Credentials resolve through the same `AuthProviders` registry as
-`alchemy deploy`, so tests pick up `alchemy login` profiles or
+`alchemy deploy`, so tests pick up stored profiles or
 the env-var auth methods registered by each provider.
 
 ### `state`

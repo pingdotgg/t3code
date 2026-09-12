@@ -31,7 +31,7 @@ bun run destroy  # tear down the Worker and assets
 
 - `@alchemy.run/frontend-frameworks` must be installed in the project; the
   source provider is loaded from its `/vocs` exports at deploy time.
-- `nodejs_compat` is added automatically for the Vocs server runtime.
+- Node.js compatibility is enabled by the Worker's compatibility date.
 - Project inputs are content-hashed, respecting `.gitignore` by default, so
   unchanged projects skip the build and deployment.
 - When `vocs.config.ts` uses a custom `outDir`, pass the same value as the

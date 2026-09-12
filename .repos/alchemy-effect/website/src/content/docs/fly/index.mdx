@@ -68,7 +68,7 @@ the same TypeScript program.
 
 ## Secrets
 
-- **[Secrets](/fly/data/secrets)** — `Config.redacted` in a Service
+- **[Secrets](/fly/data/secrets)** — `Config.Redacted` in a Service
   for values from `.env`. `Fly.Secret` when Fly should own a value
   shared across Machines. KMS keys are `SecretKey` plus `Encrypt` /
   `Decrypt` / `Sign` / `Verify`.
@@ -95,7 +95,7 @@ the same TypeScript program.
 | Object storage               | [Tigris](/fly/data/tigris) + `PutObject` / `GetObject`                     |
 | N replicas behind fly.dev    | Service `count`, or more [Machine](/fly/compute/machines) resources       |
 | Restore a disk               | [VolumeSnapshot](/fly/data/volumes#snapshots) + mount `snapshotId`        |
-| Config / API tokens          | [`Config.redacted`](/fly/data/secrets). [`Fly.Secret`](/fly/data/secrets) when Fly should own it |
+| Config / API tokens          | [`Config.Redacted`](/fly/data/secrets). [`Fly.Secret`](/fly/data/secrets) when Fly should own it |
 | Sign / encrypt in-app        | [SecretKey](/fly/data/secrets#kms-keys) + `Encrypt` / `Sign`              |
 | `{app}.fly.dev` over IPv4    | [IpAssignment](/fly/networking) `type: "shared_v4"`                       |
 | Your own domain              | [Certificate](/fly/networking#certificates) (ACME)                        |

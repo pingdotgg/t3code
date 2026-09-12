@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 /**
  * Live-API tests for the deployed Cloudflare State Store at
  * `alchemy-state-store`. The State service is wired up via
- * `Cloudflare.state()` so each test body just `yield* State` and
+ * `Cloudflare.state()` so each test body just `yield* yield* State` and
  * exercises the typed interface — same code path users hit in
  * production.
  *

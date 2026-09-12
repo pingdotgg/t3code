@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "distilled"
+      - "submodules/distilled"
       - "fixtures/**"
       - "packages/cloudflare-runtime/**"
       - "packages/cloudflare-test-tools/**"
@@ -21,7 +21,7 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
-      - "distilled"
+      - "submodules/distilled"
       - "fixtures/**"
       - "packages/cloudflare-runtime/**"
       - "packages/cloudflare-test-tools/**"
@@ -66,7 +66,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Checkout distilled
-        run: git submodule update --init --depth=1 --checkout -- distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
       - name: Restore Turbo cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

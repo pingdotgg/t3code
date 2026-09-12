@@ -6,6 +6,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Sql from "effect/unstable/sql/SqlClient";
 import { makeExecutionMemo } from "../Runtime/ExecutionMemo.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
+import { resolveSsl } from "./PostgresTls.ts";
 
 /**
  * Options for {@link Postgres}: `@effect/sql-pg`'s pool configuration, with
@@ -55,7 +56,11 @@ export const Postgres = <E = never, R = never>(config: PostgresConfig<E, R>) =>
         const { url, ...pool } = config;
         const resolved = Effect.isEffect(url) ? yield* url : url;
         const pgCtx = yield* Layer.build(
-          PgClient.layer({ ...pool, url: resolved }),
+          PgClient.layer({
+            ...pool,
+            url: resolved,
+            ssl: resolveSsl(resolved, pool.ssl),
+          }),
         );
         return Context.get(pgCtx, PgClient.PgClient);
       }),

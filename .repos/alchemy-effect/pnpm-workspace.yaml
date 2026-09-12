@@ -19,7 +19,8 @@ packages:
   - examples/monorepo-single-stack/*
   - examples/monorepo-multi-stack/*
   - benchmark/*
-  - distilled/packages/*
+  - demos/*
+  - submodules/distilled/packages/*
   - fixtures/*
 catalogs:
   auth:
@@ -30,7 +31,6 @@ catalogs:
     "@aws-crypto/util": ^5.2.0
     "@aws-sdk/credential-providers": ^3.0.0
     "@aws-sdk/types": ^3.973.1
-    "@smithy/node-config-provider": ^4.0.0
     "@smithy/shared-ini-file-loader": ^4.3.4
     "@smithy/types": ^4.8.1
     "@smithy/util-base64": ^4.3.0
@@ -45,21 +45,20 @@ catalogs:
   cloudflare:
     "@cloudflare/containers": ^0.3.7
     "@cloudflare/puppeteer": ^1.1.0
-    "@cloudflare/vite-plugin": ^1.13.12
-    "@cloudflare/workers-types": 4.20260702.1
+    "@cloudflare/workers-types": 5.20260901.1
     wrangler: ^4.103.0
   cloudflare-runtime:
-    "@cloudflare/unenv-preset": ^2.16.0
-    "@cloudflare/vitest-pool-workers": ^0.13.0
-    "@cloudflare/workers-types": ^5.20260812.1
+    "@cloudflare/unenv-preset": ^2.16.1
+    "@cloudflare/vitest-plugin": ^1.0.0
+    "@cloudflare/workers-types": 5.20260901.1
     "@octanejs/vite-plugin": ">=0.1.22"
     "@puppeteer/browsers": ^3.2.0
     "@sveltejs/kit": ">=3.0.0-next.9"
     "@types/http-cache-semantics": ^4.2.0
     "@types/ws": ^8.18.1
     astro: ^7.0.0
-    capnp-es: ^0.0.14
-    capnweb: ^0.8.0
+    capnp-es: ^0.0.16
+    capnweb: ^0.12.0
     esbuild: ^0.28.1
     fast-glob: ^3.3.2
     heap-js: ^2.5.0
@@ -75,7 +74,7 @@ catalogs:
     toucan-js: 4.0.0
     unenv: ^2.0.0-rc.24
     vite: ^7.0.0 || ^8.0.0
-    workerd: 1.20260704.1
+    workerd: 1.20260901.1
     ws: ^8.21.0
     yauzl: ^3.4.0
   database:
@@ -89,16 +88,15 @@ catalogs:
     mongodb: ^6.10.0
     pg: ^8.22.0
   effect:
-    "@effect/atom-react": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/platform-bun": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/platform-node": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/platform-node-shared": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/sql-d1": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/sql-mysql2": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/sql-pg": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/sql-sqlite-do": ">=4.0.0-rc.112 || >=4.0.0"
-    "@effect/vitest": ">=4.0.0-rc.112 || >=4.0.0"
-    effect: ">=4.0.0-rc.112 || >=4.0.0"
+    "@effect/atom-react": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/platform-bun": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/platform-node": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/sql-d1": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/sql-mysql2": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/sql-pg": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/sql-sqlite-do": ">=4.0.0-rc.115 || >=4.0.0"
+    "@effect/vitest": ">=4.0.0-rc.115 || >=4.0.0"
+    effect: ">=4.0.0-rc.115 || >=4.0.0"
   frontend:
     "@astrojs/internal-helpers": 0.10.1
     "@astrojs/underscore-redirects": 1.0.3
@@ -116,14 +114,14 @@ catalogs:
     "@solidjs/start": ^2.0.4
     "@solidjs/vite-plugin-nitro-2": ^0.3.2
     "@tailwindcss/postcss": ^4.1.13
-    "@tailwindcss/vite": ^4.1.13
+    "@tailwindcss/vite": ^4.1.18
     "@tanstack/react-router": ^1.167.4
     "@tanstack/react-start": ^1.166.15
     "@types/react": ^19.2.17
-    "@types/react-dom": ^19.2.4
+    "@types/react-dom": ^19.2.7
     "@vitejs/plugin-react": ^6.0.2
     "@vitejs/plugin-rsc": ^0.5.27
-    astro: 7.2.0
+    astro: 7.3.1
     foldkit: ^0.148.2
     hono: ^4.12.14
     isbot: ^5.2.1
@@ -136,19 +134,20 @@ catalogs:
     react-dom: ^19.2.7
     react-router: ^7.16.0
     react-server-dom-webpack: ~19.2.6
-    solid-js: ^1.9.5
+    solid-js: ^1.9.12
     solid-devtools: ^0.34.3
     svelte: ^5.56.6
-    tailwindcss: ^4.1.13
+    tailwindcss: ^4.1.18
     # Next.js requires the JS compiler API (typescript/lib/typescript.js);
     # catalog:build tracks tsgo (typescript 7), which no longer ships it.
     typescript: ^5.9.3
     vocs: 2.8.2
     waku: 1.0.0-beta.7
+    vite-plugin-solid: ^2.11.12
   shared:
     "@opentui/core": latest
     fast-xml-parser: ^5.3.4
-    uuid: ^14.0.0
+    uuid: ^14.0.1
     ws: ^8.20.0
     yaml: ^2.0.0
   testing:
@@ -159,31 +158,60 @@ catalogs:
     "@types/node": 26.2.0
     dedent: ^1.7.0
     husky: ^9.1.7
-    oxfmt: latest
-    oxlint: latest
+    oxfmt: ^0.66.0
+    oxlint: ^1.81.0
     pathe: ^2.0.3
     tsx: ^4.20.6
+    "@effect/language-service": ^0.87.2
+  node24:
+    # Examples targeting Node 24 retain the matching Node type definitions.
+    "@types/node": ^24.12.0
+  frontend-rsc:
+    # Keep React on the RSC patch line used by react-server-dom-webpack.
+    react: ~19.2.6
+    react-dom: ~19.2.6
 overrides:
-  "@cloudflare/workers-types": 5.20260812.1
-  effect: 4.0.0-rc.112
-  "@effect/platform-browser": 4.0.0-rc.112
+  "@cloudflare/workers-types": 5.20260901.1
+  workerd: 1.20260901.1
+  effect: 4.0.0-rc.115
+  "@effect/platform-browser": 4.0.0-rc.115
   drizzle-kit: 1.0.0-rc.5-ab785fc
   drizzle-orm: 1.0.0-rc.5-ab785fc
+  # Keep drizzle-orm's optional peer graph identical across workspace
+  # packages so TypeScript sees one drizzle-orm identity.
+  mysql2: 3.24.2
+  zod: 4.4.3
   rolldown: 1.2.5
 patchedDependencies:
-  "@astrojs/starlight@0.41.7": patches/@astrojs%2Fstarlight@0.41.7.patch
-  starlight-blog@0.28.0: patches/starlight-blog@0.28.0.patch
+  "@astrojs/starlight@0.42.0": patches/@astrojs%2Fstarlight@0.42.0.patch
+  starlight-blog@0.29.0: patches/starlight-blog@0.29.0.patch
 minimumReleaseAgeExclude:
-  - '@effect/atom-react@4.0.0-rc.112'
-  - '@effect/platform-bun@4.0.0-rc.112'
-  - '@effect/platform-node-shared@4.0.0-rc.112'
-  - '@effect/platform-node@4.0.0-rc.112'
-  - '@effect/sql-d1@4.0.0-rc.112'
-  - '@effect/sql-mysql2@4.0.0-rc.112'
-  - '@effect/sql-pg@4.0.0-rc.112'
-  - '@effect/sql-sqlite-do@4.0.0-rc.112'
-  - '@effect/vitest@4.0.0-rc.112'
-  - '@foldkit/vite-plugin@0.16.1'
-  - effect@4.0.0-rc.112
+  - "@alchemy.run/sigil@0.0.0-alpha.10"
+  - "@effect/atom-react@4.0.0-rc.115"
+  - "@effect/platform-bun@4.0.0-rc.115"
+  - "@effect/platform-node-shared@4.0.0-rc.115"
+  - "@effect/platform-node@4.0.0-rc.115"
+  - "@effect/sql-d1@4.0.0-rc.115"
+  - "@effect/sql-mysql2@4.0.0-rc.115"
+  - "@effect/sql-pg@4.0.0-rc.115"
+  - "@effect/sql-sqlite-do@4.0.0-rc.115"
+  - "@effect/vitest@4.0.0-rc.115"
+  - "@foldkit/vite-plugin@0.16.1"
+  - effect@4.0.0-rc.115
   - foldkit@0.148.2
-  - '@solidjs/start@2.0.4'
+  - "@solidjs/start@2.0.4"
+  - "@cloudflare/workers-types@5.20260901.1"
+  - "@cloudflare/workerd-darwin-64@1.20260901.1"
+  - "@cloudflare/workerd-darwin-arm64@1.20260901.1"
+  - "@cloudflare/workerd-linux-64@1.20260901.1"
+  - "@cloudflare/workerd-linux-arm64@1.20260901.1"
+  - "@cloudflare/workerd-windows-64@1.20260901.1"
+  - workerd@1.20260901.1
+  - '@typescript/typescript-darwin-arm64@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-darwin-x64@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-linux-arm64@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-linux-arm@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-linux-x64@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-win32-arm64@7.1.0-dev.20260905.1'
+  - '@typescript/typescript-win32-x64@7.1.0-dev.20260905.1'
+  - typescript@7.1.0-dev.20260905.1

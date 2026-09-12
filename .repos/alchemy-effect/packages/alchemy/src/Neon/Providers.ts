@@ -1,7 +1,7 @@
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { ProfileLive } from "../Auth/Profile.ts";
+import { ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Provider from "../Provider.ts";
 import { NeonAuth } from "./AuthProvider.ts";
 import { Branch, BranchProvider } from "./Branch.ts";
@@ -44,7 +44,7 @@ export const providers = () =>
     Layer.provide(Layer.mergeAll(ProjectProvider(), BranchProvider())),
     Layer.provideMerge(Credentials.fromAuthProvider()),
     Layer.provideMerge(NeonAuth),
-    Layer.provideMerge(ProfileLive),
+    Layer.provideMerge(ProfileStoreLive),
     Layer.provideMerge(CredentialsStoreLive),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.orDie,

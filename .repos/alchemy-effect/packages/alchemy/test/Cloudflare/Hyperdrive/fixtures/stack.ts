@@ -34,7 +34,7 @@ export type AsyncWorkerEnv = Cloudflare.InferEnv<typeof AsyncWorker>;
  * can also be inspected directly, e.g.
  *
  * ```sh
- * alchemy tail --stage test ./test/Cloudflare/Hyperdrive/fixtures/stack.ts
+ * alchemy logs --tail --stage test --config ./test/Cloudflare/Hyperdrive/fixtures/stack.ts
  * ```
  */
 export default Alchemy.Stack(

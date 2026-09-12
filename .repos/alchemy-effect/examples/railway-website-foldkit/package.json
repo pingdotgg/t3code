@@ -20,7 +20,6 @@
     "@foldkit/vite-plugin": "catalog:frontend",
     "@tailwindcss/vite": "catalog:frontend",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
     "tailwindcss": "catalog:frontend",
     "typescript": "catalog:build",
     "vite": "catalog:build"

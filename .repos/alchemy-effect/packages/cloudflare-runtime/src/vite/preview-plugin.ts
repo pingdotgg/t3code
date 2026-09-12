@@ -6,7 +6,7 @@ import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import { URL as NodeURL } from "node:url";
 import type * as vite from "vite";
-import { resolveForwardedHost } from "./forwarded-host.ts";
+import { proxyRequestHeaders } from "./forwarded-host.ts";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
 import { handleWebSocket } from "./websockets.ts";
 
@@ -82,7 +82,7 @@ export function preview(options: CloudflareVitePluginOptions): vite.Plugin {
       });
       const address = handle.address;
       const removeUpgradeListener = server.httpServer
-        ? handleWebSocket(server.httpServer, address)
+        ? handleWebSocket(server.httpServer, address, handle.proxySharedSecret)
         : undefined;
       const close = server.close.bind(server);
       server.close = async () => {
@@ -99,10 +99,7 @@ export function preview(options: CloudflareVitePluginOptions): vite.Plugin {
           const url = new NodeURL(req.url ?? "/", address.toString());
           const request = NodeHttp.request(url, {
             method: req.method,
-            headers: {
-              ...req.headers,
-              host: resolveForwardedHost(req.headers, url.host),
-            },
+            headers: proxyRequestHeaders(req, url, handle.proxySharedSecret),
           });
           req.pipe(request);
           request.on("response", (response) => {
