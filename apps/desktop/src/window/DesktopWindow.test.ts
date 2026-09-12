@@ -219,6 +219,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
   readonly destroyAll?: Effect.Effect<void>;
+  readonly onWindowCreate?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly copiedTexts?: string[];
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
@@ -265,6 +266,7 @@ function makeTestLayer(input: {
         input.createdWindowOptions?.push(options);
       }).pipe(
         Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
+        Effect.andThen(input.onWindowCreate ?? Effect.void),
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
@@ -761,6 +763,58 @@ describe("DesktopWindow", () => {
 
         assert.isTrue(yield* Ref.get(desktopState.windowCreated));
         assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not create the connecting splash after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+
+        yield* Ref.set(desktopState.quitting, true);
+        yield* desktopWindow.showConnectingSplash;
+
+        assert.equal(yield* Ref.get(createCount), 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("destroys a connecting splash whose creation finishes after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const destroyCount = yield* Ref.make(0);
+      const desktopStateRef = yield* Ref.make<DesktopState.DesktopState["Service"] | null>(null);
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        destroyAll: Ref.update(destroyCount, (count) => count + 1),
+        onWindowCreate: Effect.gen(function* () {
+          const state = yield* Ref.get(desktopStateRef);
+          if (state !== null) {
+            yield* Ref.set(state.quitting, true);
+          }
+        }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* Ref.set(desktopStateRef, desktopState);
+
+        yield* desktopWindow.showConnectingSplash;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(yield* Ref.get(destroyCount), 1);
       }).pipe(Effect.provide(layer));
     }),
   );
