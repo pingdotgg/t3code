@@ -422,6 +422,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # cli_archive: whether the job also builds the self-contained CLI
+          # archive. The executable is built on the runner's own Node, so only
+          # native runners qualify. macOS x64 has no native runner: a
+          # cross-built executable crashed under Rosetta in the smoke test and
+          # cannot be verified on real x64 hardware in CI, so it is skipped
+          # until it can be.
           - label: macOS arm64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -429,6 +435,7 @@ jobs:
             arch: arm64
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
+            cli_archive: true
           - label: macOS x64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -436,6 +443,7 @@ jobs:
             arch: x64
             rust_target: x86_64-apple-darwin
             resource_key: darwin-x64
+            cli_archive: false
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
@@ -443,6 +451,7 @@ jobs:
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
             resource_key: linux-x64
+            cli_archive: true
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
             platform: win
@@ -450,6 +459,7 @@ jobs:
             arch: x64
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
+            cli_archive: true
           # - label: Windows arm64
           #   runner: windows-11-arm
           #   platform: win
@@ -730,25 +740,22 @@ jobs:
           vp run dist:desktop:artifact "${args[@]}"
 
       # The single-executable is built with a Node that supports --build-sea
-      # (25.7+); the repo itself stays on the engines.node version.
-      # The macOS x64 archive is cross-built on the arm64 runner: tsdown
-      # downloads the x64 Node and injects the bundle into it.
+      # (25.7+); the repo itself stays on the engines.node version. It always
+      # injects into the runner's own Node: tsdown's cross-target download path
+      # runs `tar` on a drive-letter path on Windows, which GNU tar reads as a
+      # remote host, and a cross-built macOS binary cannot be smoke-tested.
       - name: Build CLI single-executable
+        if: matrix.cli_archive
         shell: bash
         env:
           # The exact version, not a major: vp downloads it from nodejs.org/dist on
           # the runner, and only exact versions have a dist directory. Keep in
           # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
           VP_NODE_VERSION: "26.8.2"
-        run: |
-          case "${{ matrix.platform }}" in
-            mac) target="darwin-${{ matrix.arch }}" ;;
-            *) target="${{ matrix.platform }}-${{ matrix.arch }}" ;;
-          esac
-          node apps/server/scripts/cli.ts build-exe --target "$target" --verbose
+        run: node apps/server/scripts/cli.ts build-exe --verbose
 
       - name: Import macOS signing certificate for the CLI archive
-        if: matrix.platform == 'mac'
+        if: matrix.cli_archive && matrix.platform == 'mac'
         shell: bash
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -779,6 +786,7 @@ jobs:
           echo "macOS CLI signing enabled."
 
       - name: Stage resource monitor for the CLI archive
+        if: matrix.cli_archive
         shell: bash
         run: |
           set -euo pipefail
@@ -791,6 +799,7 @@ jobs:
           cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
 
       - name: Build CLI archive
+        if: matrix.cli_archive
         shell: bash
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -817,10 +826,12 @@ jobs:
             --output-dir release-cli
 
       - name: Smoke-test CLI archive
+        if: matrix.cli_archive
         shell: bash
         run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.preflight.outputs.version }}"
 
       - name: Upload CLI archive
+        if: matrix.cli_archive
         uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.platform }}-${{ matrix.arch }}
