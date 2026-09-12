@@ -70,6 +70,14 @@ describe("buildThreadActionMenuItems", () => {
     expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour"]);
   });
 
+  it("gives every thread action and submenu option an icon", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, branch: "feat/menu" });
+    const flatten = (entries: typeof items): typeof items =>
+      entries.flatMap((item) => [item, ...(item.children ? flatten(item.children) : [])]);
+
+    expect(flatten(items).every((item) => typeof item.icon === "string")).toBe(true);
+  });
+
   it("disables title regeneration while one is in flight", () => {
     const item = buildThreadActionMenuItems({ ...baseState, isRegeneratingTitle: true }).find(
       (candidate) => candidate.id === "regenerate-title",
