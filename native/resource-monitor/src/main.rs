@@ -455,34 +455,35 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
-        let process_details = if !tracked.is_empty() {
-            let monitor_pid = Pid::from_u32(std::process::id());
-            let mut detail_pids = tracked
-                .iter()
-                .copied()
-                .map(Pid::from_u32)
-                .collect::<Vec<_>>();
-            if !tracked.contains(&monitor_pid.as_u32()) {
-                detail_pids.push(monitor_pid);
-            }
-            // Detail fields need no baseline. Drop command data and OS handles after each sample.
-            let mut details = System::new();
-            details.refresh_processes_specifics(
-                ProcessesToUpdate::Some(&detail_pids),
-                true,
-                process_refresh_kind().without_cpu(),
-            );
-            // This process cannot be replaced during collection. Its start time
-            // exposes any boot-epoch shift between the two System instances.
-            let start_time_offset = self.system.process(monitor_pid).and_then(|process| {
-                details.process(monitor_pid).map(|detail| {
-                    i128::from(detail.start_time()) - i128::from(process.start_time())
-                })
-            });
-            Some((details, start_time_offset))
-        } else {
-            None
-        };
+        let process_details =
+            if cfg!(any(target_os = "linux", target_os = "windows")) && !tracked.is_empty() {
+                let monitor_pid = Pid::from_u32(std::process::id());
+                let mut detail_pids = tracked
+                    .iter()
+                    .copied()
+                    .map(Pid::from_u32)
+                    .collect::<Vec<_>>();
+                if !tracked.contains(&monitor_pid.as_u32()) {
+                    detail_pids.push(monitor_pid);
+                }
+                // Detail fields need no baseline. Drop command data and OS handles after each sample.
+                let mut details = System::new();
+                details.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&detail_pids),
+                    true,
+                    process_refresh_kind().without_cpu(),
+                );
+                // This process cannot be replaced during collection. Its start time
+                // exposes any boot-epoch shift between the two System instances.
+                let start_time_offset = self.system.process(monitor_pid).and_then(|process| {
+                    details.process(monitor_pid).map(|detail| {
+                        i128::from(detail.start_time()) - i128::from(process.start_time())
+                    })
+                });
+                Some((details, start_time_offset))
+            } else {
+                None
+            };
         let sample_details = process_details
             .as_ref()
             .map_or(&self.system, |(details, _)| details);
@@ -562,7 +563,13 @@ impl Collector {
 
 // Keep CPU baselines separate. Even a metadata refresh resets Linux process times.
 fn process_discovery_refresh_kind() -> ProcessRefreshKind {
-    ProcessRefreshKind::nothing().with_cpu().without_tasks()
+    // sysinfo's macOS process discovery still reads command data, and its
+    // temporary System instances retain Mach ports. Keep that platform on one System.
+    if cfg!(any(target_os = "linux", target_os = "windows")) {
+        ProcessRefreshKind::nothing().with_cpu().without_tasks()
+    } else {
+        process_refresh_kind()
+    }
 }
 
 fn process_refresh_kind() -> ProcessRefreshKind {
@@ -1021,8 +1028,10 @@ mod tests {
             .system
             .process(Pid::from_u32(std::process::id()))
             .expect("current process discovered");
-        assert!(unselected.cmd().is_empty());
-        assert_eq!(unselected.memory(), 0);
+        if cfg!(any(target_os = "linux", target_os = "windows")) {
+            assert!(unselected.cmd().is_empty());
+            assert_eq!(unselected.memory(), 0);
+        }
 
         config.root_pid = std::process::id();
         let snapshot = collector.sample(&config, None);
@@ -1040,8 +1049,10 @@ mod tests {
             .system
             .process(Pid::from_u32(config.root_pid))
             .expect("selected process still discovered");
-        assert!(baseline.cmd().is_empty());
-        assert_eq!(baseline.memory(), 0);
+        if cfg!(any(target_os = "linux", target_os = "windows")) {
+            assert!(baseline.cmd().is_empty());
+            assert_eq!(baseline.memory(), 0);
+        }
     }
 
     #[test]
