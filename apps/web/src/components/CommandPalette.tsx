@@ -43,6 +43,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  HistoryIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -74,6 +75,7 @@ import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
+import { agentSessionImportAll } from "../state/agentSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -119,6 +121,7 @@ import {
   ADDON_ICON_CLASS,
   browseInputEndPaddingClass,
   buildBrowseGroups,
+  buildImportHistoryActionItem,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
@@ -592,6 +595,7 @@ function OpenCommandPaletteDialog(props: {
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
+  const importAll = useAtomCommand(agentSessionImportAll, { reportFailure: false });
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -633,6 +637,24 @@ function OpenCommandPaletteDialog(props: {
       );
     }
   }, [activeThreadReferenceCopyTarget]);
+  const importAgentHistory = useCallback(async () => {
+    if (primaryEnvironmentId === null) return;
+    const result = await importAll({ environmentId: primaryEnvironmentId, input: {} });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Import failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return;
+    }
+    toastManager.add({ type: "success", title: "Import started" });
+  }, [importAll, primaryEnvironmentId]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1702,6 +1724,14 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  actionItems.push(
+    buildImportHistoryActionItem({
+      icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+      disabled: primaryEnvironmentId === null,
+      runImport: importAgentHistory,
+    }),
+  );
 
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).

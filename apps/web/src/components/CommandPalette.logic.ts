@@ -443,6 +443,29 @@ export function getCommandPaletteMode(input: {
   return input.isBrowsing ? "root-browse" : "root";
 }
 
+/**
+ * Root palette action that kicks off the environment-wide import of existing
+ * Claude Code and Codex conversations. The item only describes how the command
+ * is found and shown; the import side effect and its toast belong to the caller.
+ */
+export function buildImportHistoryActionItem(input: {
+  icon: ReactNode;
+  disabled?: boolean;
+  runImport: () => Promise<void>;
+}): CommandPaletteActionItem {
+  return {
+    kind: "action",
+    value: "action:import-agent-history",
+    searchTerms: ["import", "claude code", "codex", "history", "conversations"],
+    title: "Import Claude Code and Codex history",
+    icon: input.icon,
+    ...(input.disabled !== undefined ? { disabled: input.disabled } : {}),
+    run: async () => {
+      await input.runImport();
+    },
+  };
+}
+
 export function buildRootGroups(input: {
   actionItems: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
   recentThreadItems: ReadonlyArray<CommandPaletteActionItem>;
