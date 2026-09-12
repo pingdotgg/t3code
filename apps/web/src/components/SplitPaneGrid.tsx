@@ -15,6 +15,7 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -230,14 +231,7 @@ function sameDragDropPreview(
 }
 
 export function SplitPaneGrid(props: SplitPaneGridProps) {
-  const [resizePreview, setResizePreview] = useState<{
-    readonly splitId: PaneSplitId;
-    readonly ratio: number;
-  } | null>(null);
-  const previewTree = resizePreview
-    ? resizePaneSplit(props.tree, resizePreview.splitId, resizePreview.ratio)
-    : props.tree;
-  const visibleRoot = getVisiblePaneTreeRoot(previewTree);
+  const visibleRoot = getVisiblePaneTreeRoot(props.tree);
   const layout = calculatePaneTreeLayout(visibleRoot);
   const paneById = useMemo(
     () =>
@@ -247,6 +241,9 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
     [props.tree.root],
   );
   const containerRef = useRef<HTMLDivElement>(null);
+  const resizePreviewRef = useRef<{ readonly splitId: PaneSplitId; readonly ratio: number } | null>(
+    null,
+  );
   const latestPointerCoordinatesRef = useRef<{ readonly x: number; readonly y: number } | null>(
     null,
   );
@@ -260,6 +257,27 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
       activationConstraint: { distance: 6 },
     }),
   );
+  const previewSplitResize = useCallback(
+    (splitId: PaneSplitId, ratio: number) => {
+      resizePreviewRef.current = { splitId, ratio };
+      const container = containerRef.current;
+      if (!container) return;
+      applyPaneTreeLayout(container, resizePaneSplit(props.tree, splitId, ratio));
+    },
+    [props.tree],
+  );
+  const resetSplitResize = useCallback(() => {
+    resizePreviewRef.current = null;
+    const container = containerRef.current;
+    if (!container) return;
+    applyPaneTreeLayout(container, props.tree);
+  }, [props.tree]);
+  useLayoutEffect(() => {
+    const preview = resizePreviewRef.current;
+    const container = containerRef.current;
+    if (!preview || !container) return;
+    applyPaneTreeLayout(container, resizePaneSplit(props.tree, preview.splitId, preview.ratio));
+  });
   const setDropPreview = (preview: PaneDragDropPreview | null) => {
     if (sameDragDropPreview(dropPreviewRef.current, preview)) return;
     dropPreviewRef.current = preview;
@@ -383,12 +401,12 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
             bounds={bounds}
             containerRef={containerRef}
             split={split}
-            onResizePreview={(ratio) => setResizePreview({ splitId: split.id, ratio })}
+            onResizePreview={(ratio) => previewSplitResize(split.id, ratio)}
             onResizeCommit={(ratio) => {
+              resizePreviewRef.current = null;
               props.onResizeSplit(split.id, ratio);
-              setResizePreview(null);
             }}
-            onResizeCancel={() => setResizePreview(null)}
+            onResizeCancel={resetSplitResize}
           />
         ))}
       </div>
@@ -467,6 +485,50 @@ function paneBoundsStyle(bounds: PaneBounds): CSSProperties {
     width: `${(bounds.right - bounds.left) * 100}%`,
     height: `${(bounds.bottom - bounds.top) * 100}%`,
   };
+}
+
+function paneSplitStyle(bounds: PaneBounds, split: PaneSplitNode): CSSProperties {
+  const splitPosition =
+    split.orientation === "horizontal"
+      ? bounds.left + (bounds.right - bounds.left) * split.ratio
+      : bounds.top + (bounds.bottom - bounds.top) * split.ratio;
+  return split.orientation === "horizontal"
+    ? {
+        top: `${bounds.top * 100}%`,
+        left: `${splitPosition * 100}%`,
+        height: `${(bounds.bottom - bounds.top) * 100}%`,
+      }
+    : {
+        top: `${splitPosition * 100}%`,
+        left: `${bounds.left * 100}%`,
+        width: `${(bounds.right - bounds.left) * 100}%`,
+      };
+}
+
+/** Updates only layout styles during a pointer resize so pane contents never reconcile per frame. */
+function applyPaneTreeLayout(container: HTMLDivElement, tree: PaneTree): void {
+  const layout = calculatePaneTreeLayout(getVisiblePaneTreeRoot(tree));
+  const paneElements = new Map<string, HTMLElement>();
+  for (const element of container.querySelectorAll<HTMLElement>("[data-editor-group]")) {
+    const paneId = element.dataset.editorGroup;
+    if (paneId) paneElements.set(paneId, element);
+  }
+  const splitElements = new Map<string, HTMLElement>();
+  for (const element of container.querySelectorAll<HTMLElement>("[data-editor-split]")) {
+    const splitId = element.dataset.editorSplit;
+    if (splitId) splitElements.set(splitId, element);
+  }
+
+  for (const { group, bounds } of layout.groups) {
+    const element = paneElements.get(group.id);
+    if (element) Object.assign(element.style, paneBoundsStyle(bounds));
+  }
+  for (const { split, bounds } of layout.splits) {
+    const element = splitElements.get(split.id);
+    if (!element) continue;
+    Object.assign(element.style, paneSplitStyle(bounds, split));
+    element.setAttribute("aria-valuenow", String(Math.round(split.ratio * 100)));
+  }
 }
 
 function PaneDropOverlay({ zone }: { readonly zone: PaneDropZone }) {
@@ -619,22 +681,6 @@ function PaneSplitHandle(props: {
     },
     [onResizeCommit, split],
   );
-  const splitPosition =
-    split.orientation === "horizontal"
-      ? props.bounds.left + (props.bounds.right - props.bounds.left) * split.ratio
-      : props.bounds.top + (props.bounds.bottom - props.bounds.top) * split.ratio;
-  const style: CSSProperties = horizontal
-    ? {
-        top: `${props.bounds.top * 100}%`,
-        left: `${splitPosition * 100}%`,
-        height: `${(props.bounds.bottom - props.bounds.top) * 100}%`,
-      }
-    : {
-        top: `${splitPosition * 100}%`,
-        left: `${props.bounds.left * 100}%`,
-        width: `${(props.bounds.right - props.bounds.left) * 100}%`,
-      };
-
   return (
     <div
       role="separator"
@@ -651,7 +697,7 @@ function PaneSplitHandle(props: {
         "focus-visible:bg-primary/70",
         horizontal ? "w-px cursor-col-resize" : "h-px cursor-row-resize",
       )}
-      style={style}
+      style={paneSplitStyle(props.bounds, split)}
       onDoubleClick={() => onResizeCommit(0.5)}
       onKeyDown={handleKeyDown}
       onPointerCancel={handlePointerCancel}
