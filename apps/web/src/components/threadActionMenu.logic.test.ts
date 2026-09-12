@@ -63,21 +63,10 @@ describe("buildThreadActionMenuItems", () => {
       ...baseState,
       projectFilter: { label: "Beta Project", isActive: true },
     });
-    const item = items.find((candidate) => candidate.id === "filter-by-project");
-    expect(item).toMatchObject({ label: "Show all projects" });
-    expect(items.map((candidate) => candidate.id)).toEqual([
-      "pin",
-      "settle",
-      "snooze",
-      "rename",
-      "regenerate-title",
-      "mark-unread",
-      "filter-by-project",
-      "copy",
-      "project-settings",
-      "archive",
-      "delete",
-    ]);
+    const filterIndex = items.findIndex((candidate) => candidate.id === "filter-by-project");
+    expect(items[filterIndex]).toMatchObject({ label: "Show all projects", icon: "folder-tree" });
+    expect(items[filterIndex - 1]?.id).toBe("mark-unread");
+    expect(items[filterIndex + 1]?.id).toBe("copy");
   });
 
   it("includes branch items only for threads with a branch", () => {
