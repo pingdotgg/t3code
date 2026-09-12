@@ -59,6 +59,7 @@ import {
   currentDevinModelIdFromConfigOptions,
   devinModelOptionValues,
   findDevinModelConfigOption,
+  isDevinSessionLockedError,
   resolveDevinModeId,
   resolveDevinModelId,
   type DevinAcpRuntimeInput,
@@ -107,14 +108,24 @@ function isDevinSignInRequiredError(cause: unknown): boolean {
 }
 
 function mapDevinError(threadId: ThreadId, method: string, cause: EffectAcpErrors.AcpError) {
-  return isDevinSignInRequiredError(cause)
-    ? new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method,
-        detail: DEVIN_SIGN_IN_REQUIRED_MESSAGE,
-        cause,
-      })
-    : mapAcpToAdapterError(PROVIDER, threadId, method, cause);
+  if (isDevinSignInRequiredError(cause)) {
+    return new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method,
+      detail: DEVIN_SIGN_IN_REQUIRED_MESSAGE,
+      cause,
+    });
+  }
+  if (cause._tag === "AcpRequestError" && isDevinSessionLockedError(cause)) {
+    return new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method,
+      detail:
+        "This Devin session is still open in another process. Close the other T3 Code window or `devin acp` session holding it, then retry.",
+      cause,
+    });
+  }
+  return mapAcpToAdapterError(PROVIDER, threadId, method, cause);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

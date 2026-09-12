@@ -44,6 +44,7 @@ const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANC
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const busyLoadSessionCount = Number(process.env.T3_ACP_BUSY_LOAD_SESSIONS ?? "0");
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -88,6 +89,9 @@ let currentReasoning = "medium";
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
+let busyLoadSessionsRemaining = Number.isFinite(busyLoadSessionCount)
+  ? Math.max(0, Math.floor(busyLoadSessionCount))
+  : 0;
 let overlappingFirstPromptId: string | undefined;
 const cancelledSessions = new Set<string>();
 
@@ -561,6 +565,17 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (busyLoadSessionsRemaining > 0) {
+        busyLoadSessionsRemaining -= 1;
+        return yield* new AcpError.AcpRequestError({
+          code: -32015,
+          errorMessage: `Session '${requestedSessionId}' is already open in another process. Close the other instance before opening it here.`,
+          data: {
+            "cognition.ai/errorKind": "session_locked",
+            "cognition.ai/retryable": true,
+          },
+        });
+      }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }

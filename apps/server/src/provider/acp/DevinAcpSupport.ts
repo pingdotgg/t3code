@@ -102,6 +102,23 @@ export const resolveDevinAuthMethodId = (input: {
     hasCredentials || !input.browserAuth ? undefined : DEVIN_BROWSER_AUTH_METHOD,
   );
 
+/**
+ * Whether a `session/load` failure is Devin's "session already open in another
+ * process" lock conflict. Devin tags it `session_locked` + `retryable: true` in
+ * the error data; the message match is a fallback for builds that drop `data`.
+ */
+export function isDevinSessionLockedError(error: EffectAcpErrors.AcpRequestError): boolean {
+  const data = error.data;
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    (data as Record<string, unknown>)["cognition.ai/errorKind"] === "session_locked"
+  ) {
+    return true;
+  }
+  return /already open in another process/i.test(error.errorMessage);
+}
+
 export function buildDevinAcpSpawnInput(
   devinSettings: DevinAcpRuntimeDevinSettings | null | undefined,
   cwd: string,
@@ -155,6 +172,13 @@ export const makeDevinAcpRuntime = (
           terminal: false,
         },
         cancelBehavior: "wait-for-prompt",
+        sessionLoadRetry: {
+          // The session lock releases as soon as the other `devin acp` process
+          // exits, so short retries absorb the common crash/teardown overlap.
+          retries: 3,
+          delay: "1.5 seconds",
+          while: isDevinSessionLockedError,
+        },
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

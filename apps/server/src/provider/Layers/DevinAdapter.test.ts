@@ -6,12 +6,15 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -529,3 +532,93 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
     }),
   );
 });
+
+// `it.live` rather than the layer tester: the session-load retry schedule
+// sleeps on the real clock, which `it.effect`'s TestClock never advances.
+it.live("retries session/load while Devin reports the session locked", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("devin-locked-resume-thread");
+    const tempDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devin-locked-resume-")),
+    );
+    const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+    const wrapperPath = yield* Effect.promise(() =>
+      makeMockDevinWrapper({
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_BUSY_LOAD_SESSIONS: "2",
+      }),
+    );
+    const adapter = yield* makeTestAdapter(wrapperPath, {
+      ...process.env,
+      WINDSURF_API_KEY: "ws-test",
+    });
+
+    const session = yield* adapter.startSession({
+      threadId,
+      cwd: process.cwd(),
+      runtimeMode: "auto",
+      resumeCursor: { schemaVersion: 1, sessionId: "locked-devin-session" },
+    });
+    assert.equal(session.provider, "devin");
+    assert.deepStrictEqual(session.resumeCursor, {
+      schemaVersion: 1,
+      sessionId: "locked-devin-session",
+    });
+    yield* adapter.stopSession(threadId);
+
+    const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+    assert.lengthOf(
+      requests.filter((request) => request.method === "session/load"),
+      3,
+      "two locked attempts then the successful load",
+    );
+  }).pipe(Effect.provide(devinAdapterTestLayer)),
+);
+
+it.live("maps an exhausted session lock to an actionable error", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("devin-stuck-locked-resume-thread");
+    const tempDir = yield* Effect.promise(() =>
+      NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devin-stuck-locked-")),
+    );
+    const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+    const wrapperPath = yield* Effect.promise(() =>
+      makeMockDevinWrapper({
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_BUSY_LOAD_SESSIONS: "9",
+      }),
+    );
+    const adapter = yield* makeTestAdapter(wrapperPath, {
+      ...process.env,
+      WINDSURF_API_KEY: "ws-test",
+    });
+
+    const exit = yield* adapter
+      .startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "auto",
+        resumeCursor: { schemaVersion: 1, sessionId: "stuck-locked-session" },
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      assert.isTrue(Option.isSome(failure));
+      if (Option.isSome(failure)) {
+        const error = failure.value;
+        assert.equal(error._tag, "ProviderAdapterRequestError");
+        if (error._tag === "ProviderAdapterRequestError") {
+          assert.match(String(error.detail), /still open in another process/i);
+        }
+      }
+    }
+
+    const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+    assert.lengthOf(
+      requests.filter((request) => request.method === "session/load"),
+      4,
+      "initial attempt plus three retries before surfacing the lock error",
+    );
+  }).pipe(Effect.provide(devinAdapterTestLayer)),
+);
