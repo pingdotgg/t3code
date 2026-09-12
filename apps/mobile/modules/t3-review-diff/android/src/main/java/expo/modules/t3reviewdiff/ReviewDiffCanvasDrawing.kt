@@ -15,6 +15,7 @@ import kotlin.math.min
 internal class ReviewDiffCanvasDrawing(context: Context) {
   private val density = context.resources.displayMetrics.density
   var theme: DiffTheme = DiffTheme.fallback("light")
+  private val wordDiffRangesByRowId = mutableMapOf<String, List<DiffWordDiffRange>>()
 
   val backgroundPaint = Paint()
   val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -39,6 +40,14 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   init {
     textPaint.typeface = ReviewDiffTypefaces.regular
     uiPaint.typeface = Typeface.DEFAULT_BOLD
+  }
+
+  fun mergeWordDiffRangesByRowId(patch: Map<String, List<DiffWordDiffRange>>) {
+    wordDiffRangesByRowId.putAll(patch)
+  }
+
+  fun clearWordDiffRanges() {
+    wordDiffRangesByRowId.clear()
   }
 
   fun fileHeaderChevronRect(top: Int, bottom: Int, style: DiffStyle): RectF {
@@ -205,14 +214,15 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     top: Int,
     bottom: Int
   ) {
-    if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
+    val ranges = wordDiffRangesByRowId[row.id] ?: row.wordDiffRanges
+    if (ranges.isEmpty() || (row.change != "add" && row.change != "delete")) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     backgroundPaint.color = withAlpha(color, 71)
     val characterWidth = textPaint.measureText("M")
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
-    row.wordDiffRanges.forEach { range ->
+    ranges.forEach { range ->
       val left = codeX + range.start * characterWidth
       val right = max(left + 2f * density, codeX + range.end * characterWidth)
       canvas.drawRoundRect(

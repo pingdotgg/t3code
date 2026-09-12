@@ -17,6 +17,7 @@ import { buildReviewParsedDiff } from "./reviewModel";
 import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { useMarkdownCodeHighlight } from "../threads/markdownCodeHighlightState";
+import { useNativeReviewCommentWordDiffs } from "./useNativeReviewCommentWordDiffs";
 
 export interface ReviewCommentColors {
   readonly background: ColorValue;
@@ -127,6 +128,10 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     [compactNativeRows.length, nativeReviewDiffStyle],
   );
   const shouldRenderNativeDiff = NativeReviewDiffView != null && compactNativeRows.length > 0;
+  const { tokensResetKey, wordDiffRangesPatchJson } = useNativeReviewCommentWordDiffs({
+    rows: compactNativeRows,
+    enabled: shouldRenderNativeDiff,
+  });
 
   return (
     <View
@@ -189,6 +194,8 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             rowHeight={nativeReviewDiffStyle.rowHeight}
             rowsJson={nativeRowsJson}
             tokensJson={nativeTokensJson}
+            tokensResetKey={tokensResetKey}
+            wordDiffRangesPatchJson={wordDiffRangesPatchJson}
             styleJson={nativeStyleJson}
             themeJson={nativeThemeJson}
           />
