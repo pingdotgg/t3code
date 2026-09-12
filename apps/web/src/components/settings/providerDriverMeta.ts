@@ -5,6 +5,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  MuseSettings,
   OpenCodeSettings,
   PiSettings,
   ProviderDriverKind,
@@ -16,6 +17,7 @@ import {
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  MuseIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
@@ -118,6 +120,13 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "Antigravity",
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: MuseIcon,
+    badgeLabel: "Beta",
+    settingsSchema: MuseSettings,
   },
 ];
 

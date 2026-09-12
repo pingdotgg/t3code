@@ -235,6 +235,98 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
   });
 
+  describe("Muse catalog changes", () => {
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("muse_work"),
+      model: "muse-spark-1.3-contributor",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: selection.instanceId,
+          driver: "muse",
+          displayName: "Muse Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          models: [
+            {
+              slug: selection.model,
+              name: "Muse Spark 1.3 Contributor",
+              isCustom: false,
+              isDefault: true,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "reasoningEffort",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [
+                      { id: "medium", label: "Medium", isDefault: true },
+                      { id: "high", label: "High" },
+                    ],
+                    currentValue: "medium",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    it.each([
+      ["disabled", { enabled: false }],
+      ["uninstalled", { installed: false }],
+      ["unavailable", { availability: "unavailable" }],
+      ["empty catalog", { models: [] }],
+    ] as const)(
+      "keeps a saved model unavailable during %s and restores it on recovery",
+      (_state, update) => {
+        const changedConfig = {
+          ...config,
+          providers: config.providers.map((provider) => ({ ...provider, ...update })),
+        };
+        expect(resolveSelectableModelSelection(changedConfig, selection)).toBe(selection);
+        expect(isModelSelectionUnavailable(changedConfig, selection)).toBe(true);
+        expect(buildModelOptions(changedConfig, null)).toEqual([]);
+        expect(buildModelOptions(changedConfig, selection)).toMatchObject([
+          {
+            providerKey: "muse_work",
+            providerDriver: "muse",
+            isUnavailable: true,
+            selection,
+          },
+        ]);
+
+        const [restored] = buildModelOptions(config, selection);
+        expect(isModelSelectionUnavailable(config, selection)).toBe(false);
+        expect(restored?.isUnavailable).not.toBe(true);
+        expect(restored?.selection).toEqual(selection);
+      },
+    );
+
+    it("marks a model removed by refresh unavailable without changing the instance", () => {
+      const changedConfig = {
+        ...config,
+        providers: config.providers.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({ ...model, slug: "muse-other-model" })),
+        })),
+      };
+      const options = buildModelOptions(changedConfig, selection);
+      expect(options.find((option) => option.selection.model === selection.model)).toMatchObject({
+        providerKey: "muse_work",
+        isUnavailable: true,
+        selection,
+      });
+      expect(
+        options.find((option) => option.selection.model === "muse-other-model")?.isUnavailable,
+      ).not.toBe(true);
+    });
+  });
+
   describe("Antigravity selections", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("google_work"),

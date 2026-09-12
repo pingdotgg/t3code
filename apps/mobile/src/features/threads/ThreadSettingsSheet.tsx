@@ -84,6 +84,7 @@ const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
   "codex",
   "antigravity",
+  "muse",
 ]);
 /**
  * Keep measured row changes stable, but let catalog mutations use the list's
@@ -184,6 +185,11 @@ function ProviderHeader(props: {
     <>
       <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
       <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      {props.driver === "muse" ? (
+        <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
+          <Text className="text-3xs font-t3-bold text-foreground-muted">Beta</Text>
+        </View>
+      ) : null}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -206,7 +212,7 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={`${props.label}${props.driver === "muse" ? ", Beta" : ""}, ${props.modelCount} models`}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"

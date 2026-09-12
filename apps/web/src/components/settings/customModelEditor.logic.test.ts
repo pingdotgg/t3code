@@ -217,6 +217,26 @@ describe("customModelEditor.logic", () => {
     },
   );
 
+  it("saves Max as the default reasoning effort for custom Muse models", () => {
+    const presets = DESCRIPTOR_PRESETS_BY_KIND[ProviderDriverKind.make("muse")] ?? [];
+    const definition = definitionFromDraft(
+      draft({ descriptors: presets.map(descriptorFromPreset) }),
+    );
+    const descriptor = definition.capabilities?.optionDescriptors?.[0];
+
+    expect(descriptor).toMatchObject({ id: "reasoningEffort", currentValue: "max" });
+    expect(descriptor?.options?.map((choice) => choice.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(
+      draftFromDefinition(definition).descriptors[0]?.choices.filter((choice) => choice.isDefault),
+    ).toMatchObject([{ id: "max" }]);
+  });
+
   it("collapses a blank name and no options back to a bare definition", () => {
     expect(definitionFromDraft(draft({ name: "  " }))).toEqual({
       slug: "my-model",
