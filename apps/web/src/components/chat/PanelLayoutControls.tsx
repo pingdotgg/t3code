@@ -1,17 +1,29 @@
 import {
   ArrowRightIcon,
+  BotIcon,
   Columns2Icon,
+  FileDiffIcon,
+  FileIcon,
+  FilesIcon,
   FolderIcon,
+  GitPullRequestArrowIcon,
+  GitPullRequestIcon,
   Globe2Icon,
   LayoutTemplateIcon,
   Maximize2Icon,
+  MessageSquareTextIcon,
   Minimize2Icon,
   PanelBottomIcon,
   PanelRightIcon,
+  SmartphoneIcon,
+  TerminalSquareIcon,
 } from "lucide-react";
 import { memo } from "react";
 
-import { calculatePaneTreeLayout, type PaneTree } from "../../splitPaneTree";
+import type { RightPanelSurface } from "../../rightPanelStore";
+import { calculatePaneTreeLayout } from "../../splitPaneTree";
+import type { ThreadWorkspaceDefault } from "../../threadWorkspaceDefaults";
+import type { ThreadWorkspaceTab } from "../../threadWorkspaceTabs";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Toggle } from "../ui/toggle";
@@ -32,12 +44,12 @@ interface PanelLayoutControlsProps {
     readonly onSplitRight: () => void;
   };
   workspaceDefaults?: {
-    readonly hasGlobalDefault: boolean;
-    readonly hasProjectDefault: boolean;
-    readonly currentLayout: PaneTree;
+    readonly canSaveGlobal: boolean;
+    readonly canSaveProject: boolean;
+    readonly current: ThreadWorkspaceDefault;
+    readonly global: ThreadWorkspaceDefault | null;
+    readonly project: ThreadWorkspaceDefault | null;
     readonly projectTitle: string;
-    readonly savedGlobalLayout: PaneTree | null;
-    readonly savedProjectLayout: PaneTree | null;
     readonly onSaveGlobal: () => void;
     readonly onSaveProject: () => void;
     readonly onClearGlobal: () => void;
@@ -49,8 +61,71 @@ interface PanelLayoutControlsProps {
   onToggleRightPanel: () => void;
 }
 
-function WorkspaceLayoutMiniature({ tree }: { readonly tree: PaneTree }) {
-  const layout = calculatePaneTreeLayout(tree.root);
+function WorkspaceTabTypeIcon({
+  surface,
+  tab,
+}: {
+  readonly surface: RightPanelSurface | null;
+  readonly tab: ThreadWorkspaceTab | undefined;
+}) {
+  if (!tab) return null;
+  if (tab._tag === "Thread") return <MessageSquareTextIcon className="size-2.5" />;
+  if (!surface) return null;
+
+  switch (surface.kind) {
+    case "diff":
+      return <FileDiffIcon className="size-2.5" />;
+    case "files":
+      return <FilesIcon className="size-2.5" />;
+    case "file":
+      return <FileIcon className="size-2.5" />;
+    case "preview":
+      return <Globe2Icon className="size-2.5" />;
+    case "device":
+      return <SmartphoneIcon className="size-2.5" />;
+    case "terminal":
+      return <TerminalSquareIcon className="size-2.5" />;
+    case "pull-request":
+      return <GitPullRequestIcon className="size-2.5" />;
+    case "pull-requests":
+      return <GitPullRequestArrowIcon className="size-2.5" />;
+    case "agents":
+      return <BotIcon className="size-2.5" />;
+  }
+}
+
+function WorkspaceMiniatureTab({
+  active,
+  surface,
+  tab,
+}: {
+  readonly active: boolean;
+  readonly surface: RightPanelSurface | null;
+  readonly tab: ThreadWorkspaceTab | undefined;
+}) {
+  return (
+    <span
+      className={`flex size-3 shrink-0 items-center justify-center rounded-[3px] ${
+        active ? "bg-foreground/8 text-foreground/65" : "text-foreground/25"
+      }`}
+    >
+      <WorkspaceTabTypeIcon tab={tab} surface={surface} />
+    </span>
+  );
+}
+
+function workspaceTabSurface(
+  tab: ThreadWorkspaceTab | undefined,
+  surfacesById: ReadonlyMap<string, RightPanelSurface>,
+): RightPanelSurface | null {
+  return tab?._tag === "Surface" ? (surfacesById.get(tab.surfaceId) ?? null) : null;
+}
+
+function WorkspaceLayoutMiniature({ template }: { readonly template: ThreadWorkspaceDefault }) {
+  const layout = calculatePaneTreeLayout(template.layout.paneTree.root);
+  const surfacesById = new Map(
+    template.rightPanel.surfaces.map((surface) => [surface.id, surface]),
+  );
   return (
     <div className="relative size-full">
       {layout.groups.map(({ bounds, group }) => (
@@ -65,15 +140,13 @@ function WorkspaceLayoutMiniature({ tree }: { readonly tree: PaneTree }) {
           }}
         >
           <div className="flex size-full min-h-0 min-w-0 flex-col overflow-hidden rounded-md bg-background shadow-[0_0_0_1px_--theme(--color-foreground/10%),0_1px_2px_--theme(--color-black/5%)] dark:shadow-[0_0_0_1px_--theme(--color-white/10%)]">
-            <div className="flex h-3 shrink-0 items-center gap-0.5 bg-muted/70 px-1">
+            <div className="flex h-4 shrink-0 items-center gap-0.5 overflow-hidden bg-muted/70 px-1">
               {group.tabIds.slice(0, 3).map((tabId) => (
-                <span
+                <WorkspaceMiniatureTab
                   key={tabId}
-                  className={
-                    tabId === group.activeTabId
-                      ? "h-1 w-3 rounded-full bg-foreground/45"
-                      : "size-1 rounded-full bg-foreground/18"
-                  }
+                  active={tabId === group.activeTabId}
+                  tab={template.layout.tabsById[tabId]}
+                  surface={workspaceTabSurface(template.layout.tabsById[tabId], surfacesById)}
                 />
               ))}
             </div>
@@ -90,10 +163,10 @@ function WorkspaceLayoutMiniature({ tree }: { readonly tree: PaneTree }) {
 
 function WorkspaceLayoutPreviewFrame({
   label,
-  tree,
+  template,
 }: {
   readonly label?: string;
-  readonly tree: PaneTree;
+  readonly template: ThreadWorkspaceDefault;
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -104,36 +177,36 @@ function WorkspaceLayoutPreviewFrame({
         aria-hidden
         className="h-28 rounded-lg bg-muted/45 p-1.5 shadow-[inset_0_0_0_1px_--theme(--color-foreground/8%)] dark:shadow-[inset_0_0_0_1px_--theme(--color-white/8%)]"
       >
-        <WorkspaceLayoutMiniature tree={tree} />
+        <WorkspaceLayoutMiniature template={template} />
       </div>
     </div>
   );
 }
 
 function WorkspaceDefaultPreview({
+  current,
+  globalDefault,
   kind,
   projectTitle,
-  savedGlobalLayout,
-  savedProjectLayout,
-  tree,
+  projectDefault,
 }: {
+  readonly current: ThreadWorkspaceDefault;
+  readonly globalDefault: ThreadWorkspaceDefault | null;
   readonly kind: "global" | "project";
   readonly projectTitle: string;
-  readonly savedGlobalLayout: PaneTree | null;
-  readonly savedProjectLayout: PaneTree | null;
-  readonly tree: PaneTree;
+  readonly projectDefault: ThreadWorkspaceDefault | null;
 }) {
   const global = kind === "global";
   const Icon = global ? Globe2Icon : FolderIcon;
-  const previousLayout = global ? savedGlobalLayout : (savedProjectLayout ?? savedGlobalLayout);
+  const previousDefault = global ? globalDefault : (projectDefault ?? globalDefault);
   const previousLabel = global
     ? "Current global"
-    : savedProjectLayout
+    : projectDefault
       ? "Current project"
       : "Inherited global";
   return (
     <div
-      className={`${previousLayout ? "w-[30rem]" : "w-64"} flex flex-col gap-2.5 p-1.5 text-left`}
+      className={`${previousDefault ? "w-[30rem]" : "w-64"} flex flex-col gap-2.5 p-1.5 text-left`}
     >
       <div className="flex items-start gap-2">
         <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
@@ -148,17 +221,57 @@ function WorkspaceDefaultPreview({
           </p>
         </div>
       </div>
-      {previousLayout ? (
+      {previousDefault ? (
         <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-          <WorkspaceLayoutPreviewFrame label={previousLabel} tree={previousLayout} />
+          <WorkspaceLayoutPreviewFrame label={previousLabel} template={previousDefault} />
           <ArrowRightIcon className="mt-4 size-3.5 shrink-0 text-muted-foreground" />
-          <WorkspaceLayoutPreviewFrame label={global ? "New global" : "New project"} tree={tree} />
+          <WorkspaceLayoutPreviewFrame
+            label={global ? "New global" : "New project"}
+            template={current}
+          />
         </div>
       ) : (
-        <WorkspaceLayoutPreviewFrame tree={tree} />
+        <WorkspaceLayoutPreviewFrame template={current} />
       )}
       <p className="text-[10px] text-muted-foreground">Existing threads won’t change.</p>
     </div>
+  );
+}
+
+function WorkspaceDefaultSaveMenuItem({
+  current,
+  disabled,
+  globalDefault,
+  kind,
+  label,
+  onSave,
+  projectDefault,
+  projectTitle,
+}: {
+  readonly current: ThreadWorkspaceDefault;
+  readonly disabled: boolean;
+  readonly globalDefault: ThreadWorkspaceDefault | null;
+  readonly kind: "global" | "project";
+  readonly label: string;
+  readonly onSave: () => void;
+  readonly projectDefault: ThreadWorkspaceDefault | null;
+  readonly projectTitle: string;
+}) {
+  if (disabled) return <MenuItem disabled>{label}</MenuItem>;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger delay={0} render={<MenuItem onClick={onSave}>{label}</MenuItem>} />
+      <TooltipPopup align="start" side="left" sideOffset={8} variant="glass" className="rounded-xl">
+        <WorkspaceDefaultPreview
+          current={current}
+          globalDefault={globalDefault}
+          kind={kind}
+          projectDefault={projectDefault}
+          projectTitle={projectTitle}
+        />
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -286,66 +399,36 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             <TooltipPopup side="bottom">Workspace defaults</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end" className="min-w-56">
-            <Tooltip>
-              <TooltipTrigger
-                delay={0}
-                render={
-                  <MenuItem onClick={workspaceDefaults.onSaveGlobal}>
-                    Save as global default
-                  </MenuItem>
-                }
-              />
-              <TooltipPopup
-                align="start"
-                side="left"
-                sideOffset={8}
-                variant="glass"
-                className="rounded-xl"
-              >
-                <WorkspaceDefaultPreview
-                  kind="global"
-                  projectTitle={workspaceDefaults.projectTitle}
-                  savedGlobalLayout={workspaceDefaults.savedGlobalLayout}
-                  savedProjectLayout={workspaceDefaults.savedProjectLayout}
-                  tree={workspaceDefaults.currentLayout}
-                />
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                delay={0}
-                render={
-                  <MenuItem onClick={workspaceDefaults.onSaveProject}>
-                    Save for this project
-                  </MenuItem>
-                }
-              />
-              <TooltipPopup
-                align="start"
-                side="left"
-                sideOffset={8}
-                variant="glass"
-                className="rounded-xl"
-              >
-                <WorkspaceDefaultPreview
-                  kind="project"
-                  projectTitle={workspaceDefaults.projectTitle}
-                  savedGlobalLayout={workspaceDefaults.savedGlobalLayout}
-                  savedProjectLayout={workspaceDefaults.savedProjectLayout}
-                  tree={workspaceDefaults.currentLayout}
-                />
-              </TooltipPopup>
-            </Tooltip>
+            <WorkspaceDefaultSaveMenuItem
+              current={workspaceDefaults.current}
+              disabled={!workspaceDefaults.canSaveGlobal}
+              globalDefault={workspaceDefaults.global}
+              kind="global"
+              label="Save as global default"
+              onSave={workspaceDefaults.onSaveGlobal}
+              projectDefault={workspaceDefaults.project}
+              projectTitle={workspaceDefaults.projectTitle}
+            />
+            <WorkspaceDefaultSaveMenuItem
+              current={workspaceDefaults.current}
+              disabled={!workspaceDefaults.canSaveProject}
+              globalDefault={workspaceDefaults.global}
+              kind="project"
+              label="Save for this project"
+              onSave={workspaceDefaults.onSaveProject}
+              projectDefault={workspaceDefaults.project}
+              projectTitle={workspaceDefaults.projectTitle}
+            />
             <MenuSeparator />
             <MenuItem
               onClick={workspaceDefaults.onClearProject}
-              disabled={!workspaceDefaults.hasProjectDefault}
+              disabled={workspaceDefaults.project === null}
             >
               Use global default for this project
             </MenuItem>
             <MenuItem
               onClick={workspaceDefaults.onClearGlobal}
-              disabled={!workspaceDefaults.hasGlobalDefault}
+              disabled={workspaceDefaults.global === null}
             >
               Clear global default
             </MenuItem>

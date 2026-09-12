@@ -13,6 +13,7 @@ import {
 import {
   createThreadWorkspaceDefault,
   parseThreadWorkspaceDefault,
+  threadWorkspaceDefaultHasChanges,
 } from "./threadWorkspaceDefaults";
 import {
   selectThreadWorkspaceLayout,
@@ -84,6 +85,7 @@ describe("thread workspace defaults", () => {
 
     expect(template.rightPanel.surfaces).toEqual([
       { id: "files", kind: "files" },
+      { id: "files:2", kind: "files" },
       { id: "browser:new", kind: "preview", resourceId: null },
       {
         id: "terminal:workspace-1",
@@ -98,10 +100,60 @@ describe("thread workspace defaults", () => {
       expect.objectContaining({ surfaceId: "file:README.md" }),
     );
     expect(Object.values(template.layout.tabsById)).toContainEqual(
+      expect.objectContaining({ surfaceId: "files:2" }),
+    );
+    expect(Object.values(template.layout.tabsById)).toContainEqual(
       expect.objectContaining({ surfaceId: "browser:new" }),
     );
     expect(getPanes(template.layout.paneTree.root)).toHaveLength(2);
     expect(template.layout.paneTree.maximizedPaneId).toBeNull();
+  });
+
+  test("keeps resource-bound tabs as reusable tool tabs", () => {
+    const pullRequestId = "pull-request:github.com:owner/repo:42";
+    const deviceId = "device:simulator";
+    const template = createThreadWorkspaceDefault(
+      createThreadWorkspaceTabFields([pullRequestId, deviceId]),
+      {
+        isOpen: true,
+        activeSurfaceId: pullRequestId,
+        surfaces: [
+          {
+            id: pullRequestId,
+            kind: "pull-request",
+            projectId: "project-test",
+            host: "github.com",
+            repository: "owner/repo",
+            number: 42,
+            url: "https://github.com/owner/repo/pull/42",
+          },
+          {
+            id: deviceId,
+            kind: "device",
+            target: {
+              hostId: "host-test",
+              deviceId: "simulator",
+              platform: "ios",
+              name: "iPhone",
+            },
+          },
+        ],
+      },
+    );
+
+    expect(template.rightPanel).toMatchObject({
+      activeSurfaceId: "pull-requests",
+      surfaces: [
+        { id: "pull-requests", kind: "pull-requests" },
+        { id: "device", kind: "device" },
+      ],
+    });
+    expect(Object.values(template.layout.tabsById)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ surfaceId: "pull-requests" }),
+        expect.objectContaining({ surfaceId: "device" }),
+      ]),
+    );
   });
 
   test("project defaults override the global default", () => {
@@ -114,6 +166,19 @@ describe("thread workspace defaults", () => {
 
     expect(selectThreadWorkspaceDefault(state, PROJECT_KEY)).toEqual(projectDefault);
     expect(selectThreadWorkspaceDefault(state, "project:other")).toEqual(globalDefault);
+  });
+
+  test("detects whether saving would change a default", () => {
+    const filesDefault = templateWithSurface("files");
+    const restoredFilesDefault = parseThreadWorkspaceDefault(
+      JSON.parse(JSON.stringify(filesDefault)),
+    );
+    expect(restoredFilesDefault).not.toBeNull();
+    if (!restoredFilesDefault) return;
+
+    expect(threadWorkspaceDefaultHasChanges(filesDefault, null)).toBe(true);
+    expect(threadWorkspaceDefaultHasChanges(filesDefault, restoredFilesDefault)).toBe(false);
+    expect(threadWorkspaceDefaultHasChanges(filesDefault, templateWithSurface("diff"))).toBe(true);
   });
 
   test("initialization copies a default only once", () => {

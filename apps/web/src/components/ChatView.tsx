@@ -198,6 +198,7 @@ import {
 import {
   createThreadWorkspaceDefault,
   describeThreadWorkspaceDefault,
+  threadWorkspaceDefaultHasChanges,
 } from "../threadWorkspaceDefaults";
 import { useThreadWorkspaceDefaultStore } from "../threadWorkspaceDefaultStore";
 import { workspacePaneShortcutAction } from "../workspacePaneShortcuts";
@@ -2113,6 +2114,18 @@ export default function ChatView(props: ChatViewProps) {
   const currentWorkspaceDefault = useMemo(
     () => createThreadWorkspaceDefault(threadWorkspaceLayout, rightPanelState),
     [rightPanelState, threadWorkspaceLayout],
+  );
+  const canSaveGlobalWorkspaceDefault = useMemo(
+    () => threadWorkspaceDefaultHasChanges(currentWorkspaceDefault, globalWorkspaceDefault),
+    [currentWorkspaceDefault, globalWorkspaceDefault],
+  );
+  const canSaveProjectWorkspaceDefault = useMemo(
+    () =>
+      threadWorkspaceDefaultHasChanges(
+        currentWorkspaceDefault,
+        projectWorkspaceDefault ?? globalWorkspaceDefault,
+      ),
+    [currentWorkspaceDefault, globalWorkspaceDefault, projectWorkspaceDefault],
   );
   const saveGlobalWorkspaceDefault = useCallback(() => {
     useThreadWorkspaceDefaultStore.getState().saveGlobal(currentWorkspaceDefault);
@@ -8270,12 +8283,12 @@ export default function ChatView(props: ChatViewProps) {
               onSplitRight: () => splitWorkspacePane("right"),
             },
             workspaceDefaults: {
-              hasGlobalDefault: globalWorkspaceDefault !== null,
-              hasProjectDefault: projectWorkspaceDefault !== null,
-              currentLayout: currentWorkspaceDefault.layout.paneTree,
+              canSaveGlobal: canSaveGlobalWorkspaceDefault,
+              canSaveProject: canSaveProjectWorkspaceDefault,
+              current: currentWorkspaceDefault,
+              global: globalWorkspaceDefault,
+              project: projectWorkspaceDefault,
               projectTitle: activeProject?.title ?? "This project",
-              savedGlobalLayout: globalWorkspaceDefault?.layout.paneTree ?? null,
-              savedProjectLayout: projectWorkspaceDefault?.layout.paneTree ?? null,
               onSaveGlobal: saveGlobalWorkspaceDefault,
               onSaveProject: saveProjectWorkspaceDefault,
               onClearGlobal: clearGlobalWorkspaceDefault,

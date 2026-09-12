@@ -1,6 +1,9 @@
+import * as Equal from "effect/Equal";
+
 import { getPanes } from "./splitPaneTree";
 import {
   migratePersistedRightPanelState,
+  type RepeatableRightPanelKind,
   type RightPanelSurface,
   type ThreadRightPanelState,
 } from "./rightPanelStore";
@@ -15,12 +18,35 @@ export interface ThreadWorkspaceDefault {
   readonly rightPanel: ThreadRightPanelState;
 }
 
+export function threadWorkspaceDefaultHasChanges(
+  current: ThreadWorkspaceDefault,
+  saved: ThreadWorkspaceDefault | null,
+): boolean {
+  return saved === null || !Equal.equals(current, saved);
+}
+
 const PARSE_KEY = "workspace-default";
+
+function allocateReusableSurfaceId<Kind extends RepeatableRightPanelKind>(
+  kind: Kind,
+  reservedSurfaceIds: Set<string>,
+): Kind | `${Kind}:${number}` {
+  if (!reservedSurfaceIds.has(kind)) {
+    reservedSurfaceIds.add(kind);
+    return kind;
+  }
+  let sequence = 2;
+  while (reservedSurfaceIds.has(`${kind}:${sequence}`)) sequence += 1;
+  const id: `${Kind}:${number}` = `${kind}:${sequence}`;
+  reservedSurfaceIds.add(id);
+  return id;
+}
 
 function reusableDefaultSurface(
   surface: RightPanelSurface,
   terminalSequence: number,
   singletonKinds: Set<"preview" | "device">,
+  reservedSurfaceIds: Set<string>,
 ): RightPanelSurface | null {
   switch (surface.kind) {
     case "diff":
@@ -52,9 +78,14 @@ function reusableDefaultSurface(
         ...(surface.splitDirection === "vertical" ? { splitDirection: "vertical" as const } : {}),
       };
     }
-    case "file":
-    case "pull-request":
-      return null;
+    case "file": {
+      const id = allocateReusableSurfaceId("files", reservedSurfaceIds);
+      return { id, kind: "files" };
+    }
+    case "pull-request": {
+      const id = allocateReusableSurfaceId("pull-requests", reservedSurfaceIds);
+      return { id, kind: "pull-requests" };
+    }
   }
 }
 
@@ -81,11 +112,17 @@ export function createThreadWorkspaceDefault(
   const singletonKinds = new Set<"preview" | "device">();
   const surfaceIdMap = new Map<string, string>();
   const surfaces: RightPanelSurface[] = [];
+  const reservedSurfaceIds = new Set(rightPanel.surfaces.map((surface) => surface.id));
   let terminalSequence = 0;
 
   for (const surface of rightPanel.surfaces) {
     if (surface.kind === "terminal") terminalSequence += 1;
-    const reusable = reusableDefaultSurface(surface, terminalSequence, singletonKinds);
+    const reusable = reusableDefaultSurface(
+      surface,
+      terminalSequence,
+      singletonKinds,
+      reservedSurfaceIds,
+    );
     if (!reusable) continue;
     surfaceIdMap.set(surface.id, reusable.id);
     surfaces.push(reusable);
