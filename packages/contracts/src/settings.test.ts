@@ -371,6 +371,28 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ServerSettings agent session auto-import", () => {
+  it("defaults auto-import on with the full history window", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.agentSessionAutoImport).toBe(true);
+    expect(settings.agentSessionImportWindow).toBe("all");
+  });
+
+  it("accepts auto-import and window updates at the patch boundary", () => {
+    expect(
+      decodeServerSettingsPatch({
+        agentSessionAutoImport: false,
+        agentSessionImportWindow: "30d",
+      }),
+    ).toMatchObject({ agentSessionAutoImport: false, agentSessionImportWindow: "30d" });
+  });
+
+  it("rejects an unsupported import window", () => {
+    expect(() => decodeServerSettings({ agentSessionImportWindow: "7d" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ agentSessionImportWindow: "7d" })).toThrow();
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({

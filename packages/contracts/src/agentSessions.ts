@@ -6,6 +6,24 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
 export type AgentSessionSource = typeof AgentSessionSource.Type;
 
+/** Configurable history window for agent session imports. */
+export const AgentSessionImportWindow = Schema.Literals(["30d", "90d", "1y", "all"]);
+export type AgentSessionImportWindow = typeof AgentSessionImportWindow.Type;
+
+/** Resolve an import window to a millisecond cutoff, or null for no cutoff. */
+export function resolveAgentSessionImportWindowMs(window: AgentSessionImportWindow): number | null {
+  switch (window) {
+    case "30d":
+      return 30 * 24 * 60 * 60 * 1000;
+    case "90d":
+      return 90 * 24 * 60 * 60 * 1000;
+    case "1y":
+      return 365 * 24 * 60 * 60 * 1000;
+    case "all":
+      return null;
+  }
+}
+
 /** File identity saved with an imported session so bounded retries can skip unchanged history. */
 export const AgentSessionImportSource = Schema.Struct({
   provider: AgentSessionSource,
@@ -58,6 +76,7 @@ export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  window: Schema.optional(AgentSessionImportWindow),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
@@ -82,6 +101,7 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedErrorCla
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  remainingCount: NonNegativeInt,
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
