@@ -1,6 +1,8 @@
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -28,6 +30,7 @@ import {
 } from "../provider/acp/CursorAcpSupport.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
+const CURSOR_METADATA_WORKSPACE_PREFIX = "t3-cursor-metadata-";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -41,11 +44,25 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const resolvedEnvironment = environment ?? process.env;
+
+  const settingsForMetadataWorkspace = (sourceCwd: string) => {
+    const binaryPath = cursorSettings.binaryPath;
+    if (
+      !binaryPath ||
+      path.isAbsolute(binaryPath) ||
+      (!binaryPath.includes("/") && !binaryPath.includes("\\"))
+    ) {
+      return cursorSettings;
+    }
+    return { ...cursorSettings, binaryPath: path.resolve(sourceCwd, binaryPath) };
+  };
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
-    cwd,
+    sourceCwd,
     prompt,
     outputSchemaJson,
     modelSelection,
@@ -55,18 +72,35 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generatePrContent"
       | "generateBranchName"
       | "generateThreadTitle";
-    cwd: string;
+    sourceCwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
+      const metadataWorkspace = yield* Effect.acquireRelease(
+        fileSystem.makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Failed to create an isolated Cursor metadata workspace.",
+                cause,
+              }),
+          ),
+        ),
+        (workspace) =>
+          fileSystem.remove(workspace, { recursive: true, force: true }).pipe(
+            // Cleanup must not replace a successfully generated result.
+            Effect.ignore({ log: true }),
+          ),
+      );
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeCursorAcpRuntime({
-        cursorSettings,
+        cursorSettings: settingsForMetadataWorkspace(sourceCwd),
         environment: resolvedEnvironment,
         childProcessSpawner: commandSpawner,
-        cwd,
+        cwd: metadataWorkspace,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
@@ -101,7 +135,17 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
 
         return yield* runtime.prompt({
-          prompt: [{ type: "text", text: prompt }],
+          prompt: [
+            {
+              type: "text",
+              text: [
+                "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
+                "Return only the requested JSON object.",
+                "",
+                prompt,
+              ].join("\n"),
+            },
+          ],
         });
       }).pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
@@ -177,7 +221,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateCommitMessage",
-        cwd: input.cwd,
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -206,7 +250,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generatePrContent",
-        cwd: input.cwd,
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -227,7 +271,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateBranchName",
-        cwd: input.cwd,
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -248,7 +292,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       const generated = yield* runCursorJson({
         operation: "generateThreadTitle",
-        cwd: input.cwd,
+        sourceCwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,

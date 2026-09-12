@@ -14,6 +14,7 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const promptStartedPath = process.env.T3_ACP_PROMPT_STARTED_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
@@ -615,6 +616,11 @@ const program = Effect.gen(function* () {
 
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
+      if (promptStartedPath) {
+        const pendingPromptStartedPath = `${promptStartedPath}.tmp`;
+        NodeFS.writeFileSync(pendingPromptStartedPath, process.cwd(), "utf8");
+        NodeFS.renameSync(pendingPromptStartedPath, promptStartedPath);
+      }
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
 
