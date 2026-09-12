@@ -2346,6 +2346,11 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * Whether `branch` has moved off `pullRequest`'s head commit, which is why
+   * the badge lookup reports nothing for it. Reads the entry that lookup
+   * already cached, so asking costs no extra git or host work.
+   */
   const branchSupersededPullRequest: GitManager["Service"]["branchSupersededPullRequest"] =
     Effect.fn("branchSupersededPullRequest")(function* ({ cwd, branch, pullRequest }) {
       const resolved = yield* resolveBranchLookup({ cwd, branch });
