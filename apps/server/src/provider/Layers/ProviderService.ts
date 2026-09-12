@@ -237,6 +237,10 @@ interface PendingCompaction {
   readonly native: boolean;
   readonly providerInstanceId: ProviderInstanceId;
   readonly requestId: MessageId | undefined;
+  // Orchestration event sequence of the turn-start request that initiated the
+  // compaction. Stamped onto correlated runtime events so ingestion can bound
+  // turn-start cleanup without consulting mutable projection rows.
+  readonly requestSequence: number | undefined;
   readonly earlyEvents: ProviderRuntimeEvent[];
   compactedEventObserved: boolean;
   expectedTurnId: TurnId | undefined;
@@ -977,7 +981,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     event: ProviderRuntimeEvent,
   ): event is Extract<ProviderRuntimeEvent, { readonly type: "thread.state.changed" }> =>
     event.type === "thread.state.changed" && event.payload.state === "compacted";
-  const withCompactionRequestId = (
+  const withCompactionCorrelation = (
     event: ProviderRuntimeEvent,
     pending: PendingCompaction,
   ): ProviderRuntimeEvent =>
@@ -986,6 +990,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       : {
           ...event,
           requestId: RuntimeRequestId.make(String(pending.requestId)),
+          ...(pending.requestSequence !== undefined
+            ? { requestSequence: pending.requestSequence }
+            : {}),
         };
   const compactionTerminal = (event: ProviderRuntimeEvent): string | null =>
     event.type === "turn.completed"
@@ -1005,7 +1012,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const matchesTurn = event.turnId !== undefined && event.turnId === pending.expectedTurnId;
       if (matchesTurn && isCompactedEvent(event)) {
         pending.compactedEventObserved = true;
-        yield* publishRuntimeEvent(withCompactionRequestId(event, pending));
+        yield* publishRuntimeEvent(withCompactionCorrelation(event, pending));
         return;
       }
       yield* publishRuntimeEvent(event);
@@ -1023,6 +1030,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         },
         ...(pending.requestId !== undefined
           ? { requestId: RuntimeRequestId.make(String(pending.requestId)) }
+          : {}),
+        ...(pending.requestSequence !== undefined
+          ? { requestSequence: pending.requestSequence }
           : {}),
       } satisfies ProviderRuntimeEvent;
       yield* increment(providerRuntimeEventsTotal, {
@@ -1152,7 +1162,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const compacted = isCompactedEvent(canonicalEvent);
         const terminal = compacted ? "completed" : compactionTerminal(canonicalEvent);
         yield* publishRuntimeEvent(
-          compacted ? withCompactionRequestId(canonicalEvent, pendingCompaction) : canonicalEvent,
+          compacted ? withCompactionCorrelation(canonicalEvent, pendingCompaction) : canonicalEvent,
         );
         if (terminal !== null)
           yield* settleCompaction(canonicalEvent.threadId, pendingCompaction, terminal);
@@ -1778,7 +1788,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const compactThread: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
-    function* (threadId, modelSelection, requestId) {
+    function* (threadId, modelSelection, requestId, requestSequence) {
       const routed = yield* resolveRoutableSession({
         threadId,
         operation: "ProviderService.compactThread",
@@ -1803,6 +1813,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         native: compaction.type === "native",
         providerInstanceId: routed.instanceId,
         requestId,
+        requestSequence,
         earlyEvents: [],
         compactedEventObserved: false,
         expectedTurnId: undefined,

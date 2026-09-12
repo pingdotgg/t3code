@@ -1258,6 +1258,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           turnStartAcknowledged: {
             messageId: command.messageId,
             turnId: command.turnId,
+            ...(command.requestSequence !== undefined
+              ? { requestSequence: command.requestSequence }
+              : {}),
           },
           // Submission state must not reorder the thread in clients.
           updatedAt: thread.updatedAt,

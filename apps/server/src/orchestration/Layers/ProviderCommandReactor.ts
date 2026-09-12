@@ -391,6 +391,7 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    readonly throughRequestSequence?: number;
   }) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
@@ -409,6 +410,9 @@ const make = Effect.gen(function* () {
             payload: {
               detail: input.detail,
               ...(input.requestId ? { requestId: input.requestId } : {}),
+              ...(input.throughRequestSequence !== undefined
+                ? { throughRequestSequence: input.throughRequestSequence }
+                : {}),
             },
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -433,6 +437,7 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: DateTime.formatIso(yield* DateTime.now),
         requestId: event.payload.messageId,
+        throughRequestSequence: event.sequence,
       }).pipe(Effect.ignore({ log: true, message: "failed to report canceled queued message" }));
     }
   });
@@ -1283,6 +1288,7 @@ const make = Effect.gen(function* () {
       readonly threadId: ThreadId;
       readonly messageId: MessageId;
       readonly turnId: TurnId;
+      readonly requestSequence: number;
       readonly sourceProposedPlan?: {
         readonly threadId: ThreadId;
         readonly planId: OrchestrationProposedPlanId;
@@ -1294,6 +1300,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         messageId: input.messageId,
         turnId: input.turnId,
+        requestSequence: input.requestSequence,
         ...(input.sourceProposedPlan !== undefined
           ? { sourceProposedPlan: input.sourceProposedPlan }
           : {}),
@@ -1355,6 +1362,7 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.messageId,
+        throughRequestSequence: event.sequence,
       });
       return;
     }
@@ -1368,6 +1376,7 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.messageId,
+        throughRequestSequence: event.sequence,
       });
     if (resumed && turnsAfterCompaction.get(event.payload.threadId) !== resumed.queued) {
       return yield* appendTurnStartFailure(
@@ -1442,7 +1451,11 @@ const make = Effect.gen(function* () {
           tone: "info",
           kind: "provider.auth.signed-out",
           summary: "Provider signed out",
-          payload: { providerInstanceId: instanceId, requestId: event.payload.messageId },
+          payload: {
+            providerInstanceId: instanceId,
+            requestId: event.payload.messageId,
+            throughRequestSequence: event.sequence,
+          },
           turnId: null,
           createdAt: event.payload.createdAt,
         },
@@ -1567,6 +1580,7 @@ const make = Effect.gen(function* () {
           event.payload.threadId,
           event.payload.modelSelection,
           event.payload.messageId,
+          event.sequence,
         );
       }).pipe(
         Effect.andThen(restoreCompaction(event.payload.threadId, true)),
@@ -1626,6 +1640,7 @@ const make = Effect.gen(function* () {
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             turnId: turn.turnId,
+            requestSequence: event.sequence,
             ...(event.payload.sourceProposedPlan !== undefined
               ? { sourceProposedPlan: event.payload.sourceProposedPlan }
               : {}),
@@ -1928,6 +1943,7 @@ const make = Effect.gen(function* () {
                     turnId,
                     createdAt: now,
                     requestId: messageId,
+                    throughRequestSequence: event.sequence,
                   }).pipe(
                     Effect.ignore({
                       log: true,
@@ -2105,6 +2121,7 @@ const make = Effect.gen(function* () {
           turnId: null,
           createdAt: pending.requestedAt,
           requestId: pending.messageId,
+          throughRequestSequence: handoffSequence,
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)

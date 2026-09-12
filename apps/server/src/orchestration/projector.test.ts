@@ -1,9 +1,11 @@
 import {
   CommandId,
   EventId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -698,6 +700,7 @@ describe("orchestration projector", () => {
         {
           messageId: "newer-request",
           turnId: "turn-provider-acknowledged",
+          requestSequence: 2,
         },
       ]);
 
@@ -860,7 +863,7 @@ describe("orchestration projector", () => {
       expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
       expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
       expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
-        requests: [{ messageId: "request-b", observedTurnIds: ["turn-b"] }],
+        requests: [{ messageId: "request-b", observedTurnIds: ["turn-b"], requestSequence: 5 }],
       });
       model = yield* projectEvent(
         model,
@@ -879,6 +882,1078 @@ describe("orchestration projector", () => {
       );
       expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
     }),
+  );
+
+  effectIt.effect("keeps a start re-requested after a bounded failure's sequence", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T02:10:00.000Z";
+      const threadId = "thread-bounded-failure";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `bounded-failure-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Bounded failure",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      // The same message is requested again before the bounded failure lands.
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-a-bounded-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Queued message was not sent",
+            payload: { requestId: "request-a", throughRequestSequence: 3 },
+            turnId: null,
+            createdAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-a-bounded-failed-again",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Queued message was not sent",
+            payload: { requestId: "request-a", throughRequestSequence: 5 },
+            turnId: null,
+            createdAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBeNull();
+    }),
+  );
+
+  effectIt.effect("keeps a re-requested start when an older acknowledgement lands", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:00:00.000Z";
+      const threadId = "thread-stale-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `stale-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Stale acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      // The same message is re-requested before the first send acknowledges.
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      // A delayed acknowledgement for the superseded request records its own
+      // provider turn without touching the newer generation's marker.
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-old",
+            requestSequence: 2,
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-old", requestSequence: 2 },
+      ]);
+
+      // The old generation's turn starting must not clear the newer request.
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-old",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+
+      model = yield* projectEvent(
+        model,
+        event(8, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-new",
+            requestSequence: 5,
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-new", requestSequence: 5 },
+      ]);
+
+      // The newer generation's own turn adopting it retires the marker.
+      model = yield* projectEvent(
+        model,
+        event(9, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-new",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("keeps a re-requested marker while its acknowledged turn has not started", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:20:00.000Z";
+      const threadId = "thread-acked-marker-repeat";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `acked-marker-repeat-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Acked marker repeat",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 5]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      // Both generations are acknowledged — the older to turn-old, the
+      // newer to turn-new — so no rendezvous entries remain.
+      for (const [sequence, turnId, requestSequence] of [
+        [6, "turn-old", 2],
+        [7, "turn-new", 5],
+      ] as const) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: "request-a",
+              turnId,
+              requestSequence,
+            },
+            updatedAt: now,
+          }),
+        );
+      }
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-old", requestSequence: 2 },
+        { messageId: "request-a", turnId: "turn-new", requestSequence: 5 },
+      ]);
+
+      const runningOldTurn = (sequence: number) =>
+        event(sequence, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-old",
+            lastError: null,
+            updatedAt: now,
+          },
+        });
+      // The older generation's turn retires its own submitted entry but
+      // leaves the newer request's marker alone.
+      model = yield* projectEvent(model, runningOldTurn(8));
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-new", requestSequence: 5 },
+      ]);
+      // A repeated lifecycle update finds neither the adopted entry nor
+      // rendezvous history; the newer generation's submitted turn still
+      // guards the marker.
+      model = yield* projectEvent(model, runningOldTurn(9));
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+
+      // The newer generation's own turn starting adopts the marker.
+      model = yield* projectEvent(
+        model,
+        event(10, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-new",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("answers only the oldest generation for an unsequenced acknowledgement", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:15:00.000Z";
+      const threadId = "thread-legacy-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `legacy-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Legacy acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          expectsTurnStartAcknowledgement: true,
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          expectsTurnStartAcknowledgement: true,
+          createdAt: now,
+        }),
+      );
+      // A legacy acknowledgement without a request sequence answers the
+      // oldest generation still awaiting one; the newer request keeps its
+      // marker and its rendezvous entry.
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-old",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-old", requestSequence: 2 },
+      ]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+        requests: [{ messageId: "request-a", observedTurnIds: [], requestSequence: 5 }],
+      });
+    }),
+  );
+
+  effectIt.effect("keeps a re-requested start when the older turn starts before its ack", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:30:00.000Z";
+      const threadId = "thread-pre-ack-lifecycle";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `pre-ack-lifecycle-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Pre-ack lifecycle",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 5]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      // The first request's provider turn starts before its acknowledgement:
+      // the running turn could belong to the older generation, so the newer
+      // marker must survive.
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-old",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+
+      // The delayed ack retires only its own generation's rendezvous entry.
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-old",
+            requestSequence: 2,
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous?.requests).toEqual([
+        { messageId: "request-a", observedTurnIds: ["turn-old"], requestSequence: 5 },
+      ]);
+    }),
+  );
+
+  effectIt.effect("keeps a re-requested marker when an adopted turn's lifecycle repeats", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:45:00.000Z";
+      const threadId = "thread-repeated-lifecycle";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `repeated-lifecycle-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Repeated lifecycle",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 5]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-old",
+            requestSequence: 2,
+          },
+          updatedAt: now,
+        }),
+      );
+      const runningOldTurn = (sequence: number) =>
+        event(sequence, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-old",
+            lastError: null,
+            updatedAt: now,
+          },
+        });
+      // The first running event retires the older generation's submitted
+      // correlation but must leave the re-requested marker in place.
+      model = yield* projectEvent(model, runningOldTurn(7));
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+      // A repeated lifecycle update for the already-adopted turn is still not
+      // the newer request's turn and must not clear its marker either.
+      model = yield* projectEvent(model, runningOldTurn(8));
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+      expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+    }),
+  );
+
+  effectIt.effect("prefers the exact request generation for a sequenced acknowledgement", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T03:50:00.000Z";
+      const threadId = "thread-sequenced-ack-exact";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `sequenced-ack-exact-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Sequenced acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 5]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      // Mimic hydration of a legacy unsequenced row next to the newer
+      // generation's row.
+      const thread = model.threads[0]!;
+      model = {
+        ...model,
+        threads: [
+          {
+            ...thread,
+            turnStartSubmissionRendezvous: {
+              requests: [
+                { messageId: MessageId.make("request-a"), observedTurnIds: [] },
+                {
+                  messageId: MessageId.make("request-a"),
+                  observedTurnIds: [],
+                  requestSequence: 5,
+                },
+              ],
+            },
+          },
+        ],
+      };
+      // A sequenced acknowledgement resolves to its exact generation; the
+      // legacy row keeps awaiting its own acknowledgement.
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "request-a",
+            turnId: "turn-new",
+            requestSequence: 5,
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-a", turnId: "turn-new", requestSequence: 5 },
+      ]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+        requests: [{ messageId: "request-a", observedTurnIds: [] }],
+      });
+    }),
+  );
+
+  effectIt.effect(
+    "keeps a legacy request's missing sequence when an unsequenced acknowledgement answers it",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T03:55:00.000Z";
+        const threadId = "thread-legacy-ack-sequence";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `legacy-ack-sequence-${sequence}`,
+          });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Legacy ack sequence",
+            modelSelection: { instanceId: "codex", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(2, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        // Mimic hydration of a legacy unsequenced row while the newer
+        // sequenced request holds the marker.
+        const thread = model.threads[0]!;
+        model = {
+          ...model,
+          threads: [
+            {
+              ...thread,
+              turnStartSubmissionRendezvous: {
+                requests: [
+                  { messageId: MessageId.make("request-a"), observedTurnIds: [] },
+                  {
+                    messageId: MessageId.make("request-a"),
+                    observedTurnIds: [],
+                    requestSequence: 2,
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        model = yield* projectEvent(
+          model,
+          event(3, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-a", turnId: "turn-old" },
+            updatedAt: now,
+          }),
+        );
+        // The unsequenced acknowledgement answered the legacy request; its
+        // submitted entry keeps the missing sequence instead of borrowing the
+        // newer marker's, matching the durable NULL row.
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([
+          { messageId: "request-a", turnId: "turn-old" },
+        ]);
+        expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+          requests: [{ messageId: "request-a", observedTurnIds: [], requestSequence: 2 }],
+        });
+      }),
+  );
+
+  effectIt.effect(
+    "keeps a newer generation's submitted entry when a legacy acknowledgement lands",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T03:58:00.000Z";
+        const threadId = "thread-legacy-ack-submitted";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `legacy-ack-submitted-${sequence}`,
+          });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Legacy ack submitted",
+            modelSelection: { instanceId: "codex", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(2, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        // Mimic hydration of a legacy unsequenced request next to the newer
+        // generation's request.
+        const thread = model.threads[0]!;
+        model = {
+          ...model,
+          threads: [
+            {
+              ...thread,
+              turnStartSubmissionRendezvous: {
+                requests: [
+                  { messageId: MessageId.make("request-a"), observedTurnIds: [] },
+                  {
+                    messageId: MessageId.make("request-a"),
+                    observedTurnIds: [],
+                    requestSequence: 5,
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        // The newer generation is acknowledged first.
+        model = yield* projectEvent(
+          model,
+          event(6, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: "request-a",
+              turnId: "turn-new",
+              requestSequence: 5,
+            },
+            updatedAt: now,
+          }),
+        );
+        // A delayed legacy acknowledgement answers the oldest unsequenced
+        // request; it must not replace the newer generation's submitted
+        // entry — the wildcard match belongs to request resolution only.
+        model = yield* projectEvent(
+          model,
+          event(7, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-a", turnId: "turn-old" },
+            updatedAt: now,
+          }),
+        );
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([
+          { messageId: "request-a", turnId: "turn-new", requestSequence: 5 },
+          { messageId: "request-a", turnId: "turn-old" },
+        ]);
+      }),
+  );
+
+  effectIt.effect(
+    "keeps the submitted generation when a delayed legacy acknowledgement arrives after its turn completed",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T04:00:00.000Z";
+        const threadId = "thread-delayed-legacy-ack";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `delayed-legacy-ack-${sequence}`,
+          });
+        const session = (status: string, activeTurnId: string | null) => ({
+          threadId,
+          status,
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId,
+          lastError: null,
+          updatedAt: now,
+        });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Delayed legacy ack",
+            modelSelection: { instanceId: "codex", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(2, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(3, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: "request-a",
+              turnId: "turn-old",
+              requestSequence: 2,
+            },
+            updatedAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(4, "thread.session-set", {
+            threadId,
+            session: session("running", "turn-old"),
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(5, "thread.session-set", {
+            threadId,
+            session: session("idle", null),
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(6, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(7, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: "request-a",
+              turnId: "turn-new",
+              requestSequence: 6,
+            },
+            updatedAt: now,
+          }),
+        );
+        // A delayed unsequenced acknowledgement for the completed turn
+        // resolves no pending request and must not borrow the newer
+        // generation's sequence to replace its submitted entry.
+        model = yield* projectEvent(
+          model,
+          event(8, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-a", turnId: "turn-old" },
+            updatedAt: now,
+          }),
+        );
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([
+          { messageId: "request-a", turnId: "turn-new", requestSequence: 6 },
+          { messageId: "request-a", turnId: "turn-old" },
+        ]);
+        // The newer turn's lifecycle still retires only its own entry and
+        // clears the marker.
+        model = yield* projectEvent(
+          model,
+          event(9, "thread.session-set", {
+            threadId,
+            session: session("running", "turn-new"),
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(10, "thread.session-set", {
+            threadId,
+            session: session("idle", null),
+          }),
+        );
+        expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([
+          { messageId: "request-a", turnId: "turn-old" },
+        ]);
+      }),
+  );
+
+  effectIt.effect(
+    "keeps the newer marker when a legacy acknowledgement answers an older observed generation",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T04:05:00.000Z";
+        const threadId = "thread-legacy-ack-marker";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `legacy-ack-marker-${sequence}`,
+          });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Legacy ack marker",
+            modelSelection: { instanceId: "codex", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        model = yield* projectEvent(
+          model,
+          event(2, "thread.session-set", {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: "turn-old",
+              lastError: null,
+              updatedAt: now,
+            },
+          }),
+        );
+        // Mimic hydration of a legacy unsequenced request that already
+        // observed the running turn.
+        const thread = model.threads[0]!;
+        model = {
+          ...model,
+          threads: [
+            {
+              ...thread,
+              turnStartSubmissionRendezvous: {
+                requests: [
+                  {
+                    messageId: MessageId.make("request-a"),
+                    observedTurnIds: [TurnId.make("turn-old")],
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        model = yield* projectEvent(
+          model,
+          event(5, "thread.turn-start-requested", {
+            threadId,
+            messageId: "request-a",
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        // The older generation's delayed unsequenced acknowledgement names
+        // the already-running turn — it retires only the legacy request and
+        // must not clear the newer generation's marker.
+        model = yield* projectEvent(
+          model,
+          event(6, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-a", turnId: "turn-old" },
+            updatedAt: now,
+          }),
+        );
+        expect(model.threads[0]?.pendingTurnStartMessageId).toBe("request-a");
+        expect(model.threads[0]?.pendingTurnStartRequestSequence).toBe(5);
+        expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+          requests: [
+            {
+              messageId: "request-a",
+              observedTurnIds: ["turn-old"],
+              requestSequence: 5,
+            },
+          ],
+        });
+      }),
   );
 
   effectIt.effect("clears only the submitted start correlated to a provider failure", () =>

@@ -129,6 +129,14 @@ function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
   return typeof requestId === "string" ? ApprovalRequestId.make(requestId) : null;
 }
 
+function extractActivityRequestSequenceBound(payload: unknown): number | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const bound = (payload as Record<string, unknown>).throughRequestSequence;
+  return typeof bound === "number" ? bound : undefined;
+}
+
 function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   if (detail === null) {
     return false;
@@ -1384,6 +1392,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
+            requestSequence: event.sequence,
             requestedAt: event.payload.createdAt,
           });
           return;
@@ -1418,6 +1427,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             messageId: acknowledgement.messageId,
             turnId: acknowledgement.turnId,
+            requestSequence: acknowledgement.requestSequence,
           });
           if (Option.isSome(existingTurn)) {
             const submittedTurnStart =
@@ -1435,9 +1445,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 startedAt: existingTurn.value.startedAt ?? submittedTurnStart.value.requestedAt,
               });
             }
-            yield* projectionTurnRepository.deletePendingTurnStart({
+            // The turn already materialized, so its submitted rendezvous is
+            // consumed: retire every submitted generation correlated to it.
+            // Still-pending rows belong to other unacknowledged generations
+            // and must survive — the acknowledgement already converted its
+            // own generation's row above.
+            yield* projectionTurnRepository.deleteSubmittedTurnStartsByTurnId({
               threadId: event.payload.threadId,
-              messageId: acknowledgement.messageId,
+              turnId: acknowledgement.turnId,
             });
             return;
           }
@@ -1454,6 +1469,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             yield* projectionTurnRepository.deletePendingTurnStart({
               threadId: event.payload.threadId,
               messageId: MessageId.make(String(requestId)),
+              throughRequestSequence: extractActivityRequestSequenceBound(
+                event.payload.activity.payload,
+              ),
             });
             return;
           }
@@ -1463,6 +1481,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionTurnRepository.deletePendingTurnStart({
             threadId: event.payload.threadId,
             messageId: MessageId.make(String(requestId)),
+            throughRequestSequence: extractActivityRequestSequenceBound(
+              event.payload.activity.payload,
+            ),
           });
           return;
         }
@@ -1619,12 +1640,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             });
           }
 
-          if (Option.isSome(pendingTurnStart)) {
-            yield* projectionTurnRepository.deletePendingTurnStart({
-              threadId: event.payload.threadId,
-              messageId: pendingTurnStart.value.messageId,
-            });
-          }
+          // A running turn retires every submitted generation correlated to
+          // it — one provider turn can carry acknowledgements for more than
+          // one same-message request generation. Correlation is exact by
+          // turn id, so no request-sequence bound applies here.
+          yield* projectionTurnRepository.deleteSubmittedTurnStartsByTurnId({
+            threadId: event.payload.threadId,
+            turnId,
+          });
           return;
         }
 

@@ -58,6 +58,7 @@ export interface ProviderServiceShape {
     threadId: ThreadId,
     modelSelection?: ProviderSendTurnInput["modelSelection"],
     requestId?: MessageId,
+    requestSequence?: number,
   ) => Effect.Effect<void, ProviderServiceError>;
 
   /**

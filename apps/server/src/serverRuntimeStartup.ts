@@ -561,6 +561,10 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 detail:
                   "The server restarted after the provider accepted this turn but before it started.",
                 requestId: submitted.messageId,
+                // A missing sequence marks a row written before
+                // request_sequence existed — bound 0 still retires it
+                // without touching any newer same-message request.
+                throughRequestSequence: submitted.requestSequence ?? 0,
               },
               turnId: submitted.turnId,
               createdAt,

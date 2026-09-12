@@ -668,6 +668,362 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("keeps a re-requested start when an older acknowledgement lands", () => {
+      const messageId = MessageId.make("message-stale-ack-request");
+      const withEvent = (thread: typeof baseThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      const sessionSet = (
+        thread: typeof baseThread,
+        sequence: number,
+        activeTurnId: TurnId | null,
+      ) =>
+        withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:10:0${sequence}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: `2026-04-01T05:10:0${sequence}.000Z`,
+            },
+          },
+        });
+      const acknowledge = (
+        thread: typeof baseThread,
+        sequence: number,
+        turnId: TurnId,
+        requestSequence: number,
+      ) =>
+        withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:10:0${sequence}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId, turnId, requestSequence },
+            updatedAt: thread.updatedAt,
+          },
+        });
+
+      // A superseded request and a re-request share the same message id.
+      let thread: typeof baseThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: messageId,
+        pendingTurnStartRequestSequence: 5,
+      };
+
+      // The delayed acknowledgement for sequence 2 keeps the newer marker.
+      thread = acknowledge(thread, 6, TurnId.make("turn-old"), 2);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+      expect(thread.submittedTurnStarts).toEqual([
+        { messageId, turnId: TurnId.make("turn-old"), requestSequence: 2 },
+      ]);
+
+      // The old generation's turn starting leaves the newer request pending.
+      thread = sessionSet(thread, 7, TurnId.make("turn-old"));
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.submittedTurnStarts).toEqual([]);
+
+      thread = acknowledge(thread, 8, TurnId.make("turn-new"), 5);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.submittedTurnStarts).toEqual([
+        { messageId, turnId: TurnId.make("turn-new"), requestSequence: 5 },
+      ]);
+
+      // The newer generation's own turn adopting it retires the marker.
+      thread = sessionSet(thread, 9, TurnId.make("turn-new"));
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.pendingTurnStartRequestSequence).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+    });
+
+    it("keeps a re-requested marker when an adopted turn's lifecycle repeats", () => {
+      const messageId = MessageId.make("message-repeated-lifecycle");
+      const turnOld = TurnId.make("turn-repeated-lifecycle-old");
+      const withEvent = (thread: typeof baseThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      const requestStart = (thread: typeof baseThread, sequence: number) =>
+        withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:20:0${sequence}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: `2026-04-01T05:20:0${sequence}.000Z`,
+          },
+        });
+      const sessionSet = (thread: typeof baseThread, sequence: number, activeTurnId: TurnId) =>
+        withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:20:0${sequence}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: `2026-04-01T05:20:0${sequence}.000Z`,
+            },
+          },
+        });
+
+      // Two generations of one message; the older is acknowledged to turn-old.
+      let thread: typeof baseThread = requestStart(baseThread, 2);
+      thread = requestStart(thread, 5);
+      thread = withEvent(thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:20:06.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId, turnId: turnOld, requestSequence: 2 },
+          updatedAt: thread.updatedAt,
+        },
+      });
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+
+      // The first running event retires the older generation's submitted
+      // correlation but keeps the re-requested marker.
+      thread = sessionSet(thread, 7, turnOld);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.submittedTurnStarts).toEqual([]);
+
+      // A repeated lifecycle update for the already-adopted turn is still not
+      // the newer request's turn and must not clear its marker either.
+      thread = sessionSet(thread, 8, turnOld);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+    });
+
+    it("keeps a re-requested marker while its acknowledged turn has not started", () => {
+      const messageId = MessageId.make("message-acked-marker-repeat");
+      const turnOld = TurnId.make("turn-acked-marker-repeat-old");
+      const turnNew = TurnId.make("turn-acked-marker-repeat-new");
+      const withEvent = (thread: OrchestrationThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      const sessionSet = (thread: OrchestrationThread, sequence: number, activeTurnId: TurnId) =>
+        withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:20:0${sequence}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: `2026-04-01T05:20:0${sequence}.000Z`,
+            },
+          },
+        });
+
+      // Both generations were acknowledged — the older to turn-old, the
+      // newer (holding the marker) to turn-new — so no rendezvous remains.
+      let thread: OrchestrationThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: messageId,
+        pendingTurnStartRequestSequence: 5,
+        submittedTurnStarts: [
+          { messageId, turnId: turnOld, requestSequence: 2 },
+          { messageId, turnId: turnNew, requestSequence: 5 },
+        ],
+      };
+
+      // The older generation's turn retires its own submitted entry but
+      // leaves the newer request's marker alone.
+      thread = sessionSet(thread, 7, turnOld);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.submittedTurnStarts).toEqual([
+        { messageId, turnId: turnNew, requestSequence: 5 },
+      ]);
+      // A repeated lifecycle update finds neither the adopted entry nor
+      // rendezvous history; the newer generation's submitted turn still
+      // guards the marker.
+      thread = sessionSet(thread, 8, turnOld);
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+
+      // The newer generation's own turn starting adopts the marker.
+      thread = sessionSet(thread, 9, turnNew);
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+    });
+
+    it("keeps a newer generation's submitted entry when a legacy acknowledgement lands", () => {
+      const messageId = MessageId.make("message-legacy-ack-submitted");
+      const turnOld = TurnId.make("turn-legacy-ack-submitted-old");
+      const turnNew = TurnId.make("turn-legacy-ack-submitted-new");
+      // A legacy unsequenced request still awaits its acknowledgement while
+      // the newer generation's submitted entry is already tracked.
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: messageId,
+        pendingTurnStartRequestSequence: 5,
+        turnStartSubmissionRendezvous: {
+          requests: [{ messageId, observedTurnIds: [] }],
+        },
+        submittedTurnStarts: [{ messageId, turnId: turnNew, requestSequence: 5 }],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T05:20:07.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId, turnId: turnOld },
+          updatedAt: "2026-04-01T05:20:07.000Z",
+        },
+      });
+      expect(result.kind).toBe("updated");
+      // The legacy acknowledgement answered the unsequenced request and
+      // appended its own entry; it must not replace the newer generation's.
+      if (result.kind === "updated") {
+        expect(result.thread.submittedTurnStarts).toEqual([
+          { messageId, turnId: turnNew, requestSequence: 5 },
+          { messageId, turnId: turnOld },
+        ]);
+      }
+    });
+
+    it("keeps the submitted generation when a delayed legacy acknowledgement arrives after its turn completed", () => {
+      const messageId = MessageId.make("message-delayed-legacy-ack");
+      const turnOld = TurnId.make("turn-delayed-legacy-ack-old");
+      const turnNew = TurnId.make("turn-delayed-legacy-ack-new");
+      // The newer generation's submitted entry is tracked and every
+      // rendezvous request was already retired when the delayed
+      // unsequenced acknowledgement arrives.
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: messageId,
+        pendingTurnStartRequestSequence: 6,
+        turnStartSubmissionRendezvous: { requests: [] },
+        submittedTurnStarts: [{ messageId, turnId: turnNew, requestSequence: 6 }],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 8,
+        occurredAt: "2026-04-01T05:20:08.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId, turnId: turnOld },
+          updatedAt: "2026-04-01T05:20:08.000Z",
+        },
+      });
+      expect(result.kind).toBe("updated");
+      // The stray acknowledgement must not borrow the marker's sequence to
+      // replace the newer generation's submitted entry.
+      if (result.kind === "updated") {
+        expect(result.thread.submittedTurnStarts).toEqual([
+          { messageId, turnId: turnNew, requestSequence: 6 },
+          { messageId, turnId: turnOld },
+        ]);
+        expect(result.thread.pendingTurnStartMessageId).toBe(messageId);
+        expect(result.thread.pendingTurnStartRequestSequence).toBe(6);
+      }
+    });
+
+    it("keeps the newer marker when a legacy acknowledgement answers an older observed generation", () => {
+      const messageId = MessageId.make("message-legacy-ack-marker");
+      const turnOld = TurnId.make("turn-legacy-ack-marker-old");
+      // A hydrated legacy request that already observed the running turn
+      // sits alongside the newer generation's request.
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: baseThread.id,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: turnOld,
+          lastError: null,
+          updatedAt: "2026-04-01T05:20:02.000Z",
+        },
+        pendingTurnStartMessageId: messageId,
+        pendingTurnStartRequestSequence: 5,
+        turnStartSubmissionRendezvous: {
+          requests: [
+            { messageId, observedTurnIds: [turnOld] },
+            { messageId, observedTurnIds: [turnOld], requestSequence: 5 },
+          ],
+        },
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:20:06.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId, turnId: turnOld },
+          updatedAt: "2026-04-01T05:20:06.000Z",
+        },
+      });
+      expect(result.kind).toBe("updated");
+      // The acknowledgement answered the older legacy request, whose
+      // observed turn made it already adopted; the newer generation's
+      // marker must survive.
+      if (result.kind === "updated") {
+        expect(result.thread.pendingTurnStartMessageId).toBe(messageId);
+        expect(result.thread.pendingTurnStartRequestSequence).toBe(5);
+        expect(result.thread.turnStartSubmissionRendezvous).toEqual({
+          requests: [{ messageId, observedTurnIds: [turnOld], requestSequence: 5 }],
+        });
+      }
+    });
+
     it("does not re-guard a turn acknowledged after its lifecycle was observed", () => {
       const requestA = MessageId.make("message-late-ack-a");
       const turnA = TurnId.make("turn-late-ack-a");
@@ -775,6 +1131,100 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.submittedTurnStarts).toEqual([
           { messageId: messageB, turnId: TurnId.make("turn-submitted-failure-b") },
+        ]);
+      }
+    });
+
+    it("keeps a start re-requested after a bounded failure's sequence", () => {
+      const messageId = MessageId.make("message-bounded-rerequest");
+      const withEvent = (thread: OrchestrationThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      const request = (sequence: number): OrchestrationEvent => ({
+        ...baseEventFields,
+        sequence,
+        occurredAt: `2026-04-01T05:20:0${sequence}.000Z`,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: `2026-04-01T05:20:0${sequence}.000Z`,
+        },
+      });
+      const failure = (sequence: number, throughRequestSequence: number): OrchestrationEvent => ({
+        ...baseEventFields,
+        sequence,
+        occurredAt: `2026-04-01T05:20:0${sequence}.000Z`,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.activity-appended",
+        payload: {
+          threadId: baseThread.id,
+          activity: {
+            id: EventId.make(`activity-bounded-failure-${sequence}`),
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Queued message was not sent",
+            payload: { requestId: messageId, throughRequestSequence },
+            turnId: null,
+            createdAt: `2026-04-01T05:20:0${sequence}.000Z`,
+          },
+        },
+      });
+
+      // Request at 2, same message re-requested at 5; a failure bounded at 3
+      // only retires the first generation.
+      let thread = withEvent(baseThread, request(2));
+      thread = withEvent(thread, request(5));
+      thread = withEvent(thread, failure(6, 3));
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+
+      // A bound at the latest request still clears the marker.
+      thread = withEvent(thread, failure(7, 5));
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.pendingTurnStartRequestSequence).toBeNull();
+    });
+
+    it("keeps a submitted start re-requested after a bounded failure's sequence", () => {
+      const messageId = MessageId.make("message-bounded-submitted");
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        submittedTurnStarts: [
+          { messageId, turnId: TurnId.make("turn-bounded-submitted"), requestSequence: 2 },
+        ],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: "2026-04-01T05:25:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.activity-appended",
+        payload: {
+          threadId: baseThread.id,
+          activity: {
+            id: EventId.make("activity-bounded-submitted-failure"),
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Queued message was not sent",
+            payload: { requestId: messageId, throughRequestSequence: 1 },
+            turnId: null,
+            createdAt: "2026-04-01T05:25:00.000Z",
+          },
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.submittedTurnStarts).toEqual([
+          { messageId, turnId: TurnId.make("turn-bounded-submitted"), requestSequence: 2 },
         ]);
       }
     });
@@ -897,6 +1347,58 @@ describe("applyThreadDetailEvent", () => {
       if (running.kind === "updated") {
         expect(running.thread.turnStartSubmissionRendezvous).toBeNull();
       }
+    });
+
+    it("answers only the oldest generation for an unsequenced acknowledgement", () => {
+      const messageId = MessageId.make("message-legacy-ack");
+      let thread = baseThread;
+      for (const event of [
+        ...([2, 5] as const).map((sequence): OrchestrationEvent => ({
+          ...baseEventFields,
+          sequence,
+          occurredAt: "2026-04-01T05:20:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-04-01T05:20:00.000Z",
+          },
+        })),
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:20:01.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: {
+              messageId,
+              turnId: TurnId.make("turn-legacy-ack"),
+            },
+            updatedAt: "2026-04-01T05:20:01.000Z",
+          },
+        } as OrchestrationEvent,
+      ]) {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") thread = result.thread;
+      }
+
+      expect(thread.pendingTurnStartMessageId).toBe(messageId);
+      expect(thread.pendingTurnStartRequestSequence).toBe(5);
+      expect(thread.submittedTurnStarts).toEqual([
+        { messageId, turnId: TurnId.make("turn-legacy-ack"), requestSequence: 2 },
+      ]);
+      expect(thread.turnStartSubmissionRendezvous).toEqual({
+        requests: [{ messageId, observedTurnIds: [], requestSequence: 5 }],
+      });
     });
 
     it("matches every acknowledgement when concurrent starts share a provider turn", () => {
