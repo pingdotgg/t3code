@@ -3,17 +3,23 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createNavigationHistory, registerNavigationHistory } from "./navigationHistoryStore";
 
-function withoutRouterLocationState(history: RouterHistory): RouterHistory {
+function withRouterPosition(history: RouterHistory, position?: number): RouterHistory {
   return {
     ...history,
     get location() {
-      return { ...history.location, state: {} as RouterHistory["location"]["state"] };
+      return {
+        ...history.location,
+        state: { __TSR_index: position } as RouterHistory["location"]["state"],
+      };
     },
     subscribe: (listener) =>
       history.subscribe(({ action, location }) =>
         listener({
           action,
-          location: { ...location, state: {} as RouterHistory["location"]["state"] },
+          location: {
+            ...location,
+            state: { __TSR_index: position } as RouterHistory["location"]["state"],
+          },
         }),
       ),
   };
@@ -44,6 +50,32 @@ function withRouterLocationKey(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("createNavigationHistory", () => {
+  it.each([NaN, Infinity, -1, 1.5])(
+    "keeps navigation usable when router positions are %s",
+    (position) => {
+      const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
+      const history = createNavigationHistory(withRouterPosition(routerHistory, position), {
+        initialMaximumPosition: position,
+      });
+      history.start();
+      expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: false });
+      routerHistory.push("/thread-a");
+      routerHistory.push("/thread-b");
+      history.back();
+      expect(routerHistory.location.pathname).toBe("/thread-a");
+      expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
+      routerHistory.replace("/settings");
+      routerHistory.notify({ type: "GO", index: NaN });
+      expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: true });
+      history.forward();
+      expect(routerHistory.location.pathname).toBe("/thread-b");
+      expect(history.getSnapshot()).toEqual({ canGoBack: true, canGoForward: false });
+      routerHistory.go(-2);
+      expect(routerHistory.location.pathname).toBe("/");
+      expect(history.getSnapshot()).toEqual({ canGoBack: false, canGoForward: true });
+    },
+  );
+
   it("preserves the router position when a native anchor push reuses its index", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/", "/thread-a"] });
     const history = createNavigationHistory(routerHistory);
@@ -115,7 +147,7 @@ describe("createNavigationHistory", () => {
 
   it("tracks back and forward availability through navigation", () => {
     const routerHistory = createMemoryHistory({ initialEntries: ["/"] });
-    const history = createNavigationHistory(withoutRouterLocationState(routerHistory));
+    const history = createNavigationHistory(withRouterPosition(routerHistory));
     const snapshots: Array<ReturnType<typeof history.getSnapshot>> = [];
     history.subscribe(() => snapshots.push(history.getSnapshot()));
     history.start();

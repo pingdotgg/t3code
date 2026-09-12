@@ -12,6 +12,10 @@ interface PersistedNavigationHistory {
   readonly maximumPosition: number;
 }
 
+function navigationPosition(value: number | undefined, fallback: number) {
+  return value !== undefined && Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
 function snapshotFor(currentPosition: number, maximumPosition: number): NavigationHistorySnapshot {
   return {
     canGoBack: currentPosition > 0,
@@ -29,8 +33,11 @@ export function createNavigationHistory(
     ) => void;
   } = {},
 ) {
-  let currentPosition = history.location.state.__TSR_index ?? 0;
-  let maximumPosition = Math.max(currentPosition, options.initialMaximumPosition ?? 0);
+  let currentPosition = navigationPosition(history.location.state.__TSR_index, 0);
+  let maximumPosition = Math.max(
+    currentPosition,
+    navigationPosition(options.initialMaximumPosition, 0),
+  );
   let snapshot = snapshotFor(currentPosition, maximumPosition);
   let started = false;
   let traversalPending = false;
@@ -43,22 +50,35 @@ export function createNavigationHistory(
     traversalPending = false;
     switch (action.type) {
       case "PUSH":
-        currentPosition = location.state.__TSR_index ?? currentPosition + 1;
+        currentPosition = navigationPosition(location.state.__TSR_index, currentPosition + 1);
         maximumPosition = currentPosition;
         break;
       case "BACK":
-        currentPosition = location.state.__TSR_index ?? Math.max(0, currentPosition - 1);
+        currentPosition = navigationPosition(
+          location.state.__TSR_index,
+          Math.max(0, currentPosition - 1),
+        );
         break;
       case "FORWARD":
-        currentPosition =
-          location.state.__TSR_index ?? Math.min(maximumPosition, currentPosition + 1);
+        currentPosition = navigationPosition(
+          location.state.__TSR_index,
+          Math.min(maximumPosition, currentPosition + 1),
+        );
         break;
       case "GO":
-        currentPosition =
-          location.state.__TSR_index ??
-          Math.max(0, Math.min(maximumPosition, currentPosition + action.index));
+        currentPosition = navigationPosition(
+          location.state.__TSR_index,
+          Math.max(
+            0,
+            Math.min(
+              maximumPosition,
+              currentPosition + (Number.isInteger(action.index) ? action.index : 0),
+            ),
+          ),
+        );
         break;
       case "REPLACE":
+        currentPosition = navigationPosition(location.state.__TSR_index, currentPosition);
         break;
     }
 
@@ -154,7 +174,7 @@ export function registerNavigationHistory(history: RouterHistory): NavigationHis
   if (existing) {
     return existing;
   }
-  const currentPosition = history.location.state.__TSR_index ?? 0;
+  const currentPosition = navigationPosition(history.location.state.__TSR_index, 0);
   const initialMaximumPosition = readPersistedMaximumPosition(history);
   const maximumPosition = Math.max(currentPosition, initialMaximumPosition ?? 0);
   const navigationHistory = createNavigationHistory(history, {
