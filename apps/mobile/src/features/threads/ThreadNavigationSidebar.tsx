@@ -9,7 +9,6 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,9 +19,11 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
 
+import type { AndroidMenuAction } from "../../components/AndroidAnchoredMenu";
 import { AppText as Text } from "../../components/AppText";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -236,6 +237,7 @@ function ThreadNavigationSidebarPane(
       projectScopes.map((scope) => ({
         key: scope.key,
         label: scope.title,
+        representative: scope.representative,
       })),
     [projectScopes],
   );
@@ -624,7 +626,7 @@ function ThreadNavigationSidebarPane(
     threadListV2Enabled,
     threadListV2Layout,
   ]);
-  const listMenuActions = useMemo<MenuAction[]>(
+  const listMenuActions = useMemo<AndroidMenuAction[]>(
     () => [
       {
         id: "environment",
@@ -663,10 +665,19 @@ function ThreadNavigationSidebarPane(
                   id: `project:${project.key}`,
                   title: project.label,
                   state: selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
+                  leading: (
+                    <ProjectFavicon
+                      environmentId={project.representative.environmentId}
+                      faviconPath={project.representative.faviconPath}
+                      projectTitle={project.label}
+                      size={18}
+                      workspaceRoot={project.representative.workspaceRoot}
+                    />
+                  ),
                 })),
               ],
             },
-          ] satisfies MenuAction[])),
+          ] satisfies AndroidMenuAction[])),
       // v2 lays the list out in fixed creation order — offering sort/group
       // controls it silently ignores would be a lie. Environment still
       // scopes the v2 partition, so it stays.
@@ -691,7 +702,7 @@ function ThreadNavigationSidebarPane(
                 state: options.threadSortOrder === option.value ? "on" : "off",
               })),
             },
-          ] satisfies MenuAction[])),
+          ] satisfies AndroidMenuAction[])),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
   );

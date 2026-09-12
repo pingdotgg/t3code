@@ -22,7 +22,11 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 
 import { cn } from "../lib/cn";
 import { withMenuActionIconColors } from "../lib/menu-action-colors";
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import {
+  AndroidAnchoredMenu,
+  type AndroidMenuAction,
+  toNativeMenuActions,
+} from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 
@@ -151,8 +155,9 @@ export function ControlPill(props: {
 // AppCompat popup can't be themed past its stock animation, metrics, and
 // submenu chrome.
 export function ControlPillMenu(
-  props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> &
+  props: Omit<ComponentProps<typeof MenuView>, "actions" | "children" | "themeVariant"> &
     Pick<AccessibilityProps, "accessible" | "accessibilityLabel" | "accessibilityRole"> & {
+      readonly actions: readonly AndroidMenuAction[];
       readonly children: ReactNode;
       readonly className?: string;
     },
@@ -200,7 +205,8 @@ export function ControlPillMenu(
     );
   }
 
-  const { className: _className, ...menuProps } = props;
+  const { className: _className, actions, ...menuProps } = props;
+  const nativeActions = useMemo(() => toNativeMenuActions(actions), [actions]);
   let children = menuProps.children;
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
     const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
@@ -258,6 +264,7 @@ export function ControlPillMenu(
   return (
     <ThemedMenuView
       {...menuProps}
+      actions={nativeActions}
       iconColorClassName="accent-icon"
       destructiveIconColorClassName="accent-danger-foreground"
       themeVariant={isDarkMode ? "dark" : "light"}

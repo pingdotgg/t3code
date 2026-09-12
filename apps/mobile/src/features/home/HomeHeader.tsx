@@ -1,6 +1,5 @@
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
 import Constants from "expo-constants";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useCallback, useMemo, useRef } from "react";
@@ -8,8 +7,10 @@ import { Platform, Pressable, Text as RNText, TextInput, View } from "react-nati
 import type { SearchBarCommands } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import type { AndroidMenuAction } from "../../components/AndroidAnchoredMenu";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../../lib/mobileBranding";
@@ -77,7 +78,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const hasCustomListOptions = threadListV2Enabled
     ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
     : hasCustomHomeListOptions(props);
-  const menuActions = useMemo<MenuAction[]>(
+  const menuActions = useMemo<AndroidMenuAction[]>(
     () => [
       {
         id: "environment",
@@ -111,10 +112,19 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                   id: `project:${project.key}`,
                   title: project.label,
                   state: checkedMenuState(props.selectedProjectKey === project.key),
+                  leading: project.representative ? (
+                    <ProjectFavicon
+                      environmentId={project.representative.environmentId}
+                      faviconPath={project.representative.faviconPath}
+                      projectTitle={project.label}
+                      size={18}
+                      workspaceRoot={project.representative.workspaceRoot}
+                    />
+                  ) : undefined,
                 })),
               ],
             },
-          ] satisfies MenuAction[])),
+          ] satisfies AndroidMenuAction[])),
       ...(threadListV2Enabled
         ? []
         : ([
@@ -136,7 +146,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 state: checkedMenuState(props.threadSortOrder === option.value),
               })),
             },
-          ] satisfies MenuAction[])),
+          ] satisfies AndroidMenuAction[])),
     ],
     [
       props.environments,

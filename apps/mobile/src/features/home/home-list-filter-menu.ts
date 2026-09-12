@@ -1,3 +1,4 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
@@ -11,6 +12,11 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  /** Project whose favicon stands for the scope (scopes can group several). */
+  readonly representative?: Pick<
+    EnvironmentProject,
+    "environmentId" | "workspaceRoot" | "faviconPath"
+  >;
 }
 
 type HomeListFilterMenuAction = {
