@@ -1,4 +1,6 @@
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { sourceControlMediaSource, type MarkdownImageContext } from "./sourceControlMedia.ts";
+export type { MarkdownImageContext } from "./sourceControlMedia.ts";
 
 import {
   normalizeMarkdownLinkDestination,
@@ -12,6 +14,7 @@ const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export type MarkdownImageSource =
+  | NonNullable<ReturnType<typeof sourceControlMediaSource>>
   | { readonly _tag: "Direct"; readonly uri: string }
   | { readonly _tag: "WorkspaceFile"; readonly path: string }
   | { readonly _tag: "Blocked" };
@@ -35,6 +38,7 @@ function joinWorkspacePath(workspaceRoot: string, relativePath: string): string 
 export function classifyMarkdownImageSource(
   value: string | null | undefined,
   workspaceRoot?: string | null,
+  context?: MarkdownImageContext | null,
 ): MarkdownImageSource {
   if (value === null || value === undefined) return { _tag: "Blocked" };
 
@@ -43,8 +47,10 @@ export function classifyMarkdownImageSource(
     return { _tag: "Blocked" };
   }
   if (DIRECT_IMAGE_SOURCE_PATTERN.test(source)) {
-    return { _tag: "Direct", uri: source };
+    return sourceControlMediaSource(source, context) ?? { _tag: "Direct", uri: source };
   }
+  const sourceControlMedia = context ? sourceControlMediaSource(source, context) : null;
+  if (sourceControlMedia) return sourceControlMedia;
 
   if (/^file:/i.test(source)) {
     const target = parseFileUrlHref(source);

@@ -2195,6 +2195,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         );
       }
       const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
+      if (imageSource._tag === "SourceControlMedia") {
+        const resource = {
+          _tag: "source-control-media",
+          reference: imageSource.reference,
+        } as const;
+        return (
+          <ThreadMarkdownImage
+            environmentId={props.environmentId}
+            resource={resource}
+            fallbackUrl={imageSource.uri}
+            alt={image.alt}
+            actionsSource={media?.source.actionsSource}
+            onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+          />
+        );
+      }
       if (imageSource._tag === "Direct") {
         return (
           <ThreadMarkdownImageView

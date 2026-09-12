@@ -35,6 +35,7 @@ export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly unavailable: boolean;
+  readonly onError?: (() => void) | undefined;
   readonly alt: string | null;
   /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
   readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
@@ -127,7 +128,10 @@ export function ThreadMarkdownImageView(props: {
                   key={props.uri}
                   uri={props.uri}
                   onLoad={setDecodedSize}
-                  onError={() => setFailedUri(props.uri)}
+                  onError={() => {
+                    setFailedUri(props.uri);
+                    props.onError?.();
+                  }}
                 />
               </View>
             </Pressable>
@@ -178,26 +182,62 @@ function ThreadMarkdownImageRequest(props: {
 /** Environment-hosted image that loads through a signed asset URL. */
 export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
+  readonly resource: Extract<
+    AssetResource,
+    { readonly _tag: "attachment" | "media-file" | "source-control-media" }
+  >;
   readonly alt: string | null;
   readonly srcFragment?: string;
+  readonly fallbackUrl?: string;
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const [failedAssetUrl, setFailedAssetUrl] = useState<string | null>(null);
+  const fallback =
+    props.resource._tag === "source-control-media"
+      ? (props.fallbackUrl ??
+        (props.resource.reference._tag === "github" ? props.resource.reference.url : null))
+      : null;
+  const showsFallback =
+    fallback !== null &&
+    (assetUrl._tag === "Failure" ||
+      (assetUrl._tag === "Success" && failedAssetUrl === assetUrl.url));
+  const actionsSource: MediaActionsSource | undefined =
+    showsFallback && props.actionsSource
+      ? {
+          uri: fallback,
+          name: props.actionsSource.name,
+          mimeType: props.actionsSource.mimeType,
+          ...(props.actionsSource.reference ? { reference: props.actionsSource.reference } : {}),
+        }
+      : props.actionsSource;
 
   return (
     <ThreadMarkdownImageView
-      uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
-      sourceKey={
-        props.resource._tag === "attachment"
-          ? `attachment:${props.resource.attachmentId}`
-          : `workspace:${props.resource.path}`
+      uri={
+        showsFallback
+          ? fallback
+          : assetUrl._tag === "Success"
+            ? assetUrl.url + (props.srcFragment ?? "")
+            : null
       }
-      unavailable={assetUrl._tag === "Failure"}
+      onError={
+        !showsFallback && fallback !== null && assetUrl._tag === "Success"
+          ? () => setFailedAssetUrl(assetUrl.url)
+          : undefined
+      }
+      sourceKey={
+        props.resource._tag === "source-control-media"
+          ? JSON.stringify(props.resource)
+          : props.resource._tag === "attachment"
+            ? `attachment:${props.resource.attachmentId}`
+            : `workspace:${props.resource.path}`
+      }
+      unavailable={assetUrl._tag === "Failure" && fallback === null}
       knownSize={assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined}
       alt={props.alt}
-      actionsSource={props.actionsSource}
+      actionsSource={actionsSource}
       onPressPreview={props.onPressPreview}
     />
   );

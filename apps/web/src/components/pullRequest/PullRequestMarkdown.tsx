@@ -1,5 +1,14 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  classifyMarkdownImageSource,
+  type MarkdownImageContext,
+} from "@t3tools/client-runtime/markdown-images";
+import { useAssetUrlState, useAssetUrlRefresh } from "~/assets/assetUrls";
+import type {
+  EnvironmentId,
+  ScopedThreadRef,
+  SourceControlMediaReference,
+} from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -12,6 +21,7 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
+  imageContext?: MarkdownImageContext | undefined;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -57,10 +67,22 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              imageContext={context?.imageContext}
             />
           );
         }
         if (segment.media === "video") {
+          const source = classifyMarkdownImageSource(segment.url, cwd, context?.imageContext);
+          if (source._tag === "SourceControlMedia") {
+            return (
+              <PullRequestAttachmentVideo
+                key={`${segment.id}:${segment.url}`}
+                environmentId={environmentId}
+                url={source.uri}
+                reference={source.reference}
+              />
+            );
+          }
           return (
             <MediaVideoPlayer
               key={`${segment.id}:${segment.url}`}
@@ -90,5 +112,32 @@ export function PullRequestMarkdown({
         );
       })}
     </div>
+  );
+}
+
+function PullRequestAttachmentVideo({
+  environmentId,
+  url,
+  reference,
+}: {
+  environmentId: EnvironmentId;
+  url: string;
+  reference: SourceControlMediaReference;
+}) {
+  const resource = useMemo(
+    () => ({ _tag: "source-control-media", reference }) as const,
+    [reference],
+  );
+  const assetUrl = useAssetUrlState(environmentId, resource);
+  const refresh = useAssetUrlRefresh(environmentId, resource);
+  return (
+    <MediaVideoPlayer
+      src={assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? url : null}
+      originalUrl={url}
+      label="Pull request video"
+      className="w-full"
+      videoClassName="rounded-lg border border-border/60"
+      onRetry={assetUrl._tag === "Failure" ? undefined : refresh}
+    />
   );
 }

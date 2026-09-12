@@ -30,6 +30,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import * as SourceControlMediaProxy from "./assets/SourceControlMediaProxy.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -126,7 +127,7 @@ export function assetResponseHeaders(
                 "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
               }
             : {}),
-    ...(!options?.download && lowerPath.endsWith(".svg")
+    ...(!options?.download && (lowerPath.endsWith(".svg") || inlineMimeType === "image/svg+xml")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
@@ -387,6 +388,43 @@ export const assetRouteLayer = HttpRouter.add(
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (asset.kind === "source-control-media") {
+      const proxy = yield* Effect.serviceOption(SourceControlMediaProxy.SourceControlMediaProxy);
+      const delivery = Option.isSome(proxy)
+        ? yield* proxy.value.resolve(
+            asset.reference,
+            request.method === "GET" ? request.headers.range : undefined,
+          )
+        : null;
+      if (delivery === null) return HttpServerResponse.text("Not Found", { status: 404 });
+      if (delivery.kind === "redirect") {
+        return HttpServerResponse.redirect(delivery.location, {
+          status: 302,
+          headers: { "Cache-Control": delivery.cacheControl },
+        });
+      }
+      if (delivery.kind === "range-not-satisfiable") {
+        return HttpServerResponse.empty({
+          status: 416,
+          headers: delivery.contentRange ? { "Content-Range": delivery.contentRange } : {},
+        });
+      }
+      const headers = {
+        ...delivery.headers,
+        ...assetResponseHeaders("upload", { mimeType: delivery.contentType }),
+        "Content-Type": delivery.contentType,
+      };
+      return request.method === "HEAD"
+        ? HttpServerResponse.empty({ status: delivery.status, headers })
+        : HttpServerResponse.stream(delivery.body, {
+            status: delivery.status,
+            headers,
+            contentType: delivery.contentType,
+            contentLength: delivery.headers["content-length"]
+              ? Number(delivery.headers["content-length"])
+              : undefined,
+          });
     }
     return yield* assetFileResponse(
       asset,

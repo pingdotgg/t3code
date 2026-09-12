@@ -18,7 +18,10 @@ import {
   type MediaReference,
 } from "./mediaReference.ts";
 
-export type MediaSourceResource = Extract<AssetResource, { readonly _tag: "media-file" }>;
+export type MediaSourceResource = Extract<
+  AssetResource,
+  { readonly _tag: "media-file" | "source-control-media" }
+>;
 
 /** What a piece of authored media is and how its bytes can be reached. */
 export type ResolvedMediaSource = {
@@ -61,6 +64,20 @@ export function resolveMediaSource(
 ): ResolvedMediaSource | null {
   const classified = classify(source, input);
   if (classified._tag === "Blocked") return null;
+  if (classified._tag === "SourceControlMedia") {
+    const mimeType = mediaMimeType(classified.uri) ?? (input.imageEmbed ? "image/*" : null);
+    if (mimeType === null) return null;
+    const reference = mediaUrlReference(classified.uri);
+    return {
+      kind: mimeType.startsWith("video/") ? "video" : "image",
+      mimeType,
+      name: fileBasename(classified.uri),
+      ...(reference ? { reference } : {}),
+      srcFragment: "",
+      access: "environment",
+      resource: { _tag: "source-control-media", reference: classified.reference },
+    };
+  }
 
   const path =
     classified._tag === "Direct"

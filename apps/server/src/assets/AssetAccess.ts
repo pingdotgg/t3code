@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  SourceControlMediaReference,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -81,6 +82,12 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
 const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("source-control-media"),
+    reference: SourceControlMediaReference,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
@@ -140,14 +147,16 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = {
-  readonly kind: "file";
-  readonly path: string;
-  readonly download?: boolean;
-  readonly fileName?: string;
-  readonly mimeType?: string;
-  readonly file?: OpenMediaFile;
-};
+export type ResolvedAsset =
+  | { readonly kind: "source-control-media"; readonly reference: SourceControlMediaReference }
+  | {
+      readonly kind: "file";
+      readonly path: string;
+      readonly download?: boolean;
+      readonly fileName?: string;
+      readonly mimeType?: string;
+      readonly file?: OpenMediaFile;
+    };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -272,6 +281,17 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let imageDimensions: ImageDimensions | null = null;
 
   switch (input.resource._tag) {
+    case "source-control-media": {
+      claims = {
+        version: 1,
+        kind: "source-control-media",
+        reference: input.resource.reference,
+        expiresAt,
+      };
+      fileName =
+        input.resource.reference._tag === "gitlab" ? input.resource.reference.fileName : "upload";
+      break;
+    }
     case "media-file": {
       let requestedPath = input.resource.path;
       if (!path.isAbsolute(requestedPath)) {
@@ -589,7 +609,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         }),
     ),
   );
-  if (claims.kind === "project-favicon" || claims.kind === "project-favicon-external") {
+  if (
+    claims.kind === "project-favicon" ||
+    claims.kind === "project-favicon-external" ||
+    claims.kind === "source-control-media"
+  ) {
     const issuedAt = yield* Clock.currentTimeMillis;
     expiresAt =
       (Math.floor(issuedAt / PROJECT_FAVICON_TOKEN_BUCKET_MS) + 2) *
@@ -623,6 +647,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "source-control-media") {
+    return { kind: "source-control-media", reference: claims.reference } satisfies ResolvedAsset;
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
