@@ -5541,6 +5541,63 @@ it.effect("asks who is reading through a pause only for the press that is waitin
   }),
 );
 
+it.effect("does not ask a paused host who is reading again after the ask failed", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.suspend(() => {
+              viewerLookups += 1;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: "gitlab",
+                  operation: "getViewer",
+                  reason: "failed",
+                  detail: "glab exited with status 1",
+                }),
+              );
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+          runAction: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "runAction",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* Effect.flip(service.filesViewed(GITLAB_REFERENCE));
+    assert.strictEqual(viewerLookups, 1);
+    yield* Effect.flip(service.runAction({ ...GITLAB_REFERENCE, action: "merge" }));
+
+    // A failed lookup is held nowhere, so a background read let through the pause would spawn the
+    // host's CLI on every refresh for as long as the pause lasted, and re-extend it each time.
+    yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    yield* TestClock.adjust("11 minutes");
+    yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    assert.strictEqual(viewerLookups, 1);
+  }),
+);
+
 it.effect("refuses the marks when the host could not be asked who is reading", () =>
   Effect.gen(function* () {
     let answering = true;
