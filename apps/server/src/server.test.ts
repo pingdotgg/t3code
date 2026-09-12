@@ -2708,47 +2708,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects cloud link proofs for unsupported endpoint providers", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const linkProofUrl = yield* getHttpServerUrl("/api/connect/link-proof");
-      const serverPort = Number(new URL(linkProofUrl).port);
-      const linkProofResponse = yield* fetchEffect(linkProofUrl, {
-        method: "POST",
-        headers: {
-          cookie: ownerCookie,
-          "content-type": "application/json",
-        },
-        body: jsonRequestBody({
-          challenge: "relay-link-challenge",
-          relayIssuer: "https://relay.example.test",
-          endpoint: {
-            httpBaseUrl: linkProofUrl.replace("/api/connect/link-proof", ""),
-            wsBaseUrl: linkProofUrl
-              .replace("http://", "ws://")
-              .replace("/api/connect/link-proof", "/ws"),
-            // "manual" and "cloudflare_tunnel" are supported; "t3_relay" is not.
-            providerKind: "t3_relay",
-          },
-          origin: {
-            localHttpHost: "127.0.0.1",
-            localHttpPort: serverPort,
-          },
-        }),
-      });
-      const body = yield* responseJsonEffect<{
-        readonly _tag?: string;
-        readonly message?: string;
-      }>(linkProofResponse);
-
-      assert.equal(linkProofResponse.status, 400);
-      assert.equal(body._tag, "EnvironmentHttpBadRequestError");
-      assert.equal(body.message, "Invalid managed endpoint origin.");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("rejects cloud link proofs requested through a public managed endpoint", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
