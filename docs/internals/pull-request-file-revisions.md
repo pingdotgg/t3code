@@ -45,9 +45,9 @@ forms are not interchangeable.
 
 A null map, from the service's read of the whole scope, costs those marks their staleness. They
 still report as cleared; they stop noticing pushes. It happens when the provider offers no
-`getFileRevisions` at all, and, on the read path only, when the call failed and was logged. A
-press takes the stricter line and fails loudly, since a mark stamped with a revision nobody read
-is wrong rather than merely less informed.
+`getFileRevisions` at all, and, on either path, when the call failed and was logged. A press that
+gets no answer does not refuse the reader's tick: it stores the mark with no baseline, which is
+the third form below.
 
 A path absent from an answered map is the per-path case, and it is the one that must not be read
 as a deletion. [`HeldFileRevisions`](../../apps/server/src/pullRequest/pullRequestViewedFiles.ts)
