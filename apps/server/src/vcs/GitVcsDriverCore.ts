@@ -3180,12 +3180,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
+      // A catch-up fetch of a large remote can run for minutes; the default
+      // 30s deadline kills it mid-pack and every retry starts over, like push.
       yield* executeGit(
         "GitVcsDriver.fetchRemote",
         input.cwd,
         ["fetch", "--quiet", input.remoteName],
         {
           env: STATUS_UPSTREAM_REFRESH_ENV,
+          timeoutMs: null,
           fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
         },
       );
