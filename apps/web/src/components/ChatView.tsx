@@ -1634,6 +1634,11 @@ export default function ChatView(props: ChatViewProps) {
     return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  // Thread whose worktree setup finished in a failed or cancelled state. Keeps
+  // the setup card subscribed after the local dispatch resets.
+  const [worktreeSetupSettledThreadId, setWorktreeSetupSettledThreadId] = useState<ThreadId | null>(
+    null,
+  );
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -3322,6 +3327,44 @@ export default function ChatView(props: ChatViewProps) {
     refresh: gitStatusQuery.refresh,
     resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
   });
+  // Live stages of a bootstrap worktree setup. Subscribed only while the
+  // client is dispatching one, or for a short while after so the final card
+  // state (done or failed) is still visible.
+  const worktreeSetupSubscriptionActive =
+    isPreparingWorktree || worktreeSetupSettledThreadId === activeThreadId;
+  const worktreeSetupQuery = useEnvironmentQuery(
+    worktreeSetupSubscriptionActive && activeThreadId
+      ? vcsEnvironment.worktreeSetup({ environmentId, input: { threadId: activeThreadId } })
+      : null,
+  );
+  const worktreeSetup = worktreeSetupSubscriptionActive ? (worktreeSetupQuery.data ?? null) : null;
+  useEffect(() => {
+    if (!worktreeSetup || worktreeSetup.phase === "running") return;
+    // Keep a failed or cancelled card until the user acts; drop a done card once
+    // the turn has started so the timeline hands over to the agent.
+    if (worktreeSetup.phase === "done") {
+      setWorktreeSetupSettledThreadId(null);
+      return;
+    }
+    setWorktreeSetupSettledThreadId(worktreeSetup.threadId);
+  }, [worktreeSetup]);
+  useEffect(() => {
+    if (isPreparingWorktree) setWorktreeSetupSettledThreadId(null);
+  }, [isPreparingWorktree]);
+  const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
+    reportFailure: false,
+  });
+  const onCancelWorktreeSetup = useCallback(() => {
+    if (!activeThreadId) return;
+    void cancelWorktreeSetup({ environmentId, input: { threadId: activeThreadId } });
+  }, [activeThreadId, cancelWorktreeSetup, environmentId]);
+  const onOpenWorktreeSetupTerminal = useCallback(
+    (terminalId: string) => {
+      if (!activeThreadRef) return;
+      storeEnsureTerminal(activeThreadRef, terminalId, { open: true, active: true });
+    },
+    [activeThreadRef, storeEnsureTerminal],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const manualCompactionProviderAvailable = useMemo(
@@ -8207,6 +8250,23 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  // "Work locally" on the setup card: stop the bootstrap, flip the draft to
+  // local mode, and resend the same message. The failed bootstrap rolls the
+  // draft back into the composer, so the resend picks it up as-is.
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
+  const onWorktreeSetupWorkLocally = useCallback(() => {
+    if (!activeThreadId || !isLocalDraftThread) return;
+    void (async () => {
+      await cancelWorktreeSetup({ environmentId, input: { threadId: activeThreadId } });
+      // Wait for the failed dispatch to restore the draft before resending.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      onEnvModeChange("local");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await onSendRef.current();
+    })();
+  }, [activeThreadId, cancelWorktreeSetup, environmentId, isLocalDraftThread, onEnvModeChange]);
+
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
     if (canOverrideServerThreadEnvMode && activeThread) {
       setPendingServerThreadStartFromOriginByThreadId((current) =>
@@ -8650,6 +8710,10 @@ export default function ChatView(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
+                worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
+                onCancelWorktreeSetup={onCancelWorktreeSetup}
+                onWorktreeSetupWorkLocally={onWorktreeSetupWorkLocally}
+                onOpenWorktreeSetupTerminal={onOpenWorktreeSetupTerminal}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 latestTurn={paintOnlyDisplayedTimeline ? null : activeLatestTurn}

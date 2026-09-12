@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { type OrchestrationProject, ProjectId } from "@t3tools/contracts";
+import { type OrchestrationProject, ProjectId, type TerminalEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -53,11 +53,11 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     searchThreads: () => Effect.succeed({ matches: [] }),
   });
 
-const makeTerminalManagerLayer = (
-  overrides: Pick<TerminalManager.TerminalManager["Service"], "open" | "write">,
-) =>
+type TerminalOverrides = Pick<TerminalManager.TerminalManager["Service"], "open" | "write"> &
+  Partial<Pick<TerminalManager.TerminalManager["Service"], "subscribe">>;
+
+const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
-    ...overrides,
     attachStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,
@@ -65,11 +65,12 @@ const makeTerminalManagerLayer = (
     close: () => Effect.void,
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),
+    ...overrides,
   });
 
 const testLayer = (
   project: OrchestrationProject,
-  terminal: Pick<TerminalManager.TerminalManager["Service"], "open" | "write">,
+  terminal: TerminalOverrides,
   settings = ServerSettings.layerTest(),
 ) =>
   ProjectSetupScriptRunner.layer.pipe(
@@ -197,6 +198,7 @@ describe("ProjectSetupScriptRunner", () => {
           status: "started",
           scriptId: "setup",
           scriptName: "Setup",
+          scriptCommand: "bun install",
           terminalId: "setup-setup",
           cwd: "/repo/worktrees/a",
         });
@@ -216,6 +218,88 @@ describe("ProjectSetupScriptRunner", () => {
           data: "bun install\r",
         });
       }).pipe(Effect.provide(testLayer(project, { open, write })));
+    },
+  );
+
+  it.effect(
+    "wraps the command with a completion sentinel and resolves the exit code from terminal output",
+    () => {
+      const open = vi.fn(() =>
+        Effect.succeed({
+          threadId: "thread-1",
+          terminalId: "setup-setup",
+          cwd: "/repo/worktrees/a",
+          worktreePath: "/repo/worktrees/a",
+          status: "running" as const,
+          pid: 123,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          label: "setup-setup",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      const writes: string[] = [];
+      const write = vi.fn((input: { data: string }) =>
+        Effect.sync(() => void writes.push(input.data)),
+      );
+      let listener: ((event: TerminalEvent) => Effect.Effect<void>) | null = null;
+      const subscribe = vi.fn((next: (event: TerminalEvent) => Effect.Effect<void>) => {
+        listener = next;
+        return Effect.succeed(() => {
+          listener = null;
+        });
+      });
+      const project = makeProject([
+        {
+          id: "setup",
+          name: "Setup",
+          command: "bun install",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]);
+      const emit = (data: string) =>
+        Effect.suspend(() =>
+          listener
+            ? listener({ threadId: "thread-1", terminalId: "setup-setup", type: "output", data })
+            : Effect.void,
+        );
+
+      return Effect.gen(function* () {
+        const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+        const seen: string[] = [];
+        const result = yield* runner.runForThread({
+          threadId: "thread-1",
+          projectCwd: "/repo/project",
+          worktreePath: "/repo/worktrees/a",
+          observeCompletion: {
+            onOutputLine: (line) => Effect.sync(() => void seen.push(line)),
+          },
+        });
+        expect(result.status).toBe("started");
+        if (result.status !== "started") return;
+        expect(result.completion).toBeDefined();
+
+        // The subscription is attached before the command is written.
+        expect(subscribe).toHaveBeenCalledTimes(1);
+        expect(writes).toHaveLength(1);
+        expect(writes[0]?.startsWith("( bun install );")).toBe(true);
+        expect(writes[0]).toContain("__T3_SETUP_DONE__:");
+
+        // Output arrives in chunks; partial lines are buffered until a newline,
+        // control sequences are stripped, and the echoed command is hidden.
+        yield* emit("( bun install ); printf '\\n__T3_SETUP_DONE__:%s\\n' \"$?\"\r\n");
+        yield* emit("\u001b[32mResolving");
+        yield* emit(" deps\u001b[0m\r\nDone in 2s\r\n");
+        yield* emit("__T3_SETUP_DONE__:3\r\n");
+
+        const completion = yield* result.completion!;
+        expect(completion.exitCode).toBe(3);
+        expect(seen).toEqual(["Resolving deps", "Done in 2s"]);
+        // The subscription is torn down once the sentinel arrives.
+        expect(listener).toBeNull();
+      }).pipe(Effect.provide(testLayer(project, { open, write, subscribe })));
     },
   );
 
