@@ -4,6 +4,7 @@ import {
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
@@ -79,8 +80,10 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const vcsTerminology = resolveVcsTerminology(gitStatus.data);
+  const currentBranchLabel =
+    gitStatus.data?.refName ?? selectedThread?.branch ?? `No ${vcsTerminology.refNoun}`;
+  const currentStatusSummary = statusSummary(gitStatus.data, vcsTerminology);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -101,7 +104,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           item,
           gitStatus: gitStatus.data,
           isBusy: busy,
-          hasOriginRemote: hasPrimaryRemote,
+          hasPrimaryRemote,
         }),
       })),
     [busy, gitStatus.data, hasPrimaryRemote, menuItems],
@@ -110,17 +113,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   useEffect(() => {
     void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
   }, [gitActions]);
-
-  const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
-    if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
-      return;
-    }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
-    }
-  }, [gitStatus.data]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
@@ -161,10 +153,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const onPressMenuItem = useCallback(
     async (item: (typeof menuItems)[number]) => {
       if (item.disabled) return;
-      if (item.kind === "open_pr") {
-        await openExistingPr();
-        return;
-      }
       if (item.dialogAction === "commit") {
         navigation.navigate("GitCommit", {
           environmentId: String(environmentId),
@@ -180,7 +168,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         await runActionWithPrompt({ action: "create_pr" });
       }
     },
-    [environmentId, openExistingPr, navigation, runActionWithPrompt, threadId],
+    [environmentId, navigation, runActionWithPrompt, threadId],
   );
 
   // Status facts live on the relevant rows instead of crowding the header
@@ -198,9 +186,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
         const ahead = status.aheadCount ?? 0;
         return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
-      }
-      if (item.kind === "open_pr" && status.pr?.number != null) {
-        return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
       }
       return undefined;
     },
@@ -272,7 +257,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
-          subtitle="Inspect turn diffs, worktree changes, and base branch diff"
+          subtitle={`Inspect turn diffs, ${vcsTerminology.workspaceNoun} changes, and base ${vcsTerminology.refNoun} diff`}
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -286,8 +271,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <View className="ml-12 h-px bg-border" />
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle="Switch branch, create branch, or move to a worktree"
+          title={`${vcsTerminology.refNounPlural} & ${vcsTerminology.workspaceNounPlural}`}
+          subtitle={`Switch ${vcsTerminology.refNoun}, create ${vcsTerminology.refNoun}, or move to a ${vcsTerminology.workspaceNoun}`}
           disabled={busy || !isRepo}
           onPress={() =>
             navigation.navigate("GitBranches", {
@@ -316,8 +301,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
                     tintColorClassName="accent-foreground-muted"
                   />
                   <Text className="text-xs text-foreground-muted">
-                    {chain.kind === "native" ? "Stack" : "Branch stack"} · {chain.layers.length} PRs
-                    · bottom to top
+                    {chain.kind === "native" ? "Stack" : `${vcsTerminology.refNounTitle} stack`} ·{" "}
+                    {chain.layers.length} PRs · bottom to top
                   </Text>
                 </View>
               ) : null}
@@ -342,7 +327,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {currentWorktreePath ? (
+        <MetaCard label={vcsTerminology.workspaceNounTitle} value={currentWorktreePath} />
+      ) : null}
     </ScrollView>
   );
 

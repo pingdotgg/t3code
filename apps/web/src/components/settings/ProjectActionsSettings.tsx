@@ -4,6 +4,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
@@ -135,7 +136,7 @@ export function ProjectActionsSettings() {
         settingKeys={["defaultProjectScripts"]}
         mixed={mixed}
         title="Actions"
-        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        description={`Commands that run in this project's ${DEFAULT_VCS_TERMINOLOGY.currentRefFallback} or its ${DEFAULT_VCS_TERMINOLOGY.workspaceNoun}, with optional shortcuts.`}
         onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">

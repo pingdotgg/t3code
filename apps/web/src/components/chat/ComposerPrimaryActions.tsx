@@ -1,4 +1,5 @@
 import { memo, type MouseEventHandler, type PointerEventHandler } from "react";
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -35,6 +36,8 @@ interface ComposerPrimaryActionsProps {
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
+  /** The project's VCS noun for a worktree; Git's is the fallback while status is unknown. */
+  workspaceNoun?: string;
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
@@ -77,6 +80,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isConnecting,
   isEnvironmentUnavailable,
   isPreparingWorktree,
+  workspaceNoun = DEFAULT_VCS_TERMINOLOGY.workspaceNoun,
   hasSendableContent,
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
@@ -252,7 +256,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       (isConnecting
         ? "Connecting"
         : isPreparingWorktree
-          ? "Preparing worktree"
+          ? `Preparing ${workspaceNoun}`
           : isSendBusy
             ? isEditingQueuedMessage
               ? "Updating queued message"

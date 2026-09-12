@@ -26,6 +26,11 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
+import { useEnvironmentQuery } from "../../state/query";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { vcsEnvironment } from "../../state/vcs";
 import * as Haptics from "expo-haptics";
 import { BlurTargetView } from "expo-blur";
 import { GlassBlurTargetContext } from "../../lib/glassBlurTarget";
@@ -266,6 +271,19 @@ const USER_INPUT_TOGGLE_TIMING = {
 
 export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const insets = useSafeAreaInsets();
+  // Same (environment, cwd) key the git sheets use, so this reads the shared
+  // status atom rather than opening a second stream.
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const vcsStatus = useEnvironmentQuery(
+    selectedThread === null || selectedThreadCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        }),
+  );
+  const vcsTerminology = resolveVcsTerminology(vcsStatus.data);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can swallow the IME hide callbacks when the app is backgrounded
@@ -377,7 +395,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     if (props.creationState?.kind === "preparing") {
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree
+          ? `Setting up ${vcsTerminology.workspaceNoun}…`
+          : "Starting…",
       };
     }
     if (props.creationState?.kind === "failed") {

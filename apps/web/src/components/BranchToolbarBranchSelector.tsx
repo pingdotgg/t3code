@@ -32,6 +32,7 @@ import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches"
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -236,6 +237,7 @@ export function BranchToolbarBranchSelector({
           input: { cwd: branchCwd },
         }),
   );
+  const vcsTerminology = resolveVcsTerminology(branchStatusQuery.data);
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   // The server filters refs by substring, so it has to be given the sanitized
@@ -351,35 +353,38 @@ export function BranchToolbarBranchSelector({
   const branchStatusText = isInitialBranchesLoadPending
     ? "Loading refs..."
     : isFetchingNextPage
-      ? "Loading more refs..."
+      ? `Loading more ${vcsTerminology.refNounPlural}...`
       : hasNextPage
-        ? `Showing ${refs.length} of ${totalBranchCount} refs`
+        ? `Showing ${refs.length} of ${totalBranchCount} ${vcsTerminology.refNounPlural}`
         : null;
 
   // ---------------------------------------------------------------------------
   // Branch actions
   // ---------------------------------------------------------------------------
-  const copyBranchName = useCallback((branchName: string) => {
-    void writeTextToClipboard(branchName, "branch name").then(
-      (didCopy) => {
-        if (!didCopy) return;
-        toastManager.add({
-          type: "success",
-          title: "Branch name copied",
-          description: branchName,
-        });
-      },
-      (error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to copy branch name",
-            description: toBranchActionErrorMessage(error),
-          }),
-        );
-      },
-    );
-  }, []);
+  const copyBranchName = useCallback(
+    (branchName: string) => {
+      void writeTextToClipboard(branchName, `${vcsTerminology.refNoun} name`).then(
+        (didCopy) => {
+          if (!didCopy) return;
+          toastManager.add({
+            type: "success",
+            title: `${vcsTerminology.refNounTitle} name copied`,
+            description: branchName,
+          });
+        },
+        (error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Failed to copy ${vcsTerminology.refNoun} name`,
+              description: toBranchActionErrorMessage(error),
+            }),
+          );
+        },
+      );
+    },
+    [vcsTerminology],
+  );
 
   const handleBranchContextMenu = useCallback(
     (event: ReactMouseEvent, branchName: string | null) => {
@@ -389,13 +394,13 @@ export function BranchToolbarBranchSelector({
       event.preventDefault();
       event.stopPropagation();
       const items: ContextMenuItem<"copy-branch-name">[] = [
-        { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+        { id: "copy-branch-name", label: `Copy ${vcsTerminology.refNoun} name`, icon: "copy" },
       ];
       void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
         if (action === "copy-branch-name") copyBranchName(branchName);
       });
     },
-    [copyBranchName],
+    [copyBranchName, vcsTerminology],
   );
 
   const runBranchAction = (action: () => Promise<void>) => {
@@ -459,7 +464,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch ref.",
+            title: `Failed to switch ${vcsTerminology.refNoun}.`,
             description: toBranchActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -495,7 +500,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to create and switch ref.",
+            title: `Failed to create and switch ${vcsTerminology.refNoun}.`,
             description: toBranchActionErrorMessage(squashAtomCommandFailure(createBranchResult)),
           }),
         );
@@ -627,6 +632,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
+    terminology: vcsTerminology,
   });
 
   // Branch status is the fallback when this thread has no linked pull requests.
@@ -705,7 +711,9 @@ export function BranchToolbarBranchSelector({
           className="pe-1.5"
           onClick={() => createRef(trimmedBranchQuery)}
         >
-          <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
+          <span className="truncate">
+            Create new {vcsTerminology.refNoun} &quot;{newRefName}&quot;
+          </span>
         </ComboboxItem>
       );
     }
@@ -718,7 +726,7 @@ export function BranchToolbarBranchSelector({
     const badge = refName.current
       ? "current"
       : hasSecondaryWorktree
-        ? "worktree"
+        ? vcsTerminology.workspaceNoun
         : refName.isRemote
           ? "remote"
           : refName.isDefault
@@ -855,7 +863,7 @@ export function BranchToolbarBranchSelector({
             <ComboboxInput
               className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
               inputClassName="rounded-none bg-transparent text-sm"
-              placeholder="Search refs..."
+              placeholder={`Search ${vcsTerminology.refNounPlural}...`}
               showTrigger={false}
               size="sm"
               unstyled
@@ -865,7 +873,7 @@ export function BranchToolbarBranchSelector({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
+          <ComboboxEmpty>No {vcsTerminology.refNounPlural} found.</ComboboxEmpty>
           <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
             <ComboboxListVirtualized className="size-full min-w-0 p-0">
               <LegendList<string>
@@ -918,15 +926,14 @@ export function BranchToolbarBranchSelector({
                       id={startFromOriginSwitchId}
                       checked={startFromOrigin}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label={`Start ${vcsTerminology.workspaceNoun} from origin`}
                       onCheckedChange={(checked) => onStartFromOriginChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal leading-tight">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                {`Creates the ${vcsTerminology.workspaceNoun} from the latest matching ${vcsTerminology.refNoun} on origin instead of your local ${vcsTerminology.refNoun}.`}
               </TooltipPopup>
             </Tooltip>
           ) : null}

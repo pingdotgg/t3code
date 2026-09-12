@@ -306,7 +306,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Start from origin",
     to: "/settings/general",
     scope: "project-defaults",
-    searchTerms: ["new worktrees latest matching remote branch local"],
+    searchTerms: ["new worktrees workspaces latest matching remote branch bookmark local"],
   },
   {
     id: "add-project-starts-in",
@@ -548,7 +548,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
     scope: "environment-defaults",
     searchTerms: [
-      "version control git github gitlab bitbucket azure devops hosting integrations credentials scan server environment",
+      "version control git jujutsu jj bookmark workspace change github gitlab bitbucket azure devops hosting integrations credentials scan server environment",
     ],
   },
   {
@@ -556,7 +556,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Git fetch interval",
     to: "/settings/source-control",
     searchTerms: [
-      "automatic remote branch refresh background credentials security keys seconds off",
+      "automatic background remote ref branch bookmark refresh git jujutsu jj credentials security keys seconds off",
     ],
     environmentOnly: true,
     scope: "environment-defaults",
@@ -591,7 +591,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-actions",
     title: "Actions",
     to: "/settings/projects",
-    searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
+    searchTerms: [
+      "commands scripts setup run dev server checkout worktree jujutsu jj bookmark workspace change t3.json import",
+    ],
   },
   {
     id: "environment-icon",

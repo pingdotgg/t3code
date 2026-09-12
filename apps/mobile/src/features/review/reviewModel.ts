@@ -1,7 +1,8 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import type { ReviewDiffPreviewSource, VcsDriverKind } from "@t3tools/contracts";
+import { getVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
@@ -9,8 +10,6 @@ import * as Order from "effect/Order";
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const DIRTY_WORKTREE_SECTION_ID = "git:working-tree";
-const DIRTY_WORKTREE_TITLE = "Dirty worktree";
-const DIRTY_WORKTREE_SUBTITLE = "Tracked, staged, and untracked worktree changes";
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -117,14 +116,18 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
-function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
+function workingTreeSubtitle(terminology: VcsTerminology): string {
+  return `Tracked, staged, and untracked ${terminology.workspaceNoun} changes`;
+}
+
+function gitSubtitle(section: ReviewDiffPreviewSource, terminology: VcsTerminology): string | null {
   if (section.kind === "working-tree") {
-    return DIRTY_WORKTREE_SUBTITLE;
+    return workingTreeSubtitle(terminology);
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
   }
-  return "Base branch unavailable";
+  return `Base ${terminology.refNoun} unavailable`;
 }
 
 function stripGitPrefix(pathValue: string | undefined): string | null {
@@ -422,7 +425,9 @@ export function buildReviewSectionItems(input: {
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingTurnIds: Readonly<Record<string, boolean | undefined>>;
   readonly loadingGitSections: boolean;
+  readonly vcsKind?: VcsDriverKind | null;
 }): ReadonlyArray<ReviewSectionItem> {
+  const terminology = getVcsTerminology(input.vcsKind);
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
@@ -441,7 +446,7 @@ export function buildReviewSectionItems(input: {
     id: `git:${section.kind}`,
     kind: section.kind,
     title: section.title,
-    subtitle: gitSubtitle(section),
+    subtitle: gitSubtitle(section, terminology),
     diff: section.diff,
     isLoading: false,
   }));
@@ -452,8 +457,10 @@ export function buildReviewSectionItems(input: {
           {
             id: DIRTY_WORKTREE_SECTION_ID,
             kind: "working-tree",
-            title: DIRTY_WORKTREE_TITLE,
-            subtitle: DIRTY_WORKTREE_SUBTITLE,
+            // Mirrors the title each driver sends for this section, so the
+            // placeholder does not flicker into a different name on arrival.
+            title: input.vcsKind === "jj" ? "Working copy" : "Dirty worktree",
+            subtitle: workingTreeSubtitle(terminology),
             diff: null,
             isLoading: true,
           } satisfies ReviewSectionItem,
