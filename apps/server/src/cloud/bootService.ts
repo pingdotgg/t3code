@@ -98,6 +98,8 @@ function escapeXmlText(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+const BOOT_SERVICE_MAX_OPEN_FILES = 16_384;
+
 /** Pure renderer: launch agents cannot rely on the user's shell or PATH. */
 export function renderBootServicePlist(
   plan: BootServicePlan,
@@ -111,6 +113,8 @@ export function renderBootServicePlist(
   // system-defined default (5s on current macOS) would SIGKILL the launcher
   // (and, with it, the process group) mid-handoff.
   // ProcessType Interactive opts out of background-job resource throttling.
+  // launchd jobs inherit the 256 soft maxfiles default, which the server's
+  // user-data and workspace watchers exhaust (EMFILE) on a normal profile.
   // AbandonProcessGroup stays at its default (false): launchd reaps leftover
   // process-group members only when the launcher itself exits — the analog of
   // KillMode=mixed's final cgroup kill — and not when the launcher restarts its
@@ -148,6 +152,11 @@ export function renderBootServicePlist(
     `  <integer>90</integer>`,
     `  <key>ProcessType</key>`,
     `  <string>Interactive</string>`,
+    `  <key>SoftResourceLimits</key>`,
+    `  <dict>`,
+    `    <key>NumberOfFiles</key>`,
+    `    <integer>${BOOT_SERVICE_MAX_OPEN_FILES}</integer>`,
+    `  </dict>`,
     `  <key>StandardOutPath</key>`,
     `  <string>${escapeXmlText(plan.logPath)}</string>`,
     `  <key>StandardErrorPath</key>`,

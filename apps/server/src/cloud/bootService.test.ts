@@ -83,6 +83,14 @@ it("restarts the launch agent on the systemd cadence", () => {
   expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>90</integer>");
 });
 
+it("raises the launch agent's open-file limit above the 256 launchd default", () => {
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
+
+  expect(plist).toContain(
+    "<key>SoftResourceLimits</key>\n  <dict>\n    <key>NumberOfFiles</key>\n    <integer>16384</integer>\n  </dict>",
+  );
+});
+
 it("appends both stdio streams to the boot service log", () => {
   const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
