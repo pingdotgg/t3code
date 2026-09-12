@@ -118,6 +118,29 @@ describe("ServerProvider", () => {
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
   });
+
+  it("decodes OpenCode MCP, LSP, and plugin inventory when present", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      mcps: [{ name: "exa", status: "connected" }],
+      lsps: [{ id: "typescript", name: "TypeScript", root: "/repo", status: "connected" }],
+      plugins: [{ name: "opencode-wakatime" }],
+    });
+
+    expect(parsed.mcps).toEqual([{ name: "exa", status: "connected" }]);
+    expect(parsed.lsps).toEqual([
+      { id: "typescript", name: "TypeScript", root: "/repo", status: "connected" },
+    ]);
+    expect(parsed.plugins).toEqual([{ name: "opencode-wakatime" }]);
+  });
+
+  it("leaves MCP, LSP, and plugin inventory absent for older snapshots", () => {
+    const parsed = decodeServerProvider(baseProviderSnapshot);
+
+    expect(parsed.mcps).toBeUndefined();
+    expect(parsed.lsps).toBeUndefined();
+    expect(parsed.plugins).toBeUndefined();
+  });
 });
 
 describe("server config forward compatibility", () => {

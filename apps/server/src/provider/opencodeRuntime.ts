@@ -187,6 +187,9 @@ export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
   readonly skills: ReadonlyArray<OpenCodeSkill>;
+  readonly mcps: ReadonlyArray<OpenCodeMcp>;
+  readonly lsps: ReadonlyArray<OpenCodeLsp>;
+  readonly plugins: ReadonlyArray<OpenCodePlugin>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -208,6 +211,103 @@ const OpenCodeSkillSchema = Schema.Struct({
 const decodeOpenCodeSkillsCliOutputExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(Schema.Array(OpenCodeSkillSchema)),
 );
+
+export type OpenCodeMcpStatus =
+  | "connected"
+  | "disabled"
+  | "failed"
+  | "needs_auth"
+  | "needs_client_registration"
+  | "unknown";
+
+export interface OpenCodeMcp {
+  readonly name: string;
+  readonly status: OpenCodeMcpStatus;
+  readonly error?: string;
+}
+
+export interface OpenCodeLsp {
+  readonly id: string;
+  readonly name: string;
+  readonly root?: string;
+  readonly status: string;
+}
+
+export interface OpenCodePlugin {
+  readonly name: string;
+}
+
+const KNOWN_OPENCODE_MCP_STATUSES: ReadonlySet<string> = new Set([
+  "connected",
+  "disabled",
+  "failed",
+  "needs_auth",
+  "needs_client_registration",
+]);
+
+function normalizeOpenCodeMcpStatus(value: unknown): OpenCodeMcpStatus {
+  return typeof value === "string" && KNOWN_OPENCODE_MCP_STATUSES.has(value)
+    ? (value as OpenCodeMcpStatus)
+    : "unknown";
+}
+
+function trimOptionalName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** @internal */
+export function parseOpenCodeMcpStatusRecord(data: unknown): ReadonlyArray<OpenCodeMcp> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const mcps: Array<OpenCodeMcp> = [];
+  for (const [rawName, rawStatus] of Object.entries(data as Record<string, unknown>)) {
+    const name = trimOptionalName(rawName);
+    if (!name) continue;
+    const record =
+      rawStatus && typeof rawStatus === "object" && !Array.isArray(rawStatus)
+        ? (rawStatus as Record<string, unknown>)
+        : null;
+    const status = normalizeOpenCodeMcpStatus(record?.status);
+    const error = trimOptionalName(record?.error);
+    mcps.push(error !== undefined ? { name, status, error } : { name, status });
+  }
+  return mcps.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/** @internal */
+export function parseOpenCodeLspList(data: unknown): ReadonlyArray<OpenCodeLsp> {
+  if (!Array.isArray(data)) return [];
+  const lsps: Array<OpenCodeLsp> = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const id = trimOptionalName(record.id);
+    const name = trimOptionalName(record.name);
+    if (!id || !name) continue;
+    const root = trimOptionalName(record.root);
+    const status = trimOptionalName(record.status) ?? "unknown";
+    lsps.push(root !== undefined ? { id, name, root, status } : { id, name, status });
+  }
+  return lsps.toSorted(
+    (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+  );
+}
+
+/** @internal */
+export function parseOpenCodePluginList(data: unknown): ReadonlyArray<OpenCodePlugin> {
+  if (!Array.isArray(data)) return [];
+  const seen = new Set<string>();
+  const plugins: Array<OpenCodePlugin> = [];
+  for (const entry of data) {
+    // Config entries are either a bare spec string or a [spec, options] tuple.
+    const name = trimOptionalName(Array.isArray(entry) ? entry[0] : entry);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    plugins.push({ name });
+  }
+  return plugins.toSorted((left, right) => left.name.localeCompare(right.name));
+}
 
 export interface OpenCodeRuntimeShape {
   /**
@@ -258,6 +358,15 @@ export interface OpenCodeRuntimeShape {
   readonly loadOpenCodeSkills: (
     client: OpencodeClient,
   ) => Effect.Effect<ReadonlyArray<OpenCodeSkill>, OpenCodeRuntimeError>;
+  readonly loadOpenCodeMcps: (
+    client: OpencodeClient,
+  ) => Effect.Effect<ReadonlyArray<OpenCodeMcp>, OpenCodeRuntimeError>;
+  readonly loadOpenCodeLsps: (
+    client: OpencodeClient,
+  ) => Effect.Effect<ReadonlyArray<OpenCodeLsp>, OpenCodeRuntimeError>;
+  readonly loadOpenCodePlugins: (
+    client: OpencodeClient,
+  ) => Effect.Effect<ReadonlyArray<OpenCodePlugin>, OpenCodeRuntimeError>;
   readonly loadInventoryFromCli: (input: {
     readonly binaryPath: string;
     readonly cwd: string;
@@ -915,10 +1024,50 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const loadSkills = (client: OpencodeClient) =>
     loadOpenCodeSkills(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []));
 
+  const loadOpenCodeMcps: OpenCodeRuntimeShape["loadOpenCodeMcps"] = (client) =>
+    runOpenCodeSdk("mcp.status", (signal) => client.mcp.status(undefined, { signal })).pipe(
+      Effect.map((result) => parseOpenCodeMcpStatusRecord(result.data)),
+    );
+  const loadMcps = (client: OpencodeClient) =>
+    loadOpenCodeMcps(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeMcp> => []));
+
+  const loadOpenCodeLsps: OpenCodeRuntimeShape["loadOpenCodeLsps"] = (client) =>
+    runOpenCodeSdk("lsp.status", (signal) => client.lsp.status(undefined, { signal })).pipe(
+      Effect.map((result) => parseOpenCodeLspList(result.data)),
+    );
+  const loadLsps = (client: OpencodeClient) =>
+    loadOpenCodeLsps(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeLsp> => []));
+
+  const loadOpenCodePlugins: OpenCodeRuntimeShape["loadOpenCodePlugins"] = (client) =>
+    runOpenCodeSdk("config.get", (signal) => client.config.get(undefined, { signal })).pipe(
+      Effect.map((result) => parseOpenCodePluginList(result.data?.plugin)),
+    );
+  const loadPlugins = (client: OpencodeClient) =>
+    loadOpenCodePlugins(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodePlugin> => []));
+
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.map(([providerList, agents, skills]) => ({ providerList, agents, skills })));
+    Effect.all(
+      [
+        loadProviders(client),
+        loadAgents(client),
+        loadSkills(client),
+        loadMcps(client),
+        loadLsps(client),
+        loadPlugins(client),
+      ],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(
+      Effect.map(([providerList, agents, skills, mcps, lsps, plugins]) => ({
+        providerList,
+        agents,
+        skills,
+        mcps,
+        lsps,
+        plugins,
+      })),
+    );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {
@@ -1017,6 +1166,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         providerList: { all: allProviders, default: {}, connected },
         agents,
         skills,
+        // The CLI has no machine-parsable MCP/LSP/plugin list (`mcp list` is
+        // human-readable, `debug lsp` only drills into files/symbols, plugins
+        // live in resolved config). SDK inventory is authoritative; the CLI
+        // fallback degrades to empty rather than parsing display output.
+        mcps: [],
+        lsps: [],
+        plugins: [],
       };
     });
 
@@ -1047,6 +1203,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     createOpenCodeSdkClient,
     loadOpenCodeInventory,
     loadOpenCodeSkills,
+    loadOpenCodeMcps,
+    loadOpenCodeLsps,
+    loadOpenCodePlugins,
     loadInventoryFromCli,
     loadSkillsFromCli,
   } satisfies OpenCodeRuntimeShape;

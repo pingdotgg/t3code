@@ -5,6 +5,9 @@ import { describe, it } from "vite-plus/test";
 import {
   parseAgentListCliOutput,
   parseModelsCliOutput,
+  parseOpenCodeLspList,
+  parseOpenCodeMcpStatusRecord,
+  parseOpenCodePluginList,
   parseSkillsCliOutput,
   toOpenCodeFileParts,
 } from "./opencodeRuntime.ts";
@@ -282,6 +285,69 @@ describe("parseSkillsCliOutput", () => {
 
   it("degrades malformed output to an empty skill list", () => {
     NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
+  });
+});
+
+describe("parseOpenCodeMcpStatusRecord", () => {
+  it("maps the SDK status record to a sorted MCP list", () => {
+    NodeAssert.deepEqual(
+      parseOpenCodeMcpStatusRecord({
+        exa: { status: "connected" },
+        broken: { status: "failed", error: "spawn ENOENT" },
+        "oauth-mcp": { status: "needs_auth" },
+      }),
+      [
+        { name: "broken", status: "failed", error: "spawn ENOENT" },
+        { name: "exa", status: "connected" },
+        { name: "oauth-mcp", status: "needs_auth" },
+      ],
+    );
+  });
+
+  it("degrades unknown statuses and malformed records", () => {
+    NodeAssert.deepEqual(parseOpenCodeMcpStatusRecord(null), []);
+    NodeAssert.deepEqual(parseOpenCodeMcpStatusRecord([]), []);
+    NodeAssert.deepEqual(parseOpenCodeMcpStatusRecord({ "": { status: "connected" } }), []);
+    NodeAssert.deepEqual(parseOpenCodeMcpStatusRecord({ weird: { status: "spinning" } }), [
+      { name: "weird", status: "unknown" },
+    ]);
+  });
+});
+
+describe("parseOpenCodeLspList", () => {
+  it("keeps LSP id, name, root, and status", () => {
+    NodeAssert.deepEqual(
+      parseOpenCodeLspList([
+        { id: "typescript", name: "TypeScript", root: "/repo", status: "connected" },
+      ]),
+      [{ id: "typescript", name: "TypeScript", root: "/repo", status: "connected" }],
+    );
+  });
+
+  it("drops entries without an id or name", () => {
+    NodeAssert.deepEqual(parseOpenCodeLspList(null), []);
+    NodeAssert.deepEqual(parseOpenCodeLspList([{ id: "", name: "" }]), []);
+  });
+});
+
+describe("parseOpenCodePluginList", () => {
+  it("dedupes and sorts plugin specs", () => {
+    NodeAssert.deepEqual(parseOpenCodePluginList(["b-plugin", "a-plugin", "b-plugin", " "]), [
+      { name: "a-plugin" },
+      { name: "b-plugin" },
+    ]);
+  });
+
+  it("unwraps tuple entries to their spec", () => {
+    NodeAssert.deepEqual(parseOpenCodePluginList([["b-plugin", { enabled: true }], "a-plugin"]), [
+      { name: "a-plugin" },
+      { name: "b-plugin" },
+    ]);
+  });
+
+  it("degrades non-lists to empty", () => {
+    NodeAssert.deepEqual(parseOpenCodePluginList(undefined), []);
+    NodeAssert.deepEqual(parseOpenCodePluginList("opencode-wakatime"), []);
   });
 });
 

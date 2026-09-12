@@ -137,6 +137,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       }),
     ),
   loadOpenCodeSkills: () => Effect.succeed([]),
+  loadOpenCodeMcps: () => Effect.succeed([]),
+  loadOpenCodeLsps: () => Effect.succeed([]),
+  loadOpenCodePlugins: () => Effect.succeed([]),
   loadInventoryFromCli: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({

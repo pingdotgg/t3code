@@ -1,7 +1,10 @@
 import {
   type ModelCapabilities,
   type OpenCodeSettings,
+  type ServerProviderLsp,
+  type ServerProviderMcp,
   type ServerProviderModel,
+  type ServerProviderPlugin,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -315,6 +318,61 @@ export function openCodeSkillsToServerProviderSkills(
   return skills.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
+const OPENCODE_MCP_STATUSES = new Set([
+  "connected",
+  "disabled",
+  "failed",
+  "needs_auth",
+  "needs_client_registration",
+  "unknown",
+] as const);
+
+export function openCodeMcpsToServerProviderMcps(
+  input: OpenCodeInventory["mcps"] | undefined,
+): ReadonlyArray<ServerProviderMcp> {
+  const mcps: ServerProviderMcp[] = [];
+  for (const mcp of input ?? []) {
+    const name = trimOptional(mcp.name);
+    if (!name) continue;
+    const status =
+      mcp.status !== undefined && OPENCODE_MCP_STATUSES.has(mcp.status) ? mcp.status : "unknown";
+    const error = trimOptional(mcp.error);
+    mcps.push(error !== undefined ? { name, status, error } : { name, status });
+  }
+  return mcps.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+export function openCodeLspsToServerProviderLsps(
+  input: OpenCodeInventory["lsps"] | undefined,
+): ReadonlyArray<ServerProviderLsp> {
+  const lsps: ServerProviderLsp[] = [];
+  for (const lsp of input ?? []) {
+    const id = trimOptional(lsp.id);
+    const name = trimOptional(lsp.name);
+    if (!id || !name) continue;
+    const root = trimOptional(lsp.root);
+    const status = trimOptional(lsp.status) ?? "unknown";
+    lsps.push(root !== undefined ? { id, name, root, status } : { id, name, status });
+  }
+  return lsps.toSorted(
+    (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+  );
+}
+
+export function openCodePluginsToServerProviderPlugins(
+  input: OpenCodeInventory["plugins"] | undefined,
+): ReadonlyArray<ServerProviderPlugin> {
+  const seen = new Set<string>();
+  const plugins: ServerProviderPlugin[] = [];
+  for (const plugin of input ?? []) {
+    const name = trimOptional(plugin.name);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    plugins.push({ name });
+  }
+  return plugins.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
 ): Effect.Effect<ServerProviderDraft> =>
@@ -519,6 +577,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
+  const mcps = openCodeMcpsToServerProviderMcps(inventoryExit.value.inventory.mcps);
+  const lsps = openCodeLspsToServerProviderLsps(inventoryExit.value.inventory.lsps);
+  const plugins = openCodePluginsToServerProviderPlugins(inventoryExit.value.inventory.plugins);
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
@@ -526,6 +587,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     checkedAt,
     models,
     skills,
+    mcps,
+    lsps,
+    plugins,
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,

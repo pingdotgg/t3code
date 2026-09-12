@@ -182,6 +182,26 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("hydrates cached OpenCode MCP, LSP, and plugin inventory", () => {
+    const cached = makeProvider(OPENCODE_DRIVER, {
+      mcps: [{ name: "exa", status: "connected" }],
+      lsps: [{ id: "typescript", name: "TypeScript", status: "connected" }],
+      plugins: [{ name: "opencode-wakatime" }],
+    });
+    const fallback = makeProvider(OPENCODE_DRIVER);
+
+    const hydrated = hydrateCachedProvider({
+      cachedProvider: cached,
+      fallbackProvider: fallback,
+    });
+
+    assert.deepStrictEqual(hydrated.mcps, [{ name: "exa", status: "connected" }]);
+    assert.deepStrictEqual(hydrated.lsps, [
+      { id: "typescript", name: "TypeScript", status: "connected" },
+    ]);
+    assert.deepStrictEqual(hydrated.plugins, [{ name: "opencode-wakatime" }]);
+  });
+
   it("does not resurrect cached custom models that settings no longer declare", () => {
     const builtIn = {
       slug: "gpt-5.4",

@@ -47,11 +47,14 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       });
 
       const inventoryFiber = yield* runtime.loadOpenCodeInventory(client).pipe(Effect.forkChild);
-      yield* Queue.takeN(started, 3);
+      yield* Queue.takeN(started, 6);
       yield* Fiber.interrupt(inventoryFiber);
 
       NodeAssert.deepEqual((yield* Queue.takeAll(aborted)).toSorted(), [
         "/agent",
+        "/config",
+        "/lsp",
+        "/mcp",
         "/provider",
         "/skill",
       ]);
@@ -76,6 +79,15 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
           agents: () => Promise.reject(new Error("agents endpoint unavailable")),
           skills: () => Promise.resolve({ data: [] }),
         },
+        mcp: {
+          status: () => Promise.resolve({ data: {} }),
+        },
+        lsp: {
+          status: () => Promise.resolve({ data: [] }),
+        },
+        config: {
+          get: () => Promise.resolve({ data: {} }),
+        },
       } as unknown as OpencodeClient;
 
       const inventory = yield* runtime.loadOpenCodeInventory(client);
@@ -83,6 +95,9 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
       NodeAssert.deepEqual(inventory.agents, []);
       NodeAssert.deepEqual(inventory.skills, []);
+      NodeAssert.deepEqual(inventory.mcps, []);
+      NodeAssert.deepEqual(inventory.lsps, []);
+      NodeAssert.deepEqual(inventory.plugins, []);
     }),
   );
 
@@ -104,6 +119,15 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
           agents: () => Promise.resolve({ data: [] }),
           skills: () => Promise.reject(new Error("skills endpoint unavailable")),
         },
+        mcp: {
+          status: () => Promise.resolve({ data: {} }),
+        },
+        lsp: {
+          status: () => Promise.resolve({ data: [] }),
+        },
+        config: {
+          get: () => Promise.resolve({ data: {} }),
+        },
       } as unknown as OpencodeClient;
 
       const inventory = yield* runtime.loadOpenCodeInventory(client);
@@ -111,6 +135,9 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
       NodeAssert.deepEqual(inventory.agents, []);
       NodeAssert.deepEqual(inventory.skills, []);
+      NodeAssert.deepEqual(inventory.mcps, []);
+      NodeAssert.deepEqual(inventory.lsps, []);
+      NodeAssert.deepEqual(inventory.plugins, []);
     }),
   );
 
@@ -142,6 +169,15 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
               ],
             }),
         },
+        mcp: {
+          status: () => Promise.resolve({ data: {} }),
+        },
+        lsp: {
+          status: () => Promise.resolve({ data: [] }),
+        },
+        config: {
+          get: () => Promise.resolve({ data: {} }),
+        },
       } as unknown as OpencodeClient;
 
       const inventory = yield* runtime.loadOpenCodeInventory(client);
@@ -153,6 +189,98 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
           location: "/skills/review/SKILL.md",
         },
       ]);
+      NodeAssert.deepEqual(inventory.mcps, []);
+      NodeAssert.deepEqual(inventory.lsps, []);
+      NodeAssert.deepEqual(inventory.plugins, []);
+    }),
+  );
+
+  it.effect("loads MCP, LSP, and plugin inventory alongside providers", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const client = {
+        provider: {
+          list: () =>
+            Promise.resolve({
+              data: {
+                connected: ["openai"],
+                all: [],
+                default: {},
+              },
+            }),
+        },
+        app: {
+          agents: () => Promise.resolve({ data: [] }),
+          skills: () => Promise.resolve({ data: [] }),
+        },
+        mcp: {
+          status: () =>
+            Promise.resolve({
+              data: {
+                "brave-search": { status: "connected" },
+                "broken-mcp": { status: "failed", error: "spawn ENOENT" },
+              },
+            }),
+        },
+        lsp: {
+          status: () =>
+            Promise.resolve({
+              data: [{ id: "typescript", name: "TypeScript", root: "/repo", status: "connected" }],
+            }),
+        },
+        config: {
+          get: () => Promise.resolve({ data: { plugin: ["opencode-wakatime"] } }),
+        },
+      } as unknown as OpencodeClient;
+
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+
+      NodeAssert.deepEqual(inventory.mcps, [
+        { name: "brave-search", status: "connected" },
+        { name: "broken-mcp", status: "failed", error: "spawn ENOENT" },
+      ]);
+      NodeAssert.deepEqual(inventory.lsps, [
+        { id: "typescript", name: "TypeScript", root: "/repo", status: "connected" },
+      ]);
+      NodeAssert.deepEqual(inventory.plugins, [{ name: "opencode-wakatime" }]);
+    }),
+  );
+
+  it.effect("degrades MCP, LSP, and plugin discovery to empty lists on failure", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const client = {
+        provider: {
+          list: () =>
+            Promise.resolve({
+              data: {
+                connected: ["openai"],
+                all: [],
+                default: {},
+              },
+            }),
+        },
+        app: {
+          agents: () => Promise.resolve({ data: [] }),
+          skills: () => Promise.resolve({ data: [] }),
+        },
+        mcp: {
+          status: () => Promise.reject(new Error("mcp endpoint unavailable")),
+        },
+        lsp: {
+          status: () => Promise.reject(new Error("lsp endpoint unavailable")),
+        },
+        config: {
+          get: () => Promise.reject(new Error("config endpoint unavailable")),
+        },
+      } as unknown as OpencodeClient;
+
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(inventory.mcps, []);
+      NodeAssert.deepEqual(inventory.lsps, []);
+      NodeAssert.deepEqual(inventory.plugins, []);
     }),
   );
 
@@ -208,6 +336,9 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
 
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
       NodeAssert.equal(inventory.skills.length, 0);
+      NodeAssert.equal(inventory.mcps.length, 0);
+      NodeAssert.equal(inventory.lsps.length, 0);
+      NodeAssert.equal(inventory.plugins.length, 0);
     }),
   );
 
