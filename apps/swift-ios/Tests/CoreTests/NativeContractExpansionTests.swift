@@ -169,6 +169,80 @@ final class NativeContractExpansionTests: XCTestCase {
         XCTAssertEqual(RPCMethod.attachmentsDelete.rawValue, "attachments.delete")
     }
 
+    func testReorderCapabilitiesAndPinOrderKeyDecode() throws {
+        let descriptor = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: Data(
+                """
+                {
+                  "environmentId": "environment-1",
+                  "label": "Studio",
+                  "platform": {"os": "darwin", "arch": "arm64"},
+                  "serverVersion": "1.0.0",
+                  "capabilities": {
+                    "repositoryIdentity": true,
+                    "threadPinning": true,
+                    "threadPinReorder": true,
+                    "threadActiveReorder": false
+                  }
+                }
+                """.utf8
+            )
+        )
+        XCTAssertEqual(descriptor.capabilities.threadPinReorder, true)
+        XCTAssertEqual(descriptor.capabilities.threadActiveReorder, false)
+
+        // Servers that predate reordering omit both flags: decode to nil,
+        // treated as unsupported everywhere downstream.
+        let legacy = try JSONDecoder.t3.decode(
+            EnvironmentDescriptor.self,
+            from: Data(
+                """
+                {
+                  "environmentId": "environment-2",
+                  "label": "Legacy",
+                  "platform": {"os": "darwin", "arch": "arm64"},
+                  "serverVersion": "0.9.0",
+                  "capabilities": {"repositoryIdentity": true}
+                }
+                """.utf8
+            )
+        )
+        XCTAssertNil(legacy.capabilities.threadPinReorder)
+        XCTAssertNil(legacy.capabilities.threadActiveReorder)
+
+        let snapshot = try JSONDecoder.t3.decode(
+            OrchestrationShellSnapshot.self,
+            from: Data(
+                """
+                {
+                  "snapshotSequence": 1,
+                  "updatedAt": "2026-09-12T00:00:00.000Z",
+                  "projects": [],
+                  "threads": [{
+                    "id": "thread-1",
+                    "projectId": "project-1",
+                    "title": "Task",
+                    "modelSelection": {"instanceId": "codex", "model": "gpt-5.6-sol"},
+                    "runtimeMode": "full-access",
+                    "interactionMode": "default",
+                    "createdAt": "2026-09-12T00:00:00.000Z",
+                    "updatedAt": "2026-09-12T00:00:00.000Z",
+                    "pinnedAt": "2026-09-12T00:00:00.000Z",
+                    "pinOrderKey": "mn",
+                    "hasPendingApprovals": false,
+                    "hasPendingUserInput": false,
+                    "hasActionableProposedPlan": false
+                  }]
+                }
+                """.utf8
+            )
+        )
+        XCTAssertEqual(snapshot.threads.count, 1)
+        XCTAssertEqual(snapshot.threads.first?.pinOrderKey, "mn")
+        XCTAssertNil(snapshot.threads.first?.activeOrderKey)
+    }
+
     func testCodexFeedbackContractMatchesTheServerRPC() throws {
         let result = try JSONDecoder.t3.decode(
             ProviderUploadFeedbackResult.self,

@@ -112,6 +112,8 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
         public var threadRestartContinuation: Bool? = nil
         public let threadSnooze: Bool?
         public let threadPinning: Bool?
+        public let threadPinReorder: Bool?
+        public let threadActiveReorder: Bool?
         public let threadTitleRegeneration: Bool?
         public let threadPullRequestLinking: Bool?
         public let serverSelfUpdate: String?
@@ -131,6 +133,8 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             case threadRestartContinuation
             case threadSnooze
             case threadPinning
+            case threadPinReorder
+            case threadActiveReorder
             case threadTitleRegeneration
             case threadPullRequestLinking
             case serverSelfUpdate
@@ -165,6 +169,11 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             )
             threadSnooze = try container.decodeIfPresent(Bool.self, forKey: .threadSnooze)
             threadPinning = try container.decodeIfPresent(Bool.self, forKey: .threadPinning)
+            threadPinReorder = try container.decodeIfPresent(Bool.self, forKey: .threadPinReorder)
+            threadActiveReorder = try container.decodeIfPresent(
+                Bool.self,
+                forKey: .threadActiveReorder
+            )
             threadTitleRegeneration = try container.decodeIfPresent(
                 Bool.self,
                 forKey: .threadTitleRegeneration
