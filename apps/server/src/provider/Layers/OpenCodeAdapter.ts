@@ -316,6 +316,14 @@ function isOpenCodeChildRequestEvent(event: OpenCodeSubscribedEvent): boolean {
   }
 }
 
+function isOpenCodeChildSessionEvent(event: OpenCodeSubscribedEvent): boolean {
+  return (
+    event.type === "session.created" ||
+    event.type === "session.updated" ||
+    event.type === "session.deleted"
+  );
+}
+
 const OPENCODE_DEFAULT_TITLE_PATTERN =
   /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -2204,8 +2212,6 @@ export function makeOpenCodeAdapter(
         if (session.parentID && context.relatedSessionIds.has(session.parentID)) {
           addRelatedOpenCodeSession(context, session.id);
         }
-      } else if (event.type === "session.deleted") {
-        context.relatedSessionIds.delete(event.properties.info.id);
       }
 
       const payloadSessionId = openCodeEventSessionId(event);
@@ -2214,7 +2220,7 @@ export function makeOpenCodeAdapter(
       if (
         payloadSessionId !== undefined &&
         !context.relatedSessionIds.has(payloadSessionId) &&
-        isOpenCodeChildRequestEvent(event)
+        (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event))
       ) {
         if (event.type === "permission.asked") {
           yield* scheduleRequestRelationRetry(context, event);
@@ -2236,7 +2242,7 @@ export function makeOpenCodeAdapter(
       }
       const isChildRequestEvent =
         payloadSessionId !== undefined &&
-        isOpenCodeChildRequestEvent(event) &&
+        (isOpenCodeChildRequestEvent(event) || isOpenCodeChildSessionEvent(event)) &&
         (context.relatedSessionIds.has(payloadSessionId) || isKnownPendingTerminalEvent);
       if (!isParentEvent && !isChildRequestEvent) {
         return;
@@ -2270,7 +2276,48 @@ export function makeOpenCodeAdapter(
       }
 
       switch (event.type) {
+        case "session.created": {
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.started",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                title: session.title,
+                description: session.title,
+              },
+            });
+          }
+          break;
+        }
         case "session.updated": {
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.progress",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                title: session.title,
+                description: session.title,
+                summary: session.title,
+                status: "running",
+              },
+            });
+          }
           const title = openCodeEventSessionTitle(event);
           if (title) {
             yield* emit({
@@ -2286,6 +2333,28 @@ export function makeOpenCodeAdapter(
                 },
               },
             });
+          }
+          break;
+        }
+        case "session.deleted": {
+          if (!isParentEvent) {
+            const session = event.properties.info;
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: session.id,
+                raw: event,
+              })),
+              type: "task.completed",
+              payload: {
+                taskId: session.id,
+                taskType: "local_agent",
+                status: "completed",
+                summary: session.title,
+              },
+            });
+            context.relatedSessionIds.delete(session.id);
           }
           break;
         }
