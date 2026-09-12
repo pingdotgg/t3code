@@ -44,7 +44,7 @@ import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   observeSelectionActions,
@@ -236,6 +236,16 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
   };
 }
 
+export function shouldOpenTerminalSelectionMenu(options: {
+  nativeContextMenu: boolean;
+  platform: string;
+}): boolean {
+  // Electron's native Linux popup grabs keyboard input but only displays its
+  // accelerators. Leave selection passive so terminal shortcuts reach Ghostty;
+  // the same actions remain available from the terminal's right-click menu.
+  return !(options.nativeContextMenu && /linux/i.test(options.platform));
+}
+
 export function terminalSelectionLineRange(position: {
   start: { y: number };
   end: { y: number };
@@ -249,15 +259,22 @@ export function terminalSelectionLineRange(position: {
 
 export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
 
+function terminalCopyAccelerator(platform: string): string {
+  if (isMacPlatform(platform)) return "Command+C";
+  return isWindowsPlatform(platform) ? "Ctrl+C" : "Ctrl+Shift+C";
+}
+
 /** Post-selection popup: available selection actions, always enabled. */
 export function terminalSelectionMenuItems(options?: {
   canAddToChat?: boolean;
+  platform?: string;
 }): ContextMenuItem<"add-to-chat" | "copy">[] {
+  const platform = options?.platform ?? navigator.platform;
   return [
     ...(options?.canAddToChat === false
       ? []
       : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
+    { id: "copy", label: "Copy", accelerator: terminalCopyAccelerator(platform) },
   ];
 }
 
@@ -270,14 +287,23 @@ export function terminalSelectionMenuItems(options?: {
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
   canAddToChat?: boolean;
+  platform?: string;
 }): ContextMenuItem<TerminalContextMenuAction>[] {
-  const { hasSelection, canAddToChat = true } = options;
+  const { hasSelection, canAddToChat = true, platform = navigator.platform } = options;
   return [
-    ...terminalSelectionMenuItems({ canAddToChat }).map((item) => ({
+    ...terminalSelectionMenuItems({ canAddToChat, platform }).map((item) => ({
       ...item,
       disabled: !hasSelection,
     })),
-    { id: "paste", label: "Paste" },
+    {
+      id: "paste",
+      label: "Paste",
+      accelerator: isMacPlatform(platform)
+        ? "Command+V"
+        : isWindowsPlatform(platform)
+          ? "Ctrl+V"
+          : "Ctrl+Shift+V",
+    },
   ];
 }
 
@@ -856,7 +882,14 @@ export function TerminalViewport({
       selectionActions = observeSelectionActions({
         element: mount,
         onSelection: (pointer) => {
-          void showSelectionAction(pointer);
+          if (
+            shouldOpenTerminalSelectionMenu({
+              nativeContextMenu: window.desktopBridge !== undefined,
+              platform: navigator.platform,
+            })
+          ) {
+            void showSelectionAction(pointer);
+          }
         },
         onDismiss: (reason) => dismissSelectionAction(reason === "interaction"),
       });

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
+  shouldOpenTerminalSelectionMenu,
   terminalContextMenuItems,
   terminalSelectionLineRange,
   terminalSelectionMenuItems,
@@ -128,6 +129,27 @@ describe("terminal selection actions", () => {
     ).toBe(false);
   });
 
+  it("keeps Linux desktop selection passive so clipboard shortcuts reach the terminal", () => {
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: false,
+        platform: "Linux x86_64",
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenTerminalSelectionMenu({
+        nativeContextMenu: true,
+        platform: "MacIntel",
+      }),
+    ).toBe(true);
+  });
+
   it("uses Ghostty's physical screen range for visually wrapped selections", () => {
     expect(
       terminalSelectionLineRange({
@@ -141,5 +163,35 @@ describe("terminal selection actions", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+
+  it("advertises native terminal clipboard accelerators for each platform", () => {
+    expect(terminalSelectionMenuItems({ platform: "Linux x86_64" })).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+Shift+C",
+    });
+    expect(
+      terminalContextMenuItems({ hasSelection: true, platform: "Linux x86_64" }),
+    ).toContainEqual({
+      id: "paste",
+      label: "Paste",
+      accelerator: "Ctrl+Shift+V",
+    });
+    expect(terminalSelectionMenuItems({ platform: "MacIntel" })).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Command+C",
+    });
+    expect(terminalSelectionMenuItems({ platform: "Win32" })).toContainEqual({
+      id: "copy",
+      label: "Copy",
+      accelerator: "Ctrl+C",
+    });
+    expect(terminalContextMenuItems({ hasSelection: true, platform: "Win32" })).toContainEqual({
+      id: "paste",
+      label: "Paste",
+      accelerator: "Ctrl+V",
+    });
   });
 });
