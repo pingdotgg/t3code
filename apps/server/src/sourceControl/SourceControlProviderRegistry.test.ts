@@ -137,6 +137,11 @@ it.effect("includes the request cwd when an unregistered provider is used", () =
     assert.strictEqual(error.operation, "getChangeRequest");
     assert.strictEqual(error.cwd, "/repo");
     assert.strictEqual(error.reference, "#42");
+    assert.strictEqual(error.detail, "No source control provider was detected for this project.");
+    assert.strictEqual(
+      error.message,
+      "Source control getChangeRequest failed: No source control provider was detected for this project.",
+    );
   }),
 );
 
