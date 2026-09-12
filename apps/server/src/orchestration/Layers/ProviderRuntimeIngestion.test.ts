@@ -4457,15 +4457,27 @@ describe("splitBufferedAssistantText", () => {
     expect(splitBufferedAssistantText("one\ntwo")).toEqual({ ready: "", rest: "one\ntwo" });
   });
 
-  it("does not split inside an open fence", () => {
+  it("does not split inside an open fence and delivers the block at its closing fence", () => {
     const open = "intro\n\n```\ncode\n\nmore\n";
     expect(splitBufferedAssistantText(open)).toEqual({
       ready: "intro\n\n",
       rest: "```\ncode\n\nmore\n",
     });
-    expect(splitBufferedAssistantText(`${open}\`\`\`\n\nafter`)).toEqual({
-      ready: `${open}\`\`\`\n\n`,
+    expect(splitBufferedAssistantText(`${open}\`\`\`\nafter`)).toEqual({
+      ready: `${open}\`\`\`\n`,
       rest: "after",
+    });
+  });
+
+  it("does not treat a fence with an info string as a closing fence", () => {
+    const text = "```\n```javascript\nstill code\n\nmore\n";
+    expect(splitBufferedAssistantText(text)).toEqual({ ready: "", rest: text });
+  });
+
+  it("treats CRLF blank lines as boundaries", () => {
+    expect(splitBufferedAssistantText("one\r\n\r\ntwo")).toEqual({
+      ready: "one\r\n\r\n",
+      rest: "two",
     });
   });
 
