@@ -218,7 +218,9 @@ This hook checks pending context transfers targeting the thread/run and chooses 
 
 Provider adapters own native details. The orchestrator owns the relationship, source point, durable transfer record, and command receipts.
 
-For Codex, native `thread/fork` forks the latest native thread state. When the app source point is an earlier completed provider turn, the Codex adapter resolves that provider-specific detail by forking first, then rolling back the forked native thread by the number of later terminal provider turns. The orchestrator still passes a provider-neutral source point and source provider-turn history; it does not encode Codex rollback policy.
+For Codex, native `thread/fork` accepts an inclusive `lastTurnId` boundary. When the app source point is a completed provider turn with a native turn reference, the Codex adapter passes that native id so the provider creates the fork at the requested point directly. This is the only viable path on paginated Codex threads, which reject `thread/rollback`. If no native turn reference is available, the adapter falls back to forking the latest native state and rolling back the fork by the number of later terminal provider turns — and reports an explicit failure when the forked thread uses paginated history, since that fallback cannot be honored there. The orchestrator still passes a provider-neutral source point and source provider-turn history; it does not encode Codex boundary or rollback policy.
+
+The same paginated-history constraint applies to direct checkpoint rollback: `thread/rollback` only works on legacy-history Codex threads. The V2 adapter probes `historyMode` before rolling back and fails explicitly on paginated threads rather than sending a request Codex will reject. The V1 session runtime implements the paginated equivalent via `thread/turns/list` + `thread/revert`; porting that path into V2 is still open.
 
 ## Data Ownership
 

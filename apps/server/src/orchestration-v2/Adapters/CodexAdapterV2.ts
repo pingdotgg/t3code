@@ -43,6 +43,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -830,6 +831,58 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
     return rollbackTurnCount;
   },
 );
+
+/**
+ * Prefer a native `thread/fork` turn boundary over the fork-then-rollback
+ * fallback. `lastTurnId` is inclusive on the Codex side, so a fork requested at
+ * the selected turn omits every later turn atomically. That matters for
+ * paginated threads, which reject `thread/rollback` entirely. The count
+ * fallback remains only for source turns that predate native turn references.
+ */
+export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBoundary")(function* (
+  input: ProviderAdapterV2ForkThreadInput,
+) {
+  const rollbackTurnCount = yield* resolveCodexForkRollbackTurnCount(input);
+  if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
+    return { lastTurnId: undefined, rollbackTurnCount };
+  }
+
+  const boundaryTurn = providerTurnsForThread(
+    input.sourceProviderTurns,
+    input.sourceProviderThread,
+  ).find((turn) => turn.id === input.providerTurnId);
+  const nativeTurnId = boundaryTurn?.nativeTurnRef?.nativeId;
+  if (nativeTurnId === null || nativeTurnId === undefined) {
+    return { lastTurnId: undefined, rollbackTurnCount };
+  }
+
+  return { lastTurnId: nativeTurnId, rollbackTurnCount: 0 };
+});
+
+/**
+ * The generated `thread/read` response schema does not surface `historyMode`,
+ * so the probe goes through the raw request channel with a permissive decode
+ * (mirrors the V1 session runtime's paginated-history detection).
+ */
+const CodexThreadHistoryMetadata = Schema.Struct({
+  thread: Schema.Struct({
+    historyMode: Schema.optionalKey(Schema.Literals(["legacy", "paginated"])),
+  }),
+});
+const decodeCodexThreadHistoryMetadata = Schema.decodeUnknownEffect(CodexThreadHistoryMetadata);
+
+const readCodexThreadHistoryMode = Effect.fn("CodexAdapterV2.readThreadHistoryMode")(function* (
+  raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">,
+  threadId: string,
+) {
+  const response = yield* raw.request("thread/read", { threadId, includeTurns: false });
+  const metadata = yield* decodeCodexThreadHistoryMetadata(response).pipe(
+    Effect.mapError((error) =>
+      CodexErrors.CodexAppServerRequestError.invalidPayload("thread/read", "decode-payload", error),
+    ),
+  );
+  return metadata.thread.historyMode;
+});
 
 export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
   function* (input: ProviderAdapterV2RollbackThreadInput) {
@@ -5583,6 +5636,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   runtimeRequests: [],
                 };
               }
+              // thread/rollback only exists for legacy-history threads; Codex
+              // rejects it on paginated threads and this adapter has no
+              // paginated rollback path yet, so surface that honestly.
+              const historyMode = yield* ensureInitialized.pipe(
+                Effect.andThen(readCodexThreadHistoryMode(client.raw, threadId)),
+              );
+              if (historyMode === "paginated") {
+                return yield* new ProviderAdapterRollbackThreadError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: threadInput.providerThread.id,
+                  cause: `Cannot roll back Codex thread ${threadId}: the thread uses paginated history, which rejects thread/rollback, and this adapter does not implement paginated conversation rollback.`,
+                });
+              }
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(client.request("thread/rollback", { threadId, numTurns })),
               );
@@ -5617,10 +5683,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
+              const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
                   client.request("thread/fork", {
                     threadId,
+                    ...(boundary.lastTurnId === undefined
+                      ? {}
+                      : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
                       threadId: threadInput.targetThreadId,
                       ...(threadInput.modelSelection === undefined
@@ -5641,26 +5711,39 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
-              const rollbackTurnCount = yield* resolveCodexForkRollbackTurnCount(threadInput);
-              const forkedThread =
-                rollbackTurnCount === 0
-                  ? response.thread
-                  : (yield* ensureInitialized.pipe(
-                      Effect.andThen(
-                        client.request("thread/rollback", {
-                          threadId: response.thread.id,
-                          numTurns: rollbackTurnCount,
-                        }),
-                      ),
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderAdapterForkThreadError({
-                            driver: CODEX_PROVIDER,
-                            providerThreadId: threadInput.sourceProviderThread.id,
-                            cause: normalizeCodexCause(cause),
-                          }),
-                      ),
-                    )).thread;
+              let forkedThread = response.thread;
+              if (boundary.rollbackTurnCount > 0) {
+                // Reached only when the selected source turn has no native
+                // turn reference, so the fork had to be taken at head and then
+                // trimmed. thread/rollback is legacy-history only; on a
+                // paginated fork the boundary cannot be honored at all.
+                const historyMode = yield* ensureInitialized.pipe(
+                  Effect.andThen(readCodexThreadHistoryMode(client.raw, response.thread.id)),
+                );
+                if (historyMode === "paginated") {
+                  return yield* new ProviderAdapterForkThreadError({
+                    driver: CODEX_PROVIDER,
+                    providerThreadId: threadInput.sourceProviderThread.id,
+                    cause: `Cannot fork Codex thread ${threadId} at provider turn ${threadInput.providerTurnId}: the source turn has no native Codex turn reference, and the forked thread uses paginated history which rejects thread/rollback.`,
+                  });
+                }
+                forkedThread = (yield* ensureInitialized.pipe(
+                  Effect.andThen(
+                    client.request("thread/rollback", {
+                      threadId: response.thread.id,
+                      numTurns: boundary.rollbackTurnCount,
+                    }),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapterForkThreadError({
+                        driver: CODEX_PROVIDER,
+                        providerThreadId: threadInput.sourceProviderThread.id,
+                        cause: normalizeCodexCause(cause),
+                      }),
+                  ),
+                )).thread;
+              }
               return providerThreadFromCodexThread({
                 appThreadId: threadInput.targetThreadId,
                 idAllocator,

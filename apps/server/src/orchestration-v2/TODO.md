@@ -12,8 +12,12 @@ implementation checklist for `apps/server/src/orchestration-v2`.
 - Checkpoint rollback is currently a full revert: filesystem checkpoint restore, provider thread
   rollback, stale checkpoint marking, and later run/node `rolled_back` projection state.
 - Codex same-provider fork is lazy: `thread.fork` records lineage and pending transfer, and first
-  dispatch resolves native Codex fork. Earlier source-point forks use native `thread/fork` followed
-  by fork-local `thread/rollback`.
+  dispatch resolves native Codex fork. Earlier source-point forks pass the source turn's native id
+  to `thread/fork` as `lastTurnId`; the fork-then-rollback fallback remains only for source turns
+  without a native turn reference and only on legacy-history threads.
+- Codex provider conversation rollback supports only legacy-history threads. The adapter probes
+  `historyMode` and fails explicitly on paginated threads; the V1 session runtime's
+  `thread/turns/list` + `thread/revert` path is the reference for closing this gap.
 - Native Codex fork-from-earlier-run has a real replay-backed test fixture:
   `testkit/fixtures/thread_fork_native_prior_turn`.
 - Merge-back from a fork into its source thread records a `merge_back` context transfer, materializes
