@@ -389,7 +389,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
 
-  it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>
+  it.effect("tracks the connection start and final disconnect time", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const issued = yield* sessions.issue({
@@ -415,11 +415,20 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(stillConnected[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
 
       yield* sessions.markDisconnected(issued.sessionId);
+      const afterFirstDisconnect = yield* sessions.listActive();
+
+      expect(afterFirstDisconnect[0]?.connected).toBe(true);
+      expect(afterFirstDisconnect[0]?.lastConnectedAt?.toString()).toBe(
+        firstConnectedAt?.toString(),
+      );
+
       yield* sessions.markDisconnected(issued.sessionId);
       const afterDisconnect = yield* sessions.listActive();
+      const disconnectedAt = afterDisconnect[0]?.lastConnectedAt;
 
       expect(afterDisconnect[0]?.connected).toBe(false);
-      expect(afterDisconnect[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
+      expect(disconnectedAt).not.toBeNull();
+      expect(disconnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
 
       yield* TestClock.adjust(Duration.seconds(1));
       yield* sessions.markConnected(issued.sessionId);
@@ -427,7 +436,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(afterReconnect[0]?.connected).toBe(true);
       expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
-      expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
+      expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(disconnectedAt?.toString());
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
   );
 
