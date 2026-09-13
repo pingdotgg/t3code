@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   ComposerContextId,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -1390,16 +1393,32 @@ describe("mobile composer drafts", () => {
   });
 
   it.each(["new-task:environment-1:project-1", "new-task:existing-id"])(
-    "preserves the permission mode of legacy draft %s when migrating persisted state",
+    "keeps legacy draft %s implicit so project permission defaults still apply",
     (key) => {
-      const draft = { text: "saved before permission defaults", attachments: [] };
+      const draft = { text: "saved under project permissions", attachments: [] };
       const migrated = decodePersistedComposerState({
         schemaVersion: 1,
         drafts: { [key]: draft },
       }).drafts;
-      expect(Object.values(migrated)).toEqual([
-        expect.objectContaining({ ...draft, runtimeMode: "full-access" }),
-      ]);
+      const restored = Object.values(migrated)[0]!;
+      expect(restored).toMatchObject(draft);
+      expect(restored.runtimeMode).toBeUndefined();
+      const projectId = ProjectId.make("project-1");
+      const settings = resolveProjectSettings(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultRuntimeMode: "full-access",
+          projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: "approval-required" } },
+        },
+        projectId,
+      ).settings;
+      expect(
+        resolveNewThreadRuntimeMode(
+          settings,
+          ProviderInstanceId.make("codex"),
+          restored.runtimeMode,
+        ),
+      ).toBe("approval-required");
       expect(decodePersistedComposerState({ schemaVersion: 2, drafts: migrated }).drafts).toEqual(
         migrated,
       );
@@ -1481,7 +1500,7 @@ describe("mobile composer drafts", () => {
       importedShareIds: ["share-1"],
       project: { environmentId: "environment-1", projectId: "project-1" },
     });
-    expect(stripped[0]?.runtimeMode).toBe("full-access");
+    expect(stripped[0]?.runtimeMode).toBeUndefined();
     expect(stripped[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.4" });
 
     const kept = Object.values(
@@ -1491,7 +1510,8 @@ describe("mobile composer drafts", () => {
       }).drafts,
     );
     expect(kept).toHaveLength(1);
-    expect(kept[0]).toMatchObject({ ...receiptDraft, runtimeMode: "full-access" });
+    expect(kept[0]).toMatchObject(receiptDraft);
+    expect(kept[0]?.runtimeMode).toBeUndefined();
   });
 
   it("persists share-import receipts on otherwise contentless drafts", async () => {
@@ -1535,9 +1555,7 @@ describe("mobile composer drafts", () => {
         },
       });
       await restoreCloudComposerDrafts("account-1");
-      expect(getComposerDraftSnapshot("new-task:implicit-id").runtimeMode).toBe(
-        schemaVersion === 1 ? "full-access" : undefined,
-      );
+      expect(getComposerDraftSnapshot("new-task:implicit-id").runtimeMode).toBeUndefined();
       expect(getComposerDraftSnapshot("new-task:explicit-id").runtimeMode).toBe(
         "approval-required",
       );
@@ -1561,7 +1579,6 @@ describe("mobile composer drafts", () => {
     expect(archived[0]?.[0]).toMatch(/^new-task:[0-9a-z]+-[0-9a-z]+$/);
     expect(archived[0]?.[1]).toMatchObject({
       text: "archived",
-      runtimeMode: "full-access",
       project: { environmentId: "environment-1", projectId: "project-1" },
     });
   });

@@ -1,6 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  DEFAULT_RUNTIME_MODE,
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
   ComposerContextId,
@@ -385,22 +384,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
   );
 }
 
-function preserveLegacyDraftRuntimeMode(
-  key: string,
-  draft: ComposerDraft,
-  preserveLegacyRuntimeMode: boolean,
-): ComposerDraft {
-  return preserveLegacyRuntimeMode &&
-    isNewTaskDraftKey(key) &&
-    draft.runtimeMode === undefined &&
-    (!isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
-    ? { ...draft, runtimeMode: DEFAULT_RUNTIME_MODE }
-    : draft;
-}
-
 function normalizePersistedDrafts(
   drafts: Record<string, ComposerDraft>,
-  preserveLegacyRuntimeMode: boolean,
   now: string,
 ): Record<string, ComposerDraft> {
   return Object.fromEntries(
@@ -423,11 +408,7 @@ function normalizePersistedDrafts(
           draft.workspaceSelection === undefined
             ? { ...draft, modelSelection: undefined }
             : draft;
-        return migrateLegacyNewTaskDraft(
-          key,
-          preserveLegacyDraftRuntimeMode(key, normalized, preserveLegacyRuntimeMode),
-          now,
-        );
+        return migrateLegacyNewTaskDraft(key, normalized, now);
       })
       // importedShareIds are share-import receipts: a contentless draft
       // carrying one is not empty, or the same native share would be
@@ -497,9 +478,8 @@ export function decodePersistedComposerState(value: unknown): {
 } {
   const parsed = decodePersistedComposerDraftsDocument(value);
   const now = new Date().toISOString();
-  const preserveLegacyRuntimeMode = parsed.schemaVersion === 1;
   return {
-    drafts: normalizePersistedDrafts(parsed.drafts, preserveLegacyRuntimeMode, now),
+    drafts: normalizePersistedDrafts(parsed.drafts, now),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,
@@ -508,14 +488,10 @@ export function decodePersistedComposerState(value: unknown): {
           id,
           {
             // Archived drafts come back through restoreCloudComposerDrafts
-            // without another decode, so both migrations must happen here.
+            // without another decode, so their project identity must migrate here.
             drafts: Object.fromEntries(
               Object.entries(saved.drafts).map(([key, draft]) =>
-                migrateLegacyNewTaskDraft(
-                  key,
-                  preserveLegacyDraftRuntimeMode(key, draft, preserveLegacyRuntimeMode),
-                  now,
-                ),
+                migrateLegacyNewTaskDraft(key, draft, now),
               ),
             ),
             queuedMessages: saved.queuedMessages.map(decodeQueuedThreadMessage),
