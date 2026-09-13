@@ -1,33 +1,43 @@
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue, useAtomSet } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useMemo, useCallback, useRef, useLayoutEffect } from "react";
+import { useMemo, useCallback, useRef } from "react";
 import { useTasks } from "../../state/tasks";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+
+/** Expansion commands read preferences on invocation; rows need no inventory subscription. */
+export function useMobileTaskListActions() {
+  const update = useAtomSet(updateMobilePreferencesAtom);
+  const latest = useRef<{
+    source: unknown;
+    value: { collapsedTaskKeys?: readonly string[]; expandedTaskShelfKeys?: readonly string[] };
+  }>({ source: null, value: {} });
+  return useCallback(
+    (key: string, shelf = false) => {
+      const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+      if (!AsyncResult.isSuccess(preferences)) return;
+      if (latest.current.source !== preferences) {
+        latest.current = { source: preferences, value: preferences.value };
+      }
+      const field = shelf ? "expandedTaskShelfKeys" : "collapsedTaskKeys";
+      const keys = new Set(latest.current.value[field] ?? preferences.value[field] ?? []);
+      if (keys.has(key)) keys.delete(key);
+      else keys.add(key);
+      const patch = { [field]: [...keys] };
+      latest.current.value = { ...latest.current.value, ...patch };
+      update(patch);
+    },
+    [update],
+  );
+}
 
 export function useMobileTaskList() {
   const tasks = useTasks();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const update = useAtomSet(updateMobilePreferencesAtom);
   const value = AsyncResult.isSuccess(preferences) ? preferences.value : {};
-  const latest = useRef(value);
-  useLayoutEffect(() => {
-    latest.current = value;
-  }, [value]);
-  const toggle = useCallback(
-    (key: string, shelf = false) => {
-      if (!AsyncResult.isSuccess(preferences)) return;
-      const field = shelf ? "expandedTaskShelfKeys" : "collapsedTaskKeys";
-      const keys = new Set(latest.current[field] ?? []);
-      if (keys.has(key)) keys.delete(key);
-      else keys.add(key);
-      const patch = { [field]: [...keys] };
-      latest.current = { ...latest.current, ...patch };
-      update(patch);
-    },
-    [preferences, update],
-  );
+  const toggle = useMobileTaskListActions();
   return useMemo(
     () => ({
       tasks,

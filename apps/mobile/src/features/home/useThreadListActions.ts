@@ -1,3 +1,5 @@
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import { mobileOrderShelf, shouldUseMixedTaskArrangement } from "../threads/taskOrder";
 import { useMobileTaskOrder } from "../threads/use-mobile-task-order";
 import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { environmentTasks } from "../../state/tasks";
@@ -246,6 +248,7 @@ export function useThreadListActions(): {
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const mixedOrder = useMobileTaskOrder();
+  const taskListEnabled = useThreadListV2Enabled();
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
@@ -489,22 +492,37 @@ export function useThreadListActions(): {
   });
   const moveThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
-      if (thread.taskId != null || appAtomRegistry.get(environmentTasks.tasksAtom).length > 0) {
-        if (
-          typeof direction === "string" ||
-          direction.section === undefined ||
-          direction.section === (thread.pinnedAt != null ? "pinned" : "active")
-        )
-          return mixedOrder.move(threadOrderRow(thread), direction);
-        if (thread.taskId != null && direction.section === "pinned") return false;
-      }
-      if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
       const current = shells.find(
         (row) => row.id === thread.id && row.environmentId === thread.environmentId,
       );
       if (!current || current.archivedAt !== null) return false;
       thread = current;
+      const configsForMode = appAtomRegistry.get(environmentServerConfigsAtom);
+      const mixedMode = shouldUseMixedTaskArrangement(
+        taskListEnabled,
+        appAtomRegistry.get(environmentTasks.tasksAtom),
+        new Set(
+          [...configsForMode].flatMap(([id, config]) =>
+            config.environment.capabilities.tasks === true ? [id] : [],
+          ),
+        ),
+      );
+      if (mixedMode) {
+        if (
+          typeof direction === "string" ||
+          direction.section === undefined ||
+          direction.section ===
+            mobileOrderShelf(
+              threadOrderRow(thread),
+              new Date().toISOString(),
+              appAtomRegistry.get(queuedThreadKeysAtom),
+            )
+        )
+          return mixedOrder.move(threadOrderRow(thread), direction);
+        if (thread.taskId != null && direction.section === "pinned") return false;
+      }
+      if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
       const section =
         typeof direction === "object" && direction.section !== undefined
           ? direction.section
@@ -646,6 +664,7 @@ export function useThreadListActions(): {
     },
     [
       mixedOrder.move,
+      taskListEnabled,
       settleThread,
       reorderActiveMutation,
       reorderPinnedMutation,

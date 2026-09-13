@@ -1,6 +1,6 @@
 import { resolveTaskCreateContext } from "../tasks/taskCreateContext";
-import { readMobileTaskMove } from "../threads/use-mobile-task-order";
-import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { useMobileTaskMovePlanner } from "../threads/use-mobile-task-order";
+import { taskOrderRow, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "../threads/TaskListRow";
 import { useMobileTaskList } from "../threads/use-mobile-task-list";
 import { buildMobileTaskListItems } from "../threads/taskList";
@@ -341,11 +341,15 @@ export function HomeScreen(props: HomeScreenProps) {
           ) ?? null),
     [projectScopes, props.selectedProjectKey],
   );
-  const taskCreateContext = resolveTaskCreateContext({
-    environmentId: props.selectedEnvironmentId,
-    projectKey: props.selectedProjectKey,
-    projectScope: selectedProjectScope,
-  });
+  const taskCreateContext = useMemo(
+    () =>
+      resolveTaskCreateContext({
+        environmentId: props.selectedEnvironmentId,
+        projectKey: props.selectedProjectKey,
+        projectScope: selectedProjectScope,
+      }),
+    [props.selectedEnvironmentId, props.selectedProjectKey, selectedProjectScope],
+  );
   const selectedProjectRefKeys = useMemo(
     () =>
       selectedProjectScope === null
@@ -677,6 +681,8 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeWakeTick,
   ]);
   const mobileTaskList = useMobileTaskList();
+  const moveNow = useMemo(() => new Date().toISOString(), [nowMinute, snoozeWakeTick]);
+  const taskMovePlanner = useMobileTaskMovePlanner(moveNow);
   const threadListV2Layout = useMemo(
     () =>
       buildMobileTaskListItems({
@@ -745,7 +751,17 @@ export function HomeScreen(props: HomeScreenProps) {
         item.type === "task-new-thread" ||
         item.type === "task-subshelf-header"
       )
-        return <TaskListRow item={item} />;
+        return (
+          <TaskListRow
+            item={item}
+            canMoveUp={
+              pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "up")
+            }
+            canMoveDown={
+              pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "down")
+            }
+          />
+        );
       const nextItem = threadListV2Items[index + 1];
       const showTrailingDivider =
         nextItem?.type === "v2-thread" ||
@@ -842,11 +858,9 @@ export function HomeScreen(props: HomeScreenProps) {
               ? pinReorderEnvironmentIds.has(thread.environmentId)
               : activeReorderEnvironmentIds.has(thread.environmentId)
           }
-          canMoveUp={
-            pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "up") !== null
-          }
+          canMoveUp={pendingOrder === null && taskMovePlanner.canMove(threadOrderRow(thread), "up")}
           canMoveDown={
-            pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "down") !== null
+            pendingOrder === null && taskMovePlanner.canMove(threadOrderRow(thread), "down")
           }
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
@@ -863,6 +877,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleDeleteThread,
       activeReorderEnvironmentIds,
       threadMovePlanners,
+      taskMovePlanner,
       pendingOrder,
       queuedThreadKeys,
       handleMoveThread,
@@ -906,6 +921,8 @@ export function HomeScreen(props: HomeScreenProps) {
   // HomeScreen render.
   const v2ExtraData = useMemo(
     () => ({
+      taskMovePlanner,
+      pendingOrder,
       projectByKey,
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
       serverConfigs,
@@ -915,6 +932,8 @@ export function HomeScreen(props: HomeScreenProps) {
       threadSearchMatchByKey,
     }),
     [
+      taskMovePlanner,
+      pendingOrder,
       projectByKey,
       props.searchQuery,
       props.savedConnectionsById,
@@ -1056,6 +1075,16 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
+  const listHeader = useMemo(
+    () => (
+      <>
+        {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
+        <TaskCreateListButton {...taskCreateContext} />
+      </>
+    ),
+    [taskCreateContext],
+  );
+
   if (!hasAnyThreads) {
     return (
       <View className={materialYouStyleLayoutActive ? "flex-1 bg-header" : "flex-1 bg-screen"}>
@@ -1087,17 +1116,6 @@ export function HomeScreen(props: HomeScreenProps) {
       </View>
     );
   }
-
-  const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
-
-  // Project scoping lives in the header filter menu (no inline chip row on
-  // mobile — the menu is the one filter surface).
-  const v2ListHeader = (
-    <>
-      {listHeader}
-      <TaskCreateListButton {...taskCreateContext} />
-    </>
-  );
 
   const listEmpty = !hasResults ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
@@ -1146,7 +1164,7 @@ export function HomeScreen(props: HomeScreenProps) {
               renderItem={renderV2Item}
               keyExtractor={v2KeyExtractor}
               extraData={v2ExtraData}
-              ListHeaderComponent={v2ListHeader}
+              ListHeaderComponent={listHeader}
               ListFooterComponent={
                 settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                   <Pressable
@@ -1210,12 +1228,7 @@ export function HomeScreen(props: HomeScreenProps) {
             getItemType={(item) => item.type}
             estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
             extraData={extraData}
-            ListHeaderComponent={
-              <>
-                {listHeader}
-                <TaskCreateListButton {...taskCreateContext} />
-              </>
-            }
+            ListHeaderComponent={listHeader}
             ListEmptyComponent={listEmpty}
             style={{ flex: 1 }}
             automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}

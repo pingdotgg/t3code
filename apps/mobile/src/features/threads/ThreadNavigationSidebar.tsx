@@ -1,6 +1,7 @@
+import { isMobileTaskListItem, mobileTaskItemsAreEqual } from "./taskListEquality";
 import { resolveTaskCreateContext } from "../tasks/taskCreateContext";
-import { readMobileTaskMove } from "./use-mobile-task-order";
-import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { useMobileTaskMovePlanner } from "./use-mobile-task-order";
+import { taskOrderRow, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "./TaskListRow";
 import { useMobileTaskList } from "./use-mobile-task-list";
 import { buildMobileTaskListItems } from "./taskList";
@@ -274,11 +275,19 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
-  const taskCreateContext = resolveTaskCreateContext({
-    environmentId: options.selectedEnvironmentId,
-    projectKey: selectedProjectKey,
-    projectScope: selectedProjectScope,
-  });
+  const taskCreateContext = useMemo(
+    () =>
+      resolveTaskCreateContext({
+        environmentId: options.selectedEnvironmentId,
+        projectKey: selectedProjectKey,
+        projectScope: selectedProjectScope,
+      }),
+    [options.selectedEnvironmentId, selectedProjectKey, selectedProjectScope],
+  );
+  const listHeader = useMemo(
+    () => <TaskCreateListButton {...taskCreateContext} />,
+    [taskCreateContext],
+  );
   const selectedProjectRefs = useMemo(
     () =>
       selectedProjectScope === null
@@ -526,6 +535,8 @@ function ThreadNavigationSidebarPane(
     snoozeWakeTick,
   ]);
   const mobileTaskList = useMobileTaskList();
+  const moveNow = useMemo(() => new Date().toISOString(), [nowMinute, snoozeWakeTick]);
+  const taskMovePlanner = useMobileTaskMovePlanner(moveNow);
   const threadListV2Layout = useMemo(
     () =>
       buildMobileTaskListItems({
@@ -758,6 +769,8 @@ function ThreadNavigationSidebarPane(
   // favicon and fallback title it was first rendered with.
   const listExtraData = useMemo(
     () => ({
+      taskMovePlanner,
+      pendingOrder,
       selectedThreadKey: props.selectedThreadKey ?? "",
       projectByKey,
       projectTitleByProjectKey,
@@ -767,6 +780,8 @@ function ThreadNavigationSidebarPane(
       threadSearchMatchByKey,
     }),
     [
+      taskMovePlanner,
+      pendingOrder,
       props.selectedThreadKey,
       projectByKey,
       projectTitleByProjectKey,
@@ -778,6 +793,8 @@ function ThreadNavigationSidebarPane(
   );
   const sidebarItemsAreEqual = useCallback(
     (previous: SidebarListItem, item: SidebarListItem): boolean => {
+      if (isMobileTaskListItem(previous) && isMobileTaskListItem(item))
+        return mobileTaskItemsAreEqual(previous, item);
       if (previous.type === "v2-thread" && item.type === "v2-thread") {
         return (
           previous.key === item.key &&
@@ -854,7 +871,17 @@ function ThreadNavigationSidebarPane(
         case "task-slim":
         case "task-new-thread":
         case "task-subshelf-header":
-          return <TaskListRow item={item} />;
+          return (
+            <TaskListRow
+              item={item}
+              canMoveUp={
+                pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "up")
+              }
+              canMoveDown={
+                pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "down")
+              }
+            />
+          );
         case "v2-pending": {
           const pendingScopeKey = scopedProjectKey(
             item.pendingTask.environmentId,
@@ -928,10 +955,10 @@ function ThreadNavigationSidebarPane(
                   : activeReorderEnvironmentIds.has(thread.environmentId)
               }
               canMoveUp={
-                pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "up") !== null
+                pendingOrder === null && taskMovePlanner.canMove(threadOrderRow(thread), "up")
               }
               canMoveDown={
-                pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "down") !== null
+                pendingOrder === null && taskMovePlanner.canMove(threadOrderRow(thread), "down")
               }
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
@@ -1063,6 +1090,7 @@ function ThreadNavigationSidebarPane(
       archiveThread,
       activeReorderEnvironmentIds,
       threadMovePlanners,
+      taskMovePlanner,
       pendingOrder,
       queuedThreadKeys,
       confirmDeletePendingTask,
@@ -1204,7 +1232,7 @@ function ThreadNavigationSidebarPane(
               <LegendList
                 data={listItems}
                 drawDistance={500}
-                ListHeaderComponent={<TaskCreateListButton {...taskCreateContext} />}
+                ListHeaderComponent={listHeader}
                 estimatedItemSize={64}
                 extraData={listExtraData}
                 getItemType={(item) =>
@@ -1267,7 +1295,7 @@ function ThreadNavigationSidebarPane(
             <LegendList
               data={listItems}
               drawDistance={500}
-              ListHeaderComponent={<TaskCreateListButton {...taskCreateContext} />}
+              ListHeaderComponent={listHeader}
               estimatedItemSize={64}
               extraData={listExtraData}
               getItemType={(item) =>

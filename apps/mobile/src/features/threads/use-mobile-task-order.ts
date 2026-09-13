@@ -1,12 +1,9 @@
-import { useCallback } from "react";
+import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import { useCallback, useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert } from "react-native";
 import * as Cause from "effect/Cause";
-import {
-  taskOrderRow,
-  threadOrderRow,
-  type TaskOrderRow,
-} from "@t3tools/client-runtime/state/task-grouping";
+import { type TaskOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { taskEnvironment, environmentTasks } from "../../state/tasks";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -14,53 +11,57 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getPendingThreadOrder, threadDropBusyAtom } from "../../state/thread-order";
-import { planMobileTaskMove } from "./taskOrder";
+import { createMobileTaskMovePlanner, planMobileTaskMove } from "./taskOrder";
 import type { ThreadMoveDestination } from "./threadOrder";
 
 export function readMobileTaskMove(row: TaskOrderRow, destination: ThreadMoveDestination) {
   const tasks = appAtomRegistry.get(environmentTasks.tasksAtom);
   const threads = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-  const current =
-    row.kind === "task"
-      ? tasks
-          .filter((task) => task.id === row.entity.id && task.environmentId === row.environmentId)
-          .map(taskOrderRow)[0]
-      : threads
-          .filter(
-            (thread) => thread.id === row.entity.id && thread.environmentId === row.environmentId,
-          )
-          .map(threadOrderRow)[0];
-  if (current == null || current.entity.archivedAt !== null) return null;
-  row = current;
   const configs = appAtomRegistry.get(environmentServerConfigsAtom);
-  const shelf =
-    typeof destination === "object"
-      ? destination.section
-      : row.entity.pinnedAt != null
-        ? "pinned"
-        : "active";
-  const taskIds = new Set(
-    [...configs].flatMap(([id, c]) => (c.environment.capabilities.tasks === true ? [id] : [])),
-  );
   return planMobileTaskMove({
+    ...mobileTaskMoveCapabilities(configs),
     moved: row,
     destination,
-    tasks: appAtomRegistry.get(environmentTasks.tasksAtom),
-    threads: appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
-    capableIds: taskIds,
-    writableTaskIds: taskIds,
-    writableThreadIds: new Set(
-      [...configs].flatMap(([id, c]) =>
-        (shelf === "pinned"
-          ? c.environment.capabilities.threadPinReorder
-          : c.environment.capabilities.threadActiveReorder) === true
-          ? [id]
-          : [],
-      ),
-    ),
+    tasks,
+    threads,
     now: new Date().toISOString(),
     queued: appAtomRegistry.get(queuedThreadKeysAtom),
   });
+}
+
+function mobileTaskMoveCapabilities(configs: ReadonlyMap<EnvironmentId, ServerConfig>) {
+  const capableIds = new Set(
+    [...configs].flatMap(([id, config]) =>
+      config.environment.capabilities.tasks === true ? [id] : [],
+    ),
+  );
+  return {
+    capableIds,
+    writableTaskIds: capableIds,
+    writableThreadIds: new Set(
+      [...configs].flatMap(([id, config]) =>
+        config.environment.capabilities.threadActiveReorder === true ? [id] : [],
+      ),
+    ),
+    writablePinnedThreadIds: new Set(
+      [...configs].flatMap(([id, config]) =>
+        config.environment.capabilities.threadPinReorder === true ? [id] : [],
+      ),
+    ),
+  };
+}
+
+/** Subscribe once at the list owner, never from render-time menu checks. */
+export function useMobileTaskMovePlanner(now: string) {
+  const tasks = useAtomValue(environmentTasks.tasksAtom);
+  const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const queued = useAtomValue(queuedThreadKeysAtom);
+  const capabilities = useMemo(() => mobileTaskMoveCapabilities(configs), [configs]);
+  return useMemo(
+    () => createMobileTaskMovePlanner({ tasks, threads, queued, now, ...capabilities }),
+    [tasks, threads, queued, now, capabilities],
+  );
 }
 
 /** Writes shared planner assignments using the entity's real dispatch identity. */
