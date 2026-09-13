@@ -273,6 +273,19 @@ describe("searchSettings", () => {
     },
   );
 
+  it("hides hosting CLI paths when only disconnected environments have server config", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    });
+
+    expect(available.some((item) => item.id === "hosting-cli-path")).toBe(false);
+  });
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({
