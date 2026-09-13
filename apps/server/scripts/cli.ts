@@ -167,7 +167,7 @@ const buildExeCmd = Command.make(
 
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
- * every `@t3tools/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
+ * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
  * the launcher is never installable before the executables it depends on.
  * Tarballs rather than directories because `npm publish <dir>` strips the
  * `node_modules/` the executable loads its native addons from.
@@ -191,7 +191,7 @@ const publishCmd = Command.make(
       // npm runs with cwd set to the packages dir below, so tarball paths are
       // resolved once here rather than joined twice.
       const packagesDir = path.resolve(config.packagesDir);
-      const scopeDir = path.join(packagesDir, "@t3tools");
+      const scopeDir = path.join(packagesDir, "@t3code");
       const launcherTarball = path.join(packagesDir, "t3.tgz");
       const platformTarballs = (yield* fs
         .readDirectory(scopeDir)
@@ -227,7 +227,7 @@ const publishCmd = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Publish the @t3tools/t3-<platform> tarballs and then the t3 launcher to npm.",
+    "Publish the @t3code/t3-<platform> tarballs and then the t3 launcher to npm.",
   ),
 );
 

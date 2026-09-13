@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Turns the per-platform CLI archives of one release into the npm packages
- * behind `npx t3` / `npm i -g t3`: one `@t3tools/t3-<platformKey>` package per
+ * behind `npx t3` / `npm i -g t3`: one `@t3code/t3-<platformKey>` package per
  * archive holding the archive's contents verbatim, plus the `t3` launcher
  * that lists them as optionalDependencies and execs the one npm installed.
  * The bytes a user gets from npm are therefore the release archive's, and
@@ -9,8 +9,8 @@
  *
  * Output layout under `--output-dir`:
  *
- *   @t3tools/t3-<platformKey>/      archive contents flattened + package.json
- *   @t3tools/t3-<platformKey>.tgz   the same tree as an npm tarball
+ *   @t3code/t3-<platformKey>/      archive contents flattened + package.json
+ *   @t3code/t3-<platformKey>.tgz   the same tree as an npm tarball
  *   t3/                             launcher: package.json, bin/t3.js, README.md
  *   t3.tgz                          the launcher as an npm tarball
  *
@@ -42,7 +42,7 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { windowsSystemTar } from "./build-cli-archive.ts";
 
-export const NPM_PLATFORM_PACKAGE_SCOPE = "@t3tools";
+export const NPM_PLATFORM_PACKAGE_SCOPE = "@t3code";
 export const NPM_LAUNCHER_PACKAGE_NAME = "t3";
 
 const encodePackageJson = Schema.encodeEffect(fromJsonStringPretty(Schema.Unknown));
@@ -405,7 +405,7 @@ const command = Command.make(
   buildNpmPlatformPackages,
 ).pipe(
   Command.withDescription(
-    "Build the t3 launcher and @t3tools/t3-<platform> npm packages from CLI release archives.",
+    "Build the t3 launcher and @t3code/t3-<platform> npm packages from CLI release archives.",
   ),
 );
 
