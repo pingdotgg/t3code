@@ -549,6 +549,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
 
 function normalizePersistedDrafts(
   drafts: Record<string, ComposerDraft>,
+  legacyModelSelection: boolean,
   now: string,
 ): Record<string, ComposerDraft> {
   return Object.fromEntries(
@@ -561,6 +562,7 @@ function normalizePersistedDrafts(
         // with runtime/interaction/workspace settings or actual text /
         // attachments were deliberately configured and are left alone.
         const normalized =
+          legacyModelSelection &&
           key.startsWith("new-task:") &&
           draft.modelSelection &&
           draft.text.length === 0 &&
@@ -643,7 +645,7 @@ export function decodePersistedComposerState(value: unknown): {
   const parsed = decodePersistedComposerDraftsDocument(value);
   const now = new Date().toISOString();
   return {
-    drafts: normalizePersistedDrafts(parsed.drafts, now),
+    drafts: normalizePersistedDrafts(parsed.drafts, parsed.schemaVersion === 1, now),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,

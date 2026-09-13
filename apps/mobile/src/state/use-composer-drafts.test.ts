@@ -1773,6 +1773,26 @@ describe("mobile composer drafts", () => {
     },
   );
 
+  it("preserves separate explicit model choices in current empty drafts", () => {
+    const first = {
+      text: "",
+      attachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    } satisfies ComposerDraft;
+    const second = {
+      ...first,
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-4-6" },
+    } satisfies ComposerDraft;
+    const drafts = { "new-task:first": first, "new-task:second": second };
+    const restored = decodePersistedComposerState({
+      schemaVersion: 2,
+      drafts,
+      stickyModelSelection: second.modelSelection,
+    });
+    expect(restored.drafts).toEqual(drafts);
+    expect(restored.stickyModelSelection).toEqual(second.modelSelection);
+  });
+
   it("keeps current new-task drafts implicit across reloads", () => {
     const draft = { text: "keep drafting", attachments: [] } satisfies ComposerDraft;
 

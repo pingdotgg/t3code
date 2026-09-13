@@ -175,21 +175,6 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
-function mergeProviderRuntimeModeDefaults(
-  current: ServerSettings["providerRuntimeModeDefaults"],
-  patch: NonNullable<ServerSettingsPatch["providerRuntimeModeDefaults"]>,
-): ServerSettings["providerRuntimeModeDefaults"] {
-  const next = new Map(Object.entries(current));
-  for (const [instanceId, runtimeMode] of Object.entries(patch)) {
-    if (runtimeMode === null) {
-      next.delete(instanceId);
-    } else {
-      next.set(instanceId, runtimeMode);
-    }
-  }
-  return Object.fromEntries(next) as ServerSettings["providerRuntimeModeDefaults"];
-}
-
 export function resolveNewThreadRuntimeMode(
   settings:
     | Pick<ServerSettings, "defaultRuntimeMode" | "providerRuntimeModeDefaults">
@@ -404,7 +389,7 @@ export function applyServerSettingsPatch(
       : {}),
     ...(providerRuntimeModeDefaultsPatch !== undefined
       ? {
-          providerRuntimeModeDefaults: mergeProviderRuntimeModeDefaults(
+          providerRuntimeModeDefaults: mergeSettingsEntries(
             current.providerRuntimeModeDefaults,
             providerRuntimeModeDefaultsPatch,
           ),
