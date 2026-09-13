@@ -323,6 +323,11 @@ export function NewTaskDraftScreen(props: {
   latestIncomingShareIdRef.current = props.incomingShareId;
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
+  // The share this screen already moved into its draft. Sending clears the
+  // draft (and its importedShareIds receipt) a frame before the screen leaves,
+  // and the inbox entry is long gone by then; without this the re-render in
+  // between reads as "shared content vanished" and alerts on every send.
+  const consumedIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
@@ -416,8 +421,9 @@ export function NewTaskDraftScreen(props: {
   }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
-    flow.draftKey &&
-    getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId),
+    (consumedIncomingShareIdRef.current === props.incomingShareId ||
+      (flow.draftKey &&
+        getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId))),
   );
   const isIncomingShareUnavailable = Boolean(
     props.incomingShareId &&
@@ -747,6 +753,7 @@ export function NewTaskDraftScreen(props: {
       }
       await consumeShare(shareId);
       didConsumeShare = true;
+      consumedIncomingShareIdRef.current = shareId;
       // The consumed inbox draft was the last owner of files that never made
       // it into the composer draft (unsupported server, oversize, limit
       // skips). Release them before any early return: an unmount or a
