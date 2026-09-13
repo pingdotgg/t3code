@@ -60,6 +60,11 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`chat.newInTask` (`mod+shift+t` by default) starts a thread in the current task when
+viewing its page or one of its members. Outside a task it behaves like `chat.new`.
+The default does not intercept terminal input. Terminal and right-panel shortcuts
+use the task's shared tools when viewing a task or member.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

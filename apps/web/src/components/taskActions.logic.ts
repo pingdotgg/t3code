@@ -1,10 +1,5 @@
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
-import type {
-  ContextMenuItem,
-  OrchestrationThreadShell,
-  ScopedThreadRef,
-  TaskId,
-} from "@t3tools/contracts";
+import type { ContextMenuItem, ScopedThreadRef, TaskId } from "@t3tools/contracts";
 
 export function taskMembershipDestinations(
   tasks: readonly EnvironmentTask[],
@@ -15,41 +10,6 @@ export function taskMembershipDestinations(
       task.environmentId === thread.environmentId &&
       task.archivedAt === null &&
       task.id !== thread.taskId,
-  );
-}
-
-/** Generic pending input can be a dismissable message-mode question. The server checks native requests. */
-export function taskSettleBlocker(
-  members: readonly Pick<
-    OrchestrationThreadShell,
-    "archivedAt" | "session" | "latestTurn" | "hasPendingApprovals" | "hasPendingUserInput"
-  >[],
-) {
-  return (
-    members.find(
-      (thread) =>
-        thread.archivedAt === null &&
-        (thread.session?.status === "starting" ||
-          thread.session?.status === "running" ||
-          thread.latestTurn?.state === "running" ||
-          thread.hasPendingApprovals),
-    ) ?? null
-  );
-}
-export function taskSnoozeBlocker(
-  members: readonly Pick<
-    OrchestrationThreadShell,
-    "archivedAt" | "session" | "latestTurn" | "hasPendingApprovals" | "hasPendingUserInput"
-  >[],
-) {
-  return (
-    members.find(
-      (thread) =>
-        thread.archivedAt === null &&
-        (thread.hasPendingApprovals ||
-          thread.hasPendingUserInput ||
-          (thread.latestTurn?.state === "running" && thread.latestTurn.startedAt === null)),
-    ) ?? null
   );
 }
 

@@ -15,12 +15,59 @@ import {
   scopeThreadRef,
 } from "../environment/scoped.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
-import { effectiveSnoozed } from "./threadSettled.ts";
+import { canSnooze, effectiveSnoozed, hasQueuedTurnStart } from "./threadSettled.ts";
 import {
   planPinnedReorder,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
 } from "./threadSort.ts";
+
+/** Generic pending input can be a dismissable message-mode question. The server checks native requests. */
+export function taskSettleBlocker(
+  members: readonly Pick<
+    OrchestrationThreadShell,
+    | "archivedAt"
+    | "session"
+    | "latestTurn"
+    | "latestUserMessageAt"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+  >[],
+  options: { readonly now: string },
+) {
+  return (
+    members.find(
+      (thread) =>
+        thread.archivedAt === null &&
+        (thread.session?.status === "starting" ||
+          thread.session?.status === "running" ||
+          thread.latestTurn?.state === "running" ||
+          thread.hasPendingApprovals ||
+          hasQueuedTurnStart(thread, options)),
+    ) ?? null
+  );
+}
+export function taskSnoozeBlocker(
+  members: readonly Pick<
+    OrchestrationThreadShell,
+    | "archivedAt"
+    | "session"
+    | "latestTurn"
+    | "latestUserMessageAt"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+  >[],
+  options: { readonly now: string },
+) {
+  return (
+    members.find(
+      (thread) =>
+        thread.archivedAt === null &&
+        (!canSnooze(thread, options) ||
+          (thread.latestTurn?.state === "running" && thread.latestTurn.startedAt === null)),
+    ) ?? null
+  );
+}
 
 export type TaskGroupingTask = OrchestrationTaskShell & { readonly environmentId: EnvironmentId };
 

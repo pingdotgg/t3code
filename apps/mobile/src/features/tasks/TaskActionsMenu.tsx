@@ -1,5 +1,6 @@
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { taskSettleBlocker, taskSnoozeBlocker } from "@t3tools/client-runtime/state/task-grouping";
+import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { type ReactNode, useState } from "react";
 import { Pressable } from "react-native";
@@ -25,14 +26,15 @@ export function TaskActionsMenu({
   const [now, setNow] = useState(() => new Date());
   if (config?.environment.capabilities.tasks !== true) return null;
   const presets = resolveSnoozePresets(now);
-  const snoozable = threads
-    .filter(
-      (thread) =>
-        thread.environmentId === task.environmentId &&
-        thread.taskId === task.id &&
-        thread.archivedAt === null,
-    )
-    .every((thread) => canSnooze(thread, { now: now.toISOString() }));
+  const members = threads.filter(
+    (thread) =>
+      thread.environmentId === task.environmentId &&
+      thread.taskId === task.id &&
+      thread.archivedAt === null,
+  );
+  const options = { now: now.toISOString() };
+  const snoozable = taskSnoozeBlocker(members, options) === null;
+  const settleable = taskSettleBlocker(members, options) === null;
   const snoozed = task.snoozedUntil !== null && Date.parse(task.snoozedUntil) > now.getTime();
   const menu: MenuAction[] =
     task.archivedAt !== null
@@ -40,6 +42,7 @@ export function TaskActionsMenu({
       : [
           {
             id: task.settledOverride === "settled" ? "unsettle" : "settle",
+            attributes: { disabled: task.settledOverride !== "settled" && !settleable },
             title:
               task.settledOverride === "settled" ? "Un-settle task" : "Settle task and members",
           },

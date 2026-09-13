@@ -4,6 +4,7 @@ import {
   partitionTaskMembers,
   rollupTaskStatus,
   taskMemberStatus,
+  taskSettleBlocker,
   taskShelf,
 } from "@t3tools/client-runtime/state/task-grouping";
 import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
@@ -120,20 +121,23 @@ export function TaskPageBody({
   const now = `${useNowMinute()}:00.000Z`;
   const shell = useAtomValue(environmentShell.stateValueAtom(taskRef.environmentId));
   const disabled = shell.status !== "live";
-  const groups = useMemo(() => {
+  const { groups, settleBlocked } = useMemo(() => {
     const members = threads.filter(
       (thread) =>
         thread.environmentId === taskRef.environmentId && thread.taskId === taskRef.taskId,
     );
     const partition = partitionTaskMembers(members, { now });
     return {
-      live: sortActiveThreadsByOrderKey(partition.live),
-      snoozed: partition.snoozed.toSorted((a, b) =>
-        (a.snoozedUntil ?? "").localeCompare(b.snoozedUntil ?? ""),
-      ),
-      settled: partition.settled.toSorted((a, b) =>
-        (b.settledAt ?? b.updatedAt).localeCompare(a.settledAt ?? a.updatedAt),
-      ),
+      settleBlocked: taskSettleBlocker(members, { now }) !== null,
+      groups: {
+        live: sortActiveThreadsByOrderKey(partition.live),
+        snoozed: partition.snoozed.toSorted((a, b) =>
+          (a.snoozedUntil ?? "").localeCompare(b.snoozedUntil ?? ""),
+        ),
+        settled: partition.settled.toSorted((a, b) =>
+          (b.settledAt ?? b.updatedAt).localeCompare(a.settledAt ?? a.updatedAt),
+        ),
+      },
     };
   }, [now, taskRef.environmentId, taskRef.taskId, threads]);
   if (!task) return null;
@@ -165,7 +169,7 @@ export function TaskPageBody({
             <Button
               size="xs"
               variant="ghost-muted"
-              disabled={disabled}
+              disabled={disabled || (shelf !== "settled" && settleBlocked)}
               onClick={() => {
                 void (shelf === "settled"
                   ? actions.unsettleTask(taskRef)

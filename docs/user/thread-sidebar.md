@@ -1,7 +1,8 @@
 # Working with threads
 
-Use a new thread for a separate task. Choose **New worktree** when its code changes
-need a separate branch and working directory.
+Use a new thread for a separate conversation with an agent. Group related threads
+in a **Task** when they belong to the same piece of work. Choose **New worktree**
+when a thread's code changes need a separate branch and working directory.
 
 ## Start a thread
 
@@ -19,6 +20,46 @@ In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Ent
 on Windows and Linux to start a new thread and immediately open another draft. The
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
+
+## Tasks
+
+Choose **New task** from the sidebar or command palette, give it a name, and select
+its primary project. A task can start empty and contain threads from different
+projects in the same environment. Use a thread's **Move to task** menu to group it
+or move it to another task; **Remove from task** returns it to the ordinary thread
+list without changing its conversation or checkout.
+
+**All projects** groups members under their tasks. Selecting a project shows its
+threads in a flat list, including members of tasks whose primary project is
+elsewhere. Servers without Tasks support continue to show flat thread lists.
+
+Open a task to edit its details or start a thread. Web and desktop use the task
+page's composer; mobile opens the existing new-thread sheet. New threads default
+to the primary project, and you can choose another project in the same environment.
+**New thread in this worktree** and **Implement in new thread** keep the source
+thread's task and checkout context.
+
+Members share the task's files and terminals, plus browser tabs on web and desktop.
+These tools use the primary project's workspace directory. The agent, Git changes,
+and diffs still use each thread's own checkout. Changing the primary project changes
+the file root and defaults for new tools; existing terminals keep their process and
+working directory. See [terminals](./terminal.md).
+
+Pin the task to keep the whole group above active work; members cannot be pinned
+individually. Settling a task settles its visible members together. Running or
+queued work, approvals, and questions that require an agent response block the
+whole action; idle async questions can be dismissed by settlement. **Un-settle
+task** reopens the task while its members stay parked. Snoozing and waking a task
+also leave member states alone. New member activity can reopen or wake its task.
+Inactive tasks with no live members follow the primary project's inactivity
+settings; see [settlement settings](#settle-finished-work).
+
+Archiving a task archives its visible members. Restore it from the existing
+archived inventory in Settings (the Archive screen on mobile) to restore its
+archived members too. Restoring a member of an archived task restores the task.
+Deleting a task defaults to **Keep threads**, which removes their membership and
+preserves their state, including archived threads. Choose **Delete threads** only
+when you also want to delete its conversations.
 
 ## Pin and reorder threads
 

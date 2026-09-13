@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ProjectId, TaskId, ThreadId, TurnId } from "@t3tools/contracts";
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
-import {
-  taskMembershipDestinations,
-  taskSettleBlocker,
-  taskSnoozeBlocker,
-} from "./taskActions.logic";
+import { taskMembershipDestinations } from "./taskActions.logic";
+import { taskSettleBlocker, taskSnoozeBlocker } from "@t3tools/client-runtime/state/task-grouping";
 
 const environmentId = EnvironmentId.make("local");
 const otherEnvironmentId = EnvironmentId.make("remote");
@@ -29,8 +26,10 @@ function task(id: string, env = environmentId, archivedAt: string | null = null)
     updatedAt: "2026-09-13T00:00:00.000Z",
   };
 }
+const options = { now: "2026-09-13T00:00:30.000Z" };
 const member = {
   archivedAt: null,
+  latestUserMessageAt: null,
   session: null,
   latestTurn: null,
   hasPendingApprovals: false,
@@ -55,8 +54,16 @@ describe("task actions", () => {
   });
   it("does not treat a generic input flag as proof that manual settlement is blocked", () => {
     const waiting = { ...member, hasPendingUserInput: true };
-    expect(taskSettleBlocker([waiting])).toBeNull();
-    expect(taskSnoozeBlocker([waiting])).toBe(waiting);
+    expect(taskSettleBlocker([waiting], options)).toBeNull();
+    expect(taskSnoozeBlocker([waiting], options)).toBe(waiting);
+  });
+  it("blocks a recent user message before turn adoption, then expires the queued guard", () => {
+    const queued = { ...member, latestUserMessageAt: "2026-09-13T00:00:00.000Z" };
+    expect(taskSettleBlocker([queued], options)).toBe(queued);
+    expect(taskSnoozeBlocker([queued], options)).toBe(queued);
+    const expired = { now: "2026-09-13T00:03:00.000Z" };
+    expect(taskSettleBlocker([queued], expired)).toBeNull();
+    expect(taskSnoozeBlocker([queued], expired)).toBeNull();
   });
   it("blocks pending approvals and a queued or running turn from shell evidence", () => {
     const pending = { ...member, hasPendingApprovals: true };
@@ -71,17 +78,22 @@ describe("task actions", () => {
         assistantMessageId: null,
       },
     };
-    expect(taskSettleBlocker([pending])).toBe(pending);
-    expect(taskSettleBlocker([queued])).toBe(queued);
-    expect(taskSnoozeBlocker([queued])).toBe(queued);
+    expect(taskSettleBlocker([pending], options)).toBe(pending);
+    expect(taskSettleBlocker([queued], options)).toBe(queued);
+    expect(taskSnoozeBlocker([queued], options)).toBe(queued);
     expect(
-      taskSnoozeBlocker([
-        {
-          ...queued,
-          latestTurn: { ...queued.latestTurn, startedAt: queued.latestTurn.requestedAt },
-        },
-      ]),
+      taskSnoozeBlocker(
+        [
+          {
+            ...queued,
+            latestTurn: { ...queued.latestTurn, startedAt: queued.latestTurn.requestedAt },
+          },
+        ],
+        options,
+      ),
     ).toBeNull();
-    expect(taskSettleBlocker([{ ...pending, archivedAt: "2026-09-13T00:00:00.000Z" }])).toBeNull();
+    expect(
+      taskSettleBlocker([{ ...pending, archivedAt: "2026-09-13T00:00:00.000Z" }], options),
+    ).toBeNull();
   });
 });

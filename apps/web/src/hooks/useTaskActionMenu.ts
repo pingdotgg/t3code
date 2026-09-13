@@ -6,7 +6,7 @@ import { readTask, readEnvironmentSupportsTasks } from "../state/tasks";
 import { readThreadShells } from "../state/entities";
 import { requestDeleteTask, requestRenameTask } from "../taskDialogStore";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
-import { taskSettleBlocker, taskSnoozeBlocker } from "../components/taskActions.logic";
+import { taskSettleBlocker, taskSnoozeBlocker } from "@t3tools/client-runtime/state/task-grouping";
 import { useClientSettings } from "./useSettings";
 import { useTaskActions } from "./useTaskActions";
 
@@ -26,7 +26,8 @@ export function useTaskActionMenu(
         const members = readThreadShells().filter(
           (thread) => thread.environmentId === taskRef.environmentId && thread.taskId === task.id,
         );
-        const presets = resolveSnoozePresets(new Date(), timestampFormat);
+        const now = new Date();
+        const presets = resolveSnoozePresets(now, timestampFormat);
         const snoozed = task.snoozedUntil !== null && Date.parse(task.snoozedUntil) > Date.now();
         const items: ContextMenuItem<string>[] = [
           { id: "open", label: "Open task" },
@@ -48,14 +49,14 @@ export function useTaskActionMenu(
                 id: "settle",
                 label: "Settle task",
                 separatorBefore: true,
-                disabled: taskSettleBlocker(members) !== null,
+                disabled: taskSettleBlocker(members, { now: now.toISOString() }) !== null,
               },
           snoozed
             ? { id: "wake", label: "Wake task" }
             : {
                 id: "snooze",
                 label: "Snooze task",
-                disabled: taskSnoozeBlocker(members) !== null,
+                disabled: taskSnoozeBlocker(members, { now: now.toISOString() }) !== null,
                 children: presets.map((preset) => ({
                   id: `snooze:${preset.id}`,
                   label: `${preset.label} (${preset.whenLabel})`,
