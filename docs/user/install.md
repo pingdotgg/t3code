@@ -22,6 +22,22 @@ npx t3@latest
 This starts the server and opens the local web app. Run
 `npx t3@latest --help` for command-line options.
 
+The executable is built for Apple Silicon Macs, Linux, and Windows. There is
+no Intel Mac build of it, because Node cannot produce a single executable for
+that platform; the Intel desktop app is unaffected. To run a standalone server
+on an Intel Mac, build it from source. You need Node.js 24 and `vp` (see
+[Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+
+```bash
+git clone https://github.com/pingdotgg/t3code
+cd t3code && vp i && vp run build:desktop
+node apps/server/dist/bin.mjs
+```
+
+A server run this way is a plain Node program: `t3 update` and the background
+service do not apply, so update it with `git pull` and a rebuild, and start it
+however you run other Node processes.
+
 ## Desktop app
 
 Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
