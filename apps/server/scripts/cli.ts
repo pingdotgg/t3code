@@ -188,8 +188,11 @@ const publishCmd = Command.make(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const scopeDir = path.join(config.packagesDir, "@t3tools");
-      const launcherTarball = path.join(config.packagesDir, "t3.tgz");
+      // npm runs with cwd set to the packages dir below, so tarball paths are
+      // resolved once here rather than joined twice.
+      const packagesDir = path.resolve(config.packagesDir);
+      const scopeDir = path.join(packagesDir, "@t3tools");
+      const launcherTarball = path.join(packagesDir, "t3.tgz");
       const platformTarballs = (yield* fs
         .readDirectory(scopeDir)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
@@ -214,7 +217,7 @@ const publishCmd = Command.make(
         yield* Effect.log(`[cli] npm ${args.join(" ")} ${path.basename(tarball)}`);
         yield* runCommand(
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-            cwd: config.packagesDir,
+            cwd: packagesDir,
             stdout: config.verbose ? "inherit" : "ignore",
             stderr: "inherit",
             shell: spawnCommand.shell,
