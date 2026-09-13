@@ -1,19 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as PlatformError from "effect/PlatformError";
 
-import { SecretStorePersistError } from "./ServerSecretStore.ts";
+import { DpopReplayAlreadyClaimedError, DpopReplayStoreClaimError } from "./DpopReplayStore.ts";
 import { mapDpopFailureReason, mapDpopReplayStoreError } from "./dpop.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
-  new SecretStorePersistError({
-    resource: "DPoP proof",
-    cause: PlatformError.systemError({
-      _tag: tag,
-      module: "FileSystem",
-      method: "open",
-      pathOrDescriptor: "dpop-proof.bin",
-    }),
-  });
+  tag === "AlreadyExists"
+    ? new DpopReplayAlreadyClaimedError({
+        source: "bucket",
+        markerPath: "dpop-replay/1/marker",
+        bucket: 1,
+      })
+    : new DpopReplayStoreClaimError({
+        cause: PlatformError.systemError({
+          _tag: tag,
+          module: "FileSystem",
+          method: "open",
+          pathOrDescriptor: "dpop-replay/1/marker",
+        }),
+        stage: "write-marker",
+        resource: "dpop-replay/1/marker",
+        bucket: 1,
+      });
 
 describe("mapDpopReplayStoreError", () => {
   it("reports replay conflicts as invalid credentials", () => {

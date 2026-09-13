@@ -21,7 +21,6 @@ import {
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -35,7 +34,8 @@ import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import * as DpopReplayStore from "./DpopReplayStore.ts";
+import { claimDpopProofReplay, verifyRequestDpopProof } from "./dpop.ts";
 import { layerConfig as SqlitePersistenceLayer } from "../persistence/Layers/Sqlite.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -217,17 +217,6 @@ export class ServerAuthDpopReplayStateRecordError extends Schema.TaggedError<Ser
   }
 }
 
-export class ServerAuthDpopReplayKeyCalculationError extends Schema.TaggedError<ServerAuthDpopReplayKeyCalculationError>()(
-  "ServerAuthDpopReplayKeyCalculationError",
-  {
-    ...serverAuthInternalErrorContext,
-  },
-) {
-  override get message(): string {
-    return "Failed to calculate DPoP replay key.";
-  }
-}
-
 export class ServerAuthLinkedCloudAccountVerificationError extends Schema.TaggedError<ServerAuthLinkedCloudAccountVerificationError>()(
   "ServerAuthLinkedCloudAccountVerificationError",
   {
@@ -324,7 +313,6 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthOtherSessionsRevocationError,
   ServerAuthWebSocketTokenIssueError,
   ServerAuthDpopReplayStateRecordError,
-  ServerAuthDpopReplayKeyCalculationError,
   ServerAuthLinkedCloudAccountVerificationError,
   ServerAuthLinkedCloudAccountReadError,
   ServerAuthLinkedCloudAccountMissingError,
@@ -441,6 +429,12 @@ export class EnvironmentAuth extends Context.Service<
       AuthAccessTokenResult,
       ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
     >;
+    readonly validateBootstrapCredentialAvailable: (
+      credential: string,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
       readonly label?: string;
@@ -596,8 +590,7 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const dpopReplayStore = yield* DpopReplayStore.DpopReplayStore;
   const descriptor = yield* policy.getDescriptor();
 
   const authenticateToken = (
@@ -655,8 +648,12 @@ export const make = Effect.gen(function* () {
             expectedThumbprint: session.proofKeyThumbprint,
             expectedAccessToken: dpopToken,
           }).pipe(
-            Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.flatMap((proof) =>
+              claimDpopProofReplay({
+                thumbprint: proof.thumbprint,
+                jti: proof.jti,
+              }).pipe(Effect.provideService(DpopReplayStore.DpopReplayStore, dpopReplayStore)),
+            ),
             Effect.as(session),
           );
         }
@@ -729,6 +726,16 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("EnvironmentAuth.createBrowserSession"),
     );
+
+  const validateBootstrapCredentialAvailable: EnvironmentAuth["Service"]["validateBootstrapCredentialAvailable"] =
+    (credential, input) =>
+      bootstrapCredentials
+        .validateAvailable(credential, input)
+        .pipe(
+          Effect.mapError(toBootstrapExchangeError),
+          Effect.asVoid,
+          Effect.withSpan("EnvironmentAuth.validateBootstrapCredentialAvailable"),
+        );
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) =>
@@ -1008,6 +1015,7 @@ export const make = Effect.gen(function* () {
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,
     createBrowserSession,
+    validateBootstrapCredentialAvailable,
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,
@@ -1032,6 +1040,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
+  Layer.provideMerge(DpopReplayStore.layer),
 );
 
 const storageLayer = Layer.mergeAll(ServerSecretStore.layer, SqlitePersistenceLayer);
