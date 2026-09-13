@@ -5787,6 +5787,10 @@ export default function ChatView(props: ChatViewProps) {
   > => {
     if (!checkoutBranchMismatch || !gitStatusCwd) return AsyncResult.success(null);
     const status = await refreshVcsStatus({ environmentId, input: { cwd: gitStatusCwd } });
+    // Refresh includes remote PR status; its availability must not prevent a local turn.
+    if (status._tag === "Failure" && !isAtomCommandInterrupted(status)) {
+      return AsyncResult.success(checkoutBranchMismatch.currentBranch);
+    }
     return mapAtomCommandResult(status, (current) => {
       const mismatch = resolveCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
