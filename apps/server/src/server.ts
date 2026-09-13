@@ -396,6 +396,7 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
 );
 
 const ReviewLayerLive = ReviewService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );

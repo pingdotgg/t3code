@@ -238,6 +238,11 @@ export default defineConfig(() => {
       },
       ...(devProxyTarget
         ? {
+            // The backend owns CORS for `/api` (another T3 client pairing this
+            // server cross-origin, as app.t3.codes does). Vite's own CORS
+            // middleware would answer the preflight first and only admits
+            // localhost origins, so it is disabled and OPTIONS reaches the proxy.
+            cors: false,
             // One entry per shared prefix; the server's dev catch-all 404s the
             // same list, so the two sides cannot drift. `/ws` is the app's own
             // socket and `/api` carries the device hub's stream sockets —

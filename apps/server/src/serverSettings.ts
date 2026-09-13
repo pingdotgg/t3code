@@ -10,6 +10,8 @@
  *
  * @module ServerSettings
  */
+import * as NodePath from "@effect/platform-node/NodePath";
+
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
@@ -57,6 +59,7 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { expandHomePathWith } from "./pathExpansion.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -115,8 +118,64 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
   };
 };
 
+/** Whether `directory` is `ancestor` or lies below it. */
+export const isWithinDirectory = (directory: string, ancestor: string, path: Path.Path) => {
+  const relative = path.relative(ancestor, directory);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+};
+
+/** Whether `directory` resolves to a filesystem root for this path implementation. */
+export const isFilesystemRoot = (directory: string, path: Path.Path) => {
+  const resolved = path.resolve(directory);
+  return resolved === path.parse(resolved).root;
+};
+
+/**
+ * Why a worktree directory can't be used, or null when it can. The review
+ * guard authorizes everything under this directory, so the home directory and
+ * anything containing it (including the filesystem root) are refused: they
+ * would expose every repository on the machine to a review-scoped client.
+ * Symlinks are not followed here; the guard repeats the check on real paths.
+ */
+const worktreeBaseDirectoryIssue = (value: string, path: Path.Path): string | null => {
+  if (value === "") return null;
+  if (value.includes("\0") || !path.isAbsolute(expandHomePathWith(value, path))) {
+    return "Worktree directory must be an absolute path or start with ~/.";
+  }
+  const resolved = path.resolve(expandHomePathWith(value, path));
+  if (isFilesystemRoot(resolved, path)) {
+    return "Worktree directory cannot be a filesystem root.";
+  }
+  if (isWithinDirectory(path.resolve(expandHomePathWith("~", path)), resolved, path)) {
+    return "Worktree directory cannot be your home directory or a directory containing it.";
+  }
+  return null;
+};
+
+const worktreeBaseDirectorySchema = (path: Path.Path) =>
+  Schema.String.check(
+    Schema.makeFilter((value) => worktreeBaseDirectoryIssue(value, path) ?? true),
+  );
+
+const assertWorktreeBaseDirectory = (value: string, path: Path.Path) =>
+  Schema.decodeUnknownEffect(worktreeBaseDirectorySchema(path))(value).pipe(
+    Effect.asVoid,
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({
+          settingsPath: "<memory>",
+          operation: "normalize",
+          cause,
+        }),
+    ),
+  );
+
 const normalizeServerSettings = (
   settings: ServerSettings,
+  path: Path.Path,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
@@ -130,6 +189,7 @@ const normalizeServerSettings = (
           cause,
         }),
     ),
+    Effect.tap((settings) => assertWorktreeBaseDirectory(settings.worktreeBaseDirectory, path)),
   );
 
 function providerEnvironmentSecretName(input: {
@@ -223,18 +283,22 @@ export class ServerSettingsService extends Context.Service<
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
     const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
       overrides;
     const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
-    const initialSettings = yield* normalizeServerSettings({
-      ...merged,
-      ...(automaticGitFetchInterval !== undefined
-        ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
-        : {}),
-      ...(providerHealthRefreshInterval !== undefined
-        ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
-        : {}),
-    });
+    const initialSettings = yield* normalizeServerSettings(
+      {
+        ...merged,
+        ...(automaticGitFetchInterval !== undefined
+          ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+          : {}),
+        ...(providerHealthRefreshInterval !== undefined
+          ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
+          : {}),
+      },
+      path,
+    );
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
 
     return {
@@ -244,7 +308,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       updateSettings: (patch) =>
         Ref.get(currentSettingsRef).pipe(
           Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
-          Effect.flatMap(normalizeServerSettings),
+          Effect.flatMap((settings) => normalizeServerSettings(settings, path)),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
@@ -253,8 +317,10 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     } satisfies ServerSettingsService["Service"];
   });
 
-export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
-  Layer.effect(ServerSettingsService, makeTest(overrides));
+export const layerTest = (
+  overrides: DeepPartial<ServerSettings> = {},
+  pathLayer: Layer.Layer<Path.Path> = NodePath.layer,
+) => Layer.effect(ServerSettingsService, makeTest(overrides)).pipe(Layer.provide(pathLayer));
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
@@ -633,8 +699,20 @@ const make = Effect.gen(function* () {
             ),
           );
 
+    const restored = restoreUsedProviders(settings, persisted, providerHistory);
+    // A bad directory must not take every setting down with it. Fall back to
+    // the default worktrees directory, the way a malformed file falls back to
+    // defaults, and leave the strict check to writes where the user sees it.
+    const directoryIssue = worktreeBaseDirectoryIssue(restored.worktreeBaseDirectory, pathService);
+    if (directoryIssue !== null) {
+      yield* Effect.logWarning("ignoring worktreeBaseDirectory in settings.json, using default", {
+        path: settingsPath,
+        worktreeBaseDirectory: restored.worktreeBaseDirectory,
+        issue: directoryIssue,
+      });
+    }
     const loaded = foldProviderInstanceEnabledFlags(
-      restoreUsedProviders(settings, persisted, providerHistory),
+      directoryIssue === null ? restored : { ...restored, worktreeBaseDirectory: "" },
     );
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
@@ -967,11 +1045,10 @@ const make = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
+          const patched = applyServerSettingsPatch(current, patch);
+          yield* assertWorktreeBaseDirectory(patched.worktreeBaseDirectory, pathService);
+          const nextPersisted = yield* persistProviderEnvironmentSecrets(current, patched);
+          const next = yield* normalizeServerSettings(nextPersisted, pathService);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);

@@ -157,6 +157,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
   environmentIcon: Schema.optionalKey(Schema.Boolean),
+  /** Server supports a configurable base directory for new worktrees. */
+  worktreeBaseDirectory: Schema.optionalKey(Schema.Boolean),
   /** The desktop app supervising this server can be driven over RPC:
       server.updateServer runs its check -> download -> relaunch. Absent on
       desktop servers whose app predates the remote trigger, where clients
@@ -165,12 +167,23 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
+/** Where this server puts things when the matching directory setting is
+    empty, so clients can show the effective path instead of a blank field. */
+export const ExecutionEnvironmentDefaultDirectories = Schema.Struct({
+  repositories: Schema.String,
+  worktrees: Schema.String,
+});
+export type ExecutionEnvironmentDefaultDirectories =
+  typeof ExecutionEnvironmentDefaultDirectories.Type;
+
 export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
   capabilities: ExecutionEnvironmentCapabilities,
+  /** Absent on older servers; clients fall back to their own placeholders. */
+  defaultDirectories: Schema.optionalKey(ExecutionEnvironmentDefaultDirectories),
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 

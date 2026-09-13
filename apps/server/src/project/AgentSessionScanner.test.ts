@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -75,6 +76,7 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
+  readonly worktreeBaseDirectory?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
 
@@ -83,6 +85,7 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
     Layer.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({
+          worktreeBaseDirectory: input.worktreeBaseDirectory ?? "",
           providers: {
             claudeAgent: { homePath: input.claudeHomePath },
             codex: { homePath: input.codexHomePath },
@@ -997,6 +1000,187 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(result.candidates).toEqual([]);
       }),
     );
+
+    it.effect(
+      "excludes sandboxes under the custom worktrees setting without a Git worktree marker",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          const fileSystem = yield* FileSystem.FileSystem;
+
+          const worktreeBaseDirectory = yield* makeTempDir("custom-checkouts-");
+          const worktreeCwd = path.join(worktreeBaseDirectory, "t3code", "wt-2");
+          yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(worktreeCwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            configBaseDir,
+            worktreeBaseDirectory,
+          });
+
+          expect(result.candidates).toEqual([]);
+        }),
+    );
+
+    it.effect("continues when the configured worktrees realpath is denied", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const configuredWorktreesDir = yield* makeTempDir("t3code-configured-worktrees-");
+        const managedWorkspace = path.join(configuredWorktreesDir, "managed");
+        const regularWorkspace = yield* makeTempDir("t3code-workspace-");
+        yield* fileSystem.makeDirectory(managedWorkspace, { recursive: true });
+
+        const codexTranscript = (cwd: string, sessionId: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Import this session" },
+            }),
+          ].join("\n");
+        for (const [cwd, sessionId] of [
+          [managedWorkspace, "managed-session"],
+          [regularWorkspace, "regular-session"],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${sessionId}.jsonl`,
+            ),
+            contents: codexTranscript(cwd, sessionId),
+            mtimeMs: nowMs,
+          });
+        }
+
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          realPath: (target: string) =>
+            target === configuredWorktreesDir
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "realPath",
+                    pathOrDescriptor: target,
+                    description: "Test PermissionDenied realPath failure.",
+                  }),
+                )
+              : fileSystem.realPath(target),
+        });
+
+        const result = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const scan = yield* scanner.scan;
+          const managedRecent = yield* scanner.recentThreads(managedWorkspace).pipe(
+            Stream.runCollect,
+            Effect.map((outcomes) => Array.from(outcomes)),
+          );
+          const regularRecent = yield* scanner.recentThreads(regularWorkspace).pipe(
+            Stream.runCollect,
+            Effect.map((outcomes) => Array.from(outcomes)),
+          );
+          return { scan, managedRecent, regularRecent };
+        }).pipe(
+          Effect.provide(
+            makeScannerTestLayer({
+              claudeHomePath,
+              codexHomePath,
+              configBaseDir,
+              worktreeBaseDirectory: configuredWorktreesDir,
+            }),
+          ),
+          Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+        );
+
+        expect(result.scan.candidates.map((candidate) => candidate.path)).toEqual([
+          regularWorkspace,
+        ]);
+        expect(result.managedRecent).toEqual([]);
+        expect(result.regularRecent).toMatchObject([
+          {
+            _tag: "Importable",
+            thread: { providerSessionId: "regular-session" },
+          },
+        ]);
+      }),
+    );
+
+    // The setting itself refuses the filesystem root, so only symlinked and
+    // missing directories can reach the scanner.
+    for (const rootKind of ["symlink", "missing"] as const) {
+      it.effect.skipIf(rootKind === "symlink" && !symlinksSupported)(
+        `resolves a ${rootKind} worktree directory for scanning and importing`,
+        () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const fs = yield* FileSystem.FileSystem;
+            const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+            const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+            const parent = yield* makeTempDir("t3code-custom-root-");
+            const workspace = path.join(parent, "repo", "branch", "subdirectory");
+            yield* fs.makeDirectory(workspace, { recursive: true });
+            const worktreeBaseDirectory = path.join(
+              yield* makeTempDir("t3code-root-setting-"),
+              "checkouts",
+            );
+            if (rootKind === "symlink") yield* fs.symlink(parent, worktreeBaseDirectory);
+            const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+            yield* TestClock.setTime(nowMs);
+            yield* writeTranscript({
+              filePath: path.join(
+                codexHomePath,
+                "sessions",
+                "2026",
+                "08",
+                "24",
+                "rollout-root.jsonl",
+              ),
+              contents: [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: "root-session", cwd: workspace },
+                }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: "Inspect this subdirectory" },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs,
+            });
+            const input = { claudeHomePath, codexHomePath, worktreeBaseDirectory };
+            const scan = yield* runScan(input);
+            const outcomes = yield* runRecentThreadOutcomes({ ...input, workspaceRoot: workspace });
+            expect(scan.candidates.map((candidate) => candidate.path)).toEqual(
+              rootKind === "missing" ? [workspace] : [],
+            );
+            expect(outcomes.map((outcome) => outcome._tag)).toEqual(
+              rootKind === "missing" ? ["Importable"] : [],
+            );
+          }),
+      );
+    }
 
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
       Effect.gen(function* () {

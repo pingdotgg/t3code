@@ -67,6 +67,10 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconPicker } from "./EnvironmentIconPicker";
+import {
+  EnvironmentDirectoryDisclosure,
+  EnvironmentDirectoryRows,
+} from "./EnvironmentDirectorySettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
@@ -1637,6 +1641,7 @@ function SavedBackendListRow({
           )}
         </div>
       </div>
+      <EnvironmentDirectoryDisclosure environment={environment} />
     </div>
   );
 }
@@ -3234,6 +3239,15 @@ export function ConnectionsSettings() {
     />
   );
 
+  const directoriesSection = primaryEnvironment ? (
+    <SettingsSection {...searchableSetting("environment-directories")}>
+      <EnvironmentDirectoryRows
+        key={primaryEnvironment.environmentId}
+        environment={primaryEnvironment}
+      />
+    </SettingsSection>
+  ) : null;
+
   return (
     <SettingsPageContainer>
       {canManageLocalBackend ? (
@@ -3319,6 +3333,7 @@ export function ConnectionsSettings() {
               </>
             )}
           </SettingsSection>
+          {directoriesSection}
 
           {isLocalBackendRemotelyReachable ? (
             <SettingsSection
@@ -3617,13 +3632,16 @@ export function ConnectionsSettings() {
           </Dialog>
         </>
       ) : (
-        <SettingsSection {...searchableSetting("connections-environment")}>
-          <SettingsRow
-            title="Administrative access"
-            description="Pairing links and client-session management require the access:write scope for this backend."
-          />
-          <CloudLinkRow canManageRelay={canManageRelay} />
-        </SettingsSection>
+        <>
+          <SettingsSection {...searchableSetting("connections-environment")}>
+            <SettingsRow
+              title="Administrative access"
+              description="Pairing links and client-session management require the access:write scope for this backend."
+            />
+            <CloudLinkRow canManageRelay={canManageRelay} />
+          </SettingsSection>
+          {directoriesSection}
+        </>
       )}
 
       <SettingsSection
