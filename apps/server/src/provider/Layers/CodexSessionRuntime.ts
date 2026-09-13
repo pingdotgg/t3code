@@ -2665,7 +2665,8 @@ export const makeCodexSessionRuntime = (
           if (!backgroundTasks.subscribe(processId))
             return yield* new MonitorSession.MonitorProcessMissingError({ processId });
         }),
-        unsubscribe: (processId) => Effect.sync(() => backgroundTasks.unsubscribe(processId)),
+        unsubscribe: (processId) =>
+          turnLock.withPermit(Effect.sync(() => backgroundTasks.unsubscribe(processId))),
       });
     }
 

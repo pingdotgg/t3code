@@ -77,8 +77,9 @@ const setup = Effect.fn("setup")(function* (
   );
   const subscribe = (yield* MonitorSession.MonitorSessions).invoke(cwd, "subscribe", "42");
   const sessions = yield* MonitorSession.MonitorSessions;
+  const unsubscribe = sessions.invoke(cwd, "unsubscribe", "42");
   const startMonitor = (command: ReadonlyArray<string>) => sessions.start(cwd, command);
-  return { runtime, until, inspect, subscribe, startMonitor };
+  return { runtime, until, inspect, subscribe, unsubscribe, startMonitor };
 });
 
 it.effect(
@@ -359,6 +360,36 @@ for (const scenario of ["reject-resume", "timeout-resume"]) {
     ),
   );
 }
+
+it.effect("waits for an in-flight wake before completing unsubscribe", () =>
+  Effect.gen(function* () {
+    const { runtime, until, inspect, subscribe, unsubscribe } = yield* setup();
+    yield* runtime.sendTurn({ input: "timeout-wake" });
+    yield* until("turn/completed");
+    yield* subscribe;
+    yield* runtime.compactThread;
+    yield* until("thread/name/updated");
+    yield* until("thread/name/updated");
+    let unsubscribed = false;
+    const fiber = yield* unsubscribe.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          unsubscribed = true;
+        }),
+      ),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    assert.isFalse(unsubscribed);
+    yield* TestClock.adjust("10 seconds");
+    yield* Fiber.join(fiber);
+    assert.isTrue(unsubscribed);
+    yield* runtime.sendTurn({ input: "resume" });
+    yield* until("turn/completed");
+    yield* runtime.compactThread;
+    yield* until("thread/name/updated");
+    assert.equal((yield* inspect).wakes.length, 0);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
+);
 
 it.effect("preserves timed-out wake evidence without retrying an ambiguous delivery", () =>
   Effect.gen(function* () {
