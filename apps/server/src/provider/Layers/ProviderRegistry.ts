@@ -266,7 +266,10 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 // after `ProviderInstanceRegistry` rebuilds an instance (e.g. because
 // its settings changed), a fresh source rides the new PubSub instead
 // of a closed one.
-const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
+type LiveProviderSnapshotSource = ProviderSnapshotSource & { readonly instance: ProviderInstance };
+
+const buildSnapshotSource = (instance: ProviderInstance): LiveProviderSnapshotSource => ({
+  instance,
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
   getSnapshot: instance.snapshot.getSnapshot,
@@ -375,7 +378,7 @@ export const ProviderRegistryLive = Layer.effect(
     // interleave two passes clobbering each other's fiber bookkeeping.
     const syncSemaphore = yield* Semaphore.make(1);
 
-    const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
+    const getLiveSources: Effect.Effect<ReadonlyArray<LiveProviderSnapshotSource>> = Ref.get(
       liveSubsRef,
     ).pipe(Effect.map((map) => Array.from(map.values(), buildSnapshotSource)));
 
@@ -522,11 +525,12 @@ export const ProviderRegistryLive = Layer.effect(
     );
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
-      providerSource: ProviderSnapshotSource,
+      providerSource: LiveProviderSnapshotSource,
     ) {
       const nextProvider = yield* providerSource.refresh;
       const correlated = yield* correlateSnapshotWithSource(providerSource, nextProvider);
-      const instance = (yield* Ref.get(liveSubsRef)).get(providerSource.instanceId);
+      const instance = yield* instanceRegistry.getInstance(providerSource.instanceId);
+      if (instance !== providerSource.instance) return yield* Ref.get(providersRef);
       // Explicit refreshes invalidate workspace catalogs. Background snapshots
       // still retain them, and active clients request their cwd again on demand.
       const cached = (yield* Ref.get(providersRef)).find(

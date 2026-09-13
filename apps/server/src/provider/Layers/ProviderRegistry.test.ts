@@ -1446,6 +1446,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const returnPendingSnapshot = yield* Ref.make(true);
           const probeStarted = yield* Deferred.make<void>();
           const releaseProbe = yield* Deferred.make<void>();
+          const machineChanges = yield* PubSub.unbounded<ServerProvider>();
+          const holdRefresh = yield* Ref.make(false);
+          const refreshStarted = yield* Deferred.make<void>();
+          const releaseRefresh = yield* Deferred.make<void>();
           const makeInstance = (
             provider: ServerProvider,
             snapshotForCwd: NonNullable<ProviderInstance["snapshotForCwd"]>,
@@ -1467,8 +1471,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   }),
                 ),
               getSnapshot: Effect.succeed(provider),
-              refresh: Effect.succeed(provider),
-              streamChanges: Stream.empty,
+              refresh: Effect.gen(function* () {
+                if (yield* Ref.get(holdRefresh)) {
+                  yield* Deferred.succeed(refreshStarted, undefined);
+                  yield* Deferred.await(releaseRefresh);
+                }
+                return provider;
+              }),
+              streamChanges: Stream.fromPubSub(machineChanges),
               applyUsageLimits: () => Effect.void,
             },
             snapshotForCwd,
@@ -1562,22 +1572,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
             yield* registry.refresh();
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, []);
+            const lateProvider = { ...machineProvider, checkedAt: "2026-06-10T00:01:30.000Z" };
+            const lateUpdate = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) => providers[0]?.checkedAt === lateProvider.checkedAt),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* PubSub.publish(machineChanges, lateProvider);
+            yield* Fiber.join(lateUpdate);
+            assert.deepStrictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, []);
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
 
+            yield* Ref.set(holdRefresh, true);
+            const staleRefresh = yield* registry.refreshInstance(instanceId).pipe(Effect.forkChild);
+            yield* Deferred.await(refreshStarted);
+            const replacementUpdate = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) => providers[0]?.checkedAt === rebuiltProvider.checkedAt),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);
-            let rebuilt = yield* registry.getProviders;
-            for (
-              let attempt = 0;
-              attempt < 50 && rebuilt[0]?.checkedAt !== rebuiltProvider.checkedAt;
-              attempt += 1
-            ) {
-              yield* Effect.yieldNow;
-              rebuilt = yield* registry.getProviders;
-            }
-            assert.strictEqual(rebuilt[0]?.checkedAt, rebuiltProvider.checkedAt);
-            assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
+            yield* Fiber.join(replacementUpdate);
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+            const beforeStaleResult = yield* registry.getProviders;
+            yield* Deferred.succeed(releaseRefresh, undefined);
+            yield* Fiber.join(staleRefresh);
+            assert.deepStrictEqual(yield* registry.getProviders, beforeStaleResult);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
