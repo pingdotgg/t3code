@@ -354,4 +354,46 @@ describe("environment grouping", () => {
 
     expect(groups.map((group) => group.displayName)).toEqual(["separate", "shared-repo"]);
   });
+
+  it("lists every physical project instance in the filter even when grouped by repository", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+
+    const groups = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (id) =>
+        id === primaryEnvironmentId ? "Local" : id === remoteEnvironmentId ? "Remote" : null,
+    });
+
+    // The grouped view collapses to one entry.
+    expect(groups).toHaveLength(1);
+
+    // But a flat filter built from the same projects must show both instances
+    // so the user can scope to a specific machine.
+    const titleCounts = new Map<string, number>();
+    for (const project of [primary, remote]) {
+      titleCounts.set(project.title, (titleCounts.get(project.title) ?? 0) + 1);
+    }
+    const filterEntries = [primary, remote].map((project) => ({
+      scopeKey: `${project.environmentId}:${project.id}`,
+      displayName:
+        (titleCounts.get(project.title) ?? 0) > 1
+          ? `${project.title} · ${project.environmentId === primaryEnvironmentId ? "Local" : "Remote"}`
+          : project.title,
+    }));
+
+    expect(filterEntries).toHaveLength(2);
+    expect(filterEntries.map((e) => e.scopeKey)).toEqual([
+      `${primaryEnvironmentId}:${primary.id}`,
+      `${remoteEnvironmentId}:${remote.id}`,
+    ]);
+    expect(filterEntries[0]?.displayName).toBe("shared-repo · Local");
+    expect(filterEntries[1]?.displayName).toBe("shared-repo · Remote");
+  });
 });

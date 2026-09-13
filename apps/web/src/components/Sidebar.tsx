@@ -1868,6 +1868,31 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  // The project filter dropdown must show every physical project instance so a
+  // repository cloned on two machines appears as two selectable entries rather
+  // than one collapsed group. Grouped `projectGroups` stay for thread list
+  // rendering; this flat list is only for the scope picker.
+  const projectFilterEntries = useMemo(() => {
+    const titleCounts = new Map<string, number>();
+    for (const project of projects) {
+      titleCounts.set(project.title, (titleCounts.get(project.title) ?? 0) + 1);
+    }
+    return projects.map((project) => ({
+      scopeKey: `${project.environmentId}:${project.id}`,
+      environmentId: project.environmentId,
+      workspaceRoot: project.workspaceRoot,
+      faviconPath: project.faviconPath,
+      displayName:
+        (titleCounts.get(project.title) ?? 0) > 1
+          ? `${project.title} · ${environmentLabelById.get(project.environmentId) ?? project.environmentId}`
+          : project.title,
+      projectGroup: projectGroups.find((group) =>
+        group.memberProjectRefs.some(
+          (ref) => ref.environmentId === project.environmentId && ref.projectId === project.id,
+        ),
+      ) ?? null,
+    }));
+  }, [environmentLabelById, projectGroups, projects]);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
@@ -1925,29 +1950,29 @@ export default function Sidebar() {
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const scopedProjectGroup = useMemo(
+  // The filter now uses physical scope keys (environmentId:projectId) so each
+  // multi-machine instance is selectable on its own. The grouped entry is still
+  // resolved for settings navigation and thread filtering.
+  const scopedFilterEntry = useMemo(
     () =>
       projectScopeKey === null
         ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+        : (projectFilterEntries.find((entry) => entry.scopeKey === projectScopeKey) ?? null),
+    [projectFilterEntries, projectScopeKey],
   );
+  const scopedProjectGroup = scopedFilterEntry?.projectGroup ?? null;
   const scopedProjectKeys = useMemo(
     () =>
-      scopedProjectGroup === null
+      projectScopeKey === null
         ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
+        : new Set([projectScopeKey]),
+    [projectScopeKey],
   );
   useEffect(() => {
-    if (projectScopeKey !== null && scopedProjectGroup === null) {
+    if (projectScopeKey !== null && scopedFilterEntry === null) {
       setProjectScopeKey(null);
     }
-  }, [projectScopeKey, scopedProjectGroup]);
+  }, [projectScopeKey, scopedFilterEntry]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -3478,18 +3503,18 @@ export default function Sidebar() {
                       />
                     }
                   >
-                    {scopedProjectGroup ? (
+                    {scopedFilterEntry ? (
                       <ProjectFavicon
-                        environmentId={scopedProjectGroup.environmentId}
-                        cwd={scopedProjectGroup.workspaceRoot}
-                        faviconPath={scopedProjectGroup.faviconPath}
+                        environmentId={scopedFilterEntry.environmentId}
+                        cwd={scopedFilterEntry.workspaceRoot}
+                        faviconPath={scopedFilterEntry.faviconPath}
                         className="size-4 shrink-0"
                       />
                     ) : (
                       <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
-                      {scopedProjectGroup?.displayName ?? "All projects"}
+                      {scopedFilterEntry?.displayName ?? "All projects"}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
@@ -3508,38 +3533,37 @@ export default function Sidebar() {
                         <FolderIcon className="size-4 shrink-0" />
                         <span className="min-w-0 truncate text-sm">All projects</span>
                       </MenuRadioItem>
-                      {projectGroups.map((project) => {
-                        const scopeKey = project.projectKey;
-                        return (
+                      {projectFilterEntries.map((entry) => (
                           <MenuRadioItem
-                            key={scopeKey}
-                            value={scopeKey}
+                            key={entry.scopeKey}
+                            value={entry.scopeKey}
                             closeOnClick
                             className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                           >
                             <ProjectFavicon
-                              environmentId={project.environmentId}
-                              cwd={project.workspaceRoot}
-                              faviconPath={project.faviconPath}
+                              environmentId={entry.environmentId}
+                              cwd={entry.workspaceRoot}
+                              faviconPath={entry.faviconPath}
                               className="size-4 shrink-0"
                             />
-                            <span className="min-w-0 truncate text-sm">{project.displayName}</span>
-                            <Button
-                              size="icon-xs"
-                              variant="ghost-muted"
-                              aria-label={`Project settings for ${project.displayName}`}
-                              title={`Project settings for ${project.displayName}`}
-                              className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                void handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SettingsIcon className="size-3.5" />
-                            </Button>
+                            <span className="min-w-0 truncate text-sm">{entry.displayName}</span>
+                            {entry.projectGroup === null ? null : (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                aria-label={`Project settings for ${entry.displayName}`}
+                                title={`Project settings for ${entry.displayName}`}
+                                className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  void handleProjectSettings(event, entry.projectGroup);
+                                }}
+                              >
+                                <SettingsIcon className="size-3.5" />
+                              </Button>
+                            )}
                           </MenuRadioItem>
-                        );
-                      })}
+                        ))}
                     </MenuRadioGroup>
                   </MenuPopup>
                 </Menu>
