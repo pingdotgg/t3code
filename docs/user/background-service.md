@@ -59,6 +59,12 @@ yourself. Pass an exact version (`t3 update 0.0.41-preview.20260912.1595`) to
 pin one, `--channel` to follow a different release train (moving onto preview from stable or nightly asks for confirmation), or
 `--allow-downgrade` to move backwards.
 
+`t3 uninstall` reverses the install script: it shows what it found (the
+background service, the `t3` launcher, every downloaded version under
+`~/.t3/runtime`), asks once, and removes them. Your projects, threads, and
+settings under `~/.t3/userdata` are kept; delete that directory yourself if
+you want them gone too. Pass `--yes` from a script.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at
