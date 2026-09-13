@@ -7,7 +7,12 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  UsageDay,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,12 +21,15 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
+
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
   return `${JSON.stringify({
@@ -71,6 +79,7 @@ const serviceLayers = (input: {
   readonly onRatesFetch?: () => void;
   /** Defaults to an unparsable document so every scan retries the fetch. */
   readonly ratesDocument?: unknown;
+  readonly environment?: NodeJS.ProcessEnv;
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -89,7 +98,10 @@ const serviceLayers = (input: {
       ),
     ),
     Layer.provideMerge(
-      Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+      Layer.succeed(HostProcessEnvironment, {
+        GROK_HOME: NodePath.join(input.home, "grok"),
+        ...input.environment,
+      }),
     ),
   );
 
@@ -98,6 +110,228 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const codexHome = NodePath.join(home, "codex-account");
+      const alias = NodePath.join(home, "codex-alias");
+      const claudeHome = NodePath.join(home, "claude-account");
+      const grokHome = NodePath.join(home, "grok-account");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(NodePath.join(claudeHome, "projects"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(claudeHome, "projects", "session.jsonl"),
+          claudeLine(2, 7),
+        );
+        await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
+        await NodeFSP.symlink(codexHome, alias, "junction");
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "codex-account-session" } },
+            { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 10, output_tokens: 11 } },
+              },
+            },
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+        await NodeFSP.mkdir(NodePath.join(grokHome, "sessions", "session"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(grokHome, "sessions", "session", "updates.jsonl"),
+          encodeUnknownJsonString({
+            timestamp: Date.parse("2026-08-01T10:00:00Z") / 1000,
+            method: "_x.ai/session/update",
+            params: {
+              sessionId: "grok-account-session",
+              update: {
+                sessionUpdate: "turn_completed",
+                prompt_id: "prompt-1",
+                usage: { inputTokens: 10, outputTokens: 13 },
+              },
+            },
+          }) + "\n",
+        );
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-accounts-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                [ProviderInstanceId.make("claude-work")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  enabled: false,
+                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("codex-work")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("codex-alias")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: alias },
+                },
+                [ProviderInstanceId.make("codex-shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: codexHome, shadowHomePath: NodePath.join(home, "shadow") },
+                  environment: [
+                    { name: "CODEX_HOME", value: NodePath.join(home, "ignored"), sensitive: false },
+                  ],
+                },
+                [ProviderInstanceId.make("grok-work")]: {
+                  driver: ProviderDriverKind.make("grok"),
+                  environment: [{ name: "GROK_HOME", value: grokHome, sensitive: false }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(summary), 36);
+      const sources = summary.sources.filter((source) => source.status === "ok");
+      assert.strictEqual(sources.length, 4);
+      assert.strictEqual(
+        sources.reduce((sum, source) => sum + source.scannedFiles, 0),
+        4,
+      );
+      assert.strictEqual(
+        sources.filter((source) => source.fingerprint.provider === "codex").length,
+        1,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "uses explicit account settings before environment and legacy homes, then refreshes them",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const configured = NodePath.join(home, "configured");
+        const environmentHome = NodePath.join(home, "environment");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 100));
+          for (const [index, root] of [configured, environmentHome].entries()) {
+            await NodeFSP.mkdir(NodePath.join(root, "projects"), { recursive: true });
+            await NodeFSP.writeFile(
+              NodePath.join(root, "projects", "session.jsonl"),
+              claudeLine(index + 2, index + 7),
+            );
+          }
+          await NodeFSP.mkdir(NodePath.join(configured, ".claude", "projects"), {
+            recursive: true,
+          });
+          await NodeFSP.writeFile(
+            NodePath.join(configured, ".claude", "projects", "wrong.jsonl"),
+            claudeLine(4, 1000),
+          );
+        });
+        yield* Effect.gen(function* () {
+          const settingsService = yield* ServerSettings.ServerSettingsService;
+          const service = yield* UsageService.make;
+          const first = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(first), 7);
+          assert.include(
+            first.sources.map((source) => source.fingerprint.resolvedHomePath),
+            NodePath.join(configured, "projects"),
+          );
+          yield* settingsService.updateSettings({
+            providerInstances: {
+              [ProviderInstanceId.make("claudeAgent")]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                config: { homePath: "" },
+                environment: [
+                  { name: "CLAUDE_CONFIG_DIR", value: environmentHome, sensitive: false },
+                ],
+              },
+            },
+          });
+          const second = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(second), 8);
+          assert.include(
+            second.sources.map((source) => source.fingerprint.resolvedHomePath),
+            NodePath.join(environmentHome, "projects"),
+          );
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-home-refresh-test",
+              home,
+              environment: { CLAUDE_CONFIG_DIR: NodePath.join(home, "host-ignored") },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  [ProviderInstanceId.make("claudeAgent")]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    config: { homePath: configured },
+                    environment: [
+                      { name: "CLAUDE_CONFIG_DIR", value: environmentHome, sensitive: false },
+                    ],
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "uses inherited home variables when explicit default accounts have no home settings",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-inherited-homes-test",
+              home,
+              environment: {
+                CODEX_HOME: NodePath.join(home, "inherited-codex"),
+                CLAUDE_CONFIG_DIR: NodePath.join(home, "claude"),
+              },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {},
+                  },
+                  [ProviderInstanceId.make("claudeAgent")]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    config: {},
+                  },
+                },
+              },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "codex")?.fingerprint
+            .resolvedHomePath,
+          NodePath.join(home, "inherited-codex", "sessions"),
+        );
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "grok")?.fingerprint
+            .resolvedHomePath,
+          NodePath.join(home, "grok", "sessions"),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -177,8 +411,7 @@ describe("UsageService", () => {
             exists: (path) =>
               fileSystem.exists(path).pipe(
                 Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", ".claude", "projects"))
-                    return Effect.void;
+                  if (path !== NodePath.join(home, "claude", "projects")) return Effect.void;
                   homeProbes += 1;
                   return Deferred.succeed(
                     homeProbes === 1 ? firstScanStarted : secondScanStarted,
