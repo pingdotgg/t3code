@@ -118,6 +118,7 @@ import {
   OrchestrationThreadSettleBlockedError,
 } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadBootstrapLive } from "./orchestration/Layers/ThreadBootstrap.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
@@ -747,6 +748,7 @@ const buildAppUnderTest = (options?: {
         routerConfig: HTTP_ROUTER_CONFIG,
       },
     ).pipe(
+      Layer.provide(ThreadBootstrapLive),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Keybindings.Keybindings)({
@@ -899,8 +901,7 @@ const buildAppUnderTest = (options?: {
             }),
         }),
       ),
-      Layer.provide(gitManagerLayer),
-      Layer.provide(gitVcsDriverLayer),
+      Layer.provide(Layer.mergeAll(gitManagerLayer, gitVcsDriverLayer)),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(reviewLayer),
       Layer.provide(vcsProvisioningLayer),
