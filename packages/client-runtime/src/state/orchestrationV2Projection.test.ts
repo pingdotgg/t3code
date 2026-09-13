@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -142,6 +144,86 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+  });
+
+  it("keeps recorded artifacts on re-publish and replaces them when a capture is recorded", () => {
+    const fence = (path: string) => `\`\`\`t3-artifact\n${path}\n\`\`\``;
+    const messageId = MessageId.make("message-artifacts");
+    const artifacts = [{ sourceOrdinal: 0, sourcePath: "chart.html", attachmentId: "copy" }];
+    const message = {
+      createdBy: "agent",
+      creationSource: "provider",
+      id: messageId,
+      threadId,
+      runId,
+      nodeId: null,
+      role: "assistant",
+      text: fence("chart.html"),
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies OrchestrationV2ConversationMessage;
+    const item = {
+      id: TurnItemId.make("item-artifacts"),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "assistant_message",
+      messageId,
+      text: message.text,
+      streaming: false,
+    } satisfies OrchestrationV2TurnItem;
+    const projection = {
+      ...emptyProjection,
+      messages: [{ ...message, artifacts }],
+      turnItems: [{ ...item, artifacts }],
+    };
+    const text = [fence("intro.html"), fence("chart.html")].join("\n");
+    const republish = (type: "message.updated" | "turn-item.updated", payload: object) =>
+      ({
+        id: `event-${type}`,
+        type,
+        threadId,
+        occurredAt: now,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(
+      applyOrchestrationV2ProjectionEvent(
+        projection,
+        republish("message.updated", { ...message, text }),
+      )!,
+      republish("turn-item.updated", { ...item, text }),
+    );
+
+    // Stored as captured: clients match ordinal and path against the fence when rendering.
+    expect(next?.messages[0]?.artifacts).toEqual(artifacts);
+    expect(next?.turnItems[0]).toMatchObject({ text, artifacts });
+
+    const recorded = [
+      { sourceOrdinal: 0, sourcePath: "intro.html", attachmentId: "intro" },
+      { sourceOrdinal: 1, sourcePath: "chart.html", attachmentId: "chart" },
+    ];
+    const replaced = applyOrchestrationV2ProjectionEvent(next!, {
+      id: EventId.make("event-recorded"),
+      type: "message.artifacts-recorded",
+      threadId,
+      occurredAt: now,
+      payload: { messageId, artifacts: recorded },
+    });
+    expect(replaced?.messages[0]?.artifacts).toEqual(recorded);
+    expect(replaced?.turnItems[0]).toMatchObject({ artifacts: recorded });
   });
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {

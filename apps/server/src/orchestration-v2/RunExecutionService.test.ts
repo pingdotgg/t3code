@@ -16,6 +16,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -2865,6 +2866,130 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+const artifactProjectId = ProjectId.make("project:run-artifacts");
+const artifactReply = (ids: BackgroundScenarioIds, text: string): ProviderAdapterV2Event => {
+  const at = DateTime.makeUnsafe("2026-09-10T12:00:00.000Z");
+  return {
+    type: "message.updated",
+    driver,
+    message: {
+      createdBy: "agent",
+      creationSource: "provider",
+      id: MessageId.make(`message:reply:${ids.runId}`),
+      threadId: ids.threadId,
+      runId: ids.runId,
+      nodeId: null,
+      role: "assistant",
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: at,
+      updatedAt: at,
+    },
+  };
+};
+
+for (const status of ["completed", "interrupted", "cancelled", "failed"] as const) {
+  it.effect(`queues one artifact capture when a ${status} run ends with artifacts on`, () =>
+    Effect.gen(function* () {
+      const key = `artifacts:${status}`;
+      const { runId } = backgroundScenarioIds(key);
+      const { queued } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        settings: { enableMessageArtifacts: true },
+        events: (ids) =>
+          Stream.make(
+            artifactReply(ids, "```t3-artifact\nchart.html\n```"),
+            rootTerminalEvent(ids, status),
+          ),
+      });
+      assert.deepEqual(queued, [
+        {
+          id: `effect:message-artifact.capture:${runId}`,
+          request: { type: "message-artifact.capture", runId },
+        },
+      ]);
+    }),
+  );
+}
+
+it.effect("queues the capture from the attempt that finalizes a steered run", () =>
+  Effect.gen(function* () {
+    const key = "artifacts:steered";
+    const settings = { enableMessageArtifacts: true };
+    // The superseded attempt wrote the fence; the capture reads every finished reply of the run.
+    const superseded = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(false),
+      settings,
+      events: (ids) =>
+        Stream.make(
+          artifactReply(ids, "```t3-artifact\nchart.html\n```"),
+          rootTerminalEvent(ids, "interrupted"),
+        ),
+    });
+    const final = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      settings,
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+    });
+    const { runId } = backgroundScenarioIds(key);
+    assert.deepEqual(superseded.queued, []);
+    assert.deepEqual(
+      final.queued.map(({ id }) => id),
+      [`effect:message-artifact.capture:${runId}`],
+    );
+  }),
+);
+
+it.effect("queues artifact captures only for runs of enabled projects", () =>
+  Effect.gen(function* () {
+    const fence = "```t3-artifact\nchart.html\n```";
+    const cases = [
+      { name: "disabled", text: fence, settings: { enableMessageArtifacts: false } },
+      {
+        name: "project-off",
+        text: fence,
+        settings: {
+          enableMessageArtifacts: true,
+          projectSettingsOverrides: { [artifactProjectId]: { enableMessageArtifacts: false } },
+        },
+      },
+      {
+        name: "project-on",
+        text: fence,
+        settings: {
+          enableMessageArtifacts: false,
+          projectSettingsOverrides: { [artifactProjectId]: { enableMessageArtifacts: true } },
+        },
+      },
+    ];
+    const results: Record<string, { queued: number; instructed: boolean | undefined }> = {};
+    for (const scenario of cases) {
+      let instructed: boolean | undefined;
+      const { queued } = yield* captureRootRunTermination({
+        key: `artifacts:${scenario.name}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        settings: scenario.settings,
+        startTurn: (turnInput) =>
+          Effect.sync(() => {
+            instructed = turnInput.messageArtifacts;
+          }),
+        events: (ids) =>
+          Stream.make(artifactReply(ids, scenario.text), rootTerminalEvent(ids, "completed")),
+      });
+      results[scenario.name] = { queued: queued.length, instructed };
+    }
+    assert.deepEqual(results, {
+      disabled: { queued: 0, instructed: false },
+      "project-off": { queued: 0, instructed: false },
+      "project-on": { queued: 1, instructed: true },
+    });
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
@@ -2875,6 +3000,7 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly settings?: Parameters<typeof ServerSettingsService.layerTest>[0];
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -2890,6 +3016,9 @@ function captureRootRunTermination(input: {
       ReadonlyArray<{ readonly type: string; readonly parentItemId: string | null }>
     >([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const queued = yield* Ref.make<
+      ReadonlyArray<{ readonly id: string; readonly request: unknown }>
+    >([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: {
       readonly type: string;
@@ -2915,6 +3044,12 @@ function captureRootRunTermination(input: {
               }),
             writeWithEffects: (payload) =>
               Effect.gen(function* () {
+                yield* Ref.update(queued, (current) => [
+                  ...current,
+                  ...payload.effects.flatMap(({ id, request }) =>
+                    request.type === "message-artifact.capture" ? [{ id, request }] : [],
+                  ),
+                ]);
                 for (const event of payload.events) {
                   if (event.type === "turn-item.updated") {
                     yield* captureTurnItem(event.payload);
@@ -2934,7 +3069,7 @@ function captureRootRunTermination(input: {
           Layer.mock(ProviderEventIngestorV2)({
             ingestNormalized: () => Effect.succeed([]),
           }),
-          ServerSettingsService.layerTest(),
+          ServerSettingsService.layerTest(input.settings),
           Layer.succeed(RunFinalizationObserver, {
             refresh: () => Effect.void,
             refreshAfterTurn: Ref.update(observed, (current) => [
@@ -2950,7 +3085,7 @@ function captureRootRunTermination(input: {
       const runExecution = yield* RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${input.key}`),
-        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+        appThread: { id: ids.threadId, projectId: artifactProjectId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${input.key}`),
         session: {
           events: Stream.empty,
@@ -3037,7 +3172,11 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return {
+      written: yield* Ref.get(writtenItems),
+      observed: yield* Ref.get(observed),
+      queued: yield* Ref.get(queued),
+    };
   });
 }
 

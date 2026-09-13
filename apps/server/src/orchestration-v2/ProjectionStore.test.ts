@@ -298,6 +298,139 @@ it.effect("memory recovery selection includes unfinished items from missing runs
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
 
+for (const [storage, storeLayer] of [
+  ["sql", TestLayer],
+  ["memory", projectionStoreMemoryLayer],
+] as const) {
+  it.effect(`${storage} projection keeps recorded artifacts when a reply is re-published`, () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:kept-artifacts-${storage}`);
+      const messageId = MessageId.make(`message:kept-artifacts-${storage}`);
+      const fence = (path: string) => `\`\`\`t3-artifact\n${path}\n\`\`\``;
+      const publish = (key: string, text: string) =>
+        Effect.gen(function* () {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:kept-artifacts:${key}:message`),
+            type: "message.updated",
+            threadId,
+            driver,
+            occurredAt: now,
+            payload: {
+              createdBy: "agent",
+              creationSource: "provider",
+              id: messageId,
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "assistant",
+              text,
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* projectionStore.apply({
+            id: EventId.make(`event:kept-artifacts:${key}:item`),
+            type: "turn-item.updated",
+            threadId,
+            driver,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`turn-item:kept-artifacts-${storage}`),
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId,
+              text,
+              streaming: false,
+            },
+          });
+        });
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:kept-artifacts:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:kept-artifacts"),
+          title: "Kept artifacts",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* publish("first", fence("chart.html"));
+      yield* projectionStore.apply({
+        id: EventId.make("event:kept-artifacts:recorded"),
+        type: "message.artifacts-recorded",
+        threadId,
+        occurredAt: now,
+        payload: {
+          messageId,
+          artifacts: [{ sourceOrdinal: 0, sourcePath: "chart.html", attachmentId: "copy" }],
+        },
+      });
+      yield* publish("again", [fence("intro.html"), fence("chart.html")].join("\n"));
+
+      const artifactsOf = Effect.gen(function* () {
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const item = projection.turnItems[0];
+        return {
+          message: projection.messages[0]?.artifacts,
+          item: item?.type === "assistant_message" ? item.artifacts : undefined,
+        };
+      });
+      // Kept as captured, not rebound to the new text.
+      const kept = [{ sourceOrdinal: 0, sourcePath: "chart.html", attachmentId: "copy" }];
+      assert.deepEqual(yield* artifactsOf, { message: kept, item: kept });
+
+      const replaced = [
+        { sourceOrdinal: 0, sourcePath: "intro.html", attachmentId: "intro" },
+        { sourceOrdinal: 1, sourcePath: "chart.html", attachmentId: "copy" },
+      ];
+      yield* projectionStore.apply({
+        id: EventId.make("event:kept-artifacts:recorded-again"),
+        type: "message.artifacts-recorded",
+        threadId,
+        occurredAt: now,
+        payload: { messageId, artifacts: replaced },
+      });
+      assert.deepEqual(yield* artifactsOf, { message: replaced, item: replaced });
+    }).pipe(Effect.provide(storeLayer)),
+  );
+}
+
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
     Effect.gen(function* () {

@@ -158,6 +158,7 @@ import {
   isContextCompactionActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
+  type ThreadFeedMessage,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
@@ -201,6 +202,8 @@ import {
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
+import { MessageArtifactPreview } from "./MessageArtifactPreview";
+import { splitMessageArtifactMarkdown } from "@t3tools/client-runtime/message-artifacts";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
@@ -875,19 +878,32 @@ interface MarkdownLinkHandlers {
 }
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
+  readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
+  readonly messageArtifacts: ThreadFeedMessage["artifacts"];
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly streaming: boolean;
 }) {
   const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
-    [props.markdown],
+    () => splitMessageArtifactMarkdown(props.markdown, props.streaming, props.messageArtifacts),
+    [props.markdown, props.messageArtifacts, props.streaming],
   );
 
   return segments.map((segment) => {
+    if (segment.kind === "message-artifact") {
+      return (
+        <MessageArtifactPreview
+          key={`artifact:${segment.artifact.sourceOrdinal}`}
+          environmentId={props.environmentId}
+          attachmentId={segment.artifact.attachmentId}
+          path={segment.artifact.path}
+        />
+      );
+    }
     if (segment.kind === "artifact-template") {
       return (
         <ArtifactTemplateCard
@@ -1796,12 +1812,15 @@ function renderFeedEntry(
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
+              environmentId={props.environmentId}
               markdown={renderedText}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
+              messageArtifacts={message.artifacts}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
+              streaming={message.streaming}
             />
           </MarkdownImageAvailableWidthContext>
         ) : null}

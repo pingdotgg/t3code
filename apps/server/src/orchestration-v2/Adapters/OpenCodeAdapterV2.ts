@@ -3229,6 +3229,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
+                  messageArtifacts: turnInput.messageArtifacts,
                 }),
               ]
                 .filter(Boolean)

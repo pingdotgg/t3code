@@ -16,6 +16,7 @@ import {
   orchestrationEffectClaimsTotal,
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
+import { MessageArtifactCapture } from "./MessageArtifactCapture.ts";
 import { RunFinalizationService } from "./RunFinalizationService.ts";
 import { ResourceCleanupService } from "./ResourceCleanupService.ts";
 import {
@@ -94,6 +95,7 @@ export const executorLayer: Layer.Layer<
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService;
+    const messageArtifacts = yield* MessageArtifactCapture;
     const checkpointRollback = yield* CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlServiceV2;
@@ -380,6 +382,19 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "message-artifact.capture":
+            return messageArtifacts
+              .capture({ threadId: effect.threadId, runId: effect.request.runId })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({

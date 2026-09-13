@@ -72,6 +72,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
+  const mixedArtifacts = useScopedSettingsMixed(["enableMessageArtifacts"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -449,6 +450,38 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedBrowser}
                 checked={mixedBrowser ? false : settings.enableAgentBrowserAccess}
                 onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["enableMessageArtifacts"]}
+            mixed={mixedArtifacts}
+            id={searchableSetting("interactive-artifacts").id}
+            title="Interactive artifacts"
+            description={
+              isProjectScope
+                ? "Let agents in this project show interactive HTML pages in their replies. Applies to new agent turns. Artifacts already in a thread stay."
+                : "Let agents show interactive HTML pages in their replies. Projects can override it. Artifacts already in a thread stay."
+            }
+            resetAction={
+              settings.enableMessageArtifacts !== DEFAULT_SERVER_SETTINGS.enableMessageArtifacts ? (
+                <SettingResetButton
+                  label="default interactive artifacts"
+                  onClick={() =>
+                    updateSettings({
+                      enableMessageArtifacts: DEFAULT_SERVER_SETTINGS.enableMessageArtifacts,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Interactive artifacts"
+                mixed={mixedArtifacts}
+                checked={mixedArtifacts ? false : settings.enableMessageArtifacts}
+                onCheckedChange={(enabled) => updateSettings({ enableMessageArtifacts: enabled })}
               />
             }
           />

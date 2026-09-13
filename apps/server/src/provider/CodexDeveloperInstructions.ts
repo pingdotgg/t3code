@@ -190,6 +190,8 @@ ${T3_CODE_ORCHESTRATION_INSTRUCTIONS}
 export interface CodexRuntimeInfo {
   readonly model: string;
   readonly reasoningEffort: string;
+  /** The resolved `enableMessageArtifacts` setting for this turn; off when omitted. */
+  readonly messageArtifacts?: boolean | undefined;
 }
 
 export function buildCodexDeveloperInstructions(

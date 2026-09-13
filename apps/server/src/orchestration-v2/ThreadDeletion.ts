@@ -201,7 +201,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     request: { type: "terminal.cleanup" },
   });
   const attachmentIds = Array.from(
-    new Set(projection.messages.flatMap((message) => message.attachments.map((item) => item.id))),
+    new Set(
+      projection.messages.flatMap((message) => [
+        ...message.attachments.map((item) => item.id),
+        ...(message.artifacts ?? []).map((artifact) => artifact.attachmentId),
+      ]),
+    ),
   );
   if (attachmentIds.length > 0) {
     effects.push({

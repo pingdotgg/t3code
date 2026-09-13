@@ -35,6 +35,10 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./message-artifacts": {
+      "types": "./src/messageArtifacts.ts",
+      "default": "./src/messageArtifacts.ts"
+    },
     "./markdown-links": {
       "types": "./src/markdownLinks.ts",
       "default": "./src/markdownLinks.ts"

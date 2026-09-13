@@ -224,3 +224,27 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## Interactive artifacts
+
+Turn on **Interactive artifacts** in Settings → Integrations to let agents show interactive HTML
+pages inside their replies, on web, desktop and mobile. Projects can override it, and changes apply
+to new agent turns. An agent writes a self-contained HTML file in the workspace and names it in a
+fenced block:
+
+````md
+```t3-artifact
+reports/chart.html
+```
+````
+
+When the reply finishes, T3 Code saves a copy with the message and shows it in place. Later changes to
+the file do not alter the reply, and a file that cannot be saved, such as one over 1 MB, shows only its
+path. Use the header to view the source or hide the artifact. Turning the setting off stops new
+artifacts; the ones already in a thread stay, and you can hide them from the header.
+
+Artifacts are isolated from your session and files, and their scripts cannot fetch from the network.
+Pages can use MCP Apps theme variables to match the app. Links open in your browser after you click
+them; mobile asks first. An artifact that tries to leave its page is stopped. Values you enter, state
+the page saves and whether you hid it are kept for recently used artifacts while the app is open, and
+their size is remembered across restarts so a reopened thread keeps its layout.

@@ -29,6 +29,7 @@ import {
 import type {
   AssetResource,
   EnvironmentId,
+  OrchestrationV2MessageArtifact,
   ScopedThreadRef,
   ServerProviderSkill,
   ThreadPullRequestKey,
@@ -82,6 +83,11 @@ import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { MessageArtifactCard } from "./chat/MessageArtifactCard";
+import {
+  messageArtifactParts,
+  type MessageArtifactPart,
+} from "@t3tools/client-runtime/message-artifacts";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
@@ -201,6 +207,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  /** Copies the server saved for this assistant message; when set, `t3-artifact` fences render as artifacts. */
+  messageArtifacts?: ReadonlyArray<OrchestrationV2MessageArtifact> | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
@@ -2204,6 +2212,8 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+const EMPTY_ARTIFACT_FENCES: ReadonlyArray<MessageArtifactPart> = [];
+
 function useChatMarkdownState({
   text,
   cwd,
@@ -2212,6 +2222,7 @@ function useChatMarkdownState({
   environmentId: explicitEnvironmentId,
   onTaskListChange,
   isStreaming = false,
+  messageArtifacts,
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   imageBaseDir,
@@ -2241,6 +2252,14 @@ function useChatMarkdownState({
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  // Artifacts are saved after the message finishes, so streaming text keeps plain code blocks.
+  const artifactFences = useMemo(
+    () =>
+      isStreaming || messageArtifacts === undefined
+        ? EMPTY_ARTIFACT_FENCES
+        : messageArtifactParts(text, isStreaming, messageArtifacts),
+    [isStreaming, messageArtifacts, text],
+  );
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions = canUseMarkdownFileShellActions(
     environmentId,
@@ -2609,6 +2628,7 @@ function useChatMarkdownState({
 
   const componentState = useMemo(
     () => ({
+      artifactFences,
       cwd,
       diffThemeName,
       environmentId,
@@ -2637,6 +2657,7 @@ function useChatMarkdownState({
       updateThreadPullRequestLink,
     }),
     [
+      artifactFences,
       cwd,
       diffThemeName,
       environmentId,
@@ -3141,10 +3162,27 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, artifactFences, environmentId } = use(
+      ChatMarkdownRendererContext,
+    );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
+    }
+
+    const fenceOffset = node?.position?.start.offset;
+    const artifactFence =
+      fenceOffset === undefined
+        ? undefined
+        : artifactFences.find((fence) => fenceOffset >= fence.start && fenceOffset < fence.end);
+    if (artifactFence !== undefined && environmentId !== null) {
+      return (
+        <MessageArtifactCard
+          environmentId={environmentId}
+          attachmentId={artifactFence.attachmentId}
+          path={artifactFence.path}
+        />
+      );
     }
 
     const language = extractFenceLanguage(codeBlock.className);

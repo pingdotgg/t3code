@@ -267,6 +267,10 @@
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"
     },
+    "./messageArtifacts": {
+      "types": "./src/messageArtifacts.ts",
+      "import": "./src/messageArtifacts.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"

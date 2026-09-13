@@ -403,6 +403,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** The project's `enableMessageArtifacts` setting when the run started; adapters pass it to runtime instructions. */
+  readonly messageArtifacts?: boolean;
 }
 
 export interface ProviderAdapterV2SteerInput {

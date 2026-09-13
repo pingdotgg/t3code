@@ -605,6 +605,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           : {}),
         runId: item.runId,
         streaming: item.type === "assistant_message" && item.streaming,
+        ...(item.type === "assistant_message" && item.artifacts !== undefined
+          ? { artifacts: item.artifacts }
+          : {}),
         ...(item.type === "user_message"
           ? {
               createdBy: item.createdBy,

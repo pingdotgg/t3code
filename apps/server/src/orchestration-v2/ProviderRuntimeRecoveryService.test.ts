@@ -2,6 +2,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   MessageId,
   NodeId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -63,6 +64,80 @@ it.effect("leaves durable effects for the worker after runtime reconciliation", 
     assert.equal(yield* Ref.get(runs), 0);
   }),
 );
+
+for (const enableMessageArtifacts of [true, false]) {
+  it.effect(
+    `queues artifact capture for cancelled runs only with artifacts on (${enableMessageArtifacts})`,
+    () => {
+      const threadId = ThreadId.make("thread_recovery_artifacts");
+      const runId = RunId.make("run_recovery_artifacts");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const queued: Array<{ readonly id: string; readonly request: unknown }> = [];
+      const layer = ProviderRuntimeRecovery.layer.pipe(
+        Layer.provide(
+          ServerSettings.layerTest({
+            enableMessageArtifacts,
+            continueThreadsAfterServerUpdate: false,
+          }),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getRecoveryThreadIds: () => Effect.succeed([threadId]),
+              getRuntimeRecoveryProjection: () =>
+                Effect.succeed({
+                  thread: {
+                    id: threadId,
+                    projectId: ProjectId.make("project_recovery_artifacts"),
+                    providerInstanceId,
+                  },
+                  runtimeRequests: [],
+                  providerSessions: [],
+                  providerThreads: [],
+                  providerTurns: [],
+                  runs: [{ id: runId, status: "running", providerInstanceId }],
+                  attempts: [],
+                  nodes: [],
+                  subagents: [],
+                  messages: [],
+                  turnItems: [],
+                } as unknown as OrchestrationV2ThreadProjection),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) => {
+                queued.push(...input.effects.map(({ id, request }) => ({ id, request })));
+                return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+              },
+            }),
+            IdAllocator.layer,
+            Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+              runRecoveryOnce: Effect.succeed(false),
+            }),
+            Layer.mock(EffectOutbox.EffectOutboxV2)({
+              reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+            }),
+          ),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+        assert.equal((yield* recovery.reconcile("startup")).terminalizedRuns, 1);
+        assert.deepEqual(
+          queued,
+          enableMessageArtifacts
+            ? [
+                {
+                  id: `effect:message-artifact.capture:${runId}`,
+                  request: { type: "message-artifact.capture", runId },
+                },
+              ]
+            : [],
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}
 
 it.effect("reads recovery projections only for threads that need runtime recovery", () => {
   const settledThreadIds = Array.from({ length: 1_000 }, (_, index) =>

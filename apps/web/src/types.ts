@@ -92,6 +92,10 @@ export interface ChatMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant" | "system";
   readonly text: string;
+  /** Copies the server saved for this assistant message's `t3-artifact` fences. */
+  readonly artifacts?:
+    | ReadonlyArray<import("@t3tools/contracts").OrchestrationV2MessageArtifact>
+    | undefined;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   readonly runId: RunId | null;
   readonly streaming: boolean;

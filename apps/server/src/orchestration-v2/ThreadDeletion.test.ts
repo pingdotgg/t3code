@@ -260,6 +260,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
             sizeBytes: 10,
           },
         ],
+        artifacts: [{ sourceOrdinal: 0, sourcePath: "chart.html", attachmentId: `copy_${index}` }],
         streaming: false,
         createdAt,
         updatedAt: createdAt,
@@ -287,7 +288,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
           revokeMcpCredential: true,
         },
         { type: "terminal.cleanup" },
-        { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
+        { type: "attachment.cleanup", attachmentIds: ["shared_file", "copy_0", "copy_1"] },
       ],
     );
   }).pipe(Effect.provide(idAllocatorLayer)),

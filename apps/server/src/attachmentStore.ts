@@ -91,6 +91,7 @@ export function createAttachmentId(threadId: string, extension?: string): string
 export function createDeterministicAttachmentId(
   threadId: string,
   stableKey: string,
+  extension?: string,
 ): string | null {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) return null;
@@ -99,7 +100,7 @@ export function createDeterministicAttachmentId(
     .digest("hex")
     .slice(0, 32);
   const uuid = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20)}`;
-  return `${threadSegment}-${uuid}`;
+  return `${threadSegment}-${uuid}${attachmentIdExtensionSuffix(extension)}`;
 }
 
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {

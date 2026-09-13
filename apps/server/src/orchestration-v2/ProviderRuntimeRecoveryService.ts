@@ -135,6 +135,7 @@ export const make = Effect.gen(function* () {
       projection: ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      captureMessageArtifacts: boolean,
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -202,6 +203,20 @@ export const make = Effect.gen(function* () {
             },
           ]
         : [];
+      // Replies that finished before the process was lost still show their artifacts.
+      if (captureMessageArtifacts) {
+        for (const run of runs) {
+          const captureCommandId = CommandId.make(
+            `command:effect:message-artifact.capture:${run.id}`,
+          );
+          effects.push({
+            id: `effect:message-artifact.capture:${run.id}`,
+            commandId: captureCommandId,
+            threadId: projection.thread.id,
+            request: { type: "message-artifact.capture", runId: run.id },
+          });
+        }
+      }
       const events: Array<OrchestrationV2DomainEvent> = [];
       for (const request of requests) {
         events.push({
@@ -523,9 +538,7 @@ export const make = Effect.gen(function* () {
 
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
-      const continueAfterRestart = yield* settings.getSettings.pipe(
-        Effect.orElseSucceed(() => null),
-      );
+      const currentSettings = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
       const threadIds = yield* projections
         .getRecoveryThreadIds("runtime")
         .pipe(
@@ -548,11 +561,16 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        const enabled =
-          continueAfterRestart !== null &&
-          resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const projectSettings =
+          currentSettings === null
+            ? null
+            : resolveProjectSettings(currentSettings, projection.thread.projectId).settings;
+        const result = yield* reconcileProjection(
+          projection,
+          trigger,
+          projectSettings?.continueThreadsAfterServerUpdate === true,
+          projectSettings?.enableMessageArtifacts === true,
+        );
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;

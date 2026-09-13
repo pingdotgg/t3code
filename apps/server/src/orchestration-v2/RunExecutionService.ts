@@ -579,6 +579,7 @@ export const layer: Layer.Layer<
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
+      readonly captureMessageArtifacts: boolean;
     }) =>
       Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
@@ -672,8 +673,8 @@ export const layer: Layer.Layer<
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
         yield* eventSink.writeWithEffects({
-          effects:
-            input.terminal.status === "completed"
+          effects: [
+            ...(input.terminal.status === "completed"
               ? [
                   {
                     id: `effect:checkpoint.capture:${input.run.id}`,
@@ -686,7 +687,22 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : []),
+            // Every terminal status, and only from the attempt that finalizes the run: capture reads
+            // every finished reply of the run, so fences from superseded attempts are included.
+            ...(input.captureMessageArtifacts
+              ? [
+                  {
+                    id: `effect:message-artifact.capture:${input.run.id}`,
+                    commandId: CommandId.make(
+                      `command:effect:message-artifact.capture:${input.run.id}`,
+                    ),
+                    threadId: input.run.threadId,
+                    request: { type: "message-artifact.capture" as const, runId: input.run.id },
+                  },
+                ]
+              : []),
+          ],
           events: [
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
@@ -786,12 +802,7 @@ export const layer: Layer.Layer<
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
         Effect.gen(function* () {
-          const assistantStreamingEnabled = yield* serverSettings.getSettings.pipe(
-            Effect.map(
-              (settings) =>
-                resolveProjectSettings(settings, input.appThread.projectId).settings
-                  .enableLegacyTokenStreaming,
-            ),
+          const settings = yield* serverSettings.getSettings.pipe(
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -801,6 +812,11 @@ export const layer: Layer.Layer<
                 }),
             ),
           );
+          const projectSettings = resolveProjectSettings(
+            settings,
+            input.appThread.projectId,
+          ).settings;
+          const assistantStreamingEnabled = projectSettings.enableLegacyTokenStreaming;
           yield* checkpointService
             .captureBaseline({
               scope: input.checkpointScope,
@@ -928,6 +944,7 @@ export const layer: Layer.Layer<
                 openRunOwnedSubagents: openSubagents,
                 terminal,
                 failureItemPersisted: terminal.status === "failed",
+                captureMessageArtifacts: projectSettings.enableMessageArtifacts,
                 refreshAfterTurn,
               }).pipe(
                 Effect.mapError(
@@ -1252,6 +1269,8 @@ export const layer: Layer.Layer<
                                         ),
                                         failureItemPersisted: false,
                                         refreshAfterTurn,
+                                        captureMessageArtifacts:
+                                          projectSettings.enableMessageArtifacts,
                                       }),
                                     ),
                                   ),
@@ -1288,6 +1307,7 @@ export const layer: Layer.Layer<
           // a long time between browser-tool calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
           const turnInput = {
+            messageArtifacts: projectSettings.enableMessageArtifacts,
             appThread: input.appThread,
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -1358,6 +1378,7 @@ export const layer: Layer.Layer<
                             ),
                             failureItemPersisted: false,
                             refreshAfterTurn,
+                            captureMessageArtifacts: projectSettings.enableMessageArtifacts,
                           }),
                         ),
                       ),

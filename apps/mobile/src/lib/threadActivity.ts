@@ -95,6 +95,8 @@ export interface ThreadFeedMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant";
   readonly text: string;
+  /** Copies the server saved for this assistant message's `t3-artifact` fences. */
+  readonly artifacts?: ReadonlyArray<import("@t3tools/contracts").OrchestrationV2MessageArtifact>;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly runId: RunId | null;
   readonly streaming: boolean;
@@ -1389,6 +1391,9 @@ export function buildThreadFeed(
           attachments: item.attachments ?? [],
           runId: item.runId,
           streaming: item.type === "assistant_message" && item.streaming,
+          ...(item.type === "assistant_message" && item.artifacts !== undefined
+            ? { artifacts: item.artifacts }
+            : {}),
           ...(item.type === "user_message"
             ? {
                 inputIntent: item.inputIntent,

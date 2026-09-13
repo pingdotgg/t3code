@@ -734,6 +734,8 @@ export function makeClaudeQueryOptions(input: {
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
+  /** Fixed for the query's lifetime: the system prompt is sent when the query opens. */
+  readonly messageArtifacts?: boolean | undefined;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -798,8 +800,10 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append:
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        buildRuntimeInstructions({
+          harness: "Claude Code",
+          messageArtifacts: input.messageArtifacts,
+        }) + (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -5397,6 +5401,7 @@ export function makeClaudeAdapterV2(
                 canUseTool,
                 onUserDialog,
                 supportedDialogKinds: ["resume_return"],
+                messageArtifacts: turnInput.messageArtifacts,
               }),
             })
             .pipe(

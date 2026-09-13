@@ -114,6 +114,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "plan.updated":
     case "checkpoint-scope.created":
     case "checkpoint.captured":
+    case "message.artifacts-recorded":
     case "checkpoint.rollback-requested":
     case "context-handoff.updated":
     case "context-transfer.created":

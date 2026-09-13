@@ -142,7 +142,7 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
             ${threadId},
             NULL,
             'assistant',
-            'First answer',
+            ${"First answer\n```t3-artifact\nchart.html\n```"},
             '[]',
             0,
             '2026-01-02T01:00:00.000Z',
@@ -276,6 +276,12 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
           ["message:legacy:4", 4, "interrupted"],
         ],
       );
+      // An imported reply names today's workspace file, not the one it meant; it captures nothing.
+      const queuedCaptures = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox
+        WHERE effect_type = 'message-artifact.capture'
+      `;
+      assert.equal(queuedCaptures[0]?.count, 0);
 
       yield* eventSink.write({
         events: [

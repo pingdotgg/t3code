@@ -647,6 +647,7 @@ export function buildCodexTurnStartParams(input: {
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
+  readonly messageArtifacts?: boolean | undefined;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -673,6 +674,7 @@ export function buildCodexTurnStartParams(input: {
             {
               model: input.modelSelection.model,
               reasoningEffort: effort ?? "medium",
+              messageArtifacts: input.messageArtifacts,
             },
             {
               browser: input.browserToolsAvailable ?? true,
@@ -5024,6 +5026,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+                messageArtifacts: turnInput.messageArtifacts,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);

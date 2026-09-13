@@ -469,6 +469,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "interactive-artifacts",
+    title: "Interactive artifacts",
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: ["html page chart inline reply agent t3-artifact project override"],
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/integrations",

@@ -29,7 +29,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
-import { ChatAttachment } from "./chatAttachment.ts";
+import { ChatAttachment, ChatAttachmentId } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -774,6 +774,41 @@ export const OrchestrationV2Notification = Schema.Struct({
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
+export const MESSAGE_ARTIFACT_MAX_BYTES = 1024 * 1024;
+export const MESSAGE_ARTIFACT_MAX_COUNT = 4;
+
+/** A copy of the HTML file named by a `t3-artifact` fence, stored as a text attachment of the thread. */
+export const OrchestrationV2MessageArtifact = Schema.Struct({
+  /**
+   * Position of the fence among the message's `t3-artifact` fences. Clients render the copy only
+   * while the fence at this position still names `sourcePath`.
+   */
+  sourceOrdinal: NonNegativeInt,
+  /** Workspace-relative path the fence named when the file was copied. */
+  sourcePath: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  attachmentId: ChatAttachmentId,
+});
+export type OrchestrationV2MessageArtifact = typeof OrchestrationV2MessageArtifact.Type;
+
+/**
+ * Copies recorded for a finished assistant message, at most one per fence. Fences without an entry
+ * were not captured and render as code.
+ */
+export const OrchestrationV2MessageArtifacts = Schema.Array(OrchestrationV2MessageArtifact).check(
+  Schema.isMaxLength(MESSAGE_ARTIFACT_MAX_COUNT),
+);
+
+/**
+ * Copies captured when a run ended. Projections replace the message's `artifacts` and those of its
+ * `assistant_message` turn items with this list.
+ */
+export const OrchestrationV2MessageArtifactsRecorded = Schema.Struct({
+  messageId: MessageId,
+  artifacts: OrchestrationV2MessageArtifacts,
+});
+export type OrchestrationV2MessageArtifactsRecorded =
+  typeof OrchestrationV2MessageArtifactsRecorded.Type;
+
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
@@ -786,6 +821,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(ChatAttachment),
+  artifacts: Schema.optionalKey(OrchestrationV2MessageArtifacts),
   streaming: Schema.Boolean,
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
@@ -1028,6 +1064,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** Mirrors the message's recorded `artifacts`. */
+    artifacts: Schema.optionalKey(OrchestrationV2MessageArtifacts),
     streaming: Schema.Boolean,
   }),
   Schema.Struct({
@@ -1349,6 +1387,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("checkpoint.captured"),
     payload: OrchestrationV2Checkpoint,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("message.artifacts-recorded"),
+    payload: OrchestrationV2MessageArtifactsRecorded,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -1739,6 +1782,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    artifacts: Schema.optionalKey(OrchestrationV2MessageArtifacts),
     streaming: Schema.Boolean,
   }),
   Schema.Struct({
@@ -2121,6 +2165,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("checkpoint.captured"),
     payload: OrchestrationV2CheckpointJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("message.artifacts-recorded"),
+    payload: OrchestrationV2MessageArtifactsRecorded,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,

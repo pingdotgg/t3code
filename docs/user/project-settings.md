@@ -29,7 +29,7 @@ one until you pick another. Every other setting fans out to the selection.
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
-access. Source Control contains automatic pull, the default pull request merge method and text
+access and interactive artifacts. Source Control contains automatic pull, the default pull request merge method and text
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
@@ -39,7 +39,8 @@ on each selected environment, and reset returns to the environment's shared list
 `t3.json` actions can be imported there.
 
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
-Browser access changes apply when an agent session next starts.
+Browser access changes apply when an agent session next starts; interactive artifact changes apply
+to new agent turns.
 
 ## Project icons
 

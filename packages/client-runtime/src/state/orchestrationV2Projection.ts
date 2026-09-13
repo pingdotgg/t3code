@@ -1,3 +1,4 @@
+import { preserveMessageArtifacts, recordMessageArtifacts } from "@t3tools/shared/messageArtifacts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
@@ -16,11 +17,12 @@ export type ApplyOrchestrationV2ProjectionEventOptions = {
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
   item: T,
+  merge?: (current: T, next: T) => T,
 ): ReadonlyArray<T> {
   const index = items.findIndex((candidate) => candidate.id === item.id);
   if (index === -1) return [...items, item];
   const next = [...items];
-  next[index] = item;
+  next[index] = merge === undefined ? item : merge(items[index]!, item);
   return next;
 }
 
@@ -232,7 +234,10 @@ export function applyOrchestrationV2ProjectionEvent(
     case "runtime-request.updated":
       return { ...base, runtimeRequests: upsertEntity(base.runtimeRequests, event.payload) };
     case "message.updated":
-      return { ...base, messages: upsertEntity(base.messages, event.payload) };
+      return {
+        ...base,
+        messages: upsertEntity(base.messages, event.payload, preserveMessageArtifacts),
+      };
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
@@ -243,18 +248,19 @@ export function applyOrchestrationV2ProjectionEvent(
       ) {
         return projection;
       }
-      const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
+      const previous = projection.turnItems.find((item) => item.id === event.payload.id);
+      const item = preserveMessageArtifacts(previous, event.payload);
+      const next = { ...base, turnItems: upsertEntity(base.turnItems, item) };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
-      const previous = projection.turnItems.find((item) => item.id === event.payload.id);
       const visible =
         event.payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
           ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }
           : next;
       return {
         ...next,
-        visibleTurnItems: shouldShowLocalTurnItem(next, event.payload)
-          ? upsertVisibleTurnItem(visible, event.payload, partialTimeline, latestLocalTurnOrdinal)
+        visibleTurnItems: shouldShowLocalTurnItem(next, item)
+          ? upsertVisibleTurnItem(visible, item, partialTimeline, latestLocalTurnOrdinal)
           : removeVisibleItem(visible.visibleTurnItems, event.payload.id),
       };
     }
@@ -264,6 +270,8 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, checkpoints: upsertEntity(base.checkpoints, event.payload) };
     case "checkpoint.rollback-requested":
       return base;
+    case "message.artifacts-recorded":
+      return recordMessageArtifacts(base, event.payload.messageId, event.payload.artifacts);
     case "context-handoff.updated":
       return { ...base, contextHandoffs: upsertEntity(base.contextHandoffs, event.payload) };
     case "context-transfer.created":

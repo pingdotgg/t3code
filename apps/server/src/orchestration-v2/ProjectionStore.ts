@@ -1,4 +1,5 @@
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { preserveMessageArtifacts, recordMessageArtifacts } from "@t3tools/shared/messageArtifacts";
 import type {
   OrchestrationV2AppThread,
   OrchestrationV2PlanArtifact,
@@ -30,6 +31,7 @@ import {
   OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema,
   OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
   OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNodeJsonSchema,
+  OrchestrationV2MessageArtifacts as OrchestrationV2MessageArtifactsSchema,
   OrchestrationV2PlanArtifact as OrchestrationV2PlanArtifactSchema,
   OrchestrationV2ProviderSessionJson as OrchestrationV2ProviderSessionJsonSchema,
   OrchestrationV2ProviderThreadJson as OrchestrationV2ProviderThreadJsonSchema,
@@ -382,14 +384,18 @@ function needsRecovery(
   }
 }
 
-function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
+function upsertById<T extends { readonly id: string }>(
+  items: ReadonlyArray<T>,
+  next: T,
+  merge?: (current: T, next: T) => T,
+): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
   if (index === -1) {
     return [...items, next];
   }
 
   const updated = [...items];
-  updated[index] = next;
+  updated[index] = merge === undefined ? next : merge(items[index]!, next);
   return updated;
 }
 
@@ -567,12 +573,12 @@ export function applyToProjection(
     case "message.updated":
       return {
         ...base,
-        messages: upsertById(base.messages, event.payload),
+        messages: upsertById(base.messages, event.payload, preserveMessageArtifacts),
       };
     case "turn-item.updated":
       return withLocalVisibleTurnItems({
         ...base,
-        turnItems: upsertById(base.turnItems, event.payload),
+        turnItems: upsertById(base.turnItems, event.payload, preserveMessageArtifacts),
       });
     case "plan.updated":
       return {
@@ -589,6 +595,8 @@ export function applyToProjection(
         ...base,
         checkpoints: upsertById(base.checkpoints, event.payload),
       };
+    case "message.artifacts-recorded":
+      return recordMessageArtifacts(base, event.payload.messageId, event.payload.artifacts);
     case "checkpoint.rollback-requested":
       return base;
     case "context-handoff.updated":
@@ -823,6 +831,9 @@ const decodeRuntimeRequestPayload = Schema.decodeUnknownEffect(
 );
 const decodeMessagePayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
+);
+const encodeMessageArtifacts = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2MessageArtifactsSchema),
 );
 const decodePlanArtifact = Schema.decodeUnknownEffect(OrchestrationV2PlanArtifactSchema);
 const decodePlanPayload = (json: string) => decodePlanArtifact(parseEncodedPayload(json));
@@ -1991,7 +2002,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 streaming = excluded.streaming,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  -- CASE stops at the first match, so rows without artifacts never parse JSON.
+                  WHEN instr(orchestration_v2_projection_messages.payload_json, '"artifacts"') = 0
+                  THEN excluded.payload_json
+                  WHEN json_type(excluded.payload_json, '$.artifacts') IS NULL
+                    AND json_type(orchestration_v2_projection_messages.payload_json, '$.artifacts') IS NOT NULL
+                  THEN json_set(
+                    excluded.payload_json,
+                    '$.artifacts',
+                    json_extract(orchestration_v2_projection_messages.payload_json, '$.artifacts')
+                  )
+                  ELSE excluded.payload_json
+                END
             `;
             break;
           }
@@ -2071,7 +2094,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type = excluded.type,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN instr(orchestration_v2_projection_turn_items.payload_json, '"artifacts"') = 0
+                  THEN excluded.payload_json
+                  WHEN json_type(excluded.payload_json, '$.artifacts') IS NULL
+                    AND json_type(orchestration_v2_projection_turn_items.payload_json, '$.artifacts') IS NOT NULL
+                  THEN json_set(
+                    excluded.payload_json,
+                    '$.artifacts',
+                    json_extract(orchestration_v2_projection_turn_items.payload_json, '$.artifacts')
+                  )
+                  ELSE excluded.payload_json
+                END
             `;
             break;
           }
@@ -2162,6 +2196,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 captured_at = excluded.captured_at,
                 payload_json = excluded.payload_json
+            `;
+            break;
+          }
+          case "message.artifacts-recorded": {
+            const { messageId } = event.payload;
+            const artifactsJson = yield* encodeMessageArtifacts(event.payload.artifacts);
+            yield* sql`
+              UPDATE orchestration_v2_projection_messages
+              SET payload_json = json_set(payload_json, '$.artifacts', json(${artifactsJson}))
+              WHERE message_id = ${messageId} AND thread_id = ${event.threadId}
+            `;
+            yield* sql`
+              UPDATE orchestration_v2_projection_turn_items
+              SET payload_json = json_set(payload_json, '$.artifacts', json(${artifactsJson}))
+              WHERE thread_id = ${event.threadId}
+                AND type = 'assistant_message'
+                AND json_extract(payload_json, '$.messageId') = ${messageId}
             `;
             break;
           }
