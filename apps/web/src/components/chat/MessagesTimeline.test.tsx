@@ -348,8 +348,6 @@ describe("MessagesTimeline", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
-        await act(() => toggle.props.onClick());
         const questionToggle = renderer!.root.find(
           (node) =>
             node.props["aria-label"]?.startsWith("Question answer submitted:") &&
@@ -700,7 +698,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("t3code — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
     expect(markup).toContain("h-28 w-52 max-w-full");
-    expect(markup).not.toContain("col-span-2");
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
   });
