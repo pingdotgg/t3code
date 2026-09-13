@@ -396,19 +396,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       createStagePatchedDependencies(
         {
           "@expo/metro-config@56.0.13": "patches/@expo%2Fmetro-config@56.0.13.patch",
-          "@ff-labs/fff-node@0.9.4": "patches/@ff-labs__fff-node@0.9.4.patch",
+          "@ff-labs/fff-node@0.10.6": "patches/@ff-labs__fff-node@0.10.6.patch",
           "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
           "alchemy@2.0.0-beta.49": "patches/alchemy@2.0.0-beta.49.patch",
           "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
         },
         {
-          "@ff-labs/fff-node": "0.9.4",
+          "@ff-labs/fff-node": "0.10.6",
           "@pierre/diffs": "1.1.20",
           effect: "4.0.0-beta.73",
         },
       ),
       {
-        "@ff-labs/fff-node@0.9.4": "patches/@ff-labs__fff-node@0.9.4.patch",
+        "@ff-labs/fff-node@0.10.6": "patches/@ff-labs__fff-node@0.10.6.patch",
         "@pierre/diffs@1.1.20": "patches/@pierre%2Fdiffs@1.1.20.patch",
         "effect@4.0.0-beta.73": "patches/effect@4.0.0-beta.73.patch",
       },
@@ -730,7 +730,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       resolveMacStageDependencies({
         serverDependencies: {
           "@anthropic-ai/claude-agent-sdk": "^0.3.170",
-          "@ff-labs/fff-node": "0.9.4",
+          "@ff-labs/fff-node": "0.10.6",
           "@opencode-ai/sdk": "^1.3.15",
           "@pierre/diffs": "1.3.0",
           "msgpackr-extract": "3.0.4",
@@ -741,15 +741,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           effect: "4.0.0-beta.103",
         },
         arch: "arm64",
-        fffNodeVersion: "0.9.4",
+        fffNodeVersion: "0.10.6",
       }),
       {
-        "@ff-labs/fff-node": "0.9.4",
+        "@ff-labs/fff-node": "0.10.6",
         "msgpackr-extract": "3.0.4",
         "node-pty": "1.1.0",
         "@clerk/electron": "0.0.34",
         effect: "4.0.0-beta.103",
-        "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+        "@ff-labs/fff-bin-darwin-arm64": "0.10.6",
       },
     );
   });
@@ -1300,7 +1300,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           primaryProbe.args[4],
           path.join(
             fixture.packagedAppDir,
-            "resources/server.asar/node_modules/@ff-labs/fff-node/dist/src/index.js",
+            "resources/server.asar/node_modules/@ff-labs/fff-node/dist/index.js",
           ),
         );
         assert.equal(primaryProbe.options.cwd, fixture.packagedAppDir);
@@ -2075,23 +2075,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it("promotes target fff binaries to direct staged dependencies", () => {
-    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
-      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.10.6"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.10.6",
     });
-    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "universal", "0.9.4"), {
-      "@ff-labs/fff-bin-darwin-arm64": "0.9.4",
-      "@ff-labs/fff-bin-darwin-x64": "0.9.4",
+    assert.deepStrictEqual(resolveFffNativeDependencies("mac", "universal", "0.10.6"), {
+      "@ff-labs/fff-bin-darwin-arm64": "0.10.6",
+      "@ff-labs/fff-bin-darwin-x64": "0.10.6",
     });
-    assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.9.4"), {
-      "@ff-labs/fff-bin-win32-x64": "0.9.4",
+    assert.deepStrictEqual(resolveFffNativeDependencies("win", "x64", "0.10.6"), {
+      "@ff-labs/fff-bin-win32-x64": "0.10.6",
     });
-    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "x64", "0.9.4"), {
-      "@ff-labs/fff-bin-linux-x64-gnu": "0.9.4",
-      "@ff-labs/fff-bin-linux-x64-musl": "0.9.4",
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "x64", "0.10.6"), {
+      "@ff-labs/fff-bin-linux-x64-gnu": "0.10.6",
+      "@ff-labs/fff-bin-linux-x64-musl": "0.10.6",
     });
-    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.9.4"), {
-      "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
-      "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
+    assert.deepStrictEqual(resolveFffNativeDependencies("linux", "arm64", "0.10.6"), {
+      "@ff-labs/fff-bin-linux-arm64-gnu": "0.10.6",
+      "@ff-labs/fff-bin-linux-arm64-musl": "0.10.6",
     });
   });
 

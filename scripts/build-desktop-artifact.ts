@@ -3157,10 +3157,7 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   const probeRoot = yield* fs.makeTempDirectoryScoped({
     prefix: "t3code-windows-primary-native-probe-",
   });
-  const fffEntryPath = path.join(
-    input.asarPath,
-    "node_modules/@ff-labs/fff-node/dist/src/index.js",
-  );
+  const fffEntryPath = path.join(input.asarPath, "node_modules/@ff-labs/fff-node/dist/index.js");
   const probeEnv = { ...process.env };
   delete probeEnv.ELECTRON_NO_ASAR;
   delete probeEnv.NODE_OPTIONS;

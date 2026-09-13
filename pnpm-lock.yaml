@@ -90,7 +90,7 @@ patchedDependencies:
   '@clerk/expo@4.2.0': 72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1
   '@effect/vitest@4.0.0-rc.112': a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b
   '@expo/metro-config@57.0.12': 96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2
-  '@ff-labs/fff-node@0.9.4': ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368
+  '@ff-labs/fff-node@0.10.6': e049ec3ce92d5c730f9e49029bd16e7d362b360837272625ed3e791802e23621
   '@legendapp/list@3.3.5': a05e968651a1352d2f374324016d1034b763b9fb2c5bf5f95111540d6899a52b
   '@pierre/diffs@1.3.0-beta.10': 0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
@@ -511,8 +511,8 @@ importers:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@ff-labs/fff-node':
-        specifier: 0.9.4
-        version: 0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)
+        specifier: 0.10.6
+        version: 0.10.6(patch_hash=e049ec3ce92d5c730f9e49029bd16e7d362b360837272625ed3e791802e23621)
       '@opencode-ai/sdk':
         specifier: ^1.3.15
         version: 1.15.13
@@ -2809,55 +2809,60 @@ packages:
     resolution: {integrity: sha512-4aQzz9vgxcNXFfo/iyNgDDYfsU5XGKKxWxZopw0cVotHiW+U8IJbIxMaxsINs6bHhtkG3StKNPcOrn3eBuxKPw==}
     hasBin: true
 
-  '@ff-labs/fff-bin-darwin-arm64@0.9.4':
-    resolution: {integrity: sha512-xyivu2xB++O5xXDx5Qm50JsU2aXt8YgXlGVhH/HE7UMYDrE6L6f1RYdYs8Y0bn0D3D0+bFBrN5ELPszK9E4Wbw==}
+  '@ff-labs/fff-bin-android-arm64@0.10.6':
+    resolution: {integrity: sha512-hGOo0wlxdhObNdK9lTNhNIrzOs99l352E0QqglD/3H1B6LsSVoVHxNeR09RmiSoIM1lOJ+FnkpXOJ5EZXSGl0w==}
+    cpu: [arm64]
+    os: [android]
+
+  '@ff-labs/fff-bin-darwin-arm64@0.10.6':
+    resolution: {integrity: sha512-Y0A1f9/UHYg0ej35rnt8Q2A2DMbBzRa4Fc9WpoBST/oVvWOQ7v5JF5ko7NAapOFM0N5oaB9oey1Hsshs6LIyYA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@ff-labs/fff-bin-darwin-x64@0.9.4':
-    resolution: {integrity: sha512-xLooAhCnTDCipPSMMZz7kGF3lhRHx6aP5fb6DJ0Ipyw/w/UWJb+xITJFszUl/QnIBoJ/qjDc93/FZMo1dk6gVA==}
+  '@ff-labs/fff-bin-darwin-x64@0.10.6':
+    resolution: {integrity: sha512-qQnmQWnotuOne10vtVHoMKTxCSANaJ3a/cegBKvfN8cZCr4b4Vtg51APADh8U3AwsI/k61rJQgjy6BqdBYj3cw==}
     cpu: [x64]
     os: [darwin]
 
-  '@ff-labs/fff-bin-linux-arm64-gnu@0.9.4':
-    resolution: {integrity: sha512-m5+8vA+1veaUUWonwva1WsU6m1HRm8CpYUzr06KDB65mewlmPbqz7+Fh7hjEfiD8C4mHVHe6RysULvAH1yhsdw==}
+  '@ff-labs/fff-bin-linux-arm64-gnu@0.10.6':
+    resolution: {integrity: sha512-JwfgfwL4V0+tJCc1HW3In++1c+EZLix0ecV/k4b+8DyzSGh3GPZB1i7F4JXQFHVibs71mLeFEJO4owglullZNw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@ff-labs/fff-bin-linux-arm64-musl@0.9.4':
-    resolution: {integrity: sha512-EMeWm7CSTVkizy4ZEzUkLDP024tVcbCUthduuIhekFQRDsiaAze0YboIylWb9HBHJCZlCCoZrWAl4nnJbsX7AA==}
+  '@ff-labs/fff-bin-linux-arm64-musl@0.10.6':
+    resolution: {integrity: sha512-g0ggmohZiVkNQsNho1r6I06sk8jlKmb8gzmmgL8HeDcaxyiZnxQrqxHmvwROP7T0scEbZGSOle/gyyqfcBRvjg==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@ff-labs/fff-bin-linux-x64-gnu@0.9.4':
-    resolution: {integrity: sha512-pglE0uLkhnlE6bStXqfgUjYTSj+2sVwXaPfoA0QksidAsQor6NRt8004mygzC9DPubgHq5B9QezPfEwigKaP9Q==}
+  '@ff-labs/fff-bin-linux-x64-gnu@0.10.6':
+    resolution: {integrity: sha512-oC8Tlg/+aNbdfEkj4QtVCbrqYUEjQZkP/e1KLwv142+dwjgxHQKQGSIKB67IvP07DKazvUG/0I0YR91dP/ClLA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@ff-labs/fff-bin-linux-x64-musl@0.9.4':
-    resolution: {integrity: sha512-VNKxgl8qs3aTfXViX7lqRK1aLu311h8dtBFqG4Scv+9Oi7WprybUp5L7IZ8sxKERaDAaiJMXHodXa1c90QdK8w==}
+  '@ff-labs/fff-bin-linux-x64-musl@0.10.6':
+    resolution: {integrity: sha512-voj2gFq6knjzXKNy2k7EyqoXizv/VZbJ6bfq7enMI5T+tCM0cKlSEjwlBOMaVj+cxrh6fSb5vnnPjhBSuZcxmA==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@ff-labs/fff-bin-win32-arm64@0.9.4':
-    resolution: {integrity: sha512-uFEt0aNL54vQxq1ivjxRuo+thnhS4wLqa4INl4VXnXJUmwB42XXxD+gsj7vzhBLLx4cFf0aWgy/+TVDR8yjZtQ==}
+  '@ff-labs/fff-bin-win32-arm64@0.10.6':
+    resolution: {integrity: sha512-GFfA21vuxcyqZZ2pSq7V5ClAKIVrWLulK5h93wjUc308zyxApY2luJdyIBHtw93UTkJQ079mRMPIthkeCEEn9A==}
     cpu: [arm64]
     os: [win32]
 
-  '@ff-labs/fff-bin-win32-x64@0.9.4':
-    resolution: {integrity: sha512-Yd2Eyxj+slWv+0QDW9/xBpu9FXq+hwD0rXQD5184/88d+xwWCLKhEP2w8I6OO9XCg+kLT79UJb+k0WwXUtBtMw==}
+  '@ff-labs/fff-bin-win32-x64@0.10.6':
+    resolution: {integrity: sha512-EjOHtxRNmZnjrNx2fahiAhP2wLDad6tlLL3cIk3snEzHpP30VygZMcuq3u8fNBZOeHgEPGRnqkfhILQDyblvJQ==}
     cpu: [x64]
     os: [win32]
 
-  '@ff-labs/fff-node@0.9.4':
-    resolution: {integrity: sha512-yUphwzcVBuNrg1iEAE5XVPOWfCLuq/BE1scUxtHMmLo+e1KuKWBRgSKFXGjNBfL8lV3c5VGwIgK66aBqmhqVBQ==}
+  '@ff-labs/fff-node@0.10.6':
+    resolution: {integrity: sha512-TYp7dgX7IIwwvYTCCHmPs+Ymt/z9w6+kKDfwZhFgU7pFBIHPkmQbLwuwQdUvngvZMgUuHyKTo7irzinjT8UWgQ==}
     engines: {node: '>=18.0.0'}
     cpu: [x64, arm64]
-    os: [darwin, linux, win32]
+    os: [darwin, linux, win32, android]
 
   '@floating-ui/core@1.7.5':
     resolution: {integrity: sha512-1Ih4WTWyw0+lKyFMcBHGbb5U5FtuHJuujoyyr5zTaWS5EYMeT6Jb2AuDeftsCsEuchO+mM2ij5+q9crhydzLhQ==}
@@ -13639,42 +13644,46 @@ snapshots:
       chalk: 4.1.2
       js-yaml: 4.2.0
 
-  '@ff-labs/fff-bin-darwin-arm64@0.9.4':
+  '@ff-labs/fff-bin-android-arm64@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-darwin-x64@0.9.4':
+  '@ff-labs/fff-bin-darwin-arm64@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-linux-arm64-gnu@0.9.4':
+  '@ff-labs/fff-bin-darwin-x64@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-linux-arm64-musl@0.9.4':
+  '@ff-labs/fff-bin-linux-arm64-gnu@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-linux-x64-gnu@0.9.4':
+  '@ff-labs/fff-bin-linux-arm64-musl@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-linux-x64-musl@0.9.4':
+  '@ff-labs/fff-bin-linux-x64-gnu@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-win32-arm64@0.9.4':
+  '@ff-labs/fff-bin-linux-x64-musl@0.10.6':
     optional: true
 
-  '@ff-labs/fff-bin-win32-x64@0.9.4':
+  '@ff-labs/fff-bin-win32-arm64@0.10.6':
     optional: true
 
-  '@ff-labs/fff-node@0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)':
+  '@ff-labs/fff-bin-win32-x64@0.10.6':
+    optional: true
+
+  '@ff-labs/fff-node@0.10.6(patch_hash=e049ec3ce92d5c730f9e49029bd16e7d362b360837272625ed3e791802e23621)':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
-      '@ff-labs/fff-bin-darwin-arm64': 0.9.4
-      '@ff-labs/fff-bin-darwin-x64': 0.9.4
-      '@ff-labs/fff-bin-linux-arm64-gnu': 0.9.4
-      '@ff-labs/fff-bin-linux-arm64-musl': 0.9.4
-      '@ff-labs/fff-bin-linux-x64-gnu': 0.9.4
-      '@ff-labs/fff-bin-linux-x64-musl': 0.9.4
-      '@ff-labs/fff-bin-win32-arm64': 0.9.4
-      '@ff-labs/fff-bin-win32-x64': 0.9.4
+      '@ff-labs/fff-bin-android-arm64': 0.10.6
+      '@ff-labs/fff-bin-darwin-arm64': 0.10.6
+      '@ff-labs/fff-bin-darwin-x64': 0.10.6
+      '@ff-labs/fff-bin-linux-arm64-gnu': 0.10.6
+      '@ff-labs/fff-bin-linux-arm64-musl': 0.10.6
+      '@ff-labs/fff-bin-linux-x64-gnu': 0.10.6
+      '@ff-labs/fff-bin-linux-x64-musl': 0.10.6
+      '@ff-labs/fff-bin-win32-arm64': 0.10.6
+      '@ff-labs/fff-bin-win32-x64': 0.10.6
 
   '@floating-ui/core@1.7.5':
     dependencies:
