@@ -231,6 +231,12 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         failure: "workspace_root_not_directory",
         normalizedCwd: error.normalizedWorkspaceRoot,
       };
+    case "WorkspaceEntriesReadDirectoryError":
+      return {
+        failure: "directory_list_failed",
+        ...(error.cwd !== undefined ? { normalizedCwd: error.cwd } : {}),
+        detail: error.message,
+      };
     case "WorkspaceSearchIndexCreateFailed":
       return {
         failure: "search_index_create_failed",

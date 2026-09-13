@@ -96,6 +96,102 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect("lists immediate children including ignored and empty directories", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "tracked.txt");
+        yield* git(cwd, ["add", "tracked.txt"]);
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\ntracked.txt\n");
+        yield* writeTextFile(cwd, ".env", "secret=value");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(root.entries).toEqual(
+          expect.arrayContaining([
+            { path: ".env", kind: "file", ignored: true },
+            { path: "node_modules", kind: "directory", ignored: true },
+            { path: "src", kind: "directory" },
+            { path: "empty", kind: "directory" },
+            { path: "tracked.txt", kind: "file" },
+          ]),
+        );
+        expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
+        expect(root.entries.some((entry) => entry.path === ".git")).toBe(false);
+        expect(root.truncated).toBe(false);
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "node_modules/pkg" })).toEqual({
+          entries: [{ path: "node_modules/pkg/index.js", kind: "file", ignored: true }],
+          truncated: false,
+        });
+        expect(yield* workspaceEntries.list({ cwd, directoryPath: "empty" })).toEqual({
+          entries: [],
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect(
+      "rejects directory traversal, git internals, and symlinks outside the workspace",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir();
+          const outside = yield* makeTempDir();
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* writeTextFile(cwd, ".git/HEAD");
+          const platform = yield* HostProcessPlatform;
+          if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          for (const directoryPath of [
+            "../",
+            outside,
+            ".git",
+            "missing",
+            ...(platform !== "win32" ? ["external"] : []),
+          ]) {
+            const error = yield* workspaceEntries.list({ cwd, directoryPath }).pipe(Effect.flip);
+            expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
+          }
+        }),
+    );
+
+    it.effect(
+      "browses a workspace with more than 25,000 entries without truncation",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir();
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          for (let directory = 0; directory < 26; directory++) {
+            const directoryPath = path.join(cwd, `folder-${directory}`);
+            yield* fileSystem.makeDirectory(directoryPath);
+            yield* Effect.forEach(
+              Array.from({ length: 1000 }, (_, i) => i),
+              (i) => fileSystem.writeFileString(path.join(directoryPath, `file-${i}.txt`), ""),
+              { concurrency: 32, discard: true },
+            );
+          }
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+          expect(root.entries).toHaveLength(26);
+          expect(root.truncated).toBe(false);
+          for (const directory of root.entries) {
+            const result = yield* workspaceEntries.list({ cwd, directoryPath: directory.path });
+            expect(result.entries).toHaveLength(1000);
+            expect(result.truncated).toBe(false);
+            expect(result.entries).toContainEqual({
+              path: `${directory.path}/file-999.txt`,
+              kind: "file",
+            });
+          }
+        }),
+      60_000,
+    );
+
     it.effect("returns the complete cached workspace index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();

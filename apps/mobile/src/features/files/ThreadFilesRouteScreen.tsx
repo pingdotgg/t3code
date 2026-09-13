@@ -5,12 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import {
-  EnvironmentId,
-  type ProjectListEntriesResult,
-  type ProjectReadFileResult,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   isWorkspaceBrowserPreviewPath,
@@ -53,6 +48,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
@@ -341,15 +337,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
-  const entriesQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && !fileInspector.supported
-      ? projectEnvironment.listEntries({
-          environmentId,
-          input: { cwd },
-        })
-      : null,
-  );
-  const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
+  const entriesQuery = useFileTreeEntries({
+    environmentId,
+    cwd: fileInspector.supported ? null : cwd,
+    searchQuery,
+  });
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -557,10 +549,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         </>
       )}
       <FileTreeBrowser
-        entries={entriesData?.entries ?? []}
+        key={JSON.stringify([environmentId, cwd])}
+        entries={entriesQuery.entries}
+        loadedDirectories={entriesQuery.loadedDirectories}
+        onLoadDirectory={entriesQuery.loadDirectory}
         error={entriesQuery.error}
         isPending={entriesQuery.isPending}
         searchQuery={searchQuery}
+        searchTruncated={entriesQuery.searchTruncated}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
         onRefresh={entriesQuery.refresh}
