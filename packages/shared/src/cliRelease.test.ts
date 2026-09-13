@@ -7,7 +7,6 @@ import {
   cliReleaseDownloadBaseUrl,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
-  isArchiveDistributedVersion,
   newestCliReleaseVersion,
   parseChecksums,
 } from "./cliRelease.ts";
@@ -54,12 +53,6 @@ describe("cliRelease", () => {
     expect(checksums.get("t3-1.2.3-linux-x64.tar.gz")).toBe("a".repeat(64));
     expect(checksums.get("t3-1.2.3-win32-x64.zip")).toBe("b".repeat(64));
     expect(checksums.size).toBe(2);
-  });
-
-  it("treats only preview builds as archive-distributed", () => {
-    expect(isArchiveDistributedVersion("1.2.3-preview.20260911.4")).toBe(true);
-    expect(isArchiveDistributedVersion("1.2.3-nightly.20260911.4")).toBe(false);
-    expect(isArchiveDistributedVersion("1.2.3")).toBe(false);
   });
 
   it("extracts with the System32 bsdtar on Windows and plain tar elsewhere", () => {

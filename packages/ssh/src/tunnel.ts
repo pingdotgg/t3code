@@ -70,19 +70,22 @@ const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
-  readonly packageSpec?: string;
+  /**
+   * Dev mode: run `node <path>` on the remote instead of a release archive.
+   * The only mode that needs Node on the remote.
+   */
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
   /**
-   * Exact version whose release archive the remote installs and runs. Takes
-   * precedence over `packageSpec`; the remote then needs neither Node nor npm.
+   * Exact version whose self-contained release archive the remote installs
+   * and runs. Required unless `nodeScriptPath` is set; the remote then needs
+   * neither Node nor npm.
    */
   readonly archiveVersion?: string | null;
   readonly releaseBaseUrl?: string | null;
 }
 
 export interface SshEnvironmentManagerOptions {
-  readonly resolveCliPackageSpec?: () => string;
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
@@ -124,17 +127,18 @@ function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
   };
 }
 
+function isNodeScriptRunner(runner: RemoteT3RunnerOptions | undefined): boolean {
+  return Boolean(runner?.nodeScriptPath?.trim());
+}
+
 function sshRunnerLogFields(runner: RemoteT3RunnerOptions | undefined) {
-  if (runner?.archiveVersion?.trim()) {
-    return { runner: "archive", archiveVersion: runner.archiveVersion.trim() };
-  }
   if (runner?.nodeScriptPath?.trim()) {
     return { runner: "node-script", nodeScriptPath: runner.nodeScriptPath.trim() };
   }
-  if (runner?.packageSpec?.trim()) {
-    return { runner: "package", packageSpec: runner.packageSpec.trim() };
+  if (runner?.archiveVersion?.trim()) {
+    return { runner: "archive", archiveVersion: runner.archiveVersion.trim() };
   }
-  return { runner: "default" };
+  return { runner: "archive" };
 }
 
 interface SshAuthOperationInput<T> {
@@ -424,144 +428,117 @@ ensure_remote_node_path() {
 
 const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
-T3_ARCHIVE_VERSION=@@T3_ARCHIVE_VERSION@@
-if [ -n "$T3_ARCHIVE_VERSION" ]; then
-  # Self-contained release archive: no Node, npm, or compiler on the remote.
-  # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
-  T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
-  T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
-  t3_runtime_ready() {
-    [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
-  }
-  if ! t3_runtime_ready; then
-    mkdir -p "$HOME/.t3/runtime/versions"
-    # Concurrent launches (two clients, a retry racing a slow first run) must
-    # not both install: mkdir is the atomic lock and the ready check repeats
-    # under it.
-    T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-    # mkdir is the only portable atomic exclusive create (mv would silently
-    # nest a candidate inside an existing lock). The owner publishes its pid
-    # right after, so a lock with a live owner is never reclaimed however
-    # slow its download is, and a lock whose owner is dead is reclaimed at
-    # once. A lock with no pid at all is a crash between mkdir and the pid
-    # write; it is reclaimed after a short grace so a live owner has time to
-    # publish.
-    T3_LOCK_WAITED=0
-    T3_LOCK_UNOWNED=0
-    while ! mkdir "$T3_LOCK" 2>/dev/null; do
-      T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
-      if [ -n "$T3_LOCK_OWNER" ]; then
-        T3_LOCK_UNOWNED=0
-        if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
-          rm -rf "$T3_LOCK"
-          continue
-        fi
-      else
-        T3_LOCK_UNOWNED=$((T3_LOCK_UNOWNED + 1))
-        if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then
-          rm -rf "$T3_LOCK"
-          continue
-        fi
-      fi
-      if [ "$T3_LOCK_WAITED" -ge @@T3_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
-        printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
-        exit 1
-      fi
-      sleep 1
-      T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
-    done
-    printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
-    trap 'rm -rf "$T3_LOCK"' EXIT
-  fi
-  if ! t3_runtime_ready; then
-    case "$(uname -s)" in
-      Darwin) T3_PLATFORM="darwin" ;;
-      Linux) T3_PLATFORM="linux" ;;
-      *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
-    esac
-    case "$(uname -m)" in
-      arm64 | aarch64) T3_ARCH="arm64" ;;
-      x86_64 | amd64) T3_ARCH="x64" ;;
-      *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
-    esac
-    T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
-    T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
-    trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
-    t3_fetch() {
-      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
-      elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
-      else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
-      fi
-    }
-    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@
-    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
-    T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
-    if command -v sha256sum >/dev/null 2>&1; then
-      T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
-    else
-      T3_ACTUAL="$(shasum -a 256 "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
-    fi
-    if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
-      printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
-    fi
-    tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
-    rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
-    # Prove the binary runs here (libc, arch) before marking it ready, or every
-    # later launch would exec a broken install instead of retrying.
-    if ! "$T3_STAGING/t3" --version >/dev/null 2>&1; then
-      printf 'The t3 %s executable does not run on this host.\\n' "$T3_ARCHIVE_VERSION" >&2; exit 1
-    fi
-    printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
-    rm -rf "$T3_RUNTIME_DIR"
-    mv "$T3_STAGING" "$T3_RUNTIME_DIR"
-  fi
-  if [ -n "\${T3_LOCK:-}" ]; then
-    rm -rf "$T3_LOCK"
-    trap - EXIT
-  fi
-  exec "$T3_RUNTIME_DIR/t3" "$@"
-fi
 @@T3_NODE_ENV_SCRIPT@@
-ensure_remote_node_path || true
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
 if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
+  # Dev mode: a source checkout on the remote. This is the only path that
+  # needs Node, so Node discovery runs here and nowhere else.
+  ensure_remote_node_path || true
   if ! command -v node >/dev/null 2>&1; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
     exit 1
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+T3_ARCHIVE_VERSION=@@T3_ARCHIVE_VERSION@@
+if [ -z "$T3_ARCHIVE_VERSION" ]; then
+  printf 'No t3 release version was provided for the remote runtime.\\n' >&2
+  exit 1
 fi
-# npm extracts a package before it runs the native builds of its dependencies,
-# so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
-# the npx cache without a t3 executable. \`npx --yes\` then exits 0 without
-# running anything at all, which the caller only ever sees as a server that
-# never becomes ready. Resolve the CLI once up front so that install failure is
-# reported here, with npm's own output on stderr.
-require_installed_t3_cli() {
-  if ! T3_CLI_PATH="$("$@" -- sh -c 'command -v t3')"; then
-    printf 'Remote host could not install %s. See npm output above for the cause.\\n' @@T3_PACKAGE_SPEC@@ >&2
-    return 1
-  fi
-  if [ -n "$T3_CLI_PATH" ]; then
-    return 0
-  fi
-  printf 'Remote host installed %s but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
-  return 1
+# Self-contained release archive: no Node, npm, or compiler on the remote.
+# Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
+T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
+T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"
+t3_runtime_ready() {
+  [ -x "$T3_RUNTIME_DIR/t3" ] && [ "$(cat "$T3_RUNTIME_DIR/.install-complete" 2>/dev/null)" = "$T3_ARCHIVE_VERSION" ]
 }
-# The launcher records this PID, so exec the CLI without an npm wrapper process.
-if command -v npx >/dev/null 2>&1; then
-  require_installed_t3_cli npx --yes --package @@T3_PACKAGE_SPEC@@ || exit 1
-  exec "$T3_CLI_PATH" "$@"
+if ! t3_runtime_ready; then
+  mkdir -p "$HOME/.t3/runtime/versions"
+  # Concurrent launches (two clients, a retry racing a slow first run) must
+  # not both install: mkdir is the atomic lock and the ready check repeats
+  # under it.
+  T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
+  # mkdir is the only portable atomic exclusive create (mv would silently
+  # nest a candidate inside an existing lock). The owner publishes its pid
+  # right after, so a lock with a live owner is never reclaimed however
+  # slow its download is, and a lock whose owner is dead is reclaimed at
+  # once. A lock with no pid at all is a crash between mkdir and the pid
+  # write; it is reclaimed after a short grace so a live owner has time to
+  # publish.
+  T3_LOCK_WAITED=0
+  T3_LOCK_UNOWNED=0
+  while ! mkdir "$T3_LOCK" 2>/dev/null; do
+    T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$T3_LOCK_OWNER" ]; then
+      T3_LOCK_UNOWNED=0
+      if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
+        rm -rf "$T3_LOCK"
+        continue
+      fi
+    else
+      T3_LOCK_UNOWNED=$((T3_LOCK_UNOWNED + 1))
+      if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then
+        rm -rf "$T3_LOCK"
+        continue
+      fi
+    fi
+    if [ "$T3_LOCK_WAITED" -ge @@T3_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
+      printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
+      exit 1
+    fi
+    sleep 1
+    T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
+  done
+  printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
+  trap 'rm -rf "$T3_LOCK"' EXIT
 fi
-if command -v npm >/dev/null 2>&1; then
-  require_installed_t3_cli npm exec --yes --package @@T3_PACKAGE_SPEC@@ || exit 1
-  exec "$T3_CLI_PATH" "$@"
+if ! t3_runtime_ready; then
+  case "$(uname -s)" in
+    Darwin) T3_PLATFORM="darwin" ;;
+    Linux) T3_PLATFORM="linux" ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
+  esac
+  case "$(uname -m)" in
+    arm64 | aarch64) T3_ARCH="arm64" ;;
+    x86_64 | amd64) T3_ARCH="x64" ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
+  esac
+  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"
+  T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
+  trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
+  t3_fetch() {
+    if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
+    elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
+    else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+    fi
+  }
+  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@
+  t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
+  T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
+  if command -v sha256sum >/dev/null 2>&1; then
+    T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+  else
+    T3_ACTUAL="$(shasum -a 256 "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+  fi
+  if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
+    printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
+  fi
+  tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
+  rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
+  # Prove the binary runs here (libc, arch) before marking it ready, or every
+  # later launch would exec a broken install instead of retrying.
+  if ! "$T3_STAGING/t3" --version >/dev/null 2>&1; then
+    printf 'The t3 %s executable does not run on this host.\\n' "$T3_ARCHIVE_VERSION" >&2; exit 1
+  fi
+  printf '%s\\n' "$T3_ARCHIVE_VERSION" > "$T3_STAGING/.install-complete"
+  rm -rf "$T3_RUNTIME_DIR"
+  mv "$T3_STAGING" "$T3_RUNTIME_DIR"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
-exit 1
+if [ -n "\${T3_LOCK:-}" ]; then
+  rm -rf "$T3_LOCK"
+  trap - EXIT
+fi
+exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
@@ -804,10 +781,21 @@ export class SshInvalidArchiveVersionError extends Schema.TaggedError<SshInvalid
 const EXACT_ARCHIVE_VERSION =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
+export class SshMissingRunnerError extends Schema.TaggedError<SshMissingRunnerError>()(
+  "SshMissingRunnerError",
+  {},
+) {
+  override get message(): string {
+    return "A remote t3 runner needs an archive version or a node script path.";
+  }
+}
+
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
-  const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   const archiveVersion = input?.archiveVersion?.trim() || "";
+  if (nodeScriptPath === "" && archiveVersion === "") {
+    throw new SshMissingRunnerError();
+  }
   if (archiveVersion !== "" && !EXACT_ARCHIVE_VERSION.test(archiveVersion)) {
     throw new SshInvalidArchiveVersionError({ archiveVersion });
   }
@@ -818,7 +806,6 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
   );
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
-      T3_PACKAGE_SPEC: packageSpec,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
@@ -841,7 +828,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
-    T3_ARCHIVE_MODE: input?.archiveVersion?.trim() ? "1" : "0",
+    T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
@@ -894,9 +881,9 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", remoteStateKey(target)],
       stdin: buildRemoteLaunchScript(runner),
-      timeoutMs: runner?.archiveVersion?.trim()
-        ? REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS
-        : REMOTE_LAUNCH_TIMEOUT_MS,
+      timeoutMs: isNodeScriptRunner(runner)
+        ? REMOTE_LAUNCH_TIMEOUT_MS
+        : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -956,7 +943,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     stdin: buildRemotePairingScript(target, runner),
     // Pairing may be the first command on a cold remote, so it can install
     // the archive on the way.
-    ...(runner?.archiveVersion?.trim() ? { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS } : {}),
+    ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1687,13 +1674,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(resolvedTarget),
       key,
     });
-    const packageSpec = options.resolveCliPackageSpec?.();
     const runner =
-      options.resolveCliRunner === undefined
-        ? packageSpec === undefined
-          ? undefined
-          : { packageSpec }
-        : yield* options.resolveCliRunner;
+      options.resolveCliRunner === undefined ? undefined : yield* options.resolveCliRunner;
     yield* Effect.logDebug("ssh.environment.runner.resolved", {
       ...sshTargetLogFields(resolvedTarget),
       ...sshRunnerLogFields(runner),

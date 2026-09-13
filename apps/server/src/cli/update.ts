@@ -1,7 +1,6 @@
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
-  HostProcessExecutablePath,
   HostProcessInvokedAs,
   HostProcessIsExecutable,
   HostProcessPlatform,
@@ -12,7 +11,6 @@ import {
   CLI_RELEASE_CHANNELS,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
-  isArchiveDistributedVersion,
   newestCliReleaseVersion,
   type CliReleaseChannel,
 } from "@t3tools/shared/cliRelease";
@@ -320,7 +318,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
         Effect.map((result) => (result.code === 0 ? result.stdout : "")),
         Effect.orElseSucceed(() => ""),
       );
-    return /__service-launcher|service-launcher\.mjs/.test(command);
+    return /__service-launcher/.test(command);
   }
   return false;
 });
@@ -338,7 +336,6 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const runner = yield* ProcessRunner.ProcessRunner;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
-  const execPath = yield* HostProcessExecutablePath;
   const environment = yield* HostProcessEnvironment;
   const httpClient = yield* HttpClient.HttpClient;
   const service = yield* BootService.BootService;
@@ -410,14 +407,6 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       ? serviceVersion
       : currentVersion;
 
-  // Only archive-distributed versions install without Node and npm on the
-  // machine. Until nightly and stable ship archives, updating onto them from
-  // here would reintroduce the dependency this command exists to remove.
-  if (!isArchiveDistributedVersion(targetVersion)) {
-    return yield* new CliUpdateError({
-      reason: `t3@${targetVersion} is published on npm only. Install it with \`npm install -g t3@${targetVersion}\`, or pick a version from the preview channel.`,
-    });
-  }
   if (executableCurrent && serviceCurrent) {
     yield* Console.log(
       serviceVersion !== undefined
@@ -480,8 +469,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     validate: (paths) =>
       runner
         .run({
-          command: pinnedRuntimeCommand(paths, execPath).command,
-          args: [...pinnedRuntimeCommand(paths, execPath).args, "--version"],
+          command: pinnedRuntimeCommand(paths).command,
+          args: [...pinnedRuntimeCommand(paths).args, "--version"],
           timeout: Duration.seconds(30),
         })
         .pipe(
