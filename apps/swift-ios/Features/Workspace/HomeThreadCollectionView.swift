@@ -40,8 +40,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         configuration.showsSeparators = false
         configuration.headerMode = .none
         configuration.footerMode = .none
+        configuration.leadingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
+            coordinator?.swipeActions(at: indexPath, leading: true)
+        }
         configuration.trailingSwipeActionsConfigurationProvider = { [weak coordinator = context.coordinator] indexPath in
-            coordinator?.trailingSwipeActions(at: indexPath)
+            coordinator?.swipeActions(at: indexPath, leading: false)
         }
 
         let collectionView = UICollectionView(
@@ -292,25 +295,26 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
 
-        func trailingSwipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        func swipeActions(
+            at indexPath: IndexPath,
+            leading: Bool
+        ) -> UISwipeActionsConfiguration? {
+            let isRightToLeft = collectionView?.effectiveUserInterfaceLayoutDirection == .rightToLeft
+            let preference = parent.settings.swipeActions.configuration(
+                leading: leading, isRightToLeft: isRightToLeft
+            )
             guard case let .thread(thread, _, _, isArchived, _, _) = item(at: indexPath) else {
                 return nil
             }
-
-            let actions = HomeThreadSwipeAction
-                .trailingActions(
-                    for: thread,
-                    isArchived: isArchived,
-                    at: .now
-                )
+            let actions = HomeThreadSwipeAction.actions(
+                for: thread, isArchived: isArchived, at: .now, configuration: preference
+            )
+            guard !actions.isEmpty else { return nil }
             let configuration = UISwipeActionsConfiguration(
                 actions: actions.map { contextualAction($0, for: thread) }
             )
-            // A full swipe runs the edge action, which is only ever settlement.
-            // Delete can never reach that slot, so the gesture cannot destroy a
-            // thread; rows with nothing to settle keep the full swipe disabled.
             configuration.performsFirstActionWithFullSwipe =
-                HomeThreadSwipeAction.performsFullSwipe(with: actions)
+                HomeThreadSwipeAction.performsFullSwipe(with: actions, configuration: preference)
             return configuration
         }
 
@@ -937,22 +941,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     }
 }
 
-/// The trailing swipe actions a Home row offers, resolved as data so the row's
-/// gesture semantics stay deterministic and testable without hosting a
-/// collection view. Order is outermost-first, matching
-/// `UISwipeActionsConfiguration`, which lays trailing actions out from the
-/// trailing edge inward and runs the first action on a full swipe.
+/// Resolves saved choices against each row's capabilities and lifecycle state.
+/// Order is outermost-first, matching UIKit's full-swipe action.
 enum HomeThreadSwipeAction: Equatable {
-    case delete
-    case restore
-    case unpin
-    case settle
-    case reopen
-    case archive
+    case delete, restore, pin, unpin, settle, reopen, archive
 
-    /// The lifecycle mutation an action requests. Keeping it separate from the
-    /// action keeps the swipe wiring verifiable and forces every case through
-    /// the row's existing callbacks instead of a second settlement path.
     enum Intent: Equatable {
         case delete
         case setArchived(Bool)
@@ -960,45 +953,44 @@ enum HomeThreadSwipeAction: Equatable {
         case setSettled(Bool)
     }
 
-    /// Settlement owns the edge slot on every row that can settle, so a full
-    /// swipe clears the task in one motion and a partial swipe still reveals
-    /// every button. Delete is always last and therefore can never be the
-    /// full-swipe action. A pinned row keeps Unpin between the two: settling
-    /// already clears the pin, so the full swipe unpins and settles together.
-    /// Archived rows stay restore-only, and a row with nothing to settle keeps
-    /// its reversible action at the edge with the full swipe turned off.
-    static func trailingActions(
+    static func actions(
         for thread: FeatureThread,
         isArchived: Bool,
-        at now: Date
+        at now: Date,
+        configuration: FeatureSwipeConfiguration = FeatureSwipeSettings().left
     ) -> [HomeThreadSwipeAction] {
-        guard !isArchived else { return [.restore, .delete] }
-
-        let isSettled = thread.isEffectivelySettled()
-        let settlement: HomeThreadSwipeAction? = isSettled
-            ? .reopen
-            : (thread.canSettleNow(at: now) ? .settle : nil)
-        let isPinned = thread.pinnedAt != nil && thread.canTogglePin
-
-        var actions: [HomeThreadSwipeAction] = []
-        if let settlement {
-            actions.append(settlement)
-            if isPinned {
-                actions.append(.unpin)
+        configuration.orderedActions.compactMap { choice in
+            switch choice {
+            case .settle:
+                guard !isArchived else { return nil }
+                if thread.isEffectivelySettled() { return .reopen }
+                return thread.canSettleNow(at: now) ? .settle : nil
+            case .pin:
+                guard !isArchived, thread.canTogglePin else { return nil }
+                return thread.pinnedAt == nil ? .pin : .unpin
+            case .archive:
+                return isArchived ? .restore : .archive
+            case .delete:
+                return .delete
             }
-        } else if isPinned {
-            actions.append(.unpin)
-        } else {
-            actions.append(.archive)
         }
-        actions.append(.delete)
-        return actions
     }
 
-    /// The full swipe is armed only when the edge action settles or reopens.
-    /// Nothing else may run from the gesture alone.
-    static func performsFullSwipe(with actions: [HomeThreadSwipeAction]) -> Bool {
-        actions.first?.isSettlement ?? false
+    static func performsFullSwipe(
+        with actions: [HomeThreadSwipeAction],
+        configuration: FeatureSwipeConfiguration = FeatureSwipeSettings().left
+    ) -> Bool {
+        guard let selected = configuration.enabledFullSwipe else { return false }
+        return actions.first?.choice == selected
+    }
+
+    var choice: FeatureSwipeAction {
+        switch self {
+        case .settle, .reopen: .settle
+        case .pin, .unpin: .pin
+        case .archive, .restore: .archive
+        case .delete: .delete
+        }
     }
 
     var isSettlement: Bool {
@@ -1010,6 +1002,7 @@ enum HomeThreadSwipeAction: Equatable {
         case .delete: .delete
         case .restore: .setArchived(false)
         case .archive: .setArchived(true)
+        case .pin: .setPinned(true)
         case .unpin: .setPinned(false)
         case .settle: .setSettled(true)
         case .reopen: .setSettled(false)
@@ -1020,6 +1013,7 @@ enum HomeThreadSwipeAction: Equatable {
         switch self {
         case .delete: "Delete"
         case .restore: "Restore"
+        case .pin: "Pin"
         case .unpin: "Unpin"
         case .settle: "Settle"
         case .reopen: "Reopen"
@@ -1031,6 +1025,7 @@ enum HomeThreadSwipeAction: Equatable {
         switch self {
         case .delete: "trash"
         case .restore: "arrow.uturn.backward"
+        case .pin: "pin"
         case .unpin: "pin.slash"
         case .settle: "checkmark"
         case .reopen: "arrow.counterclockwise"
@@ -1039,14 +1034,16 @@ enum HomeThreadSwipeAction: Equatable {
     }
 
     var style: UIContextualAction.Style {
-        self == .delete ? .destructive : .normal
+        // Delete opens a confirmation. UIKit must not remove the row before
+        // the user confirms and the existing deletion path succeeds.
+        .normal
     }
 
-    /// Destructive actions keep UIKit's own tint.
     var backgroundColor: UIColor? {
         switch self {
-        case .delete: nil
-        case .restore, .unpin, .reopen: .systemBlue
+        case .delete: .systemRed
+        case .pin, .unpin: .systemOrange
+        case .restore, .reopen: .systemBlue
         case .settle: .systemGreen
         case .archive: .systemGray
         }

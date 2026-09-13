@@ -207,7 +207,7 @@ struct DailyUXSidebarTests {
         #expect(queued.hasQueuedTurnStart(at: now))
         #expect(queued.isEffectivelySettled())
         #expect(!queued.canSettleNow(at: now))
-        #expect(HomeThreadSwipeAction.trailingActions(
+        #expect(HomeThreadSwipeAction.actions(
             for: queued,
             isArchived: false,
             at: now

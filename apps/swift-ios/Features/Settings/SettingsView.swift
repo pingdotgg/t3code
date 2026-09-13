@@ -131,6 +131,15 @@ public struct SettingsView: View {
                 .accessibilityIdentifier("settings-appearance")
                 settingsDivider
                 NavigationLink {
+                    SettingsSwipeActionsView(settings: preference(\.swipeActions))
+                } label: {
+                    SettingsNavigationRow(title: "Swipe Actions", systemImage: "hand.draw")
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Buttons and full-swipe actions for thread rows")
+                .accessibilityIdentifier("settings-swipe-actions")
+                settingsDivider
+                NavigationLink {
                     SettingsNotificationsView(
                         notificationsEnabled: preference(\.notificationsEnabled),
                         liveActivitiesEnabled: preference(\.liveActivitiesEnabled)
