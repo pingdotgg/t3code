@@ -2,8 +2,7 @@
  * Traces a small teardrop from a row's old offset into the pinned slot at (0, 0),
  * at constant speed along each curve.
  */
-export function sidebarPinPath(fromX: number, fromY: number) {
-  const bow = 16;
+export function sidebarPinPath(fromX: number, fromY: number, bow = 16) {
   const dip = 6;
   const y = -fromY;
   const segments = [

@@ -140,18 +140,27 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     if (offset === 0 && offsetX === 0 && !entry) return;
     // Spend the flight on the visible journey. Once the whole row clears the
     // scrollport, removing its transform lands it in the real offscreen slot.
+    const viewportRect = pinVisual ? viewport?.getBoundingClientRect() : undefined;
+    const rowRect = viewportRect ? node.getBoundingClientRect() : undefined;
     const targetY =
-      pinVisual && viewport
-        ? Math.max(
-            0,
-            viewport.getBoundingClientRect().top +
-              viewport.clientTop -
-              node.getBoundingClientRect().bottom,
-          )
+      viewport && viewportRect && rowRect
+        ? Math.max(0, viewportRect.top + viewport.clientTop - rowRect.bottom)
         : 0;
     if (targetY > 0 && offset <= targetY) return;
+    // Transformed rows contribute to scrollable overflow. Keep the bow within
+    // the existing inset so it cannot introduce horizontal scrolling or fades.
+    const bow =
+      viewport && viewportRect && rowRect
+        ? Math.max(
+            0,
+            Math.min(
+              16,
+              viewportRect.left + viewport.clientLeft + viewport.clientWidth - rowRect.right,
+            ),
+          )
+        : 16;
     const path = pinning
-      ? sidebarPinPath(offsetX, offset - targetY).map((point) => ({
+      ? sidebarPinPath(offsetX, offset - targetY, bow).map((point) => ({
           ...point,
           y: point.y + targetY,
         }))
@@ -177,6 +186,17 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       { once: true },
     );
   };
+
+  // A scroll can reveal a clipped endpoint. Retarget from the current visual
+  // position so the row still clears the edge before its transform disappears.
+  const onScroll = () => {
+    for (const [node, { pinVisual }] of Array.from(running)) {
+      if (!pinVisual) continue;
+      const offset = remainingOffset(node);
+      move(node, offset.y, false, offset.x);
+    }
+  };
+  viewport?.addEventListener("scroll", onScroll, { passive: true });
 
   return {
     update(animate: boolean) {
@@ -320,6 +340,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     suspend,
     dispose() {
       suspend();
+      viewport?.removeEventListener("scroll", onScroll);
       disposed = true;
     },
   };

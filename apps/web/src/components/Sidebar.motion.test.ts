@@ -40,6 +40,7 @@ class TestRow {
     return {
       top: this.offsetTop + this.dragTranslate,
       bottom: this.offsetTop + this.dragTranslate + this.offsetHeight,
+      right: this.offsetLeft + this.offsetWidth,
       height: this.offsetHeight,
     };
   }
@@ -74,7 +75,13 @@ class TestRow {
 
 function fixture(rows: TestRow[], viewportTop = 0) {
   const media = { matches: false };
-  const viewport = { getBoundingClientRect: () => ({ top: viewportTop }), clientTop: 0 };
+  const viewport = Object.assign(new EventTarget(), {
+    top: viewportTop,
+    clientTop: 0,
+    clientLeft: 0,
+    clientWidth: 280,
+    getBoundingClientRect: () => ({ top: viewport.top, left: 0 }),
+  });
   const parent = {
     children: rows,
     closest: () => viewport,
@@ -100,7 +107,7 @@ function fixture(rows: TestRow[], viewportTop = 0) {
   }
   layout(rows);
   const motion = createSidebarListMotion(parent as unknown as HTMLUListElement);
-  return { motion, layout, media, parent };
+  return { motion, layout, media, parent, viewport };
 }
 
 function expectMove(row: TestRow, offset: number) {
@@ -556,6 +563,47 @@ describe("sidebar list motion", () => {
 });
 
 describe("pinning motion", () => {
+  it("retargets a clipped flight when scrolling exposes its old endpoint", () => {
+    const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
+    const pin = rows.at(-1)!;
+    const { motion, layout, viewport } = fixture(rows, 1000);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, ...rows.slice(0, -1)]);
+    motion.update(true);
+    const first = pin.animations[0]!;
+    first.progress = Number(pin.animate.mock.lastCall![0][80]!.offset);
+    viewport.top = 600;
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(first.cancel).toHaveBeenCalledOnce();
+    expect(pin.animate.mock.lastCall![0][0]?.transform).toBe("translate(7.68px, 1251px)");
+    expect(pin.animate.mock.lastCall![0].at(-1)?.transform).toBe("translate(0px, 510px)");
+    // Scrolling all the way back reveals the actual pinned slot.
+    pin.animations[1]!.progress = 0.5;
+    viewport.top = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(pin.animate.mock.lastCall![0][0]?.transform).toBe("translate(3.84px, 880.5px)");
+    expect(pin.animate.mock.lastCall![0].at(-1)?.transform).toBe("translate(0px, 0px)");
+    motion.dispose();
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(pin.animate).toHaveBeenCalledTimes(3);
+  });
+
+  it("fits the bow inside the viewport's available right inset", () => {
+    const [first, pin] = [new TestRow("first"), new TestRow("pin")];
+    const { motion, layout, viewport } = fixture([first, pin]);
+    viewport.clientWidth = 272;
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, first]);
+    motion.update(true);
+    const xs = pin.animate.mock.lastCall![0].map((frame) =>
+      Number(String(frame.transform).match(/translate\(([^p]+)px/)![1]),
+    );
+    expect(Math.max(...xs)).toBe(8);
+    expect(Math.min(...xs)).toBe(0);
+  });
+
   it("does not replay pinning when an already pinned slim row returns to the pinned section", () => {
     const first = new TestRow("first");
     const pin = new TestRow("settled pin", 36);
