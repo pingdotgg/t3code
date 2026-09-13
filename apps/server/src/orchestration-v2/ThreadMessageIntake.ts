@@ -90,15 +90,24 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       })
       .pipe(
         Effect.tap((result) => {
-          // A replayed receipt reports the first attempt's attachments, so
-          // this attempt's copies go unreferenced and are released. With no
+          // A replayed receipt reports the first attempt's answer, so this
+          // attempt's copies go unreferenced and are released. With no
           // recorded answer the outcome is ambiguous and everything stays.
-          const accepted = result.storedEvents.flatMap(({ event }) =>
-            event.type === "turn-item.updated" && event.payload.type === "user_input_request"
-              ? Object.values(event.payload.questionAnswer?.attachmentsByQuestionId ?? {}).flat()
+          const questionAnswers = result.storedEvents.flatMap(({ event }) =>
+            event.type === "turn-item.updated" &&
+            event.payload.type === "user_input_request" &&
+            event.payload.questionAnswer !== undefined
+              ? [event.payload.questionAnswer]
               : [],
           );
-          return accepted.length > 0 ? releaseUnusedClaims(claimedPaths, accepted) : Effect.void;
+          return questionAnswers.length > 0
+            ? releaseUnusedClaims(
+                claimedPaths,
+                questionAnswers.flatMap((answer) =>
+                  Object.values(answer.attachmentsByQuestionId).flat(),
+                ),
+              )
+            : Effect.void;
         }),
         Effect.tapError((error) =>
           dispatchWasNotAccepted(error)

@@ -12,6 +12,7 @@ import {
   TurnItemId,
   type OrchestrationV2Command,
   type OrchestrationV2StoredEvent,
+  type UserInputAttachments,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -42,6 +43,49 @@ const failingDispatch = (captured: OrchestrationV2Command[]) =>
       );
     },
   });
+
+const NOW = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
+
+const answeredRespondEvents = (input: {
+  readonly threadId: ThreadId;
+  readonly requestId: string;
+  readonly attachmentsByQuestionId: UserInputAttachments;
+}): OrchestrationV2StoredEvent[] => [
+  {
+    sequence: 1,
+    commandId: null,
+    event: {
+      id: EventId.make("evt-recorded-answer"),
+      type: "turn-item.updated",
+      threadId: input.threadId,
+      occurredAt: NOW,
+      payload: {
+        id: TurnItemId.make("item-recorded-answer"),
+        type: "user_input_request",
+        threadId: input.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: NOW,
+        updatedAt: NOW,
+        requestId: RuntimeRequestId.make(input.requestId),
+        questions: [],
+        questionAnswer: {
+          requestId: input.requestId,
+          answers: {},
+          attachmentsByQuestionId: input.attachmentsByQuestionId,
+        },
+      },
+    },
+  },
+];
 
 it.effect("claims question uploads and passes readable paths through the V2 request command", () =>
   Effect.gen(function* () {
@@ -310,43 +354,15 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
       mimeType: "image/png",
       sizeBytes: 3,
     };
-    const now = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
-    const storedEvents: OrchestrationV2StoredEvent[] = [
-      {
-        sequence: 1,
-        commandId: null,
-        event: {
-          id: EventId.make("evt-earlier-answer"),
-          type: "turn-item.updated",
-          threadId,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make("item-earlier"),
-            type: "user_input_request",
-            threadId,
-            runId: null,
-            nodeId: null,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            status: "completed",
-            title: null,
-            startedAt: null,
-            completedAt: now,
-            updatedAt: now,
-            requestId: RuntimeRequestId.make("request-replay"),
-            questions: [],
-            questionAnswer: {
-              requestId: "request-replay",
-              answers: { q: ["one"] },
-              attachmentsByQuestionId: { q: [earlierAttachment] },
-            },
-          },
-        },
-      },
-    ];
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`),
+      new Uint8Array([4, 4, 4]),
+    );
+    const storedEvents = answeredRespondEvents({
+      threadId,
+      requestId: "request-replay",
+      attachmentsByQuestionId: { q: [earlierAttachment] },
+    });
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-replay"),
@@ -373,9 +389,178 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
       Effect.result,
     );
     expect(result._tag).toBe("Success");
+    // The accepted copy from the first attempt is untouched; only the
+    // retry's unreferenced copy is removed.
     expect(
       NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-replay-"),
+      ),
+    ).toEqual([`${earlierAttachment.id}.png`]);
+    expect(
+      NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`)),
+    ).toEqual(Buffer.from([4, 4, 4]));
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect("releases claimed copies when the recorded answer has no attachments", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-empty-answer");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    // The same command id was first answered without attachments; this
+    // retry's copies are unreferenced by the recorded answer.
+    const storedEvents = answeredRespondEvents({
+      threadId,
+      requestId: "request-empty-answer",
+      attachmentsByQuestionId: {},
+    });
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-empty"),
+      threadId,
+      requestId: RuntimeRequestId.make("request-empty-answer"),
+      answers: { q: ["one"] },
+      attachmentsByQuestionId: {
+        q: [
+          {
+            type: "image",
+            id: pendingId,
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService)({
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Success");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-empty-answer-"),
+      ),
+    ).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-fresh-answer");
+    const firstId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    const secondId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${firstId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${secondId}.png`),
+      new Uint8Array([7, 7]),
+    );
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-fresh"),
+      threadId,
+      requestId: RuntimeRequestId.make("request-fresh"),
+      answers: { q1: ["one"], q2: ["two"] },
+      attachmentsByQuestionId: {
+        q1: [
+          {
+            type: "image",
+            id: firstId,
+            name: "one.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+        q2: [
+          {
+            type: "image",
+            id: secondId,
+            name: "two.png",
+            mimeType: "image/png",
+            sizeBytes: 2,
+          },
+        ],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService)({
+          // A fresh commit records exactly the attachments this attempt claimed.
+          dispatch: (command) =>
+            Effect.succeed({
+              sequence: 1,
+              storedEvents: answeredRespondEvents({
+                threadId,
+                requestId: "request-fresh",
+                attachmentsByQuestionId:
+                  command.type === "runtime-request.respond"
+                    ? (command.attachmentsByQuestionId ?? {})
+                    : {},
+              }),
+            }),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Success");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-fresh-answer-"),
+      ),
+    ).toHaveLength(2);
+  }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect("releases claimed copies when preparation dies with a defect", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const poisoned = {
+      get id(): string {
+        throw new Error("poisoned");
+      },
+    };
+    const captured: OrchestrationV2Command[] = [];
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-defect"),
+      threadId: ThreadId.make("thread-defect"),
+      requestId: RuntimeRequestId.make("request-defect"),
+      answers: { q1: ["one"], q2: ["two"] },
+      attachmentsByQuestionId: {
+        q1: [
+          {
+            type: "image",
+            id: pendingId,
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+        q2: [poisoned] as never,
+      },
+    }).pipe(Effect.provide(failingDispatch(captured)), Effect.exit);
+    expect(result._tag).toBe("Failure");
+    expect(captured).toHaveLength(0);
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-defect-"),
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
