@@ -12,6 +12,18 @@ const command = (id = "watch", monitor = true) => ({
 });
 
 describe("Codex background tasks", () => {
+  it("frames interleaved stdout and stderr independently and flushes both tails", () => {
+    const tasks = new CodexBackgroundTasks();
+    tasks.register("watch", "process-watch", "watch-ci");
+    tasks.output("watch", "foo", "stdout");
+    tasks.output("watch", "bar\nerr-tail", "stderr");
+    expect(tasks.takeWake()?.output).toBe("bar");
+    tasks.output("watch", "-done\nout-tail", "stdout");
+    expect(tasks.takeWake()?.output).toBe("foo-done");
+    tasks.completed(command());
+    expect(tasks.takeWake()?.output).toBe("out-tail\nerr-tail\nWatcher exited with code 0.");
+  });
+
   it("keeps Monitoring until the last background shell exits", () => {
     const tasks = new CodexBackgroundTasks();
     const liveness = makeLiveness();

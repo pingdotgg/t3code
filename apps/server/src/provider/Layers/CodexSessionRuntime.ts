@@ -2358,6 +2358,7 @@ export const makeCodexSessionRuntime = (
           decoders[payload.stream].decode(Buffer.from(payload.deltaBase64, "base64"), {
             stream: true,
           }),
+          payload.stream,
         );
         yield* Queue.offer(wakeSignals, undefined);
       }),
@@ -2622,10 +2623,8 @@ export const makeCodexSessionRuntime = (
                       Effect.gen(function* () {
                         const decoders = monitorCommands.get(monitorId);
                         if (decoders) {
-                          backgroundTasks.output(
-                            monitorId,
-                            decoders.stdout.decode() + decoders.stderr.decode(),
-                          );
+                          backgroundTasks.output(monitorId, decoders.stdout.decode(), "stdout");
+                          backgroundTasks.output(monitorId, decoders.stderr.decode(), "stderr");
                         }
                         const completed = backgroundTasks.completed({
                           id: monitorId,

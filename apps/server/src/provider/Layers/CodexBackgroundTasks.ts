@@ -35,7 +35,7 @@ interface BackgroundTask {
   readonly description: string;
   readonly processId: string;
   monitor: boolean;
-  remainder: string;
+  remainder: Record<"stdout" | "stderr", string>;
 }
 
 interface PendingWake {
@@ -79,7 +79,7 @@ export class CodexBackgroundTasks {
       processId,
       description,
       monitor,
-      remainder: "",
+      remainder: { stdout: "", stderr: "" },
     };
     this.tasks.set(taskId, task);
     return { taskId: task.taskId, description: task.description, status: "running" };
@@ -99,12 +99,12 @@ export class CodexBackgroundTasks {
     for (const task of this.tasks.values()) {
       if (task.processId !== processId) continue;
       task.monitor = false;
-      task.remainder = "";
+      task.remainder = { stdout: "", stderr: "" };
       this.pending.delete(task.taskId);
     }
   }
 
-  output(itemId: string, delta: string): void {
+  output(itemId: string, delta: string, stream: "stdout" | "stderr" = "stdout"): void {
     const task = this.tasks.get(itemId);
     if (!task?.monitor) return;
     // Bound both an unterminated line and a burst while the foreground is busy.
@@ -112,10 +112,13 @@ export class CodexBackgroundTasks {
     for (;;) {
       const newline = delta.indexOf("\n", offset);
       const end = newline === -1 ? delta.length : newline;
-      task.remainder = (task.remainder + delta.slice(offset, end)).slice(0, MAX_EVENT_LENGTH + 1);
+      task.remainder[stream] = (task.remainder[stream] + delta.slice(offset, end)).slice(
+        0,
+        MAX_EVENT_LENGTH + 1,
+      );
       if (newline === -1) break;
-      this.enqueue(task, task.remainder.replace(/\r$/, ""));
-      task.remainder = "";
+      this.enqueue(task, task.remainder[stream].replace(/\r$/, ""));
+      task.remainder[stream] = "";
       offset = end + 1;
     }
   }
@@ -130,7 +133,8 @@ export class CodexBackgroundTasks {
       if (this.inFlightWake?.taskId === command.id) this.inFlightWake = undefined;
     }
     if (task.monitor && command.exitCode !== -1) {
-      this.enqueue(task, task.remainder);
+      this.enqueue(task, task.remainder.stdout);
+      this.enqueue(task, task.remainder.stderr);
       this.enqueue(task, `Watcher exited with code ${command.exitCode ?? "unknown"}.`);
     }
     return {
@@ -180,7 +184,7 @@ export class CodexBackgroundTasks {
     this.inFlightWake = undefined;
     this.pending.clear();
     for (const [id, task] of this.tasks)
-      this.tasks.set(id, { ...task, monitor: false, remainder: "" });
+      this.tasks.set(id, { ...task, monitor: false, remainder: { stdout: "", stderr: "" } });
   }
 
   stop(): ReadonlyArray<typeof CodexBackgroundTaskEvent.Type> {
