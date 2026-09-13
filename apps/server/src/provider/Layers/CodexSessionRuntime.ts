@@ -2771,12 +2771,16 @@ export const makeCodexSessionRuntime = (
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: "10 seconds",
-                  orElse: () =>
-                    Effect.fail(
+                  orElse: () => {
+                    // Codex may have accepted the turn without acknowledging it.
+                    // Resume monitoring only after a successful user send.
+                    suppressMonitorWakes = true;
+                    return Effect.fail(
                       CodexErrors.CodexAppServerRequestError.internalError(
                         "Timed out starting Codex turn.",
                       ),
-                    ),
+                    );
+                  },
                 }),
               ),
             ),

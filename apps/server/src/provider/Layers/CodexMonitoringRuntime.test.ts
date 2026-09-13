@@ -361,6 +361,34 @@ for (const scenario of ["reject-resume", "timeout-resume"]) {
   );
 }
 
+it.effect(
+  "suppresses monitoring after an ambiguous user start timeout until a successful send",
+  () =>
+    Effect.gen(function* () {
+      const { runtime, until, inspect, subscribe } = yield* setup();
+      yield* runtime.sendTurn({ input: "watch" });
+      yield* until("turn/completed");
+      yield* subscribe;
+      const sending = yield* runtime
+        .sendTurn({ input: "timeout-resume" })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* until("thread/name/updated");
+      yield* runtime.compactThread;
+      yield* until("thread/name/updated");
+      yield* TestClock.adjust("10 seconds");
+      assert.equal((yield* Fiber.join(sending))._tag, "Failure");
+      assert.equal((yield* subscribe.pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* inspect).wakes.length, 0);
+      yield* runtime.sendTurn({ input: "resume" });
+      yield* until("turn/completed");
+      yield* until("turn/completed");
+      assert.equal((yield* inspect).wakes.length, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
+);
+
 it.effect("waits for an in-flight wake before completing unsubscribe", () =>
   Effect.gen(function* () {
     const { runtime, until, inspect, subscribe, unsubscribe } = yield* setup();
