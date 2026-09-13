@@ -12,14 +12,18 @@ import * as DateTime from "effect/DateTime";
 
 import {
   buildBoundedThreadProjection,
+  buildGetThreadProjectionResult,
   boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
   decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
+  isThreadHistoryTurnStart,
+  isThreadHistoryUserTurn,
   projectedRowBoundedSnapshotEncodedBytes,
   projectedRowEncodedBytes,
   selectHistoryPageFromCursor,
+  selectHistoryPageFromCursorOrError,
   selectRecentTimelineWindow,
   THREAD_HISTORY_CURSOR_MAX_LENGTH,
   THREAD_HISTORY_PAGE_POLICY,
@@ -278,7 +282,7 @@ describe("threadHistoryPaging", () => {
     expect(older.nextCursor).toBeNull();
   });
 
-  it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
+  it("rejects cursors whose anchor is missing from the fetched window", () => {
     const items = Array.from({ length: 5 }, (_, index) => makeRow(index));
     const cursor = encodeThreadHistoryCursor({
       snapshotSequence: 3,
@@ -286,17 +290,15 @@ describe("threadHistoryPaging", () => {
       sourceItemId: TurnItemId.make("item-deleted-long-ago"),
       position: 40,
     });
-    const page = selectHistoryPageFromCursor({
+    // Positions are renumbered per window, so an unresolvable anchor has no
+    // durable ordering key; guessing would silently skip history.
+    const result = selectHistoryPageFromCursorOrError({
       items,
       cursor,
       snapshotSequence: 3,
       policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
     });
-    // Clamp exclusive end to items.length and page backward so the client can
-    // dedupe and advance rather than permanently 400 on a dead cursor.
-    expect(page.items.map((row) => row.sourceItemId)).toEqual(["item-3", "item-4"]);
-    expect(page.hasMoreHistory).toBe(true);
-    expect(page.nextCursor).not.toBeNull();
+    expect(result._tag).toBe("invalid_cursor");
   });
 
   it("keeps cursor resolution stable when newer items append", () => {
@@ -668,5 +670,156 @@ describe("threadHistoryPaging", () => {
       detailInTurnItem: true,
     });
     expect(bounded.payloadBudgetExceeded).toBe(false);
+  });
+
+  it("bounds the getThreadProjection compat response and pages it to the true end", () => {
+    const turnCount = 30;
+    const rows = Array.from({ length: turnCount }, (_, turn) => {
+      const promptRow = makeRow(turn * 5);
+      if (promptRow.item.type !== "command_execution") throw new Error("Expected command fixture");
+      const prompt: OrchestrationV2ProjectedTurnItem = {
+        ...promptRow,
+        item: {
+          ...promptRow.item,
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          inputIntent: "turn_start",
+          messageId: MessageId.make(`prompt-${turn}`),
+          text: `Prompt ${turn}`,
+          attachments: [],
+        },
+      };
+      return [prompt, ...Array.from({ length: 4 }, (_, i) => makeRow(turn * 5 + 1 + i))];
+    }).flat();
+
+    const full = makeProjection(rows);
+    const result = buildGetThreadProjectionResult({
+      projection: full,
+      snapshotSequence: 7,
+    });
+
+    // The compat response is a projection (flat, legacy-decodable) plus
+    // progressive-history metadata — never a bare truncated timeline.
+    expect(result.thread.id).toBe(THREAD);
+    expect(result.runs).toEqual(full.runs);
+    expect(result.snapshotSequence).toBe(7);
+    expect(result.hasMoreHistory).toBe(true);
+    expect(result.historyCursor).not.toBeNull();
+    expect(result.latestLocalTurnOrdinal).toBe(turnCount * 5);
+    expect(result.payloadBudgetExceeded).toBe(false);
+
+    // The window stops at a complete user-turn boundary.
+    const window = result.visibleTurnItems;
+    const first = window[0];
+    expect(first).toBeDefined();
+    expect(isThreadHistoryTurnStart(first!.item)).toBe(true);
+    expect(window.filter((row) => isThreadHistoryUserTurn(row.item))).toHaveLength(
+      THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+    );
+
+    // Every older page the cursor yields is disjoint and reaches the start.
+    const paged: OrchestrationV2ProjectedTurnItem[] = [];
+    let cursor = result.historyCursor;
+    while (cursor !== null) {
+      const pageOrError = selectHistoryPageFromCursorOrError({
+        items: rows,
+        cursor,
+        snapshotSequence: result.snapshotSequence,
+      });
+      expect(pageOrError._tag).toBe("ok");
+      if (pageOrError._tag !== "ok") return;
+      paged.unshift(...pageOrError.page.items);
+      cursor = pageOrError.page.nextCursor;
+    }
+    expect([...paged, ...window].map((row) => row.sourceItemId)).toEqual(
+      rows.map((row) => row.sourceItemId),
+    );
+  });
+
+  it("bounds the compat response by rows and bytes on turn-less histories", () => {
+    const rows = Array.from({ length: 300 }, (_, index) => makeRow(index));
+    const full = makeProjection(rows);
+    const result = buildGetThreadProjectionResult({
+      projection: full,
+      snapshotSequence: 3,
+    });
+
+    expect(result.visibleTurnItems).toHaveLength(THREAD_HISTORY_PAGE_POLICY.maxItems);
+    expect(result.hasMoreHistory).toBe(true);
+    expect(
+      boundedTimelineEncodedBytes({
+        visibleTurnItems: result.visibleTurnItems,
+        turnItems: result.turnItems,
+      }),
+    ).toBeLessThanOrEqual(THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes);
+
+    const paged: OrchestrationV2ProjectedTurnItem[] = [];
+    let cursor = result.historyCursor;
+    let pages = 0;
+    while (cursor !== null) {
+      const pageOrError = selectHistoryPageFromCursorOrError({
+        items: rows,
+        cursor,
+        snapshotSequence: result.snapshotSequence,
+      });
+      if (pageOrError._tag !== "ok") throw new Error(`unexpected ${pageOrError._tag}`);
+      expect(pageOrError.page.items.length).toBeLessThanOrEqual(
+        THREAD_HISTORY_PAGE_POLICY.maxItems,
+      );
+      paged.unshift(...pageOrError.page.items);
+      cursor = pageOrError.page.nextCursor;
+      pages += 1;
+    }
+    expect(pages).toBe(3);
+    expect(paged).toHaveLength(300 - THREAD_HISTORY_PAGE_POLICY.maxItems);
+    expect([...paged, ...result.visibleTurnItems].map((row) => row.sourceItemId)).toEqual(
+      rows.map((row) => row.sourceItemId),
+    );
+  });
+
+  it("reports payloadBudgetExceeded on the compat response for an oversized item", () => {
+    const huge = makeRow(0, { outputBytes: 2_000_000 });
+    const result = buildGetThreadProjectionResult({
+      projection: makeProjection([huge]),
+      snapshotSequence: 1,
+    });
+
+    expect(result.visibleTurnItems).toHaveLength(1);
+    expect(result.hasMoreHistory).toBe(false);
+    expect(result.historyCursor).toBeNull();
+    expect(result.payloadBudgetExceeded).toBe(true);
+  });
+
+  it("tags malformed cursors distinctly from other page failures", () => {
+    const rows = Array.from({ length: 10 }, (_, index) => makeRow(index));
+    const invalid = selectHistoryPageFromCursorOrError({
+      items: rows,
+      cursor: "not-valid",
+      snapshotSequence: 1,
+    });
+    expect(invalid._tag).toBe("invalid_cursor");
+
+    const cursor = encodeThreadHistoryCursor({
+      snapshotSequence: 1,
+      sourceThreadId: THREAD,
+      sourceItemId: TurnItemId.make("item-5"),
+      position: 5,
+    });
+    const ok = selectHistoryPageFromCursorOrError({
+      items: rows,
+      cursor,
+      snapshotSequence: 1,
+    });
+    expect(ok._tag).toBe("ok");
+    if (ok._tag === "ok") {
+      expect(ok.page.items.map((row) => row.sourceItemId)).toEqual([
+        "item-0",
+        "item-1",
+        "item-2",
+        "item-3",
+        "item-4",
+      ]);
+    }
   });
 });

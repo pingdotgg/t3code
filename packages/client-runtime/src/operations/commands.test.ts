@@ -16,6 +16,7 @@ import {
   TurnItemId,
   WS_METHODS,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadCheckpointContext,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
@@ -77,7 +78,10 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
+  readonly checkpointContext?: OrchestrationV2ThreadCheckpointContext;
+  readonly checkpointContextRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseThreadCheckpointContext?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -91,6 +95,19 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       Effect.sync(() => {
         input.projectionRequests?.push(requestInput.threadId);
         return input.projection ?? v2Projection;
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext]: (requestInput: {
+      readonly threadId: ThreadId;
+    }) =>
+      Effect.sync(() => {
+        input.checkpointContextRequests?.push(requestInput.threadId);
+        return (
+          input.checkpointContext ?? {
+            runs: [],
+            checkpointScopes: [],
+            checkpoints: [],
+          }
+        );
       }),
     [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
       Effect.sync(() => {
@@ -128,6 +145,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
+          ...(input.advertiseThreadCheckpointContext === false
+            ? {}
+            : { threadCheckpointContext: true }),
         },
       },
     } as never),
@@ -257,7 +277,12 @@ describe("V2 environment commands", () => {
         ],
       };
       const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projection,
+        advertiseThreadCheckpointContext: false,
+      });
 
       yield* revertThreadCheckpoint({
         commandId: CommandId.make("rollback-thread-start"),
@@ -272,6 +297,53 @@ describe("V2 environment commands", () => {
           threadId: v2ThreadId,
           scopeId,
           checkpointId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("resolves rewind ordinals from the targeted checkpoint context", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const checkpointContextRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+        checkpointContextRequests,
+        checkpointContext: {
+          runs: [],
+          checkpointScopes: [],
+          checkpoints: [
+            {
+              id: CheckpointId.make("checkpoint-turn-4"),
+              scopeId: CheckpointScopeId.make("scope-root"),
+              runId: RunId.make("run-4"),
+              ordinalWithinScope: 4,
+              appRunOrdinal: 4,
+              status: "ready",
+              ref: CheckpointRef.make("refs/t3/turn-4"),
+            },
+          ],
+        },
+      });
+
+      yield* revertThreadCheckpoint({
+        commandId: CommandId.make("rollback-to-turn-4"),
+        threadId: v2ThreadId,
+        turnCount: 4,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(checkpointContextRequests).toEqual([v2ThreadId]);
+      expect(commands).toEqual([
+        {
+          type: "checkpoint.rollback",
+          commandId: "rollback-to-turn-4",
+          threadId: v2ThreadId,
+          scopeId: "scope-root",
+          checkpointId: "checkpoint-turn-4",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
@@ -783,6 +855,7 @@ describe("V2 environment commands", () => {
           projects: [],
           projectionRequests,
           advertiseServerResolvedCommandContext: false,
+          advertiseThreadCheckpointContext: false,
           projection: {
             ...v2Projection,
             checkpoints:

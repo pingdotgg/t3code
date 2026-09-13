@@ -82,7 +82,7 @@ import type {
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2GetThreadProjectionInput,
   OrchestrationV2ShellStreamItem,
-  OrchestrationV2ThreadProjection,
+  OrchestrationV2GetThreadProjectionResult,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -1560,7 +1560,7 @@ export interface EnvironmentApi {
     ) => Promise<OrchestrationV2DispatchCommandResult>;
     getThreadProjection: (
       input: OrchestrationV2GetThreadProjectionInput,
-    ) => Promise<OrchestrationV2ThreadProjection>;
+    ) => Promise<OrchestrationV2GetThreadProjectionResult>;
     subscribeShell: (
       callback: (event: OrchestrationV2ShellStreamItem) => void,
       options?: {

@@ -24,7 +24,7 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
-  selectHistoryPageFromCursor,
+  selectHistoryPageFromCursorOrError,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
@@ -39,22 +39,6 @@ function isThreadNotFound(error: unknown): boolean {
     Predicate.hasProperty(error.cause, "_tag") &&
     error.cause._tag === "ProjectionStoreThreadNotFoundError"
   );
-}
-
-function selectHistoryPageFromCursorOrError(
-  input: Parameters<typeof selectHistoryPageFromCursor>[0],
-):
-  | { readonly _tag: "ok"; readonly page: ReturnType<typeof selectHistoryPageFromCursor> }
-  | { readonly _tag: "invalid_cursor" }
-  | { readonly _tag: "error"; readonly cause: unknown } {
-  try {
-    return { _tag: "ok", page: selectHistoryPageFromCursor(input) };
-  } catch (cause) {
-    if (cause instanceof InvalidThreadHistoryCursorError) {
-      return { _tag: "invalid_cursor" };
-    }
-    return { _tag: "error", cause };
-  }
 }
 
 /**

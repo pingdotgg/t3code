@@ -25,9 +25,11 @@ import {
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
+  OrchestrationV2RpcSchemas,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
@@ -81,6 +83,21 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 
 const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
   OrchestrationV2SubscribeThreadInput,
+);
+const decodeGetThreadProjectionInput = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.getThreadProjection.input,
+);
+const decodeGetThreadProjectionOutput = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.getThreadProjection.output,
+);
+const decodeGetThreadHistoryPageInput = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.getThreadHistoryPage.input,
+);
+const decodeGetThreadHistoryPageOutput = Schema.decodeUnknownSync(
+  OrchestrationV2RpcSchemas.getThreadHistoryPage.output,
+);
+const decodeGetThreadProjectionError = Schema.decodeUnknownSync(
+  OrchestrationV2GetThreadProjectionError,
 );
 
 describe("orchestration V2 contracts", () => {
@@ -798,6 +815,133 @@ describe("orchestration V2 contracts", () => {
       latestLocalTurnOrdinal: 1,
       payloadBudgetExceeded: false,
     });
+  });
+
+  it("keeps getThreadProjection decodable for legacy clients while carrying paging metadata", () => {
+    const projection = {
+      thread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: "thread-1",
+        projectId: "project-1",
+        title: "Thread",
+        providerInstanceId: "codex",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: "thread-1",
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        deletedAt: null,
+      },
+      runs: [],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      plans: [],
+      turnItems: [],
+      visibleTurnItems: [],
+      checkpointScopes: [],
+      checkpoints: [],
+      contextHandoffs: [],
+      contextTransfers: [],
+      updatedAt: now,
+    };
+    // New clients see the bounded-window metadata in-band.
+    const bounded = decodeGetThreadProjectionOutput({
+      ...projection,
+      snapshotSequence: 42,
+      historyCursor: "opaque-cursor",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 30,
+      payloadBudgetExceeded: false,
+    });
+    expect(bounded).toMatchObject({
+      snapshotSequence: 42,
+      historyCursor: "opaque-cursor",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 30,
+      payloadBudgetExceeded: false,
+    });
+
+    // An old client decoding the historical projection schema drops the extra
+    // keys and still sees a valid projection.
+    const legacy = decodeOrchestrationV2ThreadProjection({
+      ...projection,
+      snapshotSequence: 42,
+      historyCursor: "opaque-cursor",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 30,
+      payloadBudgetExceeded: false,
+    });
+    expect(legacy.thread.id).toBe("thread-1");
+    expect("historyCursor" in legacy).toBe(false);
+
+    // Responses from servers that do not bound the RPC still decode; absent
+    // metadata means "not bounded" rather than "no more history".
+    const unbounded = decodeGetThreadProjectionOutput(projection);
+    expect(unbounded.hasMoreHistory).toBeUndefined();
+    expect(unbounded.historyCursor).toBeUndefined();
+
+    // The request shape is unchanged for old callers.
+    expect(
+      decodeGetThreadProjectionInput({
+        threadId: "thread-1",
+      }).threadId,
+    ).toBe("thread-1");
+  });
+
+  it("round-trips getThreadHistoryPage requests and bounded pages", () => {
+    const input = decodeGetThreadHistoryPageInput({
+      threadId: "thread-1",
+      historyCursor: "opaque-cursor",
+    });
+    expect(input.historyCursor).toBe("opaque-cursor");
+    expect(() =>
+      decodeGetThreadHistoryPageInput({
+        threadId: "thread-1",
+        historyCursor: "   ",
+      }),
+    ).toThrow();
+
+    const page = decodeGetThreadHistoryPageOutput({
+      snapshotSequence: 42,
+      items: [],
+      nextCursor: null,
+      hasMoreHistory: false,
+    });
+    expect(page.hasMoreHistory).toBe(false);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("decodes typed history-cursor failures on the projection RPC error", () => {
+    const withReason = decodeGetThreadProjectionError({
+      _tag: "OrchestrationV2GetThreadProjectionError",
+      threadId: "thread-1",
+      message: "Invalid thread history cursor.",
+      reason: "invalid_history_cursor",
+    });
+    expect(withReason.reason).toBe("invalid_history_cursor");
+    const withoutReason = decodeGetThreadProjectionError({
+      _tag: "OrchestrationV2GetThreadProjectionError",
+      threadId: "thread-1",
+      message: "Failed to load orchestration V2 thread thread-1",
+    });
+    expect(withoutReason.reason).toBeUndefined();
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {
