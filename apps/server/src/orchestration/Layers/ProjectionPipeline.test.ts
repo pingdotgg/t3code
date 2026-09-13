@@ -1,4 +1,5 @@
 import {
+  type OrchestrationEvent,
   ApprovalRequestId,
   CheckpointRef,
   CommandId,
@@ -47,6 +48,7 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -232,6 +234,133 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection
             assert.strictEqual(state.lastAppliedSequence, unrelated.sequence);
           }
         }),
+    );
+
+    it.effect("replays every task lifecycle event identically in memory and SQLite", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const tasks = yield* ProjectionTaskRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const taskId = TaskId.make("task-lifecycle-replay");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const later = "2026-01-02T00:00:00.000Z";
+        const future = "2026-01-03T00:00:00.000Z";
+        const fields = {
+          sequence: 0,
+          eventId: EventId.make("placeholder"),
+          aggregateKind: "task" as const,
+          aggregateId: taskId,
+          occurredAt: createdAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        };
+        const events: OrchestrationEvent[] = [
+          {
+            ...fields,
+            type: "task.created",
+            payload: {
+              taskId,
+              name: "Lifecycle",
+              description: null,
+              primaryProjectId: ProjectId.make("project"),
+              createdAt,
+              updatedAt: createdAt,
+            },
+          },
+          {
+            ...fields,
+            type: "task.pinned",
+            payload: { taskId, pinnedAt: createdAt, pinOrderKey: "a0", updatedAt: createdAt },
+          },
+          {
+            ...fields,
+            type: "task.pin-reordered",
+            payload: { taskId, orderKey: "a1", updatedAt: createdAt },
+          },
+          { ...fields, type: "task.unpinned", payload: { taskId, updatedAt: createdAt } },
+          {
+            ...fields,
+            type: "task.unsettled",
+            payload: { taskId, reason: "user", updatedAt: createdAt },
+          },
+          {
+            ...fields,
+            type: "task.active-reordered",
+            payload: { taskId, orderKey: "a2", updatedAt: createdAt },
+          },
+          {
+            ...fields,
+            type: "task.meta-updated",
+            payload: { taskId, name: "Renamed lifecycle", updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.unsettled",
+            payload: { taskId, reason: "user", updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.unsettled",
+            payload: { taskId, reason: "activity", updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.snoozed",
+            payload: { taskId, snoozedUntil: future, snoozedAt: later, updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.unsettled",
+            payload: { taskId, reason: "activity", updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.unsnoozed",
+            payload: { taskId, reason: "activity", updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.settled",
+            payload: { taskId, settledAt: later, updatedAt: later },
+          },
+          {
+            ...fields,
+            type: "task.unsettled",
+            payload: { taskId, reason: "user", updatedAt: future },
+          },
+          {
+            ...fields,
+            type: "task.archived",
+            payload: { taskId, archivedAt: future, updatedAt: future },
+          },
+          { ...fields, type: "task.unarchived", payload: { taskId, updatedAt: future } },
+          { ...fields, type: "task.deleted", payload: { taskId, deletedAt: future } },
+        ];
+        let model = createEmptyReadModel(createdAt);
+        for (const [index, event] of events.entries()) {
+          const persisted = yield* eventStore.append({
+            ...event,
+            eventId: EventId.make(`task-lifecycle-${index}`),
+          });
+          yield* pipeline.projectEvent(persisted);
+          model = yield* projectEvent(model, persisted);
+          const { id, ...expected } = model.tasks[0]!;
+          assert.deepEqual(Option.getOrThrow(yield* tasks.getById({ taskId })), {
+            taskId: id,
+            ...expected,
+          });
+        }
+        const expected = Option.getOrThrow(yield* tasks.getById({ taskId }));
+        assert.strictEqual(expected.deletedAt, future);
+        assert.strictEqual(expected.archivedAt, null);
+        yield* sql`DELETE FROM projection_tasks`;
+        yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.tasks}`;
+        yield* pipeline.bootstrap;
+        assert.deepEqual(Option.getOrThrow(yield* tasks.getById({ taskId })), expected);
+      }),
     );
 
     it.effect(

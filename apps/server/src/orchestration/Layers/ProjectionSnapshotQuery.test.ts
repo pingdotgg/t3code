@@ -3571,3 +3571,70 @@ it.effect("hydrates task membership and opt-in active and archived task inventor
     );
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("batches task guard evidence without loading transcript or unrelated payloads", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    for (const threadId of ["guard-a", "guard-b", "unrelated"]) {
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+         pending_user_input_count, created_at, updated_at)
+        VALUES (${threadId}, 'guard-project', 'Guard', 'invalid-json', 'full-access', 'default',
+          1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`;
+      for (const [id, kind, payload] of [
+        ["pending", "user-input.requested", '{"requestId":"same-id","responseMode":"message"}'],
+        ["resolved-request", "user-input.requested", '{"requestId":"resolved-id"}'],
+        ["resolved", "user-input.resolved", '{"requestId":"resolved-id"}'],
+        ["noise", "tool.completed", "invalid-json"],
+      ]) {
+        yield* sql`INSERT INTO projection_thread_activities
+          (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+          VALUES (${`${threadId}-${id}`}, ${threadId}, NULL, 'info', ${kind}, 'Activity',
+            ${threadId === "unrelated" ? "invalid-json" : payload},
+            ${id === "resolved" ? "2026-01-01T00:00:01.000Z" : "2026-01-01T00:00:00.000Z"})`;
+      }
+      for (const [prefix, date] of [
+        ["old", "01"],
+        ["latest", "02"],
+        ["import:", "03"],
+      ]) {
+        yield* sql`INSERT INTO projection_thread_messages
+          (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
+          VALUES (${`${prefix}${threadId}`}, ${threadId}, NULL, 'user', 'Long transcript',
+            'invalid-json', 0, ${`2026-01-${date}T00:00:00.000Z`}, ${`2026-01-${date}T00:00:00.000Z`})`;
+      }
+    }
+    const counter = makeSqlStatementCounter();
+    const evidence = yield* query
+      .getTaskMemberGuardEvidence([ThreadId.make("guard-a"), ThreadId.make("guard-b")])
+      .pipe(Effect.withTracer(counter.tracer));
+    assert.strictEqual(counter.count(), 2);
+    assert.strictEqual(evidence.length, 2);
+    for (const member of evidence) {
+      assert.strictEqual(member.activities.length, 1);
+      assert.deepStrictEqual(member.activities[0]?.payload, {
+        requestId: "same-id",
+        responseMode: "message",
+      });
+      assert.strictEqual(member.messages.length, 1);
+      assert.strictEqual(member.messages[0]?.id, `latest${member.threadId}`);
+      assert.strictEqual(member.messages[0]?.text, "");
+    }
+    assert.deepStrictEqual(
+      yield* query.getTaskMemberGuardEvidence([]).pipe(Effect.withTracer(counter.tracer)),
+      [],
+    );
+    assert.strictEqual(counter.count(), 2);
+  }).pipe(
+    Effect.provide(
+      OrchestrationProjectionSnapshotQueryLive.pipe(
+        Layer.provide(ThreadBackgroundLiveness.layer),
+        Layer.provide(ThreadPlanProgress.layer),
+        Layer.provide(RepositoryIdentityResolver.layer),
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);

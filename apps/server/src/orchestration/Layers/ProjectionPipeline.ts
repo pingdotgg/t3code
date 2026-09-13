@@ -618,6 +618,176 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
 
+          case "task.deleted": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              deletedAt: event.payload.deletedAt,
+              updatedAt: event.payload.deletedAt,
+            });
+            return;
+          }
+
+          case "task.archived": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              archivedAt: event.payload.archivedAt,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.unarchived": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              archivedAt: null,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.settled": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              settledOverride: "settled",
+              settledAt: event.payload.settledAt,
+              unsettledAt: null,
+              activeOrderKey: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              pinnedAt: null,
+              pinOrderKey: null,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.snoozed": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              snoozedUntil: event.payload.snoozedUntil,
+              snoozedAt: event.payload.snoozedAt,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.unsnoozed": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              snoozedUntil: null,
+              snoozedAt: null,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.pinned": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              pinnedAt: event.payload.pinnedAt,
+              ...(event.payload.pinOrderKey !== undefined
+                ? { pinOrderKey: event.payload.pinOrderKey }
+                : {}),
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.unpinned": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              pinnedAt: null,
+              pinOrderKey: null,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.pin-reordered": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              pinOrderKey: event.payload.orderKey,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.active-reordered": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            yield* projectionTaskRepository.upsert({
+              ...existingRow.value,
+              activeOrderKey: event.payload.orderKey,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
+          case "task.unsettled": {
+            const existingRow = yield* projectionTaskRepository.getById({
+              taskId: event.payload.taskId,
+            });
+            if (Option.isNone(existingRow)) return;
+            const existing = existingRow.value;
+            const wasParked =
+              existing.settledOverride === "settled" ||
+              (existing.snoozedUntil !== null &&
+                compareDateTimeStrings(existing.snoozedUntil, event.payload.updatedAt) > 0);
+            const reentered =
+              wasParked ||
+              (event.payload.reason === "user" && existing.settledOverride !== "active");
+            yield* projectionTaskRepository.upsert({
+              ...existing,
+              settledOverride: event.payload.reason === "user" ? "active" : null,
+              settledAt: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              // Clearing active protection is not a new entry into the active list.
+              unsettledAt: reentered ? event.payload.updatedAt : existing.unsettledAt,
+              activeOrderKey: reentered ? null : existing.activeOrderKey,
+              updatedAt: event.payload.updatedAt,
+            });
+            return;
+          }
+
           default:
             return;
         }

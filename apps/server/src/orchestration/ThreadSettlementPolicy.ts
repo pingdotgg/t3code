@@ -1,4 +1,8 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type {
+  OrchestrationTaskShell,
+  OrchestrationThreadShell,
+  ServerSettings,
+} from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 export interface SettlementPullRequest {
@@ -30,11 +34,11 @@ function latestTimestamp(values: ReadonlyArray<string | null | undefined>): stri
  * pre-adoption data from blocking the thread forever. */
 export function threadHasQueuedTurnStart(
   thread: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn" | "session">,
-  now: string,
+  now: string | number,
 ): boolean {
   if (thread.latestUserMessageAt === null || thread.session?.status === "error") return false;
   const messageAt = Date.parse(thread.latestUserMessageAt);
-  const age = Date.parse(now) - messageAt;
+  const age = (typeof now === "number" ? now : Date.parse(now)) - messageAt;
   if (Number.isNaN(age) || Math.abs(age) > QUEUED_TURN_START_GRACE_MS) return false;
   if (thread.latestTurn === null) return true;
   return [
@@ -133,4 +137,78 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
     thread.latestTurn.completedAt != null &&
     Date.parse(thread.latestTurn.completedAt) > Date.parse(thread.snoozedAt);
   return wokeOnError || wokeOnCompletion;
+}
+
+/** Task settlement parks the container only; snoozed members may still be running. */
+export function resolveTaskAutoSettlementAt(input: {
+  readonly task: OrchestrationTaskShell;
+  readonly members: ReadonlyArray<
+    Pick<
+      OrchestrationThreadShell,
+      | "archivedAt"
+      | "backgroundLiveness"
+      | "settledOverride"
+      | "settledAt"
+      | "snoozedUntil"
+      | "snoozedAt"
+      | "hasPendingApprovals"
+      | "hasPendingUserInput"
+      | "latestUserMessageAt"
+      | "latestTurn"
+      | "session"
+    >
+  >;
+  readonly settings: Pick<ServerSettings, "sidebarAutoSettleAfterDays">;
+  readonly nowMs: number;
+}): string | null {
+  const { task, settings, nowMs } = input;
+  if (task.archivedAt !== null || task.settledOverride !== null) return null;
+  if (task.snoozedUntil !== null && Date.parse(task.snoozedUntil) > nowMs) return null;
+  if (settings.sidebarAutoSettleAfterDays === null) return null;
+  const members = input.members.filter((member) => member.archivedAt === null);
+  for (const member of members) {
+    if (member.hasPendingApprovals || member.hasPendingUserInput) return null;
+    if (threadHasQueuedTurnStart(member, nowMs)) return null;
+    const liveSession =
+      member.session?.status === "running" || member.session?.status === "starting";
+    if (member.settledOverride === "settled" && !liveSession && member.backgroundLiveness == null)
+      continue;
+    const snoozed = member.snoozedUntil != null && Date.parse(member.snoozedUntil) > nowMs;
+    const freshError =
+      member.session?.status === "error" &&
+      (member.snoozedAt == null ||
+        Date.parse(member.session.updatedAt) > Date.parse(member.snoozedAt));
+    const freshCompletion =
+      member.snoozedAt != null &&
+      member.latestTurn?.state === "completed" &&
+      member.latestTurn.completedAt != null &&
+      Date.parse(member.latestTurn.completedAt) > Date.parse(member.snoozedAt);
+    if (!snoozed || freshError || freshCompletion) return null;
+  }
+  const anchor = taskSettlementActivityAnchor({ task, members });
+  return anchor !== null &&
+    Date.parse(anchor) < nowMs - settings.sidebarAutoSettleAfterDays * DAY_MS
+    ? anchor
+    : null;
+}
+
+/** The decision and its stale-snapshot guard compare this same activity anchor. */
+function taskSettlementActivityAnchor(input: {
+  readonly task: Pick<OrchestrationTaskShell, "createdAt" | "updatedAt">;
+  readonly members: ReadonlyArray<
+    Pick<OrchestrationThreadShell, "settledAt" | "snoozedAt" | "latestUserMessageAt" | "latestTurn">
+  >;
+}): string | null {
+  return latestTimestamp([
+    input.task.createdAt,
+    input.task.updatedAt,
+    ...input.members.flatMap((member) => [
+      member.settledAt,
+      member.snoozedAt,
+      member.latestUserMessageAt,
+      member.latestTurn?.requestedAt,
+      member.latestTurn?.startedAt,
+      member.latestTurn?.completedAt,
+    ]),
+  ]);
 }

@@ -1571,3 +1571,48 @@ it.effect("decodes task commands with sparse metadata and explicit null clearing
     assert.equal(membership.type, "thread.task.set");
   }),
 );
+
+it.effect(
+  "task lifecycle commands keep automatic settlement internal and reject forged activity reasons",
+  () =>
+    Effect.gen(function* () {
+      const base = { commandId: "task-lifecycle", taskId: "task" };
+      for (const type of ["task.settle", "task.archive", "task.unarchive", "task.unpin"] as const) {
+        assert.equal((yield* decodeClientOrchestrationCommand({ ...base, type })).type, type);
+      }
+      for (const type of ["task.unsettle", "task.unsnooze"] as const) {
+        assert.equal(
+          (yield* decodeClientOrchestrationCommand({ ...base, type, reason: "user" })).type,
+          type,
+        );
+        assert.equal(
+          (yield* Effect.exit(
+            decodeClientOrchestrationCommand({ ...base, type, reason: "activity" }),
+          ))._tag,
+          "Failure",
+        );
+      }
+      const automatic = {
+        ...base,
+        type: "task.auto-settle",
+        snapshotSequence: 12,
+        settledAt: "2026-01-01T00:00:00.000Z",
+        memberThreadIds: ["member"],
+      };
+      assert.equal((yield* decodeOrchestrationCommand(automatic)).type, "task.auto-settle");
+      assert.equal(
+        (yield* Effect.exit(decodeClientOrchestrationCommand(automatic)))._tag,
+        "Failure",
+      );
+      for (const threads of ["keep", "delete"] as const)
+        assert.equal(
+          (yield* decodeClientOrchestrationCommand({ ...base, type: "task.delete", threads })).type,
+          "task.delete",
+        );
+      assert.equal(
+        (yield* Effect.exit(decodeClientOrchestrationCommand({ ...base, type: "task.delete" })))
+          ._tag,
+        "Failure",
+      );
+    }),
+);

@@ -1779,18 +1779,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const pinnedThreadActivityIdsCte = (threadId: string) => sql`
+  const pinnedThreadActivityIdsCte = (threadIds: ReadonlyArray<string>) => sql`
 pending_approval_requests AS (
           SELECT request_id, thread_id
           FROM projection_pending_approvals
-          WHERE thread_id = ${threadId}
+          WHERE ${sql.in("thread_id", threadIds)}
             AND status = 'pending'
         ),
         pending_approval_activities AS (
           SELECT
             activity.activity_id,
             ROW_NUMBER() OVER (
-              PARTITION BY pending.request_id
+              PARTITION BY pending.thread_id, pending.request_id
               ORDER BY activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_approval_requests AS pending
@@ -1802,7 +1802,7 @@ pending_approval_requests AS (
         pending_user_input_thread AS (
           SELECT thread_id
           FROM projection_threads
-          WHERE thread_id = ${threadId}
+          WHERE ${sql.in("thread_id", threadIds)}
             AND pending_user_input_count > 0
         ),
         user_input_lifecycle AS (
@@ -1810,7 +1810,7 @@ pending_approval_requests AS (
             activity.activity_id,
             activity.kind,
             ROW_NUMBER() OVER (
-              PARTITION BY json_extract(activity.payload_json, '$.requestId')
+              PARTITION BY activity.thread_id, json_extract(activity.payload_json, '$.requestId')
               ORDER BY activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_user_input_thread AS pending
@@ -1854,7 +1854,7 @@ pending_approval_requests AS (
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId }) =>
       sql`
-        WITH ${pinnedThreadActivityIdsCte(threadId)}
+        WITH ${pinnedThreadActivityIdsCte([threadId])}
         SELECT
           activity.activity_id AS "activityId",
           activity.thread_id AS "threadId",
@@ -1872,12 +1872,91 @@ pending_approval_requests AS (
       `,
   });
 
+  const taskGuardThreadIds = Schema.Array(ThreadId);
+  const listTaskMemberRequestRows = SqlSchema.findAll({
+    Request: taskGuardThreadIds,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: (threadIds) => sql`
+      WITH ${pinnedThreadActivityIdsCte(threadIds)}
+      SELECT activity.activity_id AS "activityId", activity.thread_id AS "threadId",
+        activity.turn_id AS "turnId", activity.tone, activity.kind, activity.summary,
+        activity.payload_json AS "payload", activity.sequence, activity.created_at AS "createdAt"
+      FROM pinned_activity_ids AS pinned
+      INNER JOIN projection_thread_activities AS activity ON activity.activity_id = pinned.activity_id
+      ORDER BY activity.created_at ASC, activity.activity_id ASC
+    `,
+  });
+  const listTaskMemberLatestUserMessages = SqlSchema.findAll({
+    Request: taskGuardThreadIds,
+    Result: Schema.Struct({
+      threadId: ThreadId,
+      messageId: MessageId,
+      turnId: Schema.NullOr(TurnId),
+      createdAt: IsoDateTime,
+      updatedAt: IsoDateTime,
+    }),
+    execute: (threadIds) => sql`
+      WITH latest_user_messages AS (
+        SELECT thread_id, message_id, turn_id, created_at, updated_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY thread_id ORDER BY created_at DESC, message_id DESC
+          ) AS message_order
+        FROM projection_thread_messages
+        WHERE ${sql.in("thread_id", threadIds)} AND role = 'user'
+          AND message_id NOT GLOB 'import:*'
+      )
+      SELECT thread_id AS "threadId", message_id AS "messageId", turn_id AS "turnId",
+        created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM latest_user_messages WHERE message_order = 1
+    `,
+  });
+  const getTaskMemberGuardEvidence: ProjectionSnapshotQueryShape["getTaskMemberGuardEvidence"] =
+    Effect.fn("ProjectionSnapshotQuery.getTaskMemberGuardEvidence")(function* (threadIds) {
+      if (threadIds.length === 0) return [];
+      const ids = [...new Set(threadIds)];
+      const [activities, messages] = yield* sql
+        .withTransaction(
+          Effect.all([listTaskMemberRequestRows(ids), listTaskMemberLatestUserMessages(ids)]),
+        )
+        .pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getTaskMemberGuardEvidence:query",
+              "ProjectionSnapshotQuery.getTaskMemberGuardEvidence:decode",
+            ),
+          ),
+        );
+      const evidence = new Map(
+        ids.map((threadId) => [
+          threadId,
+          {
+            threadId,
+            messages: [] as OrchestrationMessage[],
+            activities: [] as OrchestrationThreadActivity[],
+          },
+        ]),
+      );
+      for (const row of activities)
+        evidence.get(row.threadId)?.activities.push(mapThreadActivityRow(row));
+      for (const row of messages)
+        evidence.get(row.threadId)?.messages.push({
+          id: row.messageId,
+          role: "user",
+          turnId: row.turnId,
+          text: "",
+          streaming: false,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        });
+      return [...evidence.values()];
+    });
+
   const listPinnedThreadActivityIdsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityIdRowSchema,
     execute: ({ threadId }) =>
       sql`
-        WITH ${pinnedThreadActivityIdsCte(threadId)}
+        WITH ${pinnedThreadActivityIdsCte([threadId])}
         SELECT activity_id AS "activityId"
         FROM pinned_activity_ids
       `,
@@ -3822,6 +3901,7 @@ pending_approval_requests AS (
   return {
     getCommandReadModel,
     getUserInputActivity,
+    getTaskMemberGuardEvidence,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,

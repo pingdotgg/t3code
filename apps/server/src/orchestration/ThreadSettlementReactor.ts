@@ -22,6 +22,7 @@ import { pullRequestMatchesProject } from "./ThreadPullRequestReactor.ts";
 import {
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
+  resolveTaskAutoSettlementAt,
   type SettlementPullRequest,
 } from "./ThreadSettlementPolicy.ts";
 
@@ -89,9 +90,52 @@ export const make = Effect.gen(function* () {
     if (!autoSettlementConfigured(settings)) {
       return;
     }
-    const snapshot = yield* snapshots.getShellSnapshot();
+    const snapshot = yield* snapshots.getShellSnapshot({ includeTasks: true });
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
+    const membersByTask = Map.groupBy(
+      snapshot.threads.filter((thread) => thread.taskId != null && thread.archivedAt === null),
+      (thread) => thread.taskId,
+    );
+    // Tasks need no host state and must finish before unrelated network work.
+    yield* Effect.forEach(
+      snapshot.tasks ?? [],
+      (task) =>
+        Effect.gen(function* () {
+          const members = membersByTask.get(task.id) ?? [];
+          const settings = resolveProjectSettings(
+            yield* settingsService.getSettings,
+            task.primaryProjectId,
+          ).settings;
+          const decisionNow = yield* DateTime.now;
+          const settledAt = resolveTaskAutoSettlementAt({
+            task,
+            members,
+            settings,
+            nowMs: DateTime.toEpochMillis(decisionNow),
+          });
+          if (settledAt === null) return;
+          const uuid = yield* crypto.randomUUIDv4;
+          yield* engine.dispatch({
+            type: "task.auto-settle",
+            commandId: CommandId.make(`server:task-auto-settle:${task.id}:${uuid}`),
+            taskId: task.id,
+            snapshotSequence: snapshot.snapshotSequence,
+            settledAt,
+            memberThreadIds: members.map((member) => member.id),
+          });
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning("automatic task settlement skipped", {
+                  taskId: task.id,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        ),
+      { concurrency: 8, discard: true },
+    );
     // A merge rechecks all candidates, including branches that discovery has
     // not linked yet. Those lookups can still have cached the PR as open.
     const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));

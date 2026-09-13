@@ -1065,6 +1065,105 @@ const TaskMetaUpdateCommand = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
   primaryProjectId: Schema.optional(ProjectId),
 });
+const TaskDeleteCommand = Schema.Struct({
+  type: Schema.Literal("task.delete"),
+  commandId: CommandId,
+  taskId: TaskId,
+  threads: Schema.Literals(["keep", "delete"]),
+});
+
+const TaskArchiveCommand = Schema.Struct({
+  type: Schema.Literal("task.archive"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
+const TaskUnarchiveCommand = Schema.Struct({
+  type: Schema.Literal("task.unarchive"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
+const TaskSettleCommand = Schema.Struct({
+  type: Schema.Literal("task.settle"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
+const TaskAutoSettleCommand = Schema.Struct({
+  type: Schema.Literal("task.auto-settle"),
+  commandId: CommandId,
+  taskId: TaskId,
+  snapshotSequence: NonNegativeInt,
+  settledAt: IsoDateTime,
+  memberThreadIds: Schema.Array(ThreadId),
+});
+
+const TaskUnsettleCommand = Schema.Struct({
+  type: Schema.Literal("task.unsettle"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // Commands only carry "user": activity un-settles are decided server-side
+  // (the decider emits task.unsettled(reason: "activity") events directly,
+  // never through this command), so a client cannot forge the neutral reset.
+  reason: Schema.Literal("user"),
+});
+
+const TaskSnoozeCommand = Schema.Struct({
+  type: Schema.Literal("task.snooze"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // The wake time. Event-based wake conditions (PR merged, review posted)
+  // will arrive as an optional condition field alongside this; time-based
+  // snooze is just the first kind of condition.
+  snoozedUntil: IsoDateTime,
+});
+
+const TaskUnsnoozeCommand = Schema.Struct({
+  type: Schema.Literal("task.unsnooze"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // Commands only carry "user": activity wakes are decided server-side (the
+  // decider emits task.unsnoozed(reason: "activity") directly), and timer
+  // wakes need no event at all — clients derive visibility from snoozedUntil,
+  // so a passed wake time simply stops classifying as snoozed.
+  reason: Schema.Literal("user"),
+});
+
+const TaskPinCommand = Schema.Struct({
+  type: Schema.Literal("task.pin"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // Initial slot in the user-arranged pinned order (see TaskPinReorderCommand).
+  // Optional: clients on pre-reorder servers omit it, and the pinned block
+  // falls back to creation order for keyless tasks.
+  orderKey: Schema.optional(TrimmedNonEmptyString),
+});
+
+const TaskUnpinCommand = Schema.Struct({
+  type: Schema.Literal("task.unpin"),
+  commandId: CommandId,
+  taskId: TaskId,
+});
+
+const TaskPinReorderCommand = Schema.Struct({
+  type: Schema.Literal("task.pin.reorder"),
+  commandId: CommandId,
+  taskId: TaskId,
+  // Fractional index key: pinned tasks sort by plain string comparison of
+  // these keys, so a drag writes one key to one task — neighbors (possibly
+  // on other servers) are never touched. Clients compute a key that sorts
+  // between the dropped position's neighbors.
+  orderKey: TrimmedNonEmptyString,
+});
+
+const TaskActiveReorderCommand = Schema.Struct({
+  type: Schema.Literal("task.active.reorder"),
+  commandId: CommandId,
+  taskId: TaskId,
+  orderKey: TrimmedNonEmptyString,
+});
+
 const ThreadTaskSetCommand = Schema.Struct({
   type: Schema.Literal("thread.task.set"),
   commandId: CommandId,
@@ -1376,6 +1475,18 @@ const ThreadSessionStopCommand = Schema.Struct({
 const DispatchableClientOrchestrationCommand = Schema.Union([
   TaskCreateCommand,
   TaskMetaUpdateCommand,
+  TaskDeleteCommand,
+  TaskArchiveCommand,
+  TaskUnarchiveCommand,
+  TaskSettleCommand,
+  TaskUnsettleCommand,
+  TaskSnoozeCommand,
+  TaskUnsnoozeCommand,
+  TaskPinCommand,
+  TaskUnpinCommand,
+  TaskPinReorderCommand,
+  TaskActiveReorderCommand,
+
   ThreadTaskSetCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1412,6 +1523,18 @@ export type DispatchableClientOrchestrationCommand =
 export const ClientOrchestrationCommand = Schema.Union([
   TaskCreateCommand,
   TaskMetaUpdateCommand,
+  TaskDeleteCommand,
+  TaskArchiveCommand,
+  TaskUnarchiveCommand,
+  TaskSettleCommand,
+  TaskUnsettleCommand,
+  TaskSnoozeCommand,
+  TaskUnsnoozeCommand,
+  TaskPinCommand,
+  TaskUnpinCommand,
+  TaskPinReorderCommand,
+  TaskActiveReorderCommand,
+
   ThreadTaskSetCommand,
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1558,6 +1681,7 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  TaskAutoSettleCommand,
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
@@ -1582,6 +1706,17 @@ export const OrchestrationCommand = Schema.Union([
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationEventType = Schema.Literals([
+  "task.deleted",
+  "task.archived",
+  "task.unarchived",
+  "task.settled",
+  "task.unsettled",
+  "task.snoozed",
+  "task.unsnoozed",
+  "task.pinned",
+  "task.unpinned",
+  "task.pin-reordered",
+  "task.active-reordered",
   "task.created",
   "task.meta-updated",
   "thread.task-set",
@@ -1623,6 +1758,77 @@ export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "task"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
+
+export const TaskDeletedPayload = Schema.Struct({
+  taskId: TaskId,
+  deletedAt: IsoDateTime,
+});
+
+export const TaskArchivedPayload = Schema.Struct({
+  taskId: TaskId,
+  archivedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskUnarchivedPayload = Schema.Struct({
+  taskId: TaskId,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskSettledPayload = Schema.Struct({
+  taskId: TaskId,
+  settledAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskUnsettledPayload = Schema.Struct({
+  taskId: TaskId,
+  reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskSnoozedPayload = Schema.Struct({
+  taskId: TaskId,
+  snoozedUntil: IsoDateTime,
+  snoozedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskUnsnoozedPayload = Schema.Struct({
+  taskId: TaskId,
+  // user: explicit "wake now". activity: real work arrived (user message /
+  // session coming alive) and the decider cleared the snooze — mirrors
+  // task.unsettled's activity resets. Timer wakes emit no event: clients
+  // derive them from snoozedUntil passing.
+  reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskPinnedPayload = Schema.Struct({
+  taskId: TaskId,
+  pinnedAt: IsoDateTime,
+  // Absent on re-pins of an already-pinned task (the existing key wins)
+  // and on pins from clients that predate reordering.
+  pinOrderKey: Schema.optional(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+
+export const TaskUnpinnedPayload = Schema.Struct({
+  taskId: TaskId,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskPinReorderedPayload = Schema.Struct({
+  taskId: TaskId,
+  orderKey: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+
+export const TaskActiveReorderedPayload = Schema.Struct({
+  taskId: TaskId,
+  orderKey: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
 
 export const TaskCreatedPayload = Schema.Struct({
   taskId: TaskId,
@@ -1945,6 +2151,61 @@ const EventBaseFields = {
 } as const;
 
 export const OrchestrationEvent = Schema.Union([
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.active-reordered"),
+    payload: TaskActiveReorderedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.pin-reordered"),
+    payload: TaskPinReorderedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.unpinned"),
+    payload: TaskUnpinnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.pinned"),
+    payload: TaskPinnedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.unsnoozed"),
+    payload: TaskUnsnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.snoozed"),
+    payload: TaskSnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.unsettled"),
+    payload: TaskUnsettledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.settled"),
+    payload: TaskSettledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.unarchived"),
+    payload: TaskUnarchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.archived"),
+    payload: TaskArchivedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("task.deleted"),
+    payload: TaskDeletedPayload,
+  }),
   Schema.Struct({
     ...EventBaseFields,
     type: Schema.Literal("task.created"),

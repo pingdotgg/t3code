@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { TaskId, ThreadId } from "@t3tools/contracts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
@@ -52,9 +52,19 @@ export class OrchestrationThreadSettleBlockedError extends Schema.TaggedError<Or
   }
 }
 
+export class OrchestrationTaskSettleBlockedError extends Schema.TaggedError<OrchestrationTaskSettleBlockedError>()(
+  "OrchestrationTaskSettleBlockedError",
+  { taskId: TaskId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Task '${this.taskId}' cannot be settled because member '${this.threadId}' still needs attention. Resolve or interrupt it first.`;
+  }
+}
+
 export const OrchestrationCommandRejection = Schema.Union([
   OrchestrationCommandInvariantError,
   OrchestrationThreadSettleBlockedError,
+  OrchestrationTaskSettleBlockedError,
 ]);
 export type OrchestrationCommandRejection = typeof OrchestrationCommandRejection.Type;
 export const isOrchestrationCommandRejection = Schema.is(OrchestrationCommandRejection);

@@ -85,6 +85,16 @@ export interface ProjectionSnapshotQueryShape {
     readonly requestId: ApprovalRequestId;
   }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
+  /** Read only unresolved requests and the latest user-message metadata for task guards. */
+  readonly getTaskMemberGuardEvidence: (threadIds: ReadonlyArray<ThreadId>) => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly messages: ReadonlyArray<OrchestrationMessage>;
+      readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.

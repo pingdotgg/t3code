@@ -69,6 +69,18 @@ function commandToAggregateRef(command: OrchestrationCommand): {
   switch (command.type) {
     case "task.create":
     case "task.meta.update":
+    case "task.settle":
+    case "task.auto-settle":
+    case "task.unsettle":
+    case "task.snooze":
+    case "task.unsnooze":
+    case "task.pin":
+    case "task.unpin":
+    case "task.pin.reorder":
+    case "task.active.reorder":
+    case "task.archive":
+    case "task.unarchive":
+    case "task.delete":
       return { aggregateKind: "task", aggregateId: command.taskId };
     case "project.create":
     case "project.meta.update":
@@ -189,6 +201,41 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        if (envelope.command.type === "task.auto-settle") {
+          const command = envelope.command;
+          const currentMembers = commandReadModel.threads.filter(
+            (thread) =>
+              thread.taskId === command.taskId &&
+              thread.archivedAt === null &&
+              thread.deletedAt === null,
+          );
+          const expectedIds = new Set(command.memberThreadIds);
+          let changed =
+            currentMembers.length !== expectedIds.size ||
+            currentMembers.some((thread) => !expectedIds.has(thread.id));
+          if (!changed) {
+            changed = yield* eventStore.hasEventAfter({
+              aggregateKind: "task",
+              aggregateId: command.taskId,
+              sequenceExclusive: command.snapshotSequence,
+            });
+          }
+          for (const thread of currentMembers) {
+            if (changed) break;
+            changed = yield* eventStore.hasEventAfter({
+              aggregateKind: "thread",
+              aggregateId: thread.id,
+              sequenceExclusive: command.snapshotSequence,
+            });
+          }
+          if (changed) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `task ${command.taskId} or its members changed before automatic settlement`,
+            });
+          }
+        }
+
         // The decider compares the lookup inputs. Only recreation needs an
         // event check, since it can reset a thread to the same field values.
         if (
@@ -246,9 +293,44 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // The queue has projected earlier commands before this durable read. Use
+        // request evidence only for this decision; do not retain transcript data.
+        let decidingReadModel = commandReadModel;
+        if (
+          envelope.command.type === "task.settle" ||
+          envelope.command.type === "task.snooze" ||
+          envelope.command.type === "task.auto-settle"
+        ) {
+          const taskId = envelope.command.taskId;
+          const memberIds = commandReadModel.threads
+            .filter(
+              (thread) =>
+                thread.taskId === taskId && thread.archivedAt === null && thread.deletedAt === null,
+            )
+            .map((thread) => thread.id);
+          const evidence = new Map(
+            (yield* projectionSnapshotQuery.getTaskMemberGuardEvidence(memberIds)).map((entry) => [
+              entry.threadId,
+              entry,
+            ]),
+          );
+          decidingReadModel = {
+            ...commandReadModel,
+            threads: commandReadModel.threads.map((thread) => {
+              const member = evidence.get(thread.id);
+              return member === undefined
+                ? thread
+                : {
+                    ...thread,
+                    messages: member.messages,
+                    activities: member.activities,
+                  };
+            }),
+          };
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
-          readModel: commandReadModel,
+          readModel: decidingReadModel,
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),

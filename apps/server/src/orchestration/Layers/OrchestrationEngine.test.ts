@@ -21,6 +21,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -424,6 +425,7 @@ describe("OrchestrationEngine", () => {
           getTaskShells: () => Effect.die("unused"),
           getTaskShellById: () => Effect.die("unused"),
           getUserInputActivity: () => Effect.die("unused"),
+          getTaskMemberGuardEvidence: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
             Effect.sync(() => {
@@ -2211,5 +2213,265 @@ it("persists task aggregates and membership through restart and receipt retries"
   } finally {
     await system.dispose();
     await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function seedGuardTask(system: Awaited<ReturnType<typeof createOrchestrationSystem>>) {
+  const projectId = ProjectId.make("guard-project");
+  const taskId = TaskId.make("guard-task");
+  const threadId = ThreadId.make("guard-member");
+  await system.run(
+    system.engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make("guard-project"),
+      projectId,
+      title: "Guard project",
+      workspaceRoot: "/tmp/guard-project",
+      createdAt: now(),
+    }),
+  );
+  await system.run(
+    system.engine.dispatch({
+      type: "task.create",
+      commandId: CommandId.make("guard-task"),
+      taskId,
+      primaryProjectId: projectId,
+      name: "Guard task",
+      createdAt: now(),
+    }),
+  );
+  await system.run(
+    system.engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("guard-member"),
+      threadId,
+      taskId,
+      projectId,
+      title: "Guard member",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: now(),
+    }),
+  );
+  return { taskId, threadId, projectId };
+}
+
+it.each(["approval", "native question", "message question", "queued start"] as const)(
+  "restores task guards for %s after restart and keeps cascades atomic",
+  async (kind) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-task-guards-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      const { taskId, threadId } = await seedGuardTask(system);
+      if (kind === "queued start") {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make("guard-queued"),
+            threadId,
+            message: {
+              messageId: MessageId.make("guard-message"),
+              role: "user",
+              text: "Start work",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: await system.run(Effect.map(DateTime.now, DateTime.formatIso)),
+          }),
+        );
+      } else {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("guard-request"),
+            threadId,
+            createdAt: now(),
+            activity: {
+              id: EventId.make("guard-request"),
+              kind: kind === "approval" ? "approval.requested" : "user-input.requested",
+              summary: "Needs an answer",
+              tone: "info",
+              turnId: null,
+              createdAt: now(),
+              payload: {
+                requestId: "guard-request",
+                ...(kind === "message question" ? { responseMode: "message" } : {}),
+              },
+            },
+          }),
+        );
+      }
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const before = await system.readModel();
+      const snoozeError = await system.run(
+        system.engine
+          .dispatch({
+            type: "task.snooze",
+            commandId: CommandId.make("guard-snooze"),
+            taskId,
+            snoozedUntil: "2099-01-01T00:00:00.000Z",
+          })
+          .pipe(Effect.flip),
+      );
+      expect(snoozeError._tag).toBe("OrchestrationCommandInvariantError");
+      expect(await system.readModel()).toEqual(before);
+      const settle = {
+        type: "task.settle",
+        commandId: CommandId.make("guard-settle"),
+        taskId,
+      } as const;
+      if (kind === "message question") {
+        const receipt = await system.run(system.engine.dispatch(settle));
+        expect(await system.run(system.engine.dispatch(settle))).toEqual(receipt);
+        const after = await system.readModel();
+        expect(after.tasks[0]?.settledOverride).toBe("settled");
+        expect(after.threads[0]?.settledOverride).toBe("settled");
+        expect(
+          after.threads[0]?.activities.some((activity) => activity.kind === "user-input.resolved"),
+        ).toBe(true);
+        expect(
+          (
+            await system.run(
+              system.engine
+                .dispatch({ ...settle, taskId: TaskId.make("another-task") })
+                .pipe(Effect.flip),
+            )
+          )._tag,
+        ).toBe("OrchestrationCommandIdConflictError");
+      } else {
+        expect(await system.run(system.engine.dispatch(settle).pipe(Effect.flip))).toMatchObject({
+          _tag: "OrchestrationTaskSettleBlockedError",
+          taskId,
+          threadId,
+        });
+        expect(await system.readModel()).toEqual(before);
+        expect((await system.run(system.engine.dispatch(settle).pipe(Effect.flip)))._tag).toBe(
+          "OrchestrationCommandPreviouslyRejectedError",
+        );
+      }
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  "task changed",
+  "member changed",
+  "member removed",
+  "member removed and restored",
+] as const)(
+  "rejects automatic task settlement when %s after its policy snapshot",
+  async (change) => {
+    const system = await createOrchestrationSystem();
+    try {
+      const { taskId, threadId } = await seedGuardTask(system);
+      const snapshotSequence = await system.run(system.engine.latestSequence);
+      if (change === "task changed") {
+        await system.run(
+          system.engine.dispatch({
+            type: "task.meta.update",
+            commandId: CommandId.make("change"),
+            taskId,
+            name: "Changed",
+          }),
+        );
+      } else if (change === "member changed") {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make("change"),
+            threadId,
+            title: "Changed",
+          }),
+        );
+      } else {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.task.set",
+            commandId: CommandId.make("remove"),
+            threadId,
+            taskId: null,
+          }),
+        );
+        if (change === "member removed and restored") {
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.task.set",
+              commandId: CommandId.make("restore"),
+              threadId,
+              taskId,
+            }),
+          );
+        }
+      }
+      const before = await system.readModel();
+      const error = await system.run(
+        system.engine
+          .dispatch({
+            type: "task.auto-settle",
+            commandId: CommandId.make("stale-auto-settle"),
+            taskId,
+            snapshotSequence,
+            memberThreadIds: [threadId],
+            settledAt: now(),
+          })
+          .pipe(Effect.flip),
+      );
+      expect(error).toMatchObject({
+        _tag: "OrchestrationCommandInvariantError",
+        detail: expect.stringContaining("changed before automatic settlement"),
+      });
+      expect(await system.readModel()).toEqual(before);
+    } finally {
+      await system.dispose();
+    }
+  },
+);
+
+it("accepts task automatic settlement after unrelated events and replays its receipt", async () => {
+  const system = await createOrchestrationSystem();
+  try {
+    const { taskId, threadId } = await seedGuardTask(system);
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.task.set",
+        commandId: CommandId.make("unrelated-remove"),
+        threadId,
+        taskId: null,
+      }),
+    );
+    const snapshot = await system.readModel();
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("unrelated-edit"),
+        threadId,
+        title: "Unrelated change",
+      }),
+    );
+    const command = {
+      type: "task.auto-settle",
+      commandId: CommandId.make("valid-auto-settle"),
+      taskId,
+      snapshotSequence: snapshot.snapshotSequence,
+      memberThreadIds: [],
+      settledAt: snapshot.tasks[0]!.updatedAt,
+    } as const;
+    const receipt = await system.run(system.engine.dispatch(command));
+    expect(await system.run(system.engine.dispatch(command))).toEqual(receipt);
+    expect((await system.readModel()).tasks[0]).toMatchObject({
+      settledOverride: "settled",
+      settledAt: command.settledAt,
+    });
+  } finally {
+    await system.dispose();
   }
 });

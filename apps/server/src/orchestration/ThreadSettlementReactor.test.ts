@@ -4,6 +4,8 @@ import {
   ProviderInstanceId,
   PullRequestOperationError,
   ThreadId,
+  TaskId,
+  type OrchestrationTaskShell,
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
@@ -45,6 +47,8 @@ const PROJECT_ID = ProjectId.make("settlement-project");
 const LINKED_PROJECT_ID = ProjectId.make("linked-settlement-project");
 
 type AutoSettleCommand = Extract<OrchestrationCommand, { readonly type: "thread.auto-settle" }>;
+
+type TaskAutoSettleCommand = Extract<OrchestrationCommand, { readonly type: "task.auto-settle" }>;
 
 const testCrypto = Crypto.make({
   randomBytes: (size) => new Uint8Array(size).fill(1),
@@ -157,6 +161,9 @@ interface HarnessOptions {
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
+  readonly onTaskDispatch?: (
+    command: TaskAutoSettleCommand,
+  ) => Effect.Effect<void, OrchestrationCommandInvariantError>;
   readonly onDispatch?: (
     command: AutoSettleCommand,
   ) => Effect.Effect<void, OrchestrationCommandInvariantError>;
@@ -172,6 +179,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
+  const taskCommands = yield* Ref.make<ReadonlyArray<TaskAutoSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -216,6 +224,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     });
 
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) => {
+    if (command.type === "task.auto-settle") {
+      return Ref.update(taskCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.andThen(options.onTaskDispatch?.(command) ?? Effect.void),
+        Effect.as({ sequence: 1 }),
+      );
+    }
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -275,6 +289,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     settingsReads,
     commands,
+    taskCommands,
     branchCalls,
     summaryCalls,
     summaryRecovery,
@@ -1278,6 +1293,139 @@ describe("ThreadSettlementReactor", () => {
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
           assert.strictEqual((yield* Ref.get(fixture.commands)).length, 4);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+});
+
+const makeTask = (
+  id: string,
+  overrides: Partial<OrchestrationTaskShell> = {},
+): OrchestrationTaskShell => ({
+  id: TaskId.make(id),
+  name: id,
+  description: null,
+  primaryProjectId: PROJECT_ID,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-20T00:00:00.000Z",
+  ...overrides,
+});
+
+describe("task automatic settlement", () => {
+  it.effect("uses the primary project override and captures visible membership", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const task = makeTask("eligible");
+        const fixture = yield* makeHarness({
+          snapshot: {
+            ...makeSnapshot([
+              makeThread("foreign-member", {
+                taskId: task.id,
+                projectId: LINKED_PROJECT_ID,
+                settledOverride: "settled",
+              }),
+              makeThread("archived-member", { taskId: task.id, archivedAt: NOW }),
+            ]),
+            tasks: [task, makeTask("disabled", { primaryProjectId: LINKED_PROJECT_ID })],
+          },
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleAfterDays: 3 } },
+          },
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          const commands = yield* Ref.get(fixture.taskCommands);
+          assert.strictEqual(commands.length, 1);
+          assert.strictEqual(commands[0]?.taskId, task.id);
+          assert.deepStrictEqual(commands[0]?.memberThreadIds, [ThreadId.make("foreign-member")]);
+          assert.strictEqual(commands[0]?.snapshotSequence, 1);
+          assert.strictEqual(commands[0]?.settledAt, "2026-08-20T00:00:00.000Z");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles tasks before unrelated network work completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const lookupStarted = yield* Deferred.make<void>();
+        const releaseLookup = yield* Deferred.make<void>();
+        const fixture = yield* makeHarness({
+          snapshot: {
+            ...makeSnapshot([
+              makeThread("recent", {
+                branch: "feature",
+                latestUserMessageAt: "2026-08-27T00:00:00.000Z",
+              }),
+            ]),
+            tasks: [makeTask("empty")],
+          },
+          branchPullRequest: () =>
+            Deferred.succeed(lookupStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseLookup)),
+              Effect.as(null),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Deferred.await(lookupStarted);
+          assert.strictEqual((yield* Ref.get(fixture.taskCommands)).length, 1);
+          yield* Deferred.succeed(releaseLookup, undefined);
+          yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("continues after a stale task dispatch and retries from the next snapshot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: { ...makeSnapshot([]), tasks: [makeTask("stale"), makeTask("next")] },
+          onTaskDispatch: (command) =>
+            command.taskId === TaskId.make("stale")
+              ? Effect.fail(
+                  new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: "membership changed after settlement evaluation",
+                  }),
+                )
+              : Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.strictEqual((yield* Ref.get(fixture.taskCommands)).length, 2);
+          yield* Ref.set(fixture.snapshots, {
+            ...makeSnapshot([]),
+            snapshotSequence: 4,
+            tasks: [makeTask("stale")],
+          });
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 4 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          const commands = yield* Ref.get(fixture.taskCommands);
+          assert.strictEqual(commands.length, 3);
+          assert.strictEqual(commands[2]?.snapshotSequence, 4);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

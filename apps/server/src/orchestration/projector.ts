@@ -2,6 +2,8 @@ import type {
   OrchestrationEvent,
   OrchestrationProject,
   OrchestrationReadModel,
+  OrchestrationTask,
+  TaskId,
   ThreadId,
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
@@ -9,6 +11,17 @@ import type {
 } from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
+  TaskDeletedPayload,
+  TaskArchivedPayload,
+  TaskUnarchivedPayload,
+  TaskSettledPayload,
+  TaskUnsettledPayload,
+  TaskSnoozedPayload,
+  TaskUnsnoozedPayload,
+  TaskPinnedPayload,
+  TaskUnpinnedPayload,
+  TaskPinReorderedPayload,
+  TaskActiveReorderedPayload,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -118,6 +131,14 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function updateTask(
+  tasks: OrchestrationReadModel["tasks"],
+  taskId: TaskId,
+  patch: Partial<Omit<OrchestrationTask, "id">>,
+): OrchestrationTask[] {
+  return tasks.map((task) => (task.id === taskId ? { ...task, ...patch } : task));
 }
 
 /** Patch that swaps a thread's links and re-derives the legacy single-PR field from them. */
@@ -379,6 +400,153 @@ export function projectEvent(
           ),
         })),
       );
+    case "task.deleted":
+      return decodeForEvent(TaskDeletedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            deletedAt: payload.deletedAt,
+            updatedAt: payload.deletedAt,
+          }),
+        })),
+      );
+
+    case "task.archived":
+      return decodeForEvent(TaskArchivedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            archivedAt: payload.archivedAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.unarchived":
+      return decodeForEvent(TaskUnarchivedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            archivedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.settled":
+      return decodeForEvent(TaskSettledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            settledOverride: "settled",
+            settledAt: payload.settledAt,
+            unsettledAt: null,
+            activeOrderKey: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            pinnedAt: null,
+            pinOrderKey: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.snoozed":
+      return decodeForEvent(TaskSnoozedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            snoozedUntil: payload.snoozedUntil,
+            snoozedAt: payload.snoozedAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.unsnoozed":
+      return decodeForEvent(TaskUnsnoozedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            snoozedUntil: null,
+            snoozedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.pinned":
+      return decodeForEvent(TaskPinnedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            pinnedAt: payload.pinnedAt,
+            ...(payload.pinOrderKey !== undefined ? { pinOrderKey: payload.pinOrderKey } : {}),
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.unpinned":
+      return decodeForEvent(TaskUnpinnedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            pinnedAt: null,
+            pinOrderKey: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.pin-reordered":
+      return decodeForEvent(TaskPinReorderedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            pinOrderKey: payload.orderKey,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.active-reordered":
+      return decodeForEvent(TaskActiveReorderedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: updateTask(nextBase.tasks, payload.taskId, {
+            activeOrderKey: payload.orderKey,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "task.unsettled":
+      return decodeForEvent(TaskUnsettledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const existing = nextBase.tasks.find((task) => task.id === payload.taskId);
+          const wasParked =
+            existing?.settledOverride === "settled" ||
+            (existing?.snoozedUntil != null &&
+              compareDateTimeStrings(existing.snoozedUntil, payload.updatedAt) > 0);
+          const reentered =
+            wasParked || (payload.reason === "user" && existing?.settledOverride !== "active");
+          return {
+            ...nextBase,
+            tasks: updateTask(nextBase.tasks, payload.taskId, {
+              settledOverride: payload.reason === "user" ? "active" : null,
+              settledAt: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              // Clearing active protection is not a new entry into the active list.
+              unsettledAt: reentered ? payload.updatedAt : (existing?.unsettledAt ?? null),
+              activeOrderKey: reentered ? null : (existing?.activeOrderKey ?? null),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.task-set":
       return decodeForEvent(ThreadTaskSetPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
