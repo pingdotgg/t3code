@@ -87,6 +87,12 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("textPasteThresholdBytes") { (view: T3ComposerEditorView, threshold: Int) in
+        view.setTextPasteThresholdBytes(threshold)
+      }
+      Prop("maxInputChars") { (view: T3ComposerEditorView, maxInputChars: Int) in
+        view.setMaxInputChars(maxInputChars)
+      }
 
       Events(
         "onComposerChange",
@@ -97,6 +103,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerPasteImages",
         "onComposerContextPress",
         "onComposerPasteContext",
+        "onComposerPasteText",
         "onComposerContentSizeChange"
       )
 

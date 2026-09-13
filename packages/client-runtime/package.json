@@ -103,6 +103,10 @@
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"
     },
+    "./text-paste": {
+      "types": "./src/textPaste.ts",
+      "default": "./src/textPaste.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

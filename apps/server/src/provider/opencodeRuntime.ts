@@ -462,6 +462,13 @@ export function toOpenCodeFileParts(input: {
   const parts: Array<FilePartInput> = [];
 
   for (const attachment of input.attachments ?? []) {
+    if (
+      attachment.type === "file" &&
+      "source" in attachment &&
+      attachment.source?._tag === "pasted-text"
+    ) {
+      continue;
+    }
     if (!isOpenCodeNativeFilePart(attachment)) {
       continue;
     }

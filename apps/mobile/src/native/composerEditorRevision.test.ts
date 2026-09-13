@@ -192,3 +192,25 @@ describe("assumeComposerControlledState", () => {
     );
   });
 });
+
+describe("typing immediately before an intercepted paste", () => {
+  it("keeps the pre-paste React value behind the native paste revision", () => {
+    const snapshots = [
+      { eventCount: 0, value: "", selection: { start: 0, end: 0 } },
+      { eventCount: 1, value: "typed", selection: { start: 5, end: 5 } },
+      { eventCount: 2, value: "typed", selection: { start: 0, end: 5 } },
+    ];
+    // Both native platforms stamp the paste with its current value and selection.
+    // A render still carrying the typing caret cannot overwrite that selection.
+    expect(resolveComposerControlledEventCount("typed", { start: 5, end: 5 }, 2, snapshots)).toBe(
+      1,
+    );
+    expect(isComposerNativeEcho("typed", { start: 0, end: 5 }, 2, snapshots)).toBe(true);
+    // The replacement is a parent edit at the acknowledged paste revision.
+    expect(resolveComposerControlledEventCount("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(
+      2,
+    );
+    expect(isComposerNativeEcho("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(false);
+    expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
+  });
+});

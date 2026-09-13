@@ -99,6 +99,31 @@ describe("serializeLegacyContextMessage", () => {
     });
   });
 
+  it.each([" ", "\n", "\n\n"])(
+    "preserves the separator between a skill and a trailing PR through an older server: %j",
+    (separator) => {
+      const pullRequest = {
+        ...review,
+        label: "#11440",
+        sectionId: "pull-request:11440",
+        sectionTitle: "Pull request",
+        filePath: "PR #11440",
+        rangeLabel: "summary",
+        text: "Audit Mobile Photo Import",
+        diff: "",
+      };
+      const text = `$pr-audit${separator}${formatComposerContextReference(pullRequest)}`;
+      const upgraded = upgradeLegacyContextMessage(
+        serializeLegacyContextMessage({ text, records: [pullRequest] }),
+      );
+
+      expect(upgraded.records).toHaveLength(1);
+      expect(upgraded.text).toBe(
+        `$pr-audit${separator}${formatComposerContextReference(upgraded.records[0]!)}`,
+      );
+    },
+  );
+
   it("retains picked-element details for preview annotations sent through an older server", () => {
     const text = `Update ${formatComposerContextReference(annotation)}`;
     const upgraded = upgradeLegacyContextMessage(

@@ -226,13 +226,15 @@ function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   // The document picker types every pick as a plain file, so a picture arrives here as one.
   // What it *is* decides how it presents, the same way videos are already recognised below.
   if (attachment.type === "image" || imageMimeType(attachment) !== null) {
+    // A pasted-text marker does not fit the snapshot source a picture carries.
+    const { source: _droppedSource, ...rest } = attachment;
     return (
       <ComposerImageAttachment
         {...props}
         attachment={
           attachment.type === "image"
             ? attachment
-            : { ...attachment, type: "image", previewUri: attachment.fileUri }
+            : { ...rest, type: "image", previewUri: attachment.fileUri }
         }
       />
     );

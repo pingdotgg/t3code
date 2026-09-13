@@ -436,7 +436,9 @@ describe("composerDraftStore file attachments", () => {
 
   it("persists uploaded file references without including file contents", () => {
     const store = useComposerDraftStore.getState();
-    store.addFiles(threadRef, [makeFile("file-1")]);
+    store.addFiles(threadRef, [
+      { ...makeFile("file-1"), source: { _tag: "pasted-text" as const } },
+    ]);
     store.setFileUpload(threadRef, "file-1", TEST_ENVIRONMENT_ID, "pending-report-pdf");
 
     const persistApi = useComposerDraftStore.persist as unknown as {
@@ -459,6 +461,7 @@ describe("composerDraftStore file attachments", () => {
           sizeBytes: 6,
           attachmentId: "pending-report-pdf",
           environmentId: TEST_ENVIRONMENT_ID,
+          source: { _tag: "pasted-text" },
         },
       ],
     );
@@ -474,6 +477,7 @@ describe("composerDraftStore file attachments", () => {
         file: null,
         uploadedAttachmentId: "pending-report-pdf",
         uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+        source: { _tag: "pasted-text" },
       },
     ]);
   });

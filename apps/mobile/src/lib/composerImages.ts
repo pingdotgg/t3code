@@ -8,6 +8,7 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type EnvironmentId,
+  type PastedTextAttachmentSource,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
 import type { DocumentPickerResult } from "expo-document-picker";
@@ -21,6 +22,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
+import { writeFileAtomically } from "./atomic-file";
 
 export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttachment, "dataUrl"> {
   readonly id: string;
@@ -40,27 +42,59 @@ export interface DraftComposerFileAttachment {
   readonly mimeType: string;
   readonly sizeBytes: number;
   readonly fileUri: string;
+  readonly source?: PastedTextAttachmentSource;
   readonly uploadedAttachmentId?: string;
   readonly uploadEnvironmentId?: EnvironmentId;
+}
+
+export async function createPastedTextComposerAttachment(input: {
+  readonly text: string;
+  readonly name: string;
+  readonly maxBytes: number;
+}): Promise<DraftComposerFileAttachment> {
+  const bytes = new TextEncoder().encode(input.text).byteLength;
+  if (bytes <= 0) {
+    throw new Error("Clipboard is empty.");
+  }
+  if (bytes > input.maxBytes) {
+    throw new Error(fileAttachmentTooLargeMessage(input.name, input.maxBytes));
+  }
+
+  const { Directory, File, Paths } = await import("expo-file-system");
+  const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
+  directory.create({ idempotent: true, intermediates: true });
+  const file = new File(directory, `${uuidv4()}-${input.name}`);
+  await writeFileAtomically(file, input.text);
+  return {
+    id: uuidv4(),
+    type: "file",
+    name: input.name,
+    mimeType: "text/plain;charset=utf-8",
+    sizeBytes: bytes,
+    fileUri: file.uri,
+    source: { _tag: "pasted-text" },
+  };
 }
 
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
 /**
- * What the strip above the composer shows. Media previews there because a thumbnail is the
- * only way to see it; every other file is already legible as its inline chip, so it only
- * falls back to the strip when the prompt carries no reference to it. Mirrors web's
- * `composerOtherFilesForPresentation`.
+ * What the strip above the composer shows: media, and nothing else. A thumbnail is the only
+ * way to see a picture or a video, so those always preview there. Everything else reads as
+ * its inline chip, which carries the name, the type and the size in the line of prose the
+ * file belongs to — a square tile showing a generic document glyph says strictly less.
+ *
+ * The chip is not optional for a non-media file. Every path that attaches one also writes
+ * its reference, so a file with no chip means the draft lost it rather than that the strip
+ * should stand in. Which attachments carry a chip is therefore not consulted at all; surfaces
+ * whose attachments never get chips (a question answer) pass them to the strip directly
+ * instead of through this filter.
  */
 export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
-  inlineAttachmentIds: ReadonlySet<string>,
 ): ReadonlyArray<DraftComposerAttachment> {
   return attachments.filter(
-    (attachment) =>
-      isComposerImageAttachment(attachment) ||
-      videoMimeType(attachment) !== null ||
-      !inlineAttachmentIds.has(attachment.id),
+    (attachment) => isComposerImageAttachment(attachment) || videoMimeType(attachment) !== null,
   );
 }
 
@@ -539,11 +573,19 @@ export async function pickComposerMedia(input: {
   };
 }
 
-export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<{
-  readonly images: ReadonlyArray<DraftComposerImageAttachment>;
-  readonly text: string | null;
-  readonly error: string | null;
-}> {
+/** Clipboard images take priority over their alternate text representation. */
+export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<
+  | {
+      readonly images: ReadonlyArray<DraftComposerImageAttachment>;
+      readonly text: null;
+      readonly error: string | null;
+    }
+  | {
+      readonly images: readonly [];
+      readonly text: string;
+      readonly error: null;
+    }
+> {
   let clipboard: Awaited<ReturnType<typeof loadClipboard>>;
   try {
     clipboard = await loadClipboard();
@@ -605,8 +647,7 @@ export async function pasteComposerClipboard(input: { readonly existingCount: nu
     const text = await clipboard.getStringAsync();
     return {
       images: [],
-      text: text.length > 0 ? text : null,
-      error: text.length > 0 ? null : "Clipboard is empty.",
+      ...(text.length > 0 ? { text, error: null } : { text: null, error: "Clipboard is empty." }),
     };
   }
 

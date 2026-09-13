@@ -7,6 +7,13 @@ export type ComposerEditorSelection = {
   readonly end: number;
 };
 
+export type ComposerTextPaste = {
+  readonly value: string;
+  readonly eventCount: number;
+  readonly text: string;
+  readonly selection: ComposerEditorSelection;
+};
+
 export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
@@ -18,11 +25,12 @@ export interface ComposerEditorProps {
   readonly value: string;
   readonly context?: OrchestrationMessageContext;
   readonly clipboardFragment?: string;
-  readonly onPasteContext?: (clipboard: {
-    readonly text: string;
-    readonly fragment: string;
-    readonly html: string;
-  }) => void;
+  readonly onPasteContext?: (
+    clipboard: ComposerTextPaste & {
+      readonly fragment: string;
+      readonly html: string;
+    },
+  ) => void;
   readonly skills?: ReadonlyArray<
     Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
       Partial<Pick<ServerProviderSkill, "path">>
@@ -50,6 +58,7 @@ export interface ComposerEditorProps {
     readonly start: number;
     readonly end: number;
   }) => void;
+  readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
   /** Invoked by the native editor when Command-Return is pressed on a hardware keyboard. */

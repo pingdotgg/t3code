@@ -90,6 +90,13 @@ describe("appearancePreferences", () => {
     expect(resolveAppearancePreferences({ codeWordBreak: true }).codeWordBreak).toBe(true);
   });
 
+  it("preserves the no-wrap default unless wrapping is explicitly enabled", () => {
+    expect(resolveAppearancePreferences(undefined).codeWordBreak).toBe(false);
+    expect(resolveAppearancePreferences({}).codeWordBreak).toBe(false);
+    expect(resolveAppearancePreferences({ codeWordBreak: null }).codeWordBreak).toBe(false);
+    expect(resolveAppearancePreferences({ codeWordBreak: false }).codeWordBreak).toBe(false);
+  });
+
   it("returns the authored text scale at the 16pt default", () => {
     expect(DEFAULT_BASE_FONT_SIZE).toBe(16);
 

@@ -2,7 +2,14 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, ScrollView, Text as NativeText, useWindowDimensions, View } from "react-native";
+import {
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  Text as NativeText,
+  useWindowDimensions,
+  View,
+} from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -23,13 +30,17 @@ import {
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
 } from "./nativeSourceFileAdapter";
-import { prepareSourceFileDocument } from "./source-file-document";
+import { MarkdownTextPrimitive } from "@t3tools/mobile-markdown-text/primitive";
+
+import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
   readonly path: string;
   readonly initialLine?: number | null;
+  /** Keep the entire document in one native text-selection scope. */
+  readonly selectable?: boolean;
   /** Enables native pull-to-refresh on the source surface. */
   readonly onRefresh?: () => Promise<void> | void;
 }
@@ -129,7 +140,7 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
       ? "ready"
       : "highlighting";
 
-  return { lines, rowsJson, status, targetIndex, theme, tokens };
+  return { normalizedContents, lines, rowsJson, status, targetIndex, theme, tokens };
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
@@ -146,17 +157,7 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
   return null;
 }
 
-function NativeSourceFileSurface(
-  props: SourceFileSurfaceProps & {
-    readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
-  },
-) {
-  const { NativeView, onRefresh } = props;
-  const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
-  const { themeAppearance, themeId } = useAppearancePreferences();
-  const appTheme = useUniwindTheme();
-  const { width: viewportWidth } = useWindowDimensions();
-  const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
+function useSourceFileRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
     if (!onRefresh) {
@@ -169,6 +170,21 @@ function NativeSourceFileSurface(
       setIsPullRefreshing(false);
     }
   }, [onRefresh]);
+  return { isPullRefreshing, handlePullToRefresh };
+}
+
+function NativeSourceFileSurface(
+  props: SourceFileSurfaceProps & {
+    readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
+  },
+) {
+  const { NativeView, onRefresh } = props;
+  const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
+  const { themeAppearance, themeId } = useAppearancePreferences();
+  const appTheme = useUniwindTheme();
+  const { width: viewportWidth } = useWindowDimensions();
+  const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(onRefresh);
   const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
   const selectedRowIdsJson = useMemo(
     () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
@@ -212,9 +228,18 @@ function NativeSourceFileSurface(
 }
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+  const foreground = useUniwindTheme()["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
-  const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const selectableTokens = useMemo(
+    () => (props.selectable ? boundedSelectableSourceTokens(tokens) : null),
+    [props.selectable, tokens],
+  );
   const listRef = useRef<FlatList<string>>(null);
+  const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
+  const refreshControl = props.onRefresh ? (
+    <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
+  ) : undefined;
 
   useEffect(() => {
     if (targetIndex === null) {
@@ -240,9 +265,59 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [codeSurface, codeWordBreak, targetIndex, tokens],
   );
 
+  // One selectable text for the whole file. On iOS `uiTextView` renders a real `UITextView`,
+  // which selects across every line, wraps, and lays out long documents through TextKit; on
+  // Android the primitive is an RN `Text`, which selects across its nested children. Either
+  // way "select all" takes the file rather than a line, which a `FlatList` row can never do
+  // because each row is its own selection scope.
+  const selectableBlock = props.selectable ? (
+    <MarkdownTextPrimitive
+      uiTextView
+      selectable
+      style={{
+        color: foreground,
+        fontFamily: REVIEW_MONO_FONT_FAMILY,
+        fontSize: codeSurface.fontSize,
+        lineHeight: codeSurface.rowHeight,
+      }}
+    >
+      {selectableTokens
+        ? lines.map((line, index) => {
+            const lineTokens = selectableTokens[index] ?? null;
+            const body =
+              lineTokens && lineTokens.length > 0
+                ? lineTokens.map((token, tokenIndex) => (
+                    <MarkdownTextPrimitive
+                      key={`${index}:${tokenIndex}`}
+                      style={{
+                        color: token.color ?? foreground,
+                        fontWeight:
+                          token.fontStyle !== null && (token.fontStyle & 2) === 2 ? "700" : "400",
+                        fontStyle:
+                          token.fontStyle !== null && (token.fontStyle & 1) === 1
+                            ? "italic"
+                            : "normal",
+                      }}
+                    >
+                      {token.content}
+                    </MarkdownTextPrimitive>
+                  ))
+                : line;
+            return (
+              <MarkdownTextPrimitive key={index}>
+                {body}
+                {index < lines.length - 1 ? "\n" : ""}
+              </MarkdownTextPrimitive>
+            );
+          })
+        : normalizedContents}
+    </MarkdownTextPrimitive>
+  ) : null;
+
   const list = (
     <FlatList
       ref={listRef}
+      refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
       initialNumToRender={80}
@@ -266,14 +341,40 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     />
   );
 
+  // Workspace files retain their numbered, virtualized rows, with or without a line target.
+  // Attachments opt into one selection scope for the entire document.
+  const usesLineList = !props.selectable;
+  const padded = (
+    <ScrollView
+      refreshControl={refreshControl}
+      className="flex-1"
+      contentContainerStyle={{
+        paddingBottom: codeSurface.rowHeight,
+        paddingHorizontal: 12,
+        paddingTop: 8,
+      }}
+    >
+      {selectableBlock}
+    </ScrollView>
+  );
+
   return (
     <View className="relative flex-1 bg-sheet">
       <SourceHighlightStatusView status={status} />
-      {codeWordBreak ? (
-        list
+      {usesLineList ? (
+        codeWordBreak ? (
+          list
+        ) : (
+          <ScrollView horizontal bounces={false} className="flex-1">
+            {list}
+          </ScrollView>
+        )
+      ) : codeWordBreak ? (
+        padded
       ) : (
+        // Without wrapping the text keeps its natural width and the reader pans to it.
         <ScrollView horizontal bounces={false} className="flex-1">
-          {list}
+          {padded}
         </ScrollView>
       )}
     </View>
@@ -282,7 +383,11 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
-  return NativeView ? (
+  const { codeWordBreak } = useAppearanceCodeSurface();
+  // The native canvas draws source lines without text selection or wrapping. Attachments
+  // need one selectable text view in either wrap mode; workspace line navigation can still
+  // use the canvas when wrapping is disabled.
+  return NativeView && !codeWordBreak && !props.selectable ? (
     <NativeSourceFileSurface {...props} NativeView={NativeView} />
   ) : (
     <JavaScriptSourceFileSurface {...props} />

@@ -339,15 +339,22 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
 
   // Blocks were appended in send order (terminal, element, preview, review), so they peel
   // off the end in reverse. Each peel exposes the next block as trailing.
-  // Only reviews that trailed the original text were appended by the old send path; a
-  // review that sat before other blocks keeps its place.
+  // Peel reviews only when they hide another trailing context block. A review at the end
+  // of ordinary prose can still be inline; keep its original spacing and line breaks.
   const trailingReviewTokens: number[] = [];
   const tokens = trailingReviewTokenPattern.exec(rest);
   if (tokens && tokens[0].length > 0) {
-    trailingReviewTokens.push(
-      ...Array.from(tokens[0].matchAll(reviewTokenPattern), (m) => Number(m[1])),
-    );
-    rest = rest.slice(0, tokens.index).replace(/\n+$/, "");
+    const preceding = rest.slice(0, tokens.index);
+    if (
+      TRAILING_PREVIEW.test(preceding) ||
+      TRAILING_ELEMENT.test(preceding) ||
+      TRAILING_TERMINAL.test(preceding)
+    ) {
+      trailingReviewTokens.push(
+        ...Array.from(tokens[0].matchAll(reviewTokenPattern), (m) => Number(m[1])),
+      );
+      rest = preceding;
+    }
   }
   for (;;) {
     const preview = stripTrailing(rest, TRAILING_PREVIEW);

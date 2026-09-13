@@ -318,4 +318,18 @@ describe("toOpenCodeFileParts", () => {
       ["application/pdf", "text/markdown", "image/png"],
     );
   });
+
+  it("keeps folded clipboard text on the lazy path fallback", () => {
+    const parts = toOpenCodeFileParts({
+      attachments: [
+        {
+          ...attachment("text/plain"),
+          source: { _tag: "pasted-text" as const },
+        },
+      ],
+      resolveAttachmentPath: () => "/tmp/pasted-text.txt",
+    });
+
+    NodeAssert.deepEqual(parts, []);
+  });
 });

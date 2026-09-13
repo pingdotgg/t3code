@@ -12,6 +12,7 @@ import {
   Eye,
   Table2,
   Trash2Icon,
+  WrapTextIcon,
   XIcon,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -21,6 +22,7 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { AudioPreview } from "./AudioPreview";
@@ -180,6 +182,16 @@ export function AttachmentFilePreview(props: {
     return () => controller.abort();
   }, [url, needsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
+  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const updateClientSettings = useUpdateClientSettings();
+  // Only the raw-text body honours word wrap. A rendered table or Markdown lays itself out,
+  // so offering the toggle there would be a control that visibly does nothing.
+  const showsRawText =
+    failure === null &&
+    needsText &&
+    content !== null &&
+    !(delimiter && rendered) &&
+    !(kind === "markdown" && rendered);
 
   const save = () => {
     setSaving(true);
@@ -300,6 +312,15 @@ export function AttachmentFilePreview(props: {
             ) : (
               <Eye className="size-3.5" />
             )}
+          </FileSurfaceAction>
+        ) : null}
+        {showsRawText ? (
+          <FileSurfaceAction
+            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            pressed={wordWrap}
+            onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+          >
+            <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
         {content ? (
