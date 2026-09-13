@@ -60,7 +60,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { isBuiltInProviderAdapterDriverV2 } from "../orchestration-v2/builtInProviderAdapterDrivers.ts";
+import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
@@ -737,6 +737,7 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry;
+  const providerAdapters = yield* ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -782,6 +783,15 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  /**
+   * Instance ids the adapter registry resolves — the same lookup a
+   * `delegated_task.request` performs when it runs. Capability reporting and
+   * target resolution must not advertise a set narrower (or wider) than what
+   * dispatch can actually serve.
+   */
+  const loadOrchestrationCapableInstanceIds = () =>
+    providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
+
   const resolveTarget = (input: {
     readonly parent: OrchestrationV2ThreadProjection;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -790,13 +800,14 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedInstanceId = input.target?.providerInstanceId;
       const requestedDriver = input.target?.driverKind;
+      const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
       let instanceId = requestedInstanceId;
 
       if (instanceId === undefined && requestedDriver !== undefined) {
         const candidates = input.providers.filter(
           (provider) =>
             provider.driver === requestedDriver &&
-            isBuiltInProviderAdapterDriverV2(provider.driver),
+            orchestrationCapableInstanceIds.has(provider.instanceId),
         );
         if (candidates.length === 0) {
           return yield* failure(
@@ -807,12 +818,9 @@ const make = Effect.gen(function* () {
         const inheritedCandidate = candidates.find(
           (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
         );
-        const availableCandidate = candidates.find((candidate) => {
-          return (
-            providerConstraints(candidate, isBuiltInProviderAdapterDriverV2(candidate.driver))
-              .length === 0
-          );
-        });
+        const availableCandidate = candidates.find(
+          (candidate) => providerConstraints(candidate, true).length === 0,
+        );
         instanceId = inheritedCandidate?.instanceId ?? availableCandidate?.instanceId;
       }
       instanceId ??= input.parent.thread.modelSelection.instanceId;
@@ -832,7 +840,7 @@ const make = Effect.gen(function* () {
       }
       const constraints = providerConstraints(
         provider,
-        isBuiltInProviderAdapterDriverV2(provider.driver),
+        orchestrationCapableInstanceIds.has(provider.instanceId),
       );
       if (constraints.length > 0) {
         return yield* failure(
@@ -1179,6 +1187,7 @@ const make = Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
         const providers = yield* loadProviders;
+        const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
         return {
           parentThreadId: scope.threadId,
           inheritedProviderInstanceId: parent.thread.modelSelection.instanceId,
@@ -1188,7 +1197,7 @@ const make = Effect.gen(function* () {
           providers: providers.map((provider) => {
             const constraints = providerConstraints(
               provider,
-              isBuiltInProviderAdapterDriverV2(provider.driver),
+              orchestrationCapableInstanceIds.has(provider.instanceId),
             );
             return {
               providerInstanceId: provider.instanceId,
@@ -1777,5 +1786,9 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   OrchestratorMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService | ProviderRegistry | ScheduledTaskService
+  | Crypto.Crypto
+  | ThreadManagementService
+  | ProviderRegistry
+  | ProviderAdapterRegistryV2
+  | ScheduledTaskService
 > = Layer.effect(OrchestratorMcpService, make);
