@@ -1,11 +1,17 @@
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   resolvePullRequestAuthorFilter,
+  PositiveInt,
+  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -413,8 +419,24 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
+    readonly withVerifiedCredential: <A, E, R>(
+      input: { readonly cwd: string; readonly host: string },
+      use: (identity: {
+        readonly accountId: string;
+        readonly viewer: string;
+        readonly credentialFingerprint: string;
+      }) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | GitHubPullRequestCliError, R>;
+    readonly getRoutingIdentity: (input: {
+      readonly cwd: string;
+      readonly host: string;
+    }) => Effect.Effect<
+      { readonly accountId: string; readonly viewer: string },
+      GitHubPullRequestCliError
+    >;
     readonly getViewerLogin: (input: {
       readonly cwd: string;
+      readonly host: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
@@ -991,6 +1013,111 @@ function actionArgs(
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+  const routingIdentities = new Map<
+    string,
+    {
+      at: number;
+      value: { accountId: string; viewer: string };
+    }
+  >();
+  const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
+  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        id: PositiveInt,
+        login: TrimmedNonEmptyString,
+      }),
+    ),
+  );
+  const captureVerifiedCredential = Effect.fn("GitHubPullRequestCli.captureVerifiedCredential")(
+    function* (input: { readonly cwd: string; readonly host: string }) {
+      const unavailable = () =>
+        new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd });
+      const host = input.host.toLowerCase();
+      const pinned = yield* GitHubCli.PinnedGitHubCredential;
+      if (pinned !== null && pinned.host !== host) return yield* unavailable();
+      // Only the digest is retained. Never attach credential lookup output to an error.
+      const token =
+        pinned !== null
+          ? Redacted.value(pinned.token)
+          : (yield* github
+              .execute({
+                cwd: input.cwd,
+                args: ["auth", "token", "--hostname", host],
+                env: { GH_DEBUG: "" },
+              })
+              .pipe(Effect.mapError(unavailable))).stdout.trim();
+      if (!token) return yield* unavailable();
+      const key = `${host}:${NodeCrypto.createHash("sha256").update(token).digest("hex")}`;
+      const credential = { host, token: Redacted.make(token), credentialFingerprint: key };
+      // A cold page may ask several times. Wait per credential and check again after the
+      // first verification; cancellation releases the next waiter without losing its request.
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const lock = identityLocks.get(key) ?? { gate: Semaphore.makeUnsafe(1), users: 0 };
+          lock.users++;
+          identityLocks.set(key, lock);
+          return lock;
+        }),
+        (lock) =>
+          lock.gate.withPermit(
+            Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
+              const cached = routingIdentities.get(key);
+              if (cached !== undefined && now - cached.at < 10 * 60_000)
+                return { ...credential, ...cached.value };
+              // Pin this read so an auth switch cannot poison its cache entry.
+              const response = yield* github
+                .execute({
+                  cwd: input.cwd,
+                  args: ["api", "user", "--hostname", host],
+                  env: {
+                    GH_HOST: host,
+                    GH_TOKEN: token,
+                    GITHUB_TOKEN: token,
+                    GH_ENTERPRISE_TOKEN: token,
+                    GITHUB_ENTERPRISE_TOKEN: token,
+                    GH_DEBUG: "",
+                  },
+                })
+                .pipe(Effect.mapError(unavailable));
+              const identity = yield* decodeRoutingIdentity(response.stdout).pipe(
+                Effect.mapError(unavailable),
+              );
+              const value = { accountId: String(identity.id), viewer: identity.login };
+              if (routingIdentities.size >= 128)
+                routingIdentities.delete(routingIdentities.keys().next().value!);
+              routingIdentities.set(key, { at: now, value });
+              return { ...credential, ...value };
+            }),
+          ),
+        (lock) =>
+          Effect.sync(() => {
+            lock.users--;
+            if (lock.users === 0) identityLocks.delete(key);
+          }),
+      );
+    },
+  );
+  const withVerifiedCredential: GitHubPullRequestCli["Service"]["withVerifiedCredential"] = (
+    input,
+    use,
+  ) =>
+    captureVerifiedCredential(input).pipe(
+      Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
+        use({ accountId, viewer, credentialFingerprint }).pipe(
+          Effect.provideService(GitHubCli.PinnedGitHubCredential, {
+            host,
+            token,
+            credentialFingerprint,
+          }),
+        ),
+      ),
+    );
+  const getRoutingIdentity: GitHubPullRequestCli["Service"]["getRoutingIdentity"] = (input) =>
+    captureVerifiedCredential(input).pipe(
+      Effect.map(({ accountId, viewer }) => ({ accountId, viewer })),
+    );
 
   /**
    * The pull request's own node id, which is what a mutation against the pull request itself is
@@ -1468,15 +1595,10 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
+    withVerifiedCredential,
+    getRoutingIdentity,
     getViewerLogin: (input) =>
-      github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
-        Effect.flatMap((result) => {
-          const login = result.stdout.trim();
-          return login.length > 0
-            ? Effect.succeed(login)
-            : Effect.fail(new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }));
-        }),
-      ),
+      getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer)),
 
     listPullRequests: (input) => {
       const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);

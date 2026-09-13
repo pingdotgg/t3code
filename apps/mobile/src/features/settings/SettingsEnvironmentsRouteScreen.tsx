@@ -10,6 +10,7 @@ import { AppText as Text } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { GitHubRoutingSettings } from "../connection/GitHubRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -174,6 +175,7 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        <GitHubRoutingSettings />
       </ScrollView>
     </View>
   );

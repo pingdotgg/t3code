@@ -1,11 +1,14 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
@@ -192,7 +195,118 @@ afterEach(() => {
   mockedGetPullRequest.mockReset();
 });
 
+it.effect(
+  "keeps a verified credential through an auth switch and separates token fingerprints",
+  () =>
+    Effect.gen(function* () {
+      let activeToken = "broad-credential";
+      const commands: VcsProcess.VcsProcessInput[] = [];
+      const github = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              commands.push(input);
+              if (input.args[0] === "auth") return output(activeToken);
+              if (input.args[0] === "api") return output('{"id":123,"login":"same-account"}');
+              return output("");
+            }),
+        }),
+      );
+      const cli = yield* GitHubPullRequestCli.make.pipe(
+        Effect.provideService(GitHubCli.GitHubCli, github),
+        Effect.provide(GitHubGraphQlBudget.layer),
+      );
+      const input = { cwd: "/repo", host: "github.com" };
+      const first = yield* cli.withVerifiedCredential(input, (identity) =>
+        Effect.gen(function* () {
+          activeToken = "restricted-credential";
+          expect(yield* cli.getViewerLogin(input)).toBe("same-account");
+          yield* cli.commentOnPullRequest({
+            ...input,
+            repository: "owner/repo",
+            number: 1,
+            body: "comment",
+          });
+          return identity;
+        }),
+      );
+      const second = yield* cli.withVerifiedCredential(input, Effect.succeed);
+      expect(first.accountId).toBe(second.accountId);
+      expect(first.credentialFingerprint).not.toBe(second.credentialFingerprint);
+      expect(encodeJson([first, second])).not.toContain("broad-credential");
+      expect(encodeJson([first, second])).not.toContain("restricted-credential");
+      expect(commands.find((command) => command.args[0] === "pr")?.env).toMatchObject({
+        GH_TOKEN: "broad-credential",
+        GITHUB_TOKEN: "broad-credential",
+        GH_DEBUG: "",
+      });
+      expect(
+        commands
+          .filter((command) => command.args[0] === "api")
+          .map((command) => command.env?.GH_TOKEN),
+      ).toEqual(["broad-credential", "restricted-credential"]);
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "same-account",
+      });
+    }),
+);
+
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("coalesces concurrent identity verification for the same host and credential", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) =>
+        input.args[0] === "auth"
+          ? Effect.succeed(output("shared-credential"))
+          : Effect.yieldNow.pipe(Effect.as(output('{"id":123,"login":"viewer"}'))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const results = yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          cli.getRoutingIdentity({ cwd: "/w", host: "github.identity-flight.test" }),
+        ),
+        { concurrency: 4 },
+      );
+      expect(results).toEqual(
+        Array.from({ length: 4 }, () => ({ accountId: "123", viewer: "viewer" })),
+      );
+      expect(mockedExecute.mock.calls.filter(([input]) => input.args[0] === "api")).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "lets another identity reader continue when the first verification is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        let tokens = 0;
+        let verifications = 0;
+        mockedExecute.mockImplementation((input) =>
+          Effect.gen(function* () {
+            if (input.args[0] === "auth") {
+              if (++tokens === 2) yield* Deferred.succeed(secondStarted, undefined);
+              return output("cancel-credential");
+            }
+            if (++verifications === 1) {
+              yield* Deferred.succeed(firstStarted, undefined);
+              return yield* Effect.never;
+            }
+            return output('{"id":123,"login":"viewer"}');
+          }),
+        );
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const input = { cwd: "/w", host: "github.identity-cancel.test" };
+        const first = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
+        yield* Deferred.await(firstStarted);
+        const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
+        yield* Deferred.await(secondStarted);
+        yield* Fiber.interrupt(first);
+        expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
+        expect(verifications).toBe(2);
+      }),
+  );
+
   it.effect("reads linked pull request status with the overview fields in one request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -2458,9 +2572,76 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
+      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
+    }),
+  );
+
+  it.effect("looks up the authenticated account on the requested enterprise host", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("enterprise-test-credential")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"enterprise-user"}')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
+
+      expect(login).toBe("enterprise-user");
+      expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.acme.com"]);
+      expect(callAt(1).args).toEqual(["api", "user", "--hostname", "github.acme.com"]);
+    }),
+  );
+
+  it.effect("reuses verified credentials offline and refuses an unverified replacement", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = { cwd: "/w", host: "github.identity-cache.test" };
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-a")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "maria-rcks",
+      });
+      expect(callAt(1).env).toMatchObject({
+        GH_ENTERPRISE_TOKEN: "test-credential-a",
+        GH_DEBUG: "",
+      });
+
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("test-credential-a")));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "maria-rcks",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubCli.GitHubCliCommandError({
+              command: "gh",
+              cwd: "/w",
+              cause: new Error("upstream failed with test-credential-b"),
+            }),
+          ),
+        );
+      const failure = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(failure._tag).toBe("GitHubViewerLoginUnavailableError");
+      expect(String(failure)).not.toContain("test-credential-b");
+      expect(callAt(4).env).toMatchObject({
+        GH_ENTERPRISE_TOKEN: "test-credential-b",
+        GH_DEBUG: "",
+      });
+
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "456",
+        viewer: "maria-rcks",
+      });
     }),
   );
 

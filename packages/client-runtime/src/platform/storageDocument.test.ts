@@ -1,6 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as TokenStore from "../authorization/tokenStore.ts";
 import {
@@ -13,9 +15,15 @@ import {
 } from "../connection/catalog.ts";
 import {
   BearerConnectionTarget,
+  ConnectionTransientError,
+  PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "../connection/model.ts";
+import {
+  GitHubRoutingPermissions,
+  makeGitHubRoutingPermissions,
+} from "../connection/githubRoutingPermissions.ts";
 import {
   ConnectionCatalogDocument,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -24,6 +32,8 @@ import {
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
 } from "./storageDocument.ts";
+
+const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocument);
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const decodeCatalogDocument = Schema.decodeUnknownSync(ConnectionCatalogDocument);
@@ -61,6 +71,128 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
 });
 
 describe("ConnectionCatalogDocument", () => {
+  it.effect("persists explicit GitHub trust and forgets it when a connection is removed", () =>
+    Effect.gen(function* () {
+      let document = EMPTY_CONNECTION_CATALOG_DOCUMENT;
+      const entry = { target: BEARER_TARGET, profile: Option.some(BEARER_PROFILE), enabled: true };
+      const storage = {
+        read: Effect.sync(() => document.githubRoutingPermissions ?? []),
+        write: (githubRoutingPermissions: NonNullable<typeof document.githubRoutingPermissions>) =>
+          Effect.gen(function* () {
+            document = yield* decodeConnectionCatalogDocument({
+              ...document,
+              githubRoutingPermissions,
+            }).pipe(Effect.orDie);
+          }),
+      };
+      const permissions = yield* makeGitHubRoutingPermissions(storage);
+      expect(yield* permissions.get(entry)).toBe("off");
+      yield* permissions.set(entry, "read");
+      const restarted = yield* makeGitHubRoutingPermissions(storage);
+      expect(yield* restarted.get(entry)).toBe("read");
+
+      const changedEndpoint = {
+        ...entry,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            ...BEARER_PROFILE,
+            httpBaseUrl: "https://different.example.test",
+          }),
+        ),
+      };
+      expect(yield* restarted.get(changedEndpoint)).toBe("off");
+      expect(
+        yield* restarted.get({
+          ...entry,
+          profile: Option.some(
+            new BearerConnectionProfile({
+              ...BEARER_PROFILE,
+              wsBaseUrl: "wss://different.example.test",
+            }),
+          ),
+        }),
+      ).toBe("off");
+      expect(
+        yield* restarted.get({ target: RELAY_TARGET, profile: Option.none(), enabled: true }),
+      ).toBe("off");
+      yield* restarted.set(entry, "read-write");
+      expect(yield* restarted.get(entry)).toBe("read-write");
+      yield* restarted.forget(ENVIRONMENT_ID);
+      expect(yield* restarted.get(entry)).toBe("off");
+      const afterRemoval = yield* makeGitHubRoutingPermissions(storage);
+      expect(yield* afterRemoval.get(entry)).toBe("off");
+
+      yield* permissions.set(entry, "read");
+      document = removeConnectionFromCatalog(document, BEARER_TARGET);
+      const afterCatalogRemoval = yield* makeGitHubRoutingPermissions(storage);
+      expect(yield* afterCatalogRemoval.get(entry)).toBe("off");
+    }),
+  );
+
+  it.effect("requires explicit trust for primary, relay, and SSH connections independently", () =>
+    Effect.gen(function* () {
+      const permissions = yield* makeGitHubRoutingPermissions({
+        read: Effect.succeed([]),
+        write: () => Effect.void,
+      });
+      const entries = [
+        {
+          target: new PrimaryConnectionTarget({
+            environmentId: ENVIRONMENT_ID,
+            label: "Local",
+            httpBaseUrl: "http://localhost:3000",
+            wsBaseUrl: "ws://localhost:3000",
+          }),
+          profile: Option.none(),
+          enabled: true,
+        },
+        { target: RELAY_TARGET, profile: Option.none(), enabled: true },
+        {
+          enabled: true,
+          target: new SshConnectionTarget({
+            environmentId: ENVIRONMENT_ID,
+            label: "SSH",
+            connectionId: "ssh-1",
+          }),
+          profile: Option.some(
+            new SshConnectionProfile({
+              environmentId: ENVIRONMENT_ID,
+              label: "SSH",
+              connectionId: "ssh-1",
+              target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
+            }),
+          ),
+        },
+      ];
+      for (const entry of entries) {
+        expect(yield* permissions.get(entry)).toBe("off");
+        yield* permissions.set(entry, "read");
+        expect(yield* permissions.get(entry)).toBe("read");
+        yield* permissions.set(entry, "off");
+        expect(yield* permissions.get(entry)).toBe("off");
+      }
+    }),
+  );
+
+  it.effect("does not enable GitHub routing when permission persistence fails", () =>
+    Effect.gen(function* () {
+      const entry = { target: BEARER_TARGET, profile: Option.some(BEARER_PROFILE), enabled: true };
+      expect(yield* (yield* GitHubRoutingPermissions).get(entry)).toBe("off");
+      const permissions = yield* makeGitHubRoutingPermissions({
+        read: Effect.succeed([]),
+        write: () =>
+          Effect.fail(
+            new ConnectionTransientError({
+              reason: "remote-unavailable",
+              detail: "storage unavailable",
+            }),
+          ),
+      });
+      yield* permissions.set(entry, "read-write").pipe(Effect.flip);
+      expect(yield* permissions.get(entry)).toBe("off");
+    }),
+  );
+
   it.each([
     { name: "legacy", accountId: undefined },
     { name: "account-bound", accountId: "account-1" },

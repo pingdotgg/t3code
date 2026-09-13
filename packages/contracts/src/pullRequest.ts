@@ -643,10 +643,38 @@ export type PullRequestListResult = typeof PullRequestListResult.Type;
 export const PullRequestRef = Schema.Struct({
   projectId: ProjectId,
   host: Schema.optional(TrimmedNonEmptyString),
+  /** Refuse a routed operation unless this GitHub account still owns the active credential. */
+  expectedAccountId: Schema.optional(TrimmedNonEmptyString),
+  /** Let another environment answer when this one's cached response has expired. */
+  allowStale: Schema.optional(Schema.Boolean),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
+
+/** Account discovery never needs the originating project's private repository metadata. */
+export const PullRequestRoutingIdentityInput = Schema.Struct({
+  host: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingIdentityInput = typeof PullRequestRoutingIdentityInput.Type;
+
+export const PullRequestRoutingIdentityResult = Schema.Struct({
+  accountId: TrimmedNonEmptyString,
+  host: TrimmedNonEmptyString,
+  provider: Schema.Literal("github"),
+  viewer: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingIdentityResult = typeof PullRequestRoutingIdentityResult.Type;
+
+export const PullRequestRoutingResult = Schema.Struct({
+  accountId: TrimmedNonEmptyString,
+  host: TrimmedNonEmptyString,
+  provider: SourceControlProviderKind,
+  viewer: TrimmedNonEmptyString,
+  projectTitle: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type PullRequestRoutingResult = typeof PullRequestRoutingResult.Type;
 
 export const PullRequestLinkedThreadsResult = Schema.Struct({
   threads: Schema.Array(

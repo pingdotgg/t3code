@@ -46,6 +46,9 @@ import {
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
   type PullRequestRef,
+  type PullRequestRoutingResult,
+  type PullRequestRoutingIdentityInput,
+  type PullRequestRoutingIdentityResult,
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerRequestInput,
@@ -138,6 +141,14 @@ const VIEWER_CACHE_CAPACITY = 32;
 
 export type PullRequestError = PullRequestUnavailableError | PullRequestOperationError;
 
+const routingCredential = Context.Reference<{
+  readonly credentialFingerprint: string;
+  readonly viewer: string;
+} | null>("t3/PullRequestService/routingCredential", { defaultValue: () => null });
+// Internal only: the client cannot choose its cache's credential namespace.
+const credentialNamespace = Symbol("pullRequestCredentialNamespace");
+type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
+
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
@@ -147,6 +158,16 @@ export class PullRequestService extends Context.Service<
     readonly listStats: (
       input: PullRequestListStatsInput,
     ) => Effect.Effect<PullRequestListStatsResult, PullRequestError>;
+    readonly routing: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestRoutingResult, PullRequestError>;
+    readonly routingIdentity: (
+      input: PullRequestRoutingIdentityInput,
+    ) => Effect.Effect<PullRequestRoutingIdentityResult, PullRequestError>;
+    readonly withRoutingCredential: <A, E, R>(
+      input: PullRequestRef,
+      operation: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | PullRequestError, R>;
     readonly summary: (
       input: PullRequestRef,
       options?: { readonly recoverTransientFailure?: boolean },
@@ -473,6 +494,10 @@ function withRateLimitBackoff(
     kind: api.kind,
     capabilities: api.capabilities,
     getViewer: wrap("getViewer", api.getViewer),
+    ...(api.getRoutingIdentity === undefined ? {} : { getRoutingIdentity: api.getRoutingIdentity }),
+    ...(api.withVerifiedCredential === undefined
+      ? {}
+      : { withVerifiedCredential: api.withVerifiedCredential }),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -776,13 +801,19 @@ export const make = Effect.gen(function* () {
    * handed to a provider on the client's word. Read freshly for that reason, rather than taken
    * from whatever the detail said when the page loaded.
    */
-  const viewerPermissionsOf = (project: SupportedProject, ref: PullRequestRef, operation: string) =>
+  const viewerPermissionsOf = (
+    project: SupportedProject,
+    ref: PullRequestRef,
+    operation: string,
+    includeUpdateBranch = false,
+  ) =>
     project.api
       .getViewerPermissions({
         cwd: project.project.workspaceRoot,
         repository: project.repository,
         host: project.host,
         number: ref.number,
+        includeUpdateBranch,
       })
       .pipe(Effect.mapError(toPullRequestError(operation)));
 
@@ -1309,7 +1340,92 @@ export const make = Effect.gen(function* () {
    * and a host that cannot say leaves it null rather than failing the read it decorates.
    */
   const viewerOf = (project: SupportedProject): Effect.Effect<string | null> =>
-    resolveViewers([project], new Map()).pipe(Effect.map(([resolved]) => resolved?.viewer ?? null));
+    routingCredential.pipe(
+      Effect.flatMap((credential) =>
+        credential !== null
+          ? Effect.succeed(credential.viewer)
+          : resolveViewers([project], new Map()).pipe(
+              Effect.map(([resolved]) => resolved?.viewer ?? null),
+            ),
+      ),
+    );
+
+  const routingIdentity: PullRequestService["Service"]["routingIdentity"] = Effect.fn(
+    "PullRequestService.routingIdentity",
+  )(function* (input) {
+    const host = input.host.toLowerCase();
+    const { supported } = yield* listWorkspaceProjects({ host });
+    const project = supported.find((candidate) => candidate.api.kind === "github");
+    const api = registry.get("github");
+    if (project === undefined || api?.getRoutingIdentity === undefined) {
+      return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+    }
+    const identity = yield* api
+      .getRoutingIdentity({
+        cwd: project.project.workspaceRoot,
+        host,
+      })
+      .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
+    return { ...identity, host, provider: "github" as const };
+  });
+
+  const withRoutingCredential: PullRequestService["Service"]["withRoutingCredential"] = (
+    input,
+    operation,
+  ) =>
+    Effect.gen(function* () {
+      if (input.expectedAccountId === undefined) return yield* operation;
+      const rejected = () =>
+        new PullRequestOperationError({
+          operation: "routeIdentity",
+          detail: "The GitHub account could not be verified before starting the operation.",
+        });
+      const project = yield* requireProject(input).pipe(Effect.mapError(rejected));
+      const api = project.api.kind === "github" ? registry.get("github") : null;
+      if (
+        api?.withVerifiedCredential === undefined ||
+        input.host?.toLowerCase() !== project.host.toLowerCase()
+      ) {
+        return yield* rejected();
+      }
+      const result = yield* api
+        .withVerifiedCredential(
+          { cwd: project.project.workspaceRoot, host: project.host },
+          (identity) =>
+            identity.accountId === input.expectedAccountId
+              ? operation.pipe(Effect.provideService(routingCredential, identity), Effect.result)
+              : Effect.fail(rejected()),
+        )
+        .pipe(Effect.catchTag("PullRequestProviderError", () => Effect.fail(rejected())));
+      return yield* Effect.fromResult(result);
+    });
+
+  const routing = Effect.fn("PullRequestService.routing")(function* (input: PullRequestRef) {
+    const project = yield* requireProject(input);
+    const api = project.api.kind === "github" ? registry.get("github") : null;
+    if (api?.getRoutingIdentity === undefined) {
+      return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
+    }
+    const identity = yield* api
+      .getRoutingIdentity({
+        cwd: project.project.workspaceRoot,
+        host: project.host,
+      })
+      .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
+    if (!identity.viewer.trim() || !identity.accountId.trim()) {
+      return yield* new PullRequestOperationError({
+        operation: "routeIdentity",
+        detail: "The signed-in account could not be verified.",
+      });
+    }
+    return {
+      host: project.host,
+      provider: project.api.kind,
+      ...identity,
+      projectTitle: project.project.title,
+      workspaceRoot: project.project.workspaceRoot,
+    };
+  });
 
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
     requireProject(input).pipe(
@@ -1620,7 +1736,12 @@ export const make = Effect.gen(function* () {
         // What the host can do and what this account may ask of it are two questions, and both
         // have to say yes. The second is asked last, because it costs a request and the checks
         // above do not.
-        return viewerPermissionsOf(project, input, "runAction").pipe(
+        return viewerPermissionsOf(
+          project,
+          input,
+          "runAction",
+          input.action === "update-branch",
+        ).pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
             const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
             if (
@@ -2193,6 +2314,12 @@ export const make = Effect.gen(function* () {
 
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
+  const revalidate = <A, E>(read: Effect.Effect<A, E>) =>
+    Effect.context<never>().pipe(
+      Effect.flatMap((caller) =>
+        Effect.sync(() => runFork(Effect.ignore(read).pipe(Effect.provideContext(caller)))),
+      ),
+    );
 
   /**
    * The diff is not live-polled and is expensive enough to keep its stale-while-revalidate path.
@@ -2218,7 +2345,7 @@ export const make = Effect.gen(function* () {
         // Run as its own fiber rather than a child: the caller is answered and gone before the
         // refresh lands. The read still coalesces on the cache key, so ten stale reads in one
         // window cost one host request — and a failed refresh costs nothing but the retry.
-        return Effect.sync(() => runFork(Effect.ignore(recorded))).pipe(Effect.as(snapshot.value));
+        return revalidate(recorded).pipe(Effect.as(snapshot.value));
       });
     };
   })();
@@ -2276,9 +2403,7 @@ export const make = Effect.gen(function* () {
       const snapshot = held.get(key);
       if (snapshot === undefined) return read(key, effect);
       if (mode === "reuse") return Effect.succeed(snapshot.value);
-      return Effect.sync(() => runFork(Effect.ignore(read(key, effect)))).pipe(
-        Effect.as(snapshot.value),
-      );
+      return revalidate(read(key, effect)).pipe(Effect.as(snapshot.value));
     };
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
   };
@@ -2300,25 +2425,25 @@ export const make = Effect.gen(function* () {
     Math.max(turnRefreshEpoch, refEpochs.get(refScope(ref)) ?? 0);
   // Keys carry the reference back out of the cache loader, so the slot layout is shared with
   // `refOfCacheKey` rather than read positionally at every loader.
-  const refCacheKey = (ref: PullRequestRef) =>
+  const refCacheKey = (ref: CredentialRef) =>
     JSON.stringify([
       refEpoch(ref),
       ref.projectId,
       ref.host?.toLowerCase() ?? null,
       ref.repository.toLowerCase(),
       ref.number,
+      ref.expectedAccountId ?? null,
+      ref[credentialNamespace] ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number] = JSON.parse(key) as [
-      number,
-      string,
-      string | null,
-      string,
-      number,
-    ];
+    const [, projectId, host, repository, number, expectedAccountId, fingerprint] = JSON.parse(
+      key,
+    ) as [number, string, string | null, string, number, string | null, string | null];
     return {
       projectId,
       ...(host === null ? {} : { host }),
+      ...(expectedAccountId === null ? {} : { expectedAccountId }),
+      ...(fingerprint === null ? {} : { [credentialNamespace]: fingerprint }),
       repository,
       number,
     } as PullRequestRef;
@@ -2365,7 +2490,7 @@ export const make = Effect.gen(function* () {
   };
 
   const persistedRead = Effect.fn("PullRequestService.persistedRead")(function* <A>(
-    input: PullRequestRef,
+    input: CredentialRef,
     operation: string,
     codec: Schema.Codec<A, string>,
     read: Effect.Effect<A, PullRequestError>,
@@ -2379,6 +2504,8 @@ export const make = Effect.gen(function* () {
       project.project.id,
       project.project.workspaceRoot,
       String(input.number),
+      input.expectedAccountId ?? "",
+      input[credentialNamespace] ?? "",
     ]
       .map(encodeURIComponent)
       .join(":");
@@ -2409,6 +2536,7 @@ export const make = Effect.gen(function* () {
     const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
     return held !== undefined &&
+      input.allowStale !== false &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
       ? Effect.succeed(held)
       : cached.pipe(
@@ -2566,18 +2694,17 @@ export const make = Effect.gen(function* () {
     // `serveHeld` returns immediately. Skip the write when that read is older
     // than a later strict summary — display reuse would otherwise keep the
     // regression and never ask the host again.
-    return lastGoodDetail.serveHeld(
-      key,
-      Cache.get(detailCache, key).pipe(
-        Effect.tap((value) => {
-          const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
-          return shouldReplaceHeldSummary(key, summary)
-            ? lastGoodSummary.record(key, summary)
-            : Effect.void;
-        }),
-      ),
-      "revalidate",
+    const read = Cache.get(detailCache, key).pipe(
+      Effect.tap((value) => {
+        const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
+        return shouldReplaceHeldSummary(key, summary)
+          ? lastGoodSummary.record(key, summary)
+          : Effect.void;
+      }),
     );
+    return input.allowStale === false
+      ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
+      : lastGoodDetail.serveHeld(key, read, "revalidate");
   };
 
   const activityCache = yield* Cache.makeWith(
@@ -2758,11 +2885,33 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const credentialCached =
+    <I extends PullRequestRef, Args extends ReadonlyArray<unknown>, A, E>(
+      read: (input: I, ...args: Args) => Effect.Effect<A, E>,
+    ) =>
+    (input: I, ...args: Args) =>
+      routingCredential.pipe(
+        Effect.flatMap((credential) =>
+          read(
+            credential === null
+              ? input
+              : {
+                  ...input,
+                  [credentialNamespace]: credential.credentialFingerprint,
+                },
+            ...args,
+          ),
+        ),
+      );
+
   return PullRequestService.of({
+    routing,
+    routingIdentity,
+    withRoutingCredential,
     list,
     listStats,
-    summary,
-    stack,
+    summary: credentialCached(summary),
+    stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),
@@ -2770,8 +2919,8 @@ export const make = Effect.gen(function* () {
       Stream.filter((revision) => revision > 0),
     ),
     refreshAfterTurn,
-    detail,
-    activity,
+    detail: credentialCached(detail),
+    activity: credentialCached(activity),
     threadComments,
     diff,
     diffFileContents,

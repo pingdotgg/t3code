@@ -689,6 +689,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "github-routing",
+    title: "GitHub routing",
+    to: "/settings/connections",
+    searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
