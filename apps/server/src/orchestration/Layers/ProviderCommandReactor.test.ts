@@ -2478,6 +2478,91 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Keep this custom title");
   });
 
+  effectIt.effect("marks a bare skill command title as needing refinement", () =>
+    Effect.gen(function* () {
+      // The client seeds the thread title with the first message text.
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "$wayfinder 769" }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:01.000Z";
+      // The model cannot tell that "769" is unresolved, so it reports a confident title.
+      harness.generateThreadTitle.mockReturnValue(
+        Effect.succeed({ title: "Wayfinding Plan for Issue 769", needsRefinement: false }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("bare-command-turn"),
+        threadId,
+        message: {
+          messageId: MessageId.make("bare-command-user"),
+          role: "user",
+          text: "$wayfinder 769",
+          attachments: [],
+        },
+        titleSeed: "$wayfinder 769",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      // Title generation is forked, so wait for the generated title to land.
+      yield* Effect.promise(() =>
+        waitFor(async () =>
+          (await harness.readModel()).threads.some(
+            (entry) => entry.id === threadId && entry.title === "Wayfinding Plan for Issue 769",
+          ),
+        ),
+      );
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.titleState?.needsRefinement).toBe(true);
+    }),
+  );
+
+  effectIt.effect("leaves a descriptive first message's title alone", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initialTitle: "Specify the settings port rulings from the map" }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:01.000Z";
+      harness.generateThreadTitle.mockReturnValue(
+        Effect.succeed({ title: "Specify Settings Port Rulings", needsRefinement: false }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("descriptive-turn"),
+        threadId,
+        message: {
+          messageId: MessageId.make("descriptive-user"),
+          role: "user",
+          text: "Specify the settings port rulings from the map",
+          attachments: [],
+        },
+        titleSeed: "Specify the settings port rulings from the map",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      yield* Effect.promise(() =>
+        waitFor(async () =>
+          (await harness.readModel()).threads.some(
+            (entry) => entry.id === threadId && entry.title === "Specify Settings Port Rulings",
+          ),
+        ),
+      );
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.titleState?.needsRefinement).toBe(false);
+    }),
+  );
+
   it("matches the client-seeded title even when the outgoing prompt is reformatted", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Fix reconnect spinner on resume";

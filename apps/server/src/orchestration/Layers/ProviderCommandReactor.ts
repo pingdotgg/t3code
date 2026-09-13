@@ -94,6 +94,12 @@ const isCompactCommandMessage = (message: ThreadTitleMessage): boolean =>
   message.role === "user" &&
   (message.attachments?.length ?? 0) === 0 &&
   message.text.trim().toLowerCase() === "/compact";
+
+// A bare skill or slash command with at most one argument, such as "$wayfinder 769". The title
+// model cannot see what it refers to, so the title always needs refinement, whether or not the
+// model recognized the subject as unknown.
+const isOpaqueCommandMessage = (text: string, attachments: ReadonlyArray<ChatAttachment>) =>
+  attachments.length === 0 && /^[$/][\w:-]+(?:\s+\S+)?$/.test(text.trim());
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -983,7 +989,9 @@ const make = Effect.gen(function* () {
           expectedTitle: input.expectedTitle,
           expectedVersion: input.expectedVersion,
           needsRefinement:
-            generated.needsRefinement === true || generated.title === DEFAULT_THREAD_TITLE,
+            generated.needsRefinement === true ||
+            generated.title === DEFAULT_THREAD_TITLE ||
+            isOpaqueCommandMessage(input.messageText, attachments),
         });
       }).pipe(
         Effect.catchCause((cause) =>
