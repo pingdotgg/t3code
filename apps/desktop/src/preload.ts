@@ -303,11 +303,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         }),
       layout: (tabId, layout) =>
         ipcRenderer.invoke(IpcChannels.BROWSER_LAYOUT_CHANNEL, { tabId, layout }),
-      interact: (tabId, pointer) =>
-        ipcRenderer.invoke(IpcChannels.BROWSER_INTERACT_CHANNEL, { tabId, pointer }),
+      input: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.BROWSER_INPUT_CHANNEL, { tabId, input }),
       viewport: (tabId) => ipcRenderer.invoke(IpcChannels.BROWSER_VIEWPORT_CHANNEL, { tabId }),
-      motion: (tabId, input) =>
-        ipcRenderer.invoke(IpcChannels.BROWSER_MOTION_CHANNEL, { tabId, input }),
       onCursorChange: (listener) => {
         const wrapped = (_event: Electron.IpcRendererEvent, tabId: unknown, cursor: unknown) => {
           if (typeof tabId === "string" && typeof cursor === "string") listener(tabId, cursor);

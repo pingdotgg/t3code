@@ -13,8 +13,7 @@ import {
 } from "@t3tools/contracts";
 import type {
   DesktopBrowserLayout,
-  DesktopBrowserMotion,
-  DesktopBrowserPointer,
+  DesktopBrowserInput,
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
@@ -72,7 +71,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
-import { IsolatedBrowserHost } from "./IsolatedBrowserHost.ts";
+import { BrowserViewHost } from "./BrowserViewHost.ts";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
@@ -698,7 +697,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
   // (electron#44618) and now always rejects with NotAllowedError.
   let pendingRecording: PendingRecording | null = null;
-  let browserHost: IsolatedBrowserHost | undefined;
+  let browserHost: BrowserViewHost | undefined;
   let configureBrowserContents: ((contents: Electron.WebContents) => void) | undefined;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   const downloadHandlerSessions = new WeakSet<Session>();
@@ -2463,7 +2462,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const mainWindow = yield* Ref.get(mainWindowRef);
         if (Option.isNone(mainWindow)) return yield* new PreviewMainWindowClosedError({ tabId });
         const wc = yield* attempt({ operation: "mountBrowser", tabId }, () => {
-          browserHost ??= new IsolatedBrowserHost(mainWindow.value, configureBrowserContents);
+          browserHost ??= new BrowserViewHost(mainWindow.value, configureBrowserContents);
           return browserHost.create(tabId, session, preload, tab.zoomFactor);
         });
         yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
@@ -2481,35 +2480,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const layoutBrowser = (tabId: string, layout: DesktopBrowserLayout) =>
     attempt({ operation: "layoutBrowser", tabId }, () => browserHost?.layout(tabId, layout));
 
-  const interactWithBrowser = Effect.fn("PreviewManager.interactWithBrowser")(function* (
+  const browserInput = Effect.fn("PreviewManager.browserInput")(function* (
     tabId: string,
-    pointer: DesktopBrowserPointer | null,
+    input: DesktopBrowserInput | null,
   ) {
-    yield* Ref.update(controlEpochRef, (epochs) =>
-      replaceMap(epochs, (copy) => {
-        copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
-      }),
-    );
-    yield* attempt({ operation: "interactWithBrowser", tabId }, () =>
-      browserHost?.interact(
-        tabId,
-        pointer ? { ...pointer, modifiers: [...pointer.modifiers] } : null,
-      ),
-    );
-  });
-
-  const browserMotion = Effect.fn("PreviewManager.browserMotion")(function* (
-    tabId: string,
-    input: DesktopBrowserMotion,
-  ) {
-    if (input.type === "mouseWheel") {
+    if (!input || input.type === "mouseDown" || input.type === "mouseWheel") {
       yield* Ref.update(controlEpochRef, (epochs) =>
         replaceMap(epochs, (copy) => {
           copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
         }),
       );
     }
-    yield* attempt({ operation: "browserMotion", tabId }, () => browserHost?.motion(tabId, input));
+    yield* attempt({ operation: "browserInput", tabId }, () => browserHost?.input(tabId, input));
   });
 
   const readBrowserViewport = Effect.fn("PreviewManager.readBrowserViewport")(function* (
@@ -2690,7 +2672,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pickElement = Effect.fn("PreviewManager.pickElement")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     yield* cancelPickElement(tabId);
-    yield* interactWithBrowser(tabId, null);
+    yield* browserInput(tabId, null);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     return yield* Effect.callback<PreviewAnnotationSubmissionResult | null, PreviewManagerError>(
       (resume) => {
@@ -4097,16 +4079,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     yield* withControlSession(tabId, wc, "click", (send) =>
-      Effect.gen(function* () {
-        if (browserHost?.owns(tabId, wc)) {
-          // An offscreen navigation can finish before Chromium updates hit testing.
-          // Await a frame before injecting the click, without focusing its window.
-          yield* attemptPromise({ operation: "automationClick.warmSource", tabId }, () =>
-            wc.capturePage().then(() => undefined),
-          ).pipe(Effect.retry({ times: 1 }));
-        }
-        yield* performAutomationClick(tabId, input, send);
-      }),
+      performAutomationClick(tabId, input, send),
     );
   });
 
@@ -4810,9 +4783,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   return {
     mountBrowser,
-    browserMotion,
+    browserInput,
     layoutBrowser,
-    interactWithBrowser,
     readBrowserViewport,
     startBrowserStream,
     automationClick,
@@ -5171,9 +5143,9 @@ export class PreviewManager extends Context.Service<
       defaults?: DesktopPreviewTabDefaults,
     ) => Effect.Effect<PreviewTabState, PreviewManagerError>;
     readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    readonly browserMotion: (
+    readonly browserInput: (
       tabId: string,
-      input: DesktopBrowserMotion,
+      input: DesktopBrowserInput | null,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly mountBrowser: (
       tabId: string,
@@ -5184,10 +5156,6 @@ export class PreviewManager extends Context.Service<
     readonly layoutBrowser: (
       tabId: string,
       layout: DesktopBrowserLayout,
-    ) => Effect.Effect<void, PreviewManagerError>;
-    readonly interactWithBrowser: (
-      tabId: string,
-      pointer: DesktopBrowserPointer | null,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly readBrowserViewport: (
       tabId: string,
@@ -5323,9 +5291,8 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     createTab: operations.createTab,
     closeTab: operations.closeTab,
     mountBrowser: operations.mountBrowser,
-    browserMotion: operations.browserMotion,
+    browserInput: operations.browserInput,
     layoutBrowser: operations.layoutBrowser,
-    interactWithBrowser: operations.interactWithBrowser,
     readBrowserViewport: operations.readBrowserViewport,
     startBrowserStream: operations.startBrowserStream,
     registerWebview: operations.registerWebview,

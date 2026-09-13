@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   layoutBrowser: vi.fn<DesktopPreviewBridge["browser"]["layout"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
   activeRecordings: new Set<string>(),
+  captureBrowserViewStream: vi.fn<() => Promise<MediaStream>>(),
 }));
 
 vi.mock("~/localApi", () => ({
@@ -29,7 +30,11 @@ vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
     createTab: mocks.createTab,
     closeTab: mocks.closeTab,
-    browser: { mount: mocks.mountBrowser, layout: mocks.layoutBrowser },
+    browser: {
+      mount: mocks.mountBrowser,
+      layout: mocks.layoutBrowser,
+      onCursorChange: () => () => undefined,
+    },
     getPreviewConfig: mocks.getPreviewConfig,
   },
 }));
@@ -39,7 +44,7 @@ vi.mock("~/components/preview/usePreviewBridge", () => ({
 }));
 
 vi.mock("./browserRecording", () => ({
-  captureBrowserViewStream: async () => ({ getTracks: () => [] }),
+  captureBrowserViewStream: mocks.captureBrowserViewStream,
   useActiveBrowserRecordingTabIds: () => mocks.activeRecordings,
   stopBrowserRecording: async () => null,
 }));
@@ -48,7 +53,7 @@ import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
-import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { acquireBrowserSurface, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
 import { HostedBrowserView } from "./HostedBrowserView";
 
@@ -73,6 +78,7 @@ beforeEach(() => {
   mocks.closeTab.mockReset().mockResolvedValue(undefined);
   mocks.mountBrowser.mockReset().mockResolvedValue(undefined);
   mocks.layoutBrowser.mockReset().mockResolvedValue(undefined);
+  mocks.captureBrowserViewStream.mockReset();
   mocks.getPreviewConfig.mockReset().mockResolvedValue({
     partition: "persist:t3-preview-work",
     webPreferences: "contextIsolation=yes",
@@ -191,5 +197,97 @@ describe("HostedBrowserView settings hydration", () => {
     );
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.setClientSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("HostedBrowserView capture recovery", () => {
+  const mount = async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await ensureClientSettingsHydrated();
+    const lease = acquireBrowserSurface("capture-tab");
+    const rect = { x: 0, y: 0, width: 400, height: 300, right: 400, bottom: 300 };
+    lease.present(rect, true);
+    const node = Object.assign(new EventTarget(), {
+      srcObject: null as MediaStream | null,
+      getBoundingClientRect: () => rect,
+      scrollTo: () => undefined,
+      scrollLeft: 0,
+      scrollTop: 0,
+      style: {},
+    });
+    await act(() => {
+      renderer = create(
+        <HostedBrowserView
+          threadRef={{
+            environmentId: EnvironmentId.make("capture-env"),
+            threadId: ThreadId.make("capture-thread"),
+          }}
+          tabId="capture-server-tab"
+          runtimeTabId="capture-tab"
+          initialUrl="about:blank"
+          viewport={FILL_PREVIEW_VIEWPORT}
+          pictureInPicture={false}
+          profileId={undefined}
+          zoomFactor={1}
+        />,
+        { createNodeMock: () => node },
+      );
+    });
+    return { lease, node };
+  };
+  const media = () => {
+    const track = Object.assign(new EventTarget(), { stop: vi.fn() });
+    const stream = {
+      getTracks: () => [track],
+      getVideoTracks: () => [track],
+    } as unknown as MediaStream;
+    return { track, stream };
+  };
+
+  it("recovers a transient startup failure and a subsequently ended track", async () => {
+    vi.useFakeTimers();
+    const first = media();
+    const second = media();
+    mocks.captureBrowserViewStream
+      .mockRejectedValueOnce(new Error("capture timeout"))
+      .mockResolvedValueOnce(first.stream)
+      .mockResolvedValueOnce(second.stream);
+    const { node, lease } = await mount();
+    expect(node.srcObject).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(250));
+    expect(node.srcObject).toBe(first.stream);
+    await act(() => first.track.dispatchEvent(new Event("ended")));
+    expect(first.track.stop).toHaveBeenCalledOnce();
+    expect(node.srcObject).toBe(second.stream);
+    await act(() => lease.release());
+    expect(second.track.stop).toHaveBeenCalledOnce();
+    expect(node.srcObject).toBeNull();
+  });
+
+  it("bounds automatic retries and allows an explicit retry without switching tabs", async () => {
+    vi.useFakeTimers();
+    mocks.captureBrowserViewStream.mockRejectedValue(new Error("capture unavailable"));
+    const { node } = await mount();
+    await act(() => vi.advanceTimersByTimeAsync(750));
+    expect(mocks.captureBrowserViewStream).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(mocks.captureBrowserViewStream).toHaveBeenCalledTimes(3);
+    const recovered = media();
+    mocks.captureBrowserViewStream.mockResolvedValue(recovered.stream);
+    const retry = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.children.includes("Retry displaying page"));
+    expect(retry).toBeDefined();
+    await act(() => retry!.props.onClick());
+    expect(node.srcObject).toBe(recovered.stream);
+  });
+
+  it("cancels a scheduled retry when the page becomes inactive", async () => {
+    vi.useFakeTimers();
+    mocks.captureBrowserViewStream.mockRejectedValue(new Error("capture timeout"));
+    const { lease } = await mount();
+    await act(() => lease.release());
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(mocks.captureBrowserViewStream).toHaveBeenCalledOnce();
   });
 });

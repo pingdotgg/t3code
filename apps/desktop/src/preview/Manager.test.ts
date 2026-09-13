@@ -235,8 +235,8 @@ vi.mock("electron", () => ({
 
 // Native focus routing is exercised by scripts/test-browser-focus.mjs. Here the
 // host supplies ownership so we can verify the manager's navigation/control rules.
-vi.mock("./IsolatedBrowserHost.ts", () => ({
-  IsolatedBrowserHost: class {
+vi.mock("./BrowserViewHost.ts", () => ({
+  BrowserViewHost: class {
     contents = fromId(42);
     interactive = false;
     create() {
@@ -248,7 +248,7 @@ vi.mock("./IsolatedBrowserHost.ts", () => ({
     isInteractive() {
       return this.interactive;
     }
-    interact() {
+    input() {
       this.interactive = true;
     }
     park() {
@@ -627,7 +627,7 @@ describe("PreviewManager", () => {
         } as never);
         yield* manager.createTab("tab_native");
         yield* manager.mountBrowser("tab_native", {} as Electron.Session, "preload.cjs", null);
-        yield* manager.interactWithBrowser("tab_native", null);
+        yield* manager.browserInput("tab_native", null);
         const result = yield* manager
           .automationClick("tab_native", { x: 10, y: 10 })
           .pipe(Effect.exit);

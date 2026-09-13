@@ -61,7 +61,7 @@ if (!process.argv.includes("--focus-test-child")) {
   }
 } else {
   const { app, BrowserWindow, session } = await import("electron");
-  const { IsolatedBrowserHost } = await import("../src/preview/IsolatedBrowserHost.ts");
+  const { BrowserViewHost } = await import("../src/preview/BrowserViewHost.ts");
   const directory = process.argv.at(-1);
   app.setPath("userData", NodePath.join(directory, "profile"));
   app.whenReady().then(async () => {
@@ -82,7 +82,7 @@ if (!process.argv.includes("--focus-test-child")) {
       );
       window = new BrowserWindow({ width: 1000, height: 700 });
       await window.loadFile(editorPath);
-      host = new IsolatedBrowserHost(window);
+      host = new BrowserViewHost(window);
       const guests = [];
       for (const tabId of ["first", "second"]) {
         const contents = host.create(tabId, session.fromPartition("focus-test"), preload, 1);
@@ -122,7 +122,7 @@ if (!process.argv.includes("--focus-test-child")) {
         await window.webContents.executeJavaScript("editor.focus()");
       };
       await focusEditor();
-      const text = "x".repeat(200);
+      let text = "x".repeat(200);
       const typed = exec("xdotool", ["type", "--clearmodifiers", "--delay", "10", text]);
       for (let index = 0; index < 200; index++) await click(guests[index % 2]);
       await typed;
@@ -133,9 +133,37 @@ if (!process.argv.includes("--focus-test-child")) {
           clicks: 100,
         });
       }
+      const navigationText = "n".repeat(50);
+      const typingDuringNavigation = exec("xdotool", [
+        "type",
+        "--clearmodifiers",
+        "--delay",
+        "10",
+        navigationText,
+      ]);
+      for (let index = 0; index < 8; index++) await guests[index % 2].loadFile(pagePath);
+      await typingDuringNavigation;
+      text += navigationText;
+      NodeAssert.equal(await window.webContents.executeJavaScript("editor.value"), text);
+      for (const guest of guests)
+        NodeAssert.equal(await guest.executeJavaScript("target.value"), "");
       for (let index = 0; index < 10; index++) {
-        host.interact("first", { type: "mouseDown", x: 100, y: 45, button: "left", clickCount: 1 });
-        guests[0].sendInputEvent({ type: "mouseUp", x: 100, y: 45, button: "left", clickCount: 1 });
+        host.input("first", {
+          type: "mouseDown",
+          x: 100,
+          y: 45,
+          button: "left",
+          clickCount: 1,
+          modifiers: [],
+        });
+        guests[0].sendInputEvent({
+          type: "mouseUp",
+          x: 100,
+          y: 45,
+          button: "left",
+          clickCount: 1,
+          modifiers: [],
+        });
         const humanReceipt = inputReceipt(guests[0]);
         await exec("xdotool", ["type", "--clearmodifiers", "h"]);
         await humanReceipt;
@@ -167,11 +195,11 @@ if (!process.argv.includes("--focus-test-child")) {
       } finally {
         otherWindow.destroy();
       }
-      host.interact("first", null);
+      host.input("first", null);
       window.destroy();
       host.destroy(); // Closing the owner and repeated cleanup must both be safe.
       console.log(
-        "Browser focus passed: 200 concurrent native keys, two automated tabs, 10 native interaction round trips, external window focus, owner cleanup.",
+        "Browser focus passed: 200 concurrent native keys, typing during navigation, two automated tabs, 10 native interaction round trips, external window focus, owner cleanup.",
       );
     } catch (error) {
       console.error(error);

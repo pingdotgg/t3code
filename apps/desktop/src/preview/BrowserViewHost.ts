@@ -1,6 +1,6 @@
-import { BrowserWindow, View, WebContentsView, type Session } from "electron";
+import { View, WebContentsView, type BrowserWindow, type Session } from "electron";
 
-import type { DesktopBrowserLayout, DesktopBrowserMotion } from "@t3tools/contracts";
+import type { DesktopBrowserLayout, DesktopBrowserInput } from "@t3tools/contracts";
 import { BROWSER_CURSOR_CHANNEL } from "../ipc/channels.ts";
 
 interface BrowserViewEntry {
@@ -11,9 +11,12 @@ interface BrowserViewEntry {
   interactive: boolean;
 }
 
-/** Automation stays in a different native window from the chat's keyboard focus. */
-export class IsolatedBrowserHost {
-  readonly #window: BrowserWindow;
+/**
+ * Unlike a webview guest, a WebContentsView has its own frame focus. CDP input
+ * can focus the page without selecting a frame inside the app renderer.
+ * Passive pages sit behind the renderer; human input raises the native view.
+ */
+export class BrowserViewHost {
   readonly #mainWindow: BrowserWindow;
   readonly #mainContents: Electron.WebContents;
   readonly #configureContents: ((contents: Electron.WebContents) => void) | undefined;
@@ -26,20 +29,6 @@ export class IsolatedBrowserHost {
     this.#mainContents = mainWindow.webContents;
     this.#configureContents = configureContents;
     this.#mainWindow = mainWindow;
-    this.#window = new BrowserWindow({
-      x: -100_000,
-      y: -100_000,
-      width: 1280,
-      height: 800,
-      title: "T3 browser automation host",
-      show: false,
-      focusable: false,
-      opacity: 0,
-      skipTaskbar: true,
-      webPreferences: { sandbox: true, backgroundThrottling: false },
-    });
-    this.#window.setIgnoreMouseEvents(true);
-    this.#window.showInactive();
     mainWindow.webContents.on("focus", this.#parkAll);
     mainWindow.on("blur", this.#parkAll);
     mainWindow.once("closed", this.destroy);
@@ -57,6 +46,7 @@ export class IsolatedBrowserHost {
         contextIsolation: false,
         nodeIntegration: false,
         backgroundThrottling: false,
+        focusOnNavigation: false,
       },
     });
     const entry: BrowserViewEntry = {
@@ -72,7 +62,7 @@ export class IsolatedBrowserHost {
       interactive: false,
     };
     entry.container.addChildView(view);
-    this.#window.contentView.addChildView(entry.container);
+    this.#mainWindow.contentView.addChildView(entry.container, 0);
     this.#tabs.set(tabId, entry);
     this.#configureContents?.(view.webContents);
     view.webContents.on("cursor-changed", (_event, type, image, scale, _size, hotspot) => {
@@ -116,27 +106,20 @@ export class IsolatedBrowserHost {
     this.#applyLayout(entry);
   }
 
-  interact(tabId: string, input: Electron.MouseInputEvent | null) {
-    const entry = this.#tabs.get(tabId);
-    if (!entry?.layout.clip || entry.view.webContents.isDestroyed()) return;
-    if (!entry.interactive) {
-      if (input?.type === "mouseUp") return;
-      this.#parkAll();
-      this.#window.contentView.removeChildView(entry.container);
-      this.#mainWindow.contentView.addChildView(entry.container);
-      entry.interactive = true;
-      this.#applyLayout(entry);
-      entry.view.webContents.focus();
-    }
-    if (input) {
-      const zoom = this.#mainContents.getZoomFactor();
-      entry.view.webContents.sendInputEvent({ ...input, x: input.x * zoom, y: input.y * zoom });
-    }
-  }
-
-  motion(tabId: string, input: DesktopBrowserMotion) {
+  input(tabId: string, input: DesktopBrowserInput | null) {
     const entry = this.#tabs.get(tabId);
     if (!entry || entry.view.webContents.isDestroyed()) return;
+    if (input === null || input.type === "mouseDown") {
+      if (!entry.layout.clip) return;
+      if (!entry.interactive) {
+        this.#parkAll();
+        this.#mainWindow.contentView.addChildView(entry.container);
+        entry.interactive = true;
+        this.#applyLayout(entry);
+        entry.view.webContents.focus();
+      }
+    }
+    if (!input || (input.type === "mouseUp" && !entry.interactive)) return;
     const zoom = this.#mainContents.getZoomFactor();
     entry.view.webContents.sendInputEvent({
       ...input,
@@ -155,7 +138,8 @@ export class IsolatedBrowserHost {
     const focused = !entry.view.webContents.isDestroyed() && entry.view.webContents.isFocused();
     if (!this.#mainWindow.isDestroyed())
       this.#mainWindow.contentView.removeChildView(entry.container);
-    if (!this.#window.isDestroyed()) this.#window.contentView.addChildView(entry.container);
+    if (!this.#mainWindow.isDestroyed())
+      this.#mainWindow.contentView.addChildView(entry.container, 0);
     entry.interactive = false;
     this.#applyLayout(entry);
     if (focused && !this.#mainWindow.isDestroyed() && this.#mainWindow.isFocused())
@@ -167,7 +151,8 @@ export class IsolatedBrowserHost {
     if (!entry) return;
     this.park(tabId);
     this.#tabs.delete(tabId);
-    if (!this.#window.isDestroyed()) this.#window.contentView.removeChildView(entry.container);
+    if (!this.#mainWindow.isDestroyed())
+      this.#mainWindow.contentView.removeChildView(entry.container);
     if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
   }
 
@@ -176,7 +161,6 @@ export class IsolatedBrowserHost {
     this.#mainWindow.removeListener("blur", this.#parkAll);
     this.#mainWindow.removeListener("closed", this.destroy);
     for (const tabId of this.#tabs.keys()) this.close(tabId);
-    if (!this.#window.isDestroyed()) this.#window.destroy();
   };
 
   readonly #parkAll = () => {
@@ -191,7 +175,7 @@ export class IsolatedBrowserHost {
     // races Chromium's input-coordinate update and can hit the wrong element.
     const scale = clip ? content.scale * appZoom : 1;
     // Keep the native view attached and visible: Chromium drops injected clicks
-    // when its View is hidden. The parking window already keeps it offscreen.
+    // when its View is hidden. The app renderer covers passive pages instead.
     entry.view.webContents.setBackgroundThrottling(!entry.interactive && !entry.layout.rendering);
     const width = Math.max(1, Math.round(viewport.width * entry.zoomFactor * scale));
     const height = Math.max(1, Math.round(viewport.height * entry.zoomFactor * scale));
@@ -212,17 +196,5 @@ export class IsolatedBrowserHost {
       height,
     });
     entry.view.webContents.setZoomFactor(entry.zoomFactor * scale);
-    const sizes = Array.from(this.#tabs.values())
-      .filter((tab) => !tab.interactive)
-      .map((tab) => ({
-        width: Math.round(tab.layout.viewport.width * tab.zoomFactor),
-        height: Math.round(tab.layout.viewport.height * tab.zoomFactor),
-      }));
-    const parkedWidth = Math.max(1, ...sizes.map((size) => size.width));
-    const parkedHeight = Math.max(1, ...sizes.map((size) => size.height));
-    if (this.#window.isDestroyed()) return;
-    const [currentWidth, currentHeight] = this.#window.getContentSize();
-    if (currentWidth !== parkedWidth || currentHeight !== parkedHeight)
-      this.#window.setContentSize(parkedWidth, parkedHeight);
   }
 }

@@ -63,6 +63,8 @@ export function HostedBrowserView(props: {
   const [initialUrl] = useState(props.initialUrl);
   const [mounted, setMounted] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [failedCaptureAttempt, setFailedCaptureAttempt] = useState<number | null>(null);
+  const [captureAttempt, setCaptureAttempt] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const focusingFromPointer = useRef(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -220,28 +222,47 @@ export function HostedBrowserView(props: {
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !active) return;
     let disposed = false;
     let stream: MediaStream | null = null;
-    if (renderingActive) {
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    const capture = () => {
       void captureBrowserViewStream(runtimeTabId)
         .then((captured) => {
           if (disposed) {
             captured.getTracks().forEach((track) => track.stop());
             return;
           }
+          setFailedCaptureAttempt(null);
           stream = captured;
+          captured.getVideoTracks()[0]?.addEventListener(
+            "ended",
+            () => {
+              if (!disposed) setCaptureAttempt((attempt) => attempt + 1);
+            },
+            { once: true },
+          );
           if (videoRef.current) videoRef.current.srcObject = captured;
         })
-        .catch(reportError);
-    }
+        .catch((error) => {
+          if (disposed) return;
+          if (++failures < 3) retry = setTimeout(capture, failures * 250);
+          else {
+            setFailedCaptureAttempt(captureAttempt);
+            reportError(error);
+          }
+        });
+    };
+    capture();
     return () => {
       disposed = true;
+      clearTimeout(retry);
       setStreamReady(false);
       stream?.getTracks().forEach((track) => track.stop());
       if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
     };
-  }, [renderingActive, mounted, runtimeTabId]);
+  }, [active, mounted, runtimeTabId, captureAttempt]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -257,19 +278,19 @@ export function HostedBrowserView(props: {
     };
     const move = (event: PointerEvent) => {
       void bridge.browser
-        .motion(runtimeTabId, { type: "mouseMove", ...point(event) })
+        .input(runtimeTabId, { type: "mouseMove", ...point(event) })
         .catch(reportError);
     };
     const leave = (event: PointerEvent) => {
       void bridge.browser
-        .motion(runtimeTabId, { type: "mouseLeave", ...point(event) })
+        .input(runtimeTabId, { type: "mouseLeave", ...point(event) })
         .catch(reportError);
     };
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? video.clientHeight : 1;
       void bridge.browser
-        .motion(runtimeTabId, {
+        .input(runtimeTabId, {
           type: "mouseWheel",
           ...point(event),
           deltaX: -event.deltaX * unit,
@@ -291,13 +312,29 @@ export function HostedBrowserView(props: {
     };
   }, [active, mounted, runtimeTabId]);
 
-  const releasePointer = (event: ReactPointerEvent<HTMLVideoElement>) => {
+  const handlePointer = (event: ReactPointerEvent<HTMLVideoElement>) => {
     event.preventDefault();
-    if (!mounted || event.button > 2) return;
+    if (!mounted) return;
+    const down = event.type === "pointerdown";
+    if (event.button > 2) {
+      if (down)
+        void (
+          event.button === 3
+            ? previewBridge?.goBack(runtimeTabId)
+            : previewBridge?.goForward(runtimeTabId)
+        )?.catch(reportError);
+      return;
+    }
+    if (down) {
+      // Keep DOM focus on the browser while the native page handles input.
+      focusingFromPointer.current = true;
+      event.currentTarget.focus({ preventScroll: true });
+      focusingFromPointer.current = false;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     void previewBridge?.browser
-      .interact(runtimeTabId, {
-        type: "mouseUp",
+      .input(runtimeTabId, {
+        type: down ? "mouseDown" : "mouseUp",
         x: event.clientX - rect.x,
         y: event.clientY - rect.y,
         button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
@@ -325,7 +362,9 @@ export function HostedBrowserView(props: {
       className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
-      data-preview-rendering={renderingActive && streamReady ? "active" : "suspended"}
+      data-preview-rendering={
+        renderingActive && mounted && (!active || streamReady) ? "active" : "suspended"
+      }
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
@@ -346,39 +385,13 @@ export function HostedBrowserView(props: {
           playsInline
           tabIndex={active && mounted ? 0 : -1}
           aria-label="Browser page"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            if (!mounted) return;
-            if (event.button === 3 || event.button === 4) {
-              void (
-                event.button === 3
-                  ? previewBridge?.goBack(runtimeTabId)
-                  : previewBridge?.goForward(runtimeTabId)
-              )?.catch(reportError);
-              return;
-            }
-            // Keep DOM focus on the browser while the native page handles input.
-            focusingFromPointer.current = true;
-            event.currentTarget.focus({ preventScroll: true });
-            focusingFromPointer.current = false;
-            const rect = event.currentTarget.getBoundingClientRect();
-            void previewBridge?.browser
-              .interact(runtimeTabId, {
-                type: "mouseDown",
-                x: event.clientX - rect.x,
-                y: event.clientY - rect.y,
-                button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
-                clickCount: Math.max(1, event.detail),
-                modifiers: browserModifiers(event),
-              })
-              .catch(reportError);
-          }}
-          onPointerUp={releasePointer}
-          onPointerCancel={releasePointer}
+          onPointerDown={handlePointer}
+          onPointerUp={handlePointer}
+          onPointerCancel={handlePointer}
           onContextMenu={(event) => event.preventDefault()}
           onFocus={(event) => {
             if (event.relatedTarget && !focusingFromPointer.current) {
-              void previewBridge?.browser.interact(runtimeTabId, null).catch(reportError);
+              void previewBridge?.browser.input(runtimeTabId, null).catch(reportError);
             }
           }}
           data-preview-tab={runtimeTabId}
@@ -413,6 +426,15 @@ export function HostedBrowserView(props: {
             transformOrigin: "top left",
           }}
         />
+        {active && failedCaptureAttempt === captureAttempt ? (
+          <button
+            type="button"
+            className="absolute inset-0 m-auto h-fit w-fit rounded-md border bg-background px-3 py-2 text-sm"
+            onClick={() => setCaptureAttempt((attempt) => attempt + 1)}
+          >
+            Retry displaying page
+          </button>
+        ) : null}
         {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (
           <>
             <BrowserViewportResizeHandles

@@ -1096,39 +1096,33 @@ const DesktopBrowserModifiersSchema = Schema.Array(
     "rightbuttondown",
   ]),
 );
-export const DesktopBrowserPointerSchema = Schema.Struct({
-  type: Schema.Literals(["mouseDown", "mouseUp"]),
-  modifiers: DesktopBrowserModifiersSchema,
+const DesktopBrowserInputPosition = {
   x: Schema.Finite,
   y: Schema.Finite,
-  button: Schema.Literals(["left", "middle", "right"]),
-  clickCount: Schema.Int.check(Schema.isGreaterThan(0)),
-});
-export type DesktopBrowserPointer = typeof DesktopBrowserPointerSchema.Type;
-export const DesktopBrowserInteractInputSchema = Schema.Struct({
-  tabId: DesktopPreviewTabIdSchema,
-  pointer: Schema.NullOr(DesktopBrowserPointerSchema),
-});
-export const DesktopBrowserMotionSchema = Schema.Union([
+  modifiers: DesktopBrowserModifiersSchema,
+};
+export const DesktopBrowserInputSchema = Schema.Union([
   Schema.Struct({
-    type: Schema.Literals(["mouseMove", "mouseLeave"]),
-    x: Schema.Finite,
-    y: Schema.Finite,
-    modifiers: DesktopBrowserModifiersSchema,
+    ...DesktopBrowserInputPosition,
+    type: Schema.Literals(["mouseDown", "mouseUp"]),
+    button: Schema.Literals(["left", "middle", "right"]),
+    clickCount: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
   Schema.Struct({
+    ...DesktopBrowserInputPosition,
+    type: Schema.Literals(["mouseMove", "mouseLeave"]),
+  }),
+  Schema.Struct({
+    ...DesktopBrowserInputPosition,
     type: Schema.Literal("mouseWheel"),
-    x: Schema.Finite,
-    y: Schema.Finite,
     deltaX: Schema.Finite,
     deltaY: Schema.Finite,
-    modifiers: DesktopBrowserModifiersSchema,
   }),
 ]);
-export type DesktopBrowserMotion = typeof DesktopBrowserMotionSchema.Type;
-export const DesktopBrowserMotionInputSchema = Schema.Struct({
+export type DesktopBrowserInput = typeof DesktopBrowserInputSchema.Type;
+export const DesktopBrowserInputEventSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
-  input: DesktopBrowserMotionSchema,
+  input: Schema.NullOr(DesktopBrowserInputSchema),
 });
 export const DesktopBrowserViewportSchema = DesktopBrowserSizeSchema;
 
@@ -1348,10 +1342,9 @@ export interface DesktopPreviewBridge {
       initialUrl: string | null,
     ) => Promise<void>;
     layout: (tabId: string, layout: DesktopBrowserLayout) => Promise<void>;
-    interact: (tabId: string, pointer: DesktopBrowserPointer | null) => Promise<void>;
+    input: (tabId: string, input: DesktopBrowserInput | null) => Promise<void>;
     viewport: (tabId: string) => Promise<{ width: number; height: number }>;
     startStream: (tabId: string) => Promise<void>;
-    motion: (tabId: string, input: DesktopBrowserMotion) => Promise<void>;
     onCursorChange: (listener: (tabId: string, cursor: string) => void) => () => void;
   };
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;

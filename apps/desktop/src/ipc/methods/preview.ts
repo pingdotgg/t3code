@@ -1,8 +1,7 @@
 import {
   DesktopBrowserMountInputSchema,
-  DesktopBrowserMotionInputSchema,
   DesktopBrowserLayoutInputSchema,
-  DesktopBrowserInteractInputSchema,
+  DesktopBrowserInputEventSchema,
   DesktopBrowserViewportSchema,
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
@@ -517,13 +516,13 @@ export const layoutBrowser = DesktopIpc.makeIpcMethod({
     yield* manager.layoutBrowser(tabId, layout);
   }),
 });
-export const interactWithBrowser = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.BROWSER_INTERACT_CHANNEL,
-  payload: DesktopBrowserInteractInputSchema,
+export const browserInput = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_INPUT_CHANNEL,
+  payload: DesktopBrowserInputEventSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.interactWithBrowser")(function* ({ tabId, pointer }) {
+  handler: Effect.fn("desktop.ipc.preview.browserInput")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.interactWithBrowser(tabId, pointer);
+    yield* manager.browserInput(tabId, input);
   }),
 });
 export const readBrowserViewport = DesktopIpc.makeIpcMethod({
@@ -541,21 +540,10 @@ export const startBrowserStream = tabMethod(
   (manager, tabId) => manager.startBrowserStream(tabId),
 );
 
-export const browserMotion = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.BROWSER_MOTION_CHANNEL,
-  payload: DesktopBrowserMotionInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.browserMotion")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.browserMotion(tabId, input);
-  }),
-});
-
 export const methods = [
-  browserMotion,
   mountBrowser,
   layoutBrowser,
-  interactWithBrowser,
+  browserInput,
   readBrowserViewport,
   startBrowserStream,
   createTab,
