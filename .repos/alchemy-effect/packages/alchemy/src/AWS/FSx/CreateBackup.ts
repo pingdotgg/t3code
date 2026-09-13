@@ -15,9 +15,8 @@ import type { FileSystem } from "./FileSystem.ts";
  * make the call idempotent. A backup already in progress surfaces the typed
  * `BackupInProgress`. Provide the implementation with
  * `Effect.provide(AWS.FSx.CreateBackupHttp)`.
- * @binding
- * @section Managing Backups at Runtime
- * @example Take a pre-migration backup
+ * ### Managing Backups at Runtime
+ * **Example:** Take a pre-migration backup
  * ```typescript
  * const createBackup = yield* AWS.FSx.CreateBackup(files);
  *
@@ -27,6 +26,8 @@ import type { FileSystem } from "./FileSystem.ts";
  * });
  * yield* Effect.log(`backup ${response.Backup?.BackupId} started`);
  * ```
+ *
+ * @binding
  */
 export interface CreateBackup extends Binding.Service<
   CreateBackup,

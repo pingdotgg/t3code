@@ -19,7 +19,7 @@ export class EfsBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default EfsBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Control-plane bindings only — no VPC/mount target needed: EFS's data

@@ -10,9 +10,8 @@ import type { Revision } from "./Revision.ts";
  * and revision ids are injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.ListRevisionAssetsHttp)`.
- * @binding
- * @section Reading Revisions & Assets
- * @example List A Revision's Assets
+ * ### Reading Revisions & Assets
+ * **Example:** List A Revision's Assets
  * ```typescript
  * const listAssets = yield* AWS.DataExchange.ListRevisionAssets(revision);
  *
@@ -20,6 +19,8 @@ import type { Revision } from "./Revision.ts";
  * const { Assets } = yield* listAssets();
  * yield* Effect.log(`${(Assets ?? []).length} assets`);
  * ```
+ *
+ * @binding
  */
 export interface ListRevisionAssets extends Binding.Service<
   ListRevisionAssets,

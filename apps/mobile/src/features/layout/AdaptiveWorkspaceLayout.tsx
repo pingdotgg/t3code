@@ -22,7 +22,12 @@ import {
   type ReactNode,
 } from "react";
 import { useWindowDimensions, View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, {
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
@@ -47,9 +52,11 @@ import {
 } from "../keyboard/hardwareKeyboardCommands";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
+import { WorkspaceContentWidthContext } from "./workspace-content-width";
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -219,6 +226,7 @@ function AdaptiveWorkspaceLayoutContent(
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
@@ -503,6 +511,10 @@ function AdaptiveWorkspaceLayoutContent(
   const contentSettledWidth = layout.usesSplitView
     ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth)
     : null;
+  const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
+  const renderedContentWidth = useDerivedValue(() =>
+    Math.max(0, width - renderedSidebarWidth.value - renderedInspectorWidth.value),
+  );
 
   const handleSelectThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -567,17 +579,29 @@ function AdaptiveWorkspaceLayoutContent(
               </View>
             </Animated.View>
           ) : null}
-          <View className="flex-1 overflow-hidden bg-screen" collapsable={false}>
+          <View
+            className={
+              materialYouStyleLayoutActive
+                ? "flex-1 overflow-hidden bg-header"
+                : "flex-1 overflow-hidden bg-screen"
+            }
+            collapsable={false}
+          >
             <View
               collapsable={false}
               style={
                 contentSettledWidth !== null ? { flex: 1, width: contentSettledWidth } : { flex: 1 }
               }
             >
-              {props.children}
+              <WorkspaceContentWidthContext
+                value={layout.usesSplitView ? renderedContentWidth : null}
+              >
+                {props.children}
+              </WorkspaceContentWidthContext>
             </View>
           </View>
           <WorkspaceInspectorPane
+            renderedInspectorWidth={renderedInspectorWidth}
             active={workspaceInspector?.active ?? false}
             panes={panes}
             renderInspector={workspaceInspector?.render}

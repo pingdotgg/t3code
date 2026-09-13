@@ -61,9 +61,8 @@ export interface RuleSet extends Resource<
  * Lambda, ...).
  *
  * All aspects (name, rules, tags) update in place.
- * @resource
- * @section Creating Rule Sets
- * @example Drop Everything
+ * ### Creating Rule Sets
+ * **Example:** Drop Everything
  * ```typescript
  * import * as MailManager from "alchemy/AWS/MailManager";
  *
@@ -72,7 +71,7 @@ export interface RuleSet extends Resource<
  * });
  * ```
  *
- * @example Conditional Archive
+ * **Example:** Conditional Archive
  * ```typescript
  * const ruleSet = yield* MailManager.RuleSet("Inbound", {
  *   rules: [
@@ -93,8 +92,8 @@ export interface RuleSet extends Resource<
  * });
  * ```
  *
- * @section Wiring to an Ingress Point
- * @example Rule Set + Traffic Policy + Ingress Point
+ * ### Wiring to an Ingress Point
+ * **Example:** Rule Set + Traffic Policy + Ingress Point
  * ```typescript
  * const ingress = yield* MailManager.IngressPoint("Smtp", {
  *   type: "OPEN",
@@ -103,8 +102,8 @@ export interface RuleSet extends Resource<
  * });
  * ```
  *
- * @section Delivering Email Events to Compute
- * @example Invoke a Lambda for Matching Mail
+ * ### Delivering Email Events to Compute
+ * **Example:** Invoke a Lambda for Matching Mail
  * ```typescript
  * // Mail Manager has no EventBridge events or event-source mapping — email
  * // events reach compute through rule actions: InvokeLambda (direct),
@@ -127,6 +126,8 @@ export interface RuleSet extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const RuleSet = Resource<RuleSet>("AWS.MailManager.RuleSet");
 

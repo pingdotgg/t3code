@@ -6,15 +6,16 @@ import type { Project } from "./Project.ts";
 /**
  * Runtime binding for `codebuild:StopBuild` — stops an in-progress build
  * of the bound project by build id.
- * @binding
- * @section Stopping Builds
- * @example Stop a Running Build
+ * ### Stopping Builds
+ * **Example:** Stop a Running Build
  * ```typescript
  * const stopBuild = yield* AWS.CodeBuild.StopBuild(project);
  *
  * const { build } = yield* stopBuild({ id: buildId });
  * // build.buildStatus transitions to "STOPPED"
  * ```
+ *
+ * @binding
  */
 export interface StopBuild extends Binding.Service<
   StopBuild,

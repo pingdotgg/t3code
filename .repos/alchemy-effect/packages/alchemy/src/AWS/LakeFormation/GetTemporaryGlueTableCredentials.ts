@@ -16,9 +16,8 @@ export interface GetTemporaryGlueTableCredentialsRequest
  * vending API used by query engines. The returned `SecretAccessKey` and
  * `SessionToken` are `Redacted`. Provide the implementation with
  * `Effect.provide(AWS.LakeFormation.GetTemporaryGlueTableCredentialsHttp)`.
- * @binding
- * @section Vending Data Access Credentials
- * @example Vend Table-Scoped S3 Credentials
+ * ### Vending Data Access Credentials
+ * **Example:** Vend Table-Scoped S3 Credentials
  * ```typescript
  * // init — account-level binding takes no resource
  * const getTableCredentials =
@@ -32,6 +31,8 @@ export interface GetTemporaryGlueTableCredentialsRequest
  * });
  * const secret = Redacted.value(credentials.SecretAccessKey!);
  * ```
+ *
+ * @binding
  */
 export interface GetTemporaryGlueTableCredentials extends Binding.Service<
   GetTemporaryGlueTableCredentials,

@@ -21,7 +21,7 @@ import type * as Option from "../../Option.ts"
  *
  * **Example** (Defining command help documentation)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Context, Option as O } from "effect"
  * import type { HelpDoc } from "effect/unstable/cli"
  *
@@ -55,6 +55,8 @@ import type * as Option from "../../Option.ts"
  *     }
  *   ]
  * }
+ *
+ * deployCommandHelp.usage // => "myapp deploy [options] <target>"
  * ```
  *
  * @category models
@@ -126,7 +128,7 @@ export interface ExampleDoc {
  *
  * **Example** (Documenting command flags)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Option as O } from "effect"
  * import type { HelpDoc } from "effect/unstable/cli"
  *
@@ -145,6 +147,8 @@ export interface ExampleDoc {
  *   description: O.some("Port number to use"),
  *   required: true
  * }
+ *
+ * const names = [verboseFlag.name, portFlag.name] // => ["verbose", "port"]
  * ```
  *
  * @category models
@@ -182,7 +186,7 @@ export interface FlagDoc {
  *
  * **Example** (Documenting subcommands)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Context, Option as O } from "effect"
  * import type { HelpDoc } from "effect/unstable/cli"
  *
@@ -211,6 +215,8 @@ export interface FlagDoc {
  *     commands: [deploySubcommand, buildSubcommand]
  *   }]
  * }
+ *
+ * mainCommandHelp.subcommands?.[0].commands.map((command) => command.name) // => ["deploy", "build"]
  * ```
  *
  * @category models
@@ -262,7 +268,7 @@ export interface SubcommandGroupDoc {
  *
  * **Example** (Documenting positional arguments)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Context, Option as O } from "effect"
  * import type { HelpDoc } from "effect/unstable/cli"
  *
@@ -290,6 +296,8 @@ export interface SubcommandGroupDoc {
  *   flags: [],
  *   args: [sourceArg, filesArg]
  * }
+ *
+ * copyCommandHelp.args?.map((arg) => arg.name) // => ["source", "files"]
  * ```
  *
  * @category models

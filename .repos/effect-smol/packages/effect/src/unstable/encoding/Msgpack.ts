@@ -12,14 +12,13 @@
 import { Packr, Unpackr } from "msgpackr"
 import * as Msgpackr from "msgpackr"
 import * as Arr from "../../Array.ts"
+import * as Cause from "../../Cause.ts"
 import * as Channel from "../../Channel.ts"
 import * as ChannelSchema from "../../ChannelSchema.ts"
 import * as Data from "../../Data.ts"
 import * as Effect from "../../Effect.ts"
 import { dual } from "../../Function.ts"
-import * as Option from "../../Option.ts"
-import * as Predicate from "../../Predicate.ts"
-import type * as Pull from "../../Pull.ts"
+import * as Pull from "../../Pull.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaIssue from "../../SchemaIssue.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
@@ -136,37 +135,55 @@ export const decode = <IE = never, Done = unknown>(): Channel.Channel<
   Channel.fromTransform((upstream, _scope) =>
     Effect.sync(() => {
       const unpackr = new Unpackr()
-      let incomplete: Uint8Array<ArrayBuffer> | undefined = undefined
-      return Effect.flatMap(
-        upstream,
-        function loop(chunk): Pull.Pull<Arr.NonEmptyReadonlyArray<unknown>, IE | MsgPackError, Done> {
-          const out = Arr.empty<unknown>()
-          for (let i = 0; i < chunk.length; i++) {
-            let buf = chunk[i]
-            if (incomplete !== undefined) {
-              const prev = buf
-              buf = new Uint8Array(incomplete.length + buf.length)
-              buf.set(incomplete)
-              buf.set(prev, incomplete.length)
-              incomplete = undefined
-            }
-            try {
-              out.push(...unpackr.unpackMultiple(buf))
-            } catch (cause) {
-              const error: any = cause
-              if (error.incomplete) {
-                incomplete = buf.subarray(error.lastPosition)
-                if (error.values) {
-                  out.push(...error.values)
-                }
-              } else {
-                return Effect.fail(new MsgPackError({ kind: "Unpack", cause }))
+      let incomplete: {
+        readonly bytes: Uint8Array<ArrayBuffer>
+        readonly cause: unknown
+      } | undefined = undefined
+
+      const pull = Effect.suspend((): Pull.Pull<Arr.NonEmptyReadonlyArray<unknown>, IE | MsgPackError, Done> =>
+        Pull.matchEffect(upstream, {
+          onSuccess: loop,
+          onFailure: Effect.failCause,
+          onDone: (done): Pull.Pull<never, MsgPackError, Done> =>
+            incomplete === undefined
+              ? Cause.done(done)
+              : Effect.fail(new MsgPackError({ kind: "Unpack", cause: incomplete.cause }))
+        })
+      )
+
+      function loop(chunk: Arr.NonEmptyReadonlyArray<Uint8Array<ArrayBuffer>>): Pull.Pull<
+        Arr.NonEmptyReadonlyArray<unknown>,
+        IE | MsgPackError,
+        Done
+      > {
+        const out = Arr.empty<unknown>()
+        for (let i = 0; i < chunk.length; i++) {
+          let buf = chunk[i]
+          if (incomplete !== undefined) {
+            const prev = buf
+            buf = new Uint8Array(incomplete.bytes.length + buf.length)
+            buf.set(incomplete.bytes)
+            buf.set(prev, incomplete.bytes.length)
+            incomplete = undefined
+          }
+          try {
+            out.push(...unpackr.unpackMultiple(buf))
+          } catch (cause) {
+            const error: any = cause
+            if (error.incomplete) {
+              incomplete = { bytes: buf.subarray(error.lastPosition), cause }
+              if (error.values) {
+                out.push(...error.values)
               }
+            } else {
+              return Effect.fail(new MsgPackError({ kind: "Unpack", cause }))
             }
           }
-          return Arr.isReadonlyArrayNonEmpty(out) ? Effect.succeed(out) : Effect.flatMap(upstream, loop)
         }
-      )
+        return Arr.isReadonlyArrayNonEmpty(out) ? Effect.succeed(out) : pull
+      }
+
+      return pull
     })
   )
 
@@ -344,25 +361,29 @@ export const transformation: SchemaTransformation.Transformation<
   unknown,
   Uint8Array<ArrayBuffer>
 > = SchemaTransformation.transformOrFail({
-  decode(e, _options) {
+  decode(e, options) {
     try {
       return Effect.succeed(Msgpackr.decode(e))
-    } catch (cause) {
+    } catch {
       return Effect.fail(
-        new SchemaIssue.InvalidValue(Option.some(e), {
-          message: Predicate.hasProperty(cause, "message") ? String(cause.message) : String(cause)
-        })
+        new SchemaIssue.InvalidValue(
+          { expected: "valid MessagePack bytes" },
+          e,
+          options
+        )
       )
     }
   },
-  encode(t, _options) {
+  encode(t, options) {
     try {
       return Effect.succeed(Msgpackr.encode(t) as Uint8Array<ArrayBuffer>)
-    } catch (cause) {
+    } catch {
       return Effect.fail(
-        new SchemaIssue.InvalidValue(Option.some(t), {
-          message: Predicate.hasProperty(cause, "message") ? String(cause.message) : String(cause)
-        })
+        new SchemaIssue.InvalidValue(
+          { expected: "a MessagePack-serializable value" },
+          t,
+          options
+        )
       )
     }
   }

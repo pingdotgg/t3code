@@ -89,26 +89,23 @@ export type Certificate = Resource<
  * property triggers a replacement. Deployment is asynchronous — the
  * certificate starts in `pending_deployment` and becomes `active` within a
  * few minutes; deletion likewise passes through `pending_deletion`.
- * @resource
- * @product Origin TLS Client Auth
- * @category SSL/TLS & Certificates
- * @section Uploading a certificate
- * @example Zone client certificate
+ * ### Uploading a certificate
+ * **Example:** Zone client certificate
  * ```typescript
  * const cert = yield* Cloudflare.OriginTlsClientAuth.Certificate("AopCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
- *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
+ *   privateKey: yield* Config.redacted("AOP_CLIENT_KEY"),
  * });
  * ```
  *
- * @section Enabling Authenticated Origin Pulls
- * @example Upload the certificate and turn AOP on
+ * ### Enabling Authenticated Origin Pulls
+ * **Example:** Upload the certificate and turn AOP on
  * ```typescript
  * const cert = yield* Cloudflare.OriginTlsClientAuth.Certificate("AopCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
- *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
+ *   privateKey: yield* Config.redacted("AOP_CLIENT_KEY"),
  * });
  *
  * yield* Cloudflare.OriginTlsClientAuth.Setting("Aop", {
@@ -118,6 +115,10 @@ export type Certificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/
+ *
+ * @resource
+ * @product Origin TLS Client Auth
+ * @category SSL/TLS & Certificates
  */
 export const Certificate = Resource<Certificate>(TypeId);
 

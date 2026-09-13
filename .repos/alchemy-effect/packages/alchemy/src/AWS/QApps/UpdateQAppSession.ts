@@ -16,9 +16,8 @@ export interface UpdateQAppSessionRequest extends Omit<
  *
  * Submits new card values into a running Q App session (e.g. answers a text-input card). Provide the implementation with
  * `Effect.provide(AWS.QApps.UpdateQAppSessionHttp)`.
- * @binding
- * @section Sessions
- * @example Submit Card Values
+ * ### Sessions
+ * **Example:** Submit Card Values
  * ```typescript
  * // init — bind the operation to the Q App
  * const updateQAppSession = yield* AWS.QApps.UpdateQAppSession(app);
@@ -29,6 +28,8 @@ export interface UpdateQAppSessionRequest extends Omit<
  *   values: [{ cardId, value: "Hello, Q Apps!" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateQAppSession extends Binding.Service<
   UpdateQAppSession,

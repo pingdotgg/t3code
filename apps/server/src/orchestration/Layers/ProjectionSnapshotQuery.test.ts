@@ -1,14 +1,17 @@
 import {
   type AgentSessionImportSource,
   ChatAttachment,
+  ComposerContextId,
   CheckpointRef,
   EventId,
   MessageId,
   ProjectId,
   ThreadId,
+  type ThreadPullRequestLink,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
+  OrchestrationMessageContext,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -40,6 +43,61 @@ const encodeChatAttachments = Schema.encodeEffect(
 const encodeThreadLinkedPullRequest = Schema.encodeSync(
   Schema.fromJsonString(ThreadLinkedPullRequest),
 );
+const encodeMessageContext = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationMessageContext),
+);
+
+it.effect("reads project shells without loading threads or resolving excluded projects", () => {
+  const resolved: string[] = [];
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (root) =>
+          Effect.sync(() => {
+            resolved.push(root);
+            return null;
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES
+      ('p1', 'First', '/first', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL),
+      ('p2', 'Second', '/second', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL),
+      ('p3', 'Deleted', '/deleted', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z', '2026-09-04T00:00:00Z')`;
+    const expected = (yield* query.getShellSnapshot()).projects;
+    resolved.length = 0;
+    yield* sql`INSERT INTO projection_threads
+      (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+      VALUES ('t1', 'p1', 'Thread', 'invalid-json', 'full-access', 'default', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+
+    const counter = makeSqlStatementCounter();
+    const projects = yield* query.getProjectShells().pipe(Effect.withTracer(counter.tracer));
+    assert.deepStrictEqual(projects, expected);
+    assert.strictEqual(counter.count(), 1);
+    assert.deepStrictEqual(resolved.toSorted(), ["/first", "/second"]);
+    resolved.length = 0;
+    yield* sql`UPDATE projection_projects SET scripts_json = 'invalid-json' WHERE project_id IN ('p1', 'p3')`;
+    assert.deepStrictEqual(yield* query.getProjectShells([asProjectId("p2")]), [expected[1]!]);
+    assert.deepStrictEqual(resolved, ["/second"]);
+    resolved.length = 0;
+    const beforeEmpty = counter.count();
+    assert.deepStrictEqual(
+      yield* query.getProjectShells([]).pipe(Effect.withTracer(counter.tracer)),
+      [],
+    );
+    assert.strictEqual(counter.count(), beforeEmpty);
+    assert.deepStrictEqual(yield* query.getProjectShells([asProjectId("p3")]), []);
+    assert.deepStrictEqual(resolved, []);
+  }).pipe(Effect.provide(layer));
+});
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
@@ -66,6 +124,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_pull_requests`;
       yield* sql`DELETE FROM projection_turns`;
 
       yield* sql`
@@ -89,6 +148,45 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           '2026-02-24T00:00:01.000Z',
           NULL
         )
+      `;
+
+      // A merged link plus a newer open one: the multi-link projection must
+      // resolve to the open pull request, not the stale JSON column below.
+      yield* sql`
+        INSERT INTO projection_thread_pull_requests (
+          thread_id,
+          host,
+          repository,
+          number,
+          url,
+          source,
+          linked_at,
+          snapshot_json,
+          stack_json
+        )
+        VALUES
+          (
+            'thread-1',
+            'github.com',
+            'pingdotgg/t3code',
+            41,
+            'https://github.com/pingdotgg/t3code/pull/41',
+            'created',
+            '2026-02-24T00:00:02.500Z',
+            '{"state":"merged","title":"Groundwork","headBranch":"feat/groundwork","baseBranch":"main","isDraft":false,"updatedAt":"2026-02-24T00:00:02.600Z","syncedAt":"2026-02-24T00:00:02.700Z"}',
+            NULL
+          ),
+          (
+            'thread-1',
+            'github.com',
+            'pingdotgg/t3code',
+            42,
+            'https://github.com/pingdotgg/t3code/pull/42',
+            'manual',
+            '2026-02-24T00:00:03.000Z',
+            NULL,
+            NULL
+          )
       `;
 
       yield* sql`
@@ -124,7 +222,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'default',
           NULL,
           NULL,
-          '{"projectId":"project-1","repository":"pingdotgg/t3code","number":42,"url":"https://github.com/pingdotgg/t3code/pull/42"}',
+          '{"projectId":"project-1","repository":"pingdotgg/t3code","number":41,"url":"https://github.com/pingdotgg/t3code/pull/41"}',
           ${encodeThreadLinkedPullRequest(branchPullRequest)},
           'turn-1',
           '2026-02-24T00:00:04.000Z',
@@ -286,6 +384,37 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         sequence += 1;
       }
 
+      const expectedPullRequests: ReadonlyArray<ThreadPullRequestLink> = [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 41,
+          url: "https://github.com/pingdotgg/t3code/pull/41",
+          source: "created",
+          linkedAt: "2026-02-24T00:00:02.500Z",
+          snapshot: {
+            state: "merged",
+            title: "Groundwork",
+            headBranch: "feat/groundwork",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: "2026-02-24T00:00:02.600Z",
+            syncedAt: "2026-02-24T00:00:02.700Z",
+          },
+          stack: null,
+        },
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          source: "manual",
+          linkedAt: "2026-02-24T00:00:03.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ];
+
       const snapshot = yield* snapshotQuery.getSnapshot();
 
       assert.equal(snapshot.snapshotSequence, 5);
@@ -331,12 +460,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
-          linkedPullRequest: {
-            projectId: asProjectId("project-1"),
-            repository: "pingdotgg/t3code",
-            number: 42,
-            url: "https://github.com/pingdotgg/t3code/pull/42",
-          },
+          pullRequests: expectedPullRequests,
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),
@@ -461,12 +585,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
-          linkedPullRequest: {
-            projectId: asProjectId("project-1"),
-            repository: "pingdotgg/t3code",
-            number: 42,
-            url: "https://github.com/pingdotgg/t3code/pull/42",
-          },
+          pullRequests: expectedPullRequests,
           branchPullRequest,
           latestTurn: {
             turnId: asTurnId("turn-1"),
@@ -516,13 +635,27 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
 
-      const commandSnapshot = yield* snapshotQuery.getCommandReadModel();
-      assert.equal(commandSnapshot.threads[0]?.activeOrderKey, "hq");
-      assert.deepEqual(commandSnapshot.threads[0]?.branchPullRequest, branchPullRequest);
       const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
       assert.equal(threadShell._tag, "Some");
       if (threadShell._tag === "Some") {
-        assert.deepEqual(threadShell.value.branchPullRequest, branchPullRequest);
+        assert.deepEqual(threadShell.value, shellSnapshot.threads[0]);
+      }
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads[0]?.pullRequests, expectedPullRequests);
+      assert.deepEqual(
+        commandReadModel.threads[0]?.linkedPullRequest,
+        snapshot.threads[0]?.linkedPullRequest,
+      );
+
+      // Without link rows the legacy field is omitted, whatever the old JSON
+      // column still holds.
+      yield* sql`DELETE FROM projection_thread_pull_requests`;
+      const unlinkedShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(unlinkedShell._tag, "Some");
+      if (unlinkedShell._tag === "Some") {
+        assert.deepEqual(unlinkedShell.value.pullRequests, []);
+        assert.equal("linkedPullRequest" in unlinkedShell.value, false);
       }
 
       yield* sql`
@@ -606,6 +739,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (context._tag === "Some") {
         assert.deepEqual(context.value, {
           id: ThreadId.make("thread-1"),
+          projectId: asProjectId("project-1"),
           title: "Thread 1",
           session: snapshot.threads[0]?.session,
         });
@@ -648,23 +782,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ];
       const attachmentsJson = yield* encodeChatAttachments(attachments);
+      const messageContext: OrchestrationMessageContext = {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: ComposerContextId.make("notes-context"),
+            kind: "file",
+            label: "notes.txt",
+            attachmentId: "notes",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 8,
+          },
+        ],
+      };
+      const contextJson = yield* encodeMessageContext(messageContext);
       yield* sql`
         WITH RECURSIVE history(n) AS (
           VALUES (1) UNION ALL SELECT n + 1 FROM history WHERE n < 2000
         )
         INSERT INTO projection_thread_messages (
-          message_id, thread_id, turn_id, role, text, attachments_json,
+          message_id, thread_id, turn_id, role, text, attachments_json, context_json,
           is_streaming, created_at, updated_at
         )
         SELECT 'turn-start-history:' || n, ${threadId}, 'old-turn:' || n, 'assistant',
-          'Unrelated assistant output', 'not-json', 0, ${createdAt}, ${createdAt}
+          'Unrelated assistant output', 'not-json', 'not-json', 0, ${createdAt}, ${createdAt}
         FROM history
       `;
       yield* sql`
         INSERT INTO projection_thread_messages (
-          message_id, thread_id, role, text, attachments_json, is_streaming, created_at, updated_at
+          message_id, thread_id, role, text, attachments_json, context_json, is_streaming, created_at, updated_at
         ) VALUES (${messageId}, ${threadId}, 'user', 'Read these notes',
-          ${attachmentsJson}, 0, ${createdAt}, ${createdAt})
+          ${attachmentsJson}, ${contextJson}, 0, ${createdAt}, ${createdAt})
       `;
       yield* sql`
         INSERT INTO projection_thread_messages (
@@ -690,6 +840,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             createdAt,
             updatedAt: createdAt,
             attachments,
+            context: messageContext,
           },
           hasOtherUserMessages: false,
         }),
@@ -3258,4 +3409,57 @@ projectionSnapshotLayer("ProjectionSnapshotQuery imported sources", (it) => {
       assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [imported, valid]);
     }),
   );
+});
+
+it.effect("omits foreign-host PRs from legacy snapshots while preserving native links", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/acme/web",
+            provider: "github",
+            displayName: "acme/web",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('project-1', 'Project', '/repo', '[]', '2026-09-09T00:00:00Z', '2026-09-09T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+      VALUES ('thread-1', 'project-1', 'Thread', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-09T00:00:00Z', '2026-09-09T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('thread-1', 'github.enterprise.test', 'acme/web', 42, 'https://github.enterprise.test/acme/web/pull/42', 'manual', '2026-09-09T00:00:00Z')`;
+    const readThreads = Effect.gen(function* () {
+      const full = yield* query.getSnapshot();
+      const shell = yield* query.getShellSnapshot();
+      const detail = yield* query.getThreadDetailById(ThreadId.make("thread-1"));
+      const individual = yield* query.getThreadShellById(ThreadId.make("thread-1"));
+      return [
+        full.threads[0]!,
+        shell.threads[0]!,
+        Option.getOrThrow(detail),
+        Option.getOrThrow(individual),
+      ];
+    });
+    for (const thread of yield* readThreads) {
+      assert.equal(thread.linkedPullRequest ?? null, null);
+      assert.equal(thread.pullRequests[0]?.host, "github.enterprise.test");
+    }
+    yield* sql`UPDATE projection_thread_pull_requests SET host = 'github.com', url = 'https://github.com/acme/web/pull/42'`;
+    for (const thread of yield* readThreads) {
+      assert.equal(thread.linkedPullRequest?.url, "https://github.com/acme/web/pull/42");
+    }
+  }).pipe(Effect.provide(layer));
 });

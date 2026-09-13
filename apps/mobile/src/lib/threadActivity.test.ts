@@ -1,7 +1,8 @@
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   EventId,
   MessageId,
   ProjectId,
@@ -25,6 +26,21 @@ import {
   type ThreadFeedEntry,
   type WorkLogEntry,
 } from "./threadActivity";
+
+// Match Hermes: these ES2023 array methods are absent on mobile.
+beforeEach(() => {
+  const methods = ["toSorted", "toReversed"] as const;
+  const descriptors = methods.map((method) =>
+    Object.getOwnPropertyDescriptor(Array.prototype, method),
+  );
+  for (const method of methods) Reflect.deleteProperty(Array.prototype, method);
+  return () => {
+    for (const [index, method] of methods.entries()) {
+      const descriptor = descriptors[index];
+      if (descriptor) Reflect.defineProperty(Array.prototype, method, descriptor);
+    }
+  };
+});
 
 const singleSelectQuestion = {
   id: "runtime",
@@ -257,6 +273,7 @@ function makeThread(
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
@@ -3313,4 +3330,124 @@ describe("quiet timeline: nested agents", () => {
       },
     ]);
   });
+});
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+it("keeps attachment-only question answers expandable outside mobile work groups and turn folds", () => {
+  const turnId = TurnId.make("turn-answer");
+  const answer = {
+    requestId: ApprovalRequestId.make("question-request"),
+    answers: { q: "" },
+    questionTextById: { q: "Attach the specification" },
+    attachmentsByQuestionId: {
+      q: [
+        {
+          type: "file" as const,
+          id: "question-file",
+          name: "spec.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        },
+      ],
+    },
+  };
+  const thread = makeThread({
+    id: ThreadId.make("thread-answer"),
+    projectId: ProjectId.make("project-answer"),
+    title: "Answer history",
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      startedAt: "2026-09-08T00:00:00.000Z",
+      completedAt: "2026-09-08T00:00:04.000Z",
+      assistantMessageId: null,
+    },
+    activities: [
+      makeActivity({
+        id: EventId.make("tool-before-answer"),
+        createdAt: "2026-09-08T00:00:01.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+      makeActivity({
+        id: EventId.make("answer-submitted"),
+        createdAt: "2026-09-08T00:00:02.000Z",
+        kind: "user-input.answer-submitted",
+        summary: "Answered questions",
+        turnId,
+        payload: answer,
+      }),
+      makeActivity({
+        id: EventId.make("tool-after-answer"),
+        createdAt: "2026-09-08T00:00:03.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+    ],
+  });
+  const feed = buildThreadFeed(thread);
+  expect(feed).toHaveLength(3);
+  const group = feed[1];
+  expect(group?.type).toBe("activity-group");
+  if (group?.type !== "activity-group") return;
+  expect(group.activities[0]).toMatchObject({
+    canExpand: true,
+    workEntry: { questionAnswer: answer },
+  });
+  expect(group.activities[0]?.getFullDetail()).toBeNull();
+  const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+  expect(collapsed.map((entry) => entry.type)).toEqual(["turn-fold", "activity-group"]);
+  expect(collapsed[1]).toBe(group);
+  const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+  expect(expanded.map((entry) => entry.type)).toEqual([
+    "turn-fold",
+    "work-toggle",
+    "activity-group",
+    "work-toggle",
+  ]);
+  expect(expanded[2]).toBe(group);
+  const running = deriveThreadFeedPresentation(
+    feed,
+    { ...thread.latestTurn!, state: "running", completedAt: null },
+    new Set(),
+    new Set(),
+    "2026-09-08T00:00:00.000Z",
+  );
+  expect(running[0]?.type).toBe("work-toggle");
+  expect(running[1]).toBe(group);
+  expect(running[2]?.type).toBe("work-toggle");
 });

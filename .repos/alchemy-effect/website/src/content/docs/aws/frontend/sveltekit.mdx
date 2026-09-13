@@ -1,0 +1,191 @@
+---
+title: SvelteKit
+description: Deploy a SvelteKit app to AWS with AWS.Website.SvelteKit — SSR on a streaming Lambda Function URL, assets and prerendered pages on S3 + CloudFront, and Kit's own dev server under alchemy dev.
+sidebar:
+  order: 12
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`AWS.Website.SvelteKit` deploys a
+[SvelteKit](https://svelte.dev/docs/kit) app to AWS. It builds the
+app with SvelteKit's own Vite pipeline and a wrangler-free in-memory
+AWS adapter emitting a streaming Lambda handler. Client assets and
+prerendered pages are served from a private S3 bucket through
+CloudFront; dynamic routes stream from the Lambda Function URL. Your
+`vite.config.ts` loads natively; there is no `svelte.config.js` to
+write (kit v3 dropped it) and no adapter to install.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/sveltekit` and `/sveltekit/aws` exports from your project at deploy
+time. It is only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure SvelteKit
+
+Your project's `vite.config.ts` loads natively — your Vite plugins
+and the kit options in your `sveltekit(...)` call all apply as usual.
+Alchemy injects its own wrangler-free AWS adapter (replacing any
+adapter you declare, with a warning), so a fresh SvelteKit project
+deploys as-is. Deploy-specific kit overrides can also be passed via
+the `kit` prop, which merges over your `sveltekit(...)` options — see
+[Kit options](#kit-options) below. A project without a
+`vite.config.*` works too: the resource falls back to a fully
+programmatic build.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.SvelteKit("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySvelteKitSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Routes with `export const prerender = true` are uploaded to S3 and
+served from the edge without invoking the server; server routes
+(`+server.ts`) and server load functions stream from the Lambda.
+
+See
+[examples/aws-website-sveltekit](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-website-sveltekit)
+for the checked-in example.
+
+## Add environment variables
+
+The server function's environment is configured under `env` — plain
+values, or outputs from other resources in the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.SvelteKit("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: api.url,
++  },
+});
+```
+
+The values are set on the Lambda at deploy time and injected into the
+dev server's process environment under `alchemy dev`, so server code
+reads the same values in both modes.
+
+## Read the environment in server code
+
+The Kit server runs in a plain Node Lambda, so server routes read the
+environment from `process.env` (or kit's `$env/dynamic/private`,
+which is initialized from it):
+
+```typescript
+// src/routes/+page.server.ts
+export const load = () => {
+  return { greeting: process.env.GREETING ?? "hello" };
+};
+```
+
+## Kit options
+
+Since kit v3 there is no `svelte.config.js` — kit options live in the
+`sveltekit(...)` call in your `vite.config.ts`, which loads natively:
+
+```typescript
+// vite.config.ts
+import { sveltekit } from "@sveltejs/kit/vite";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    sveltekit({
+      alias: { $lib: "src/lib" },
+    }),
+  ],
+});
+```
+
+The `kit` prop on the resource is the deploy-time override bag:
+JSON-serializable kit config merged over those options (the prop
+wins). Use it for per-stage values or alchemy `Output`s your config
+file can't compute:
+
+```typescript
+// alchemy.run.ts
+export const Website = AWS.Website.SvelteKit("Website", {
+  kit: {
+    paths: { base: "/docs" },
+  },
+});
+```
+
+No functions or plugins in the bag — `preprocess`, `vitePlugin`, and
+the other construction-time options belong in your `sveltekit(...)`
+call. Don't set `kit.adapter` — Alchemy injects its own wrangler-free
+AWS adapter (an adapter declared in your `sveltekit(...)` call is
+replaced with a warning).
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs SvelteKit's own Vite dev server — Node SSR with
+full HMR, which is already the AWS Lambda programming model
+(`process.env` included) — instead of deploying; `site.url` is the
+local address and no AWS resources are created. Wrap the site in
+`Alchemy.remote()` to deploy the real infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* AWS.Website.SvelteKit("Web", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The hosted zone is inferred from the hostname. Pass `hostedZoneId` to
+pin it when several zones could match.

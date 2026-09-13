@@ -1,0 +1,6 @@
+"@effect/ai/LanguageModel#ConstructorParams":
+  replacement: "none"
+  note: "V4 inlines this provider-adapter shape in LanguageModel.make. Pass generateText and streamText directly to make, with optional codecTransformer, instead of naming a constructor-parameter type."
+"@effect/ai/LanguageModel#ExtractContext":
+  replacement: "LanguageModel.ExtractServices"
+  note: "Renamed in effect/unstable/ai/LanguageModel. ExtractServices infers toolkit handler, result-decoding, and effectful-toolkit service requirements."

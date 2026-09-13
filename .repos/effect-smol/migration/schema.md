@@ -31,7 +31,6 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `EitherFromSelf`                                | `Result`                                                                      | rename            |
 | `DateFromNumber`                                | `DateFromMillis`                                                              | rename            |
 | `Date`                                          | `DateFromString`                                                              | restructure       |
-| `TaggedError`                                   | `TaggedErrorClass`                                                            | rename            |
 | `decodeUnknown`                                 | `decodeUnknownEffect`                                                         | rename            |
 | `decode`                                        | `decodeEffect`                                                                | rename            |
 | `decodeUnknownEither`                           | `decodeUnknownExit`                                                           | rename            |
@@ -898,14 +897,14 @@ const NumberFromString = Schema.transformOrFail(Schema.String, Schema.Number, {
 v4
 
 ```ts
-import { Effect, Number, Option, Schema, SchemaGetter, SchemaIssue } from "effect"
+import { Effect, Number, Schema, SchemaGetter, SchemaIssue } from "effect"
 
 const NumberFromString = Schema.String.pipe(
   Schema.decodeTo(Schema.Number, {
     decode: SchemaGetter.transformOrFail((s) => {
       const n = Number.parse(s)
       if (n === undefined) {
-        return Effect.fail(new SchemaIssue.InvalidValue(Option.some(s)))
+        return Effect.fail(new SchemaIssue.InvalidValue())
       }
       return Effect.succeed(n)
     }),

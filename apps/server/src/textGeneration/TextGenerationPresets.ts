@@ -1,10 +1,5 @@
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
-export const defaultTextGenerationPolicy: TextGenerationPolicy = {
-  kind: "default",
-  inferRepositoryConventions: false,
-};
-
 export const conventionalCommitsTextGenerationPolicy: TextGenerationPolicy = {
   kind: "conventional_commits",
   commitInstructions:

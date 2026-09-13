@@ -58,9 +58,8 @@ export interface DelegatedAdministrator extends Resource<
  * Requires trusted access for the same service principal (see
  * {@link TrustedServiceAccess}). Existence-only resource: changing
  * `accountId` or `servicePrincipal` replaces the registration.
- * @resource
- * @section Delegating Administration
- * @example Delegate GuardDuty to a Security Account
+ * ### Delegating Administration
+ * **Example:** Delegate GuardDuty to a Security Account
  * ```typescript
  * const security = yield* Account("Security", {
  *   name: "security",
@@ -77,6 +76,8 @@ export interface DelegatedAdministrator extends Resource<
  *   servicePrincipal: guardDutyAccess.servicePrincipal,
  * });
  * ```
+ *
+ * @resource
  */
 export const DelegatedAdministrator = Resource<DelegatedAdministrator>(
   "AWS.Organizations.DelegatedAdministrator",

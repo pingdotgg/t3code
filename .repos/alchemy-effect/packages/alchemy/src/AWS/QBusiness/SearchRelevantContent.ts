@@ -21,9 +21,8 @@ export interface SearchRelevantContentRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.SearchRelevantContentHttp)`.
  *
- * @binding
- * @section Content Retrieval
- * @example Retrieve Relevant Passages
+ * ### Content Retrieval
+ * **Example:** Retrieve Relevant Passages
  * ```typescript
  * const search = yield* AWS.QBusiness.SearchRelevantContent(app);
  *
@@ -32,6 +31,8 @@ export interface SearchRelevantContentRequest extends Omit<
  *   contentSource: { retriever: { retrieverId: retriever.retrieverId } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface SearchRelevantContent extends Binding.Service<
   SearchRelevantContent,

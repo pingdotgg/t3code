@@ -79,7 +79,7 @@ handling a request.
 
 ## Expose a public URL
 
-`fetch` exists, but no one can call it yet. Set `url: true` on the
+`fetch` exists, but no one can call it yet. Set `functionUrl: true` on the
 props to ask AWS for a public **Function URL** — no API Gateway, no
 auth, just a public HTTPS endpoint:
 
@@ -87,7 +87,7 @@ auth, just a public HTTPS endpoint:
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
 -  { main: import.meta.url },
-+  { main: import.meta.url, url: true },
++  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     return {
       fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
@@ -115,7 +115,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
 +    const bucket = yield* S3.Bucket("Bucket");
 
@@ -275,7 +275,7 @@ credentials. Provide them at the bottom of the function:
 // ...
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     /* ... bucket + bindings + fetch ... */
 -  }),
@@ -321,7 +321,7 @@ export default Alchemy.Stack(
 
 Yielding `Api` returns the resolved Lambda outputs — the function
 ARN, role ARN, and the public Function URL we asked for with
-`url: true`. We surface `functionUrl` as the Stack's `url` output.
+`functionUrl: true`. We surface `functionUrl` as the Stack's `url` output.
 
 ## Retire the inline Bucket
 

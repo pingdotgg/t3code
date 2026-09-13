@@ -14,9 +14,8 @@ export interface DescribeServiceDeploymentsRequest
  * circuit-breaker status, target service revision. The host is granted
  * `ecs:DescribeServiceDeployments` on the service's deployments (deployment
  * ARNs are only known at runtime, e.g. from `ListServiceDeployments`).
- * @binding
- * @section Service Deployments
- * @example Inspect a Deployment's Rollout State
+ * ### Service Deployments
+ * **Example:** Inspect a Deployment's Rollout State
  * ```typescript
  * const describeServiceDeployments =
  *   yield* AWS.ECS.DescribeServiceDeployments(service);
@@ -26,6 +25,8 @@ export interface DescribeServiceDeploymentsRequest
  * });
  * const status = response.serviceDeployments?.[0]?.status;
  * ```
+ *
+ * @binding
  */
 export interface DescribeServiceDeployments extends Binding.Service<
   DescribeServiceDeployments,

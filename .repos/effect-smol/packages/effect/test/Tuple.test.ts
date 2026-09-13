@@ -1,4 +1,4 @@
-import { Number, pipe, Schema, String, Tuple } from "effect"
+import { Equivalence, Number, pipe, Schema, String, Tuple } from "effect"
 import { TestSchema } from "effect/testing"
 import { deepStrictEqual, strictEqual } from "node:assert"
 import { describe, it } from "vitest"
@@ -123,5 +123,35 @@ describe("Tuple", () => {
     ])
 
     deepStrictEqual(R.initialValue, [0, ""])
+  })
+
+  it("appendElement appends a single element in both data-first and data-last forms", () => {
+    deepStrictEqual(pipe(Tuple.make(1, 2), Tuple.appendElement("end")), [1, 2, "end"])
+    deepStrictEqual(Tuple.appendElement(Tuple.make(1, 2), "end"), [1, 2, "end"])
+  })
+
+  it("appendElements concatenates a tuple in both data-first and data-last forms", () => {
+    deepStrictEqual(pipe(Tuple.make(1, 2), Tuple.appendElements(["a", "b"] as const)), [1, 2, "a", "b"])
+    deepStrictEqual(Tuple.appendElements(Tuple.make(1, 2), ["a", "b"] as const), [1, 2, "a", "b"])
+  })
+
+  it("makeEquivalence compares tuple positions independently", () => {
+    const eq = Tuple.makeEquivalence([
+      Equivalence.strictEqual<string>(),
+      Equivalence.strictEqual<number>()
+    ])
+
+    strictEqual(eq(["Alice", 30], ["Alice", 30]), true)
+    strictEqual(eq(["Alice", 30], ["Bob", 30]), false)
+    strictEqual(eq(["Alice", 30], ["Alice", 31]), false)
+  })
+
+  it("makeOrder orders tuple positions lexicographically", () => {
+    const ord = Tuple.makeOrder([String.Order, Number.Order])
+
+    strictEqual(ord(["Alice", 30], ["Bob", 25]), -1)
+    strictEqual(ord(["Alice", 30], ["Alice", 30]), 0)
+    strictEqual(ord(["Bob", 25], ["Alice", 30]), 1)
+    strictEqual(ord(["Alice", 30], ["Alice", 25]), 1)
   })
 })

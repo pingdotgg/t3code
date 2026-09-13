@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type LimitAccount,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -777,9 +778,100 @@ describe("pools", () => {
       ["weekly", 1],
       ["monthly", 1],
     ]);
-    // Segments read left to right as "who refills next", matching the reset list.
+    // Session resets determine the account order for every row.
     expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
     expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+  });
+});
+
+describe("pooled account columns", () => {
+  const weekly = {
+    ...window,
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    windowDurationMins: 7 * 24 * 60,
+  } as const;
+  const account = (key: string, windows: LimitAccount["limits"]["windows"]): LimitAccount => ({
+    key,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    displayName: key,
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: "Hub",
+    redeem: null,
+    limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
+  });
+  const keys = (pool: ReturnType<typeof collectLimitPools>[number]) =>
+    pool.windows.map((row) =>
+      row.columns.map((member) => (member.window ? member.account.key : null)),
+    );
+
+  it("keeps session columns across rows with opposite reset and usage orders", () => {
+    const accounts = [
+      account("a", [
+        { ...weekly, usedPercent: 80, resetsAt: "2026-09-05T12:00:00.000Z" },
+        { ...window, usedPercent: 10, resetsAt: "2026-09-03T15:00:00.000Z" },
+      ]),
+      account("b", [
+        { ...weekly, usedPercent: 20, resetsAt: "2026-09-06T12:00:00.000Z" },
+        { ...window, usedPercent: 90, resetsAt: "2026-09-03T13:00:00.000Z" },
+      ]),
+    ];
+    const [pool] = collectLimitPools(accounts, now);
+    expect(pool!.accounts.map((account) => account.key)).toEqual(["b", "a"]);
+    expect(keys(pool!)).toEqual([
+      ["b", "a"],
+      ["b", "a"],
+    ]);
+    expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(50);
+    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it("preserves gaps without counting missing windows toward pooled quota", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [window]),
+        account("b", [
+          { ...window, resetsAt: "2026-09-03T15:00:00.000Z" },
+          { ...weekly, usedPercent: 80 },
+        ]),
+        account("c", [weekly]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([
+      ["a", "b", null],
+      [null, "b", "c"],
+    ]);
+    expect(pool!.windows[1]!.members.map((member) => member.account.key)).toEqual(["b", "c"]);
+    expect(pool!.windows[1]!.remainingPercent).toBe(40);
+    expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
+  });
+
+  it("falls back to weekly resets when no account reports a session", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("a", [{ ...weekly, resetsAt: "2026-09-06T12:00:00.000Z" }]),
+        account("b", [{ ...weekly, resetsAt: "2026-09-05T12:00:00.000Z" }]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([["b", "a"]]);
+  });
+
+  it("sorts unknown resets last and breaks ties consistently", () => {
+    const accounts = [
+      account("z", [{ ...window, resetsAt: undefined }]),
+      account("b", [window]),
+      account("a", [window]),
+      account("y", [{ ...window, resetsAt: "invalid" }]),
+    ];
+    expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
+    expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
   });
 });
 

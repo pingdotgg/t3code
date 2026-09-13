@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * name — e.g. checking a cluster's status or endpoint from an operational
  * Lambda. Provide the implementation with
  * `Effect.provide(AWS.MemoryDB.DescribeClustersHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Check a Cluster's Status
+ * ### Monitoring Clusters
+ * **Example:** Check a Cluster's Status
  * ```typescript
  * const describeClusters = yield* MemoryDB.DescribeClusters();
  *
  * const page = yield* describeClusters({ ClusterName: clusterName });
  * // page.Clusters[0].Status → "available"
  * ```
+ *
+ * @binding
  */
 export interface DescribeClusters extends Binding.Service<
   DescribeClusters,

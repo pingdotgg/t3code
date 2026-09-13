@@ -12,7 +12,7 @@ import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
 
-export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowUpsertPersistenceError>()(
+export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedError<AgentActivityRowUpsertPersistenceError>()(
   "AgentActivityRowUpsertPersistenceError",
   {
     environmentId: Schema.String,
@@ -25,7 +25,7 @@ export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedErrorCl
   }
 }
 
-export class AgentActivityRowDeletePersistenceError extends Schema.TaggedErrorClass<AgentActivityRowDeletePersistenceError>()(
+export class AgentActivityRowDeletePersistenceError extends Schema.TaggedError<AgentActivityRowDeletePersistenceError>()(
   "AgentActivityRowDeletePersistenceError",
   {
     environmentId: Schema.String,
@@ -38,7 +38,7 @@ export class AgentActivityRowDeletePersistenceError extends Schema.TaggedErrorCl
   }
 }
 
-export class AgentActivityRowPruneTerminalPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowPruneTerminalPersistenceError>()(
+export class AgentActivityRowPruneTerminalPersistenceError extends Schema.TaggedError<AgentActivityRowPruneTerminalPersistenceError>()(
   "AgentActivityRowPruneTerminalPersistenceError",
   {
     updatedBefore: Schema.String,
@@ -50,7 +50,7 @@ export class AgentActivityRowPruneTerminalPersistenceError extends Schema.Tagged
   }
 }
 
-export class AgentActivityRowListPersistenceError extends Schema.TaggedErrorClass<AgentActivityRowListPersistenceError>()(
+export class AgentActivityRowListPersistenceError extends Schema.TaggedError<AgentActivityRowListPersistenceError>()(
   "AgentActivityRowListPersistenceError",
   {
     userId: Schema.String,

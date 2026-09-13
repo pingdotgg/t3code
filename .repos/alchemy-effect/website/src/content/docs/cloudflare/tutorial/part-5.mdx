@@ -95,7 +95,6 @@ profile) to provision the Cloudflare API token CI will use.
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as GitHub from "alchemy/GitHub";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -110,10 +109,21 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const accountId = yield* Config.string("CLOUDFLARE_ACCOUNT_ID");
+    const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
   }),
 );
 ```
+
+`Cloudflare.CloudflareEnvironment` resolves the credentials of the
+profile you're deploying with — here, the `admin` profile — and the
+account ID comes along with them. You don't need to set a
+`CLOUDFLARE_ACCOUNT_ID` environment variable; your login already
+knows it.
+
+Note the double `yield*`: the service's value is itself an Effect,
+because credentials are cached and can refresh themselves (OAuth
+tokens expire). The first `yield*` gets the service, the second
+resolves the current credentials.
 
 Reusing the same `Cloudflare.state()` you set up in Part 1 means the
 token's ID is tracked alongside the rest of your infrastructure, so
@@ -128,7 +138,7 @@ in state — the raw token never touches your terminal.
 
 ```diff lang="typescript"
   Effect.gen(function* () {
-    const accountId = yield* Config.string("CLOUDFLARE_ACCOUNT_ID");
+    const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
 +
 +   const apiToken = yield* Cloudflare.ApiToken.AccountApiToken("CIToken", {
 +     accountId,
@@ -208,8 +218,8 @@ Run it once from your laptop, under the `admin` profile:
 alchemy deploy stacks/github.ts --profile admin
 ```
 
-You'll see Alchemy plan two creates — the Cloudflare token and the
-GitHub secret — then apply them. When it's done, head to your repo's
+You'll see Alchemy plan three creates — the Cloudflare token and the
+two GitHub secrets — then apply them. When it's done, head to your repo's
 **Settings → Secrets and variables → Actions** page; you should see
 `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` listed there.
 
@@ -380,6 +390,11 @@ If you want to keep preview environments on one Cloudflare account
 and production on another, deploy two tokens from the same
 `stacks/github.ts` and prefix the secrets accordingly.
 
+Your profile resolves a single account ID, so this is the one case
+where you pass the account IDs in explicitly — set
+`TEST_CLOUDFLARE_ACCOUNT_ID` and `PROD_CLOUDFLARE_ACCOUNT_ID` in
+your environment when deploying this stack.
+
 ```typescript
 // stacks/github.ts
 import * as Alchemy from "alchemy";
@@ -449,7 +464,7 @@ a user that's a member of both.
 
 ## Recap
 
-You've completed the tutorial. You now know how to:
+You now know how to:
 
 - **Part 1** — Create a Stack and deploy a resource
 - **Part 2** — Add a Worker with bindings to other resources
@@ -458,6 +473,10 @@ You've completed the tutorial. You now know how to:
 - **Part 5** — Mint scoped CI credentials with
   `Cloudflare.ApiToken.AccountApiToken`, push them to GitHub with
   `GitHub.Secret`, and deploy from Actions
+
+In [Part 6](/cloudflare/tutorial/part-6), you'll ship the Worker's
+traces and logs to Axiom — with the datasets and ingest token
+declared in the same Stack as the Worker they observe.
 
 ## What's next
 

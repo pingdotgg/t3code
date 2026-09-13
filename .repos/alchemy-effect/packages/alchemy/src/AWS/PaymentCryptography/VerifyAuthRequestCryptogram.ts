@@ -15,9 +15,8 @@ export interface VerifyAuthRequestCryptogramRequest extends Omit<
  * Authorization Response Cryptogram (ARPC). A mismatch fails with the typed
  * `VerificationFailedException`. Provide `VerifyAuthRequestCryptogramHttp`
  * on the Function to satisfy this service.
- * @binding
- * @section EMV Cryptograms
- * @example Verify an ARQC and produce the ARPC
+ * ### EMV Cryptograms
+ * **Example:** Verify an ARQC and produce the ARPC
  * ```typescript
  * // init
  * const verifyArqc =
@@ -34,6 +33,8 @@ export interface VerifyAuthRequestCryptogramRequest extends Omit<
  *   AuthResponseAttributes: { ArqcMethod1: { AuthResponseCode: "0000" } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface VerifyAuthRequestCryptogram extends Binding.Service<
   VerifyAuthRequestCryptogram,

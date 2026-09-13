@@ -64,7 +64,7 @@ const InstanceTag = Context.Service<
  * Waits inside a workflow, using an in-memory activity for durations at or
  * below the threshold and scheduling a durable clock for longer durations.
  *
- * @category sleeping
+ * @category delays & timeouts
  * @since 4.0.0
  */
 export const sleep: (

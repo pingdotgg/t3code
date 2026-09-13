@@ -135,7 +135,7 @@ export const ElastiCacheTestFunctionLive = ElastiCacheTestFunction.make(
     const vpc = yield* resolveFixtureVpc;
     return {
       main: import.meta.url,
-      url: true,
+      functionUrl: true,
       timeout: Duration.seconds(30),
       memorySize: 256,
       ...(vpc === undefined ? {} : { vpc }),

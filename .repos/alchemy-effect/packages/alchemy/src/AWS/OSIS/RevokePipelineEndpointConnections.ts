@@ -11,9 +11,8 @@ import type { Pipeline } from "./Pipeline.ts";
  * (e.g. after an account is offboarded). The pipeline ARN is injected from
  * the binding; pass the endpoint IDs to revoke. Provide the implementation
  * with `Effect.provide(AWS.OSIS.RevokePipelineEndpointConnectionsHttp)`.
- * @binding
- * @section Managing Endpoint Connections
- * @example Revoke an Endpoint's Access
+ * ### Managing Endpoint Connections
+ * **Example:** Revoke an Endpoint's Access
  * ```typescript
  * // init — bind the operation to the pipeline
  * const revokeConnections =
@@ -22,6 +21,8 @@ import type { Pipeline } from "./Pipeline.ts";
  * // runtime
  * yield* revokeConnections({ EndpointIds: ["pe-1234567890abcdef0"] });
  * ```
+ *
+ * @binding
  */
 export interface RevokePipelineEndpointConnections extends Binding.Service<
   RevokePipelineEndpointConnections,

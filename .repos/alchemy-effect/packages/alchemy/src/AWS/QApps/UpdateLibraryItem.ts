@@ -16,9 +16,8 @@ export interface UpdateLibraryItemRequest extends Omit<
  *
  * Updates a library item's publication status or categories. Provide the implementation with
  * `Effect.provide(AWS.QApps.UpdateLibraryItemHttp)`.
- * @binding
- * @section Library Items
- * @example Disable a Library Item
+ * ### Library Items
+ * **Example:** Disable a Library Item
  * ```typescript
  * // init — bind the operation to the Q App
  * const updateLibraryItem = yield* AWS.QApps.UpdateLibraryItem(app);
@@ -26,6 +25,8 @@ export interface UpdateLibraryItemRequest extends Omit<
  * // runtime
  * yield* updateLibraryItem({ libraryItemId, status: "DISABLED" });
  * ```
+ *
+ * @binding
  */
 export interface UpdateLibraryItem extends Binding.Service<
   UpdateLibraryItem,

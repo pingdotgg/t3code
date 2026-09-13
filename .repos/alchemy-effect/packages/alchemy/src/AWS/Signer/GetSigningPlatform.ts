@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * supports revocation. Account-level operation over the AWS-managed platform
  * catalog, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Signer.GetSigningPlatformHttp)`.
- * @binding
- * @section Discovering Platforms
- * @example Check Revocation Support
+ * ### Discovering Platforms
+ * **Example:** Check Revocation Support
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getSigningPlatform = yield* AWS.Signer.GetSigningPlatform();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const canRevoke = platform.revocationSupported === true;
  * ```
+ *
+ * @binding
  */
 export interface GetSigningPlatform extends Binding.Service<
   GetSigningPlatform,
