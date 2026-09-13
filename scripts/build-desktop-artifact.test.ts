@@ -733,7 +733,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "@ff-labs/fff-node": "0.9.4",
           "@opencode-ai/sdk": "^1.3.15",
           "@pierre/diffs": "1.3.0",
-          "msgpackr-extract": "3.0.4",
           "node-pty": "1.1.0",
         },
         desktopDependencies: {
@@ -745,7 +744,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
       {
         "@ff-labs/fff-node": "0.9.4",
-        "msgpackr-extract": "3.0.4",
         "node-pty": "1.1.0",
         "@clerk/electron": "0.0.34",
         effect: "4.0.0-beta.103",
@@ -1907,7 +1905,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/node-pty/third_party/conpty*",
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
-      "--exclude=node_modules/@msgpackr-extract/msgpackr-extract-win32-*",
       "apps/server/dist",
       "node_modules",
     ]);
@@ -2010,8 +2007,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so",
           "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi.dll",
           "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so",
-          "node_modules/@msgpackr-extract/msgpackr-extract-win32-x64/addon.node",
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
           "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/index.js",
           "node_modules/.bin/tool",
           "node_modules/.pnpm/lock.yaml",
@@ -2050,10 +2045,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.include(listing, "node_modules/node-pty/prebuilds/linux-x64/pty.node");
         assert.include(listing, "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so");
         assert.include(listing, "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so");
-        assert.include(
-          listing,
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
-        );
         for (const excluded of [
           "prebuilds/darwin-",
           "prebuilds/win32-",
@@ -2061,7 +2052,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "third_party/conpty",
           "fff-bin-win32-",
           "ffi-rs-win32-",
-          "msgpackr-extract-win32-",
           "claude-agent-sdk-",
           "node_modules/.bin",
           "node_modules/.pnpm",

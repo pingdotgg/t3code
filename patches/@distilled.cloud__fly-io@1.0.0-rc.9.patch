@@ -1,0 +1,15 @@
+diff --git a/lib/credentials.js b/lib/credentials.js
+index dbbbf5910f857b50a2d10954eca55676b42ff6f3..8516d91d6ea42d4a7ba67e1d6e7134b468feb2d2 100644
+--- a/lib/credentials.js
++++ b/lib/credentials.js
+@@ -48,8 +48,8 @@ export const normalizeApiBaseUrl = (hostname) => {
+ export class Credentials extends Context.Service()("Fly-ioCredentials") {
+ }
+ const envConfig = EffectConfig.all({
+-    apiKey: EffectConfig.string("FLY_API_TOKEN").pipe(EffectConfig.orElse(() => EffectConfig.string("FLY_IO_API_KEY"))),
+-    apiBaseUrl: EffectConfig.string("FLY_API_HOSTNAME").pipe(EffectConfig.withDefault("")),
++    apiKey: EffectConfig.String("FLY_API_TOKEN").pipe(EffectConfig.orElse(() => EffectConfig.String("FLY_IO_API_KEY"))),
++    apiBaseUrl: EffectConfig.String("FLY_API_HOSTNAME").pipe(EffectConfig.withDefault("")),
+ });
+ export const CredentialsFromEnv = Layer.succeed(Credentials, envConfig.pipe(Effect.mapError(() => new ConfigError({
+     message: "FLY_API_TOKEN (or FLY_IO_API_KEY) environment variable is required",

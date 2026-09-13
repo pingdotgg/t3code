@@ -19,8 +19,8 @@ import {
 // Only the field this test cares about; decoding ignores everything else.
 // optionalDependencies matter as much as dependencies here: every native family
 // in the list declares its actual platform bindings there (ffi-rs -> @yuuang/*,
-// msgpackr-extract -> @msgpackr-extract/*, fff-node -> @ff-labs/fff-bin-*), so
-// reading only `dependencies` would check nothing for exactly those packages.
+// fff-node -> @ff-labs/fff-bin-*), so reading only `dependencies` would check
+// nothing for exactly those packages.
 const PackageManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -48,8 +48,7 @@ describe("shouldBundleCliDependency", () => {
       "@yuuang/ffi-rs-win32-x64-msvc",
       "@ff-labs/fff-node",
       "@clerk/electron-passkeys",
-      "msgpackr-extract",
-      "@msgpackr-extract/msgpackr-extract-win32-x64",
+      "node-addon-api",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
@@ -60,9 +59,9 @@ describe("shouldBundleCliDependency", () => {
     assert.strictEqual(shouldBundleCliDependency("@effect/sql-sqlite-bun"), false);
   });
 
-  // The real package is `node-gyp-build-optional-packages`, reached by prefix.
-  // It is transitive to a selected dependency root, so the runtime closure test
-  // below ensures it follows that root into the sidecar.
+  // `node-gyp-build-optional-packages` is reached by prefix. Nothing in the
+  // server's closure depends on it today, but the prefix keeps a future native
+  // dependency that does from being inlined by default.
   it("treats prefix-matched siblings as external", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
   });
@@ -87,7 +86,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "msgpackr-extract", "node-pty"],
+      ["@ff-labs/fff-node", "node-pty"],
     );
   });
 });
@@ -97,12 +96,13 @@ describe("selectCliRuntimeExternalDependencies", () => {
 // bundled away instead of left external, that dependency does not follow the
 // selected root into the sidecar.
 //
-// Found the hard way: node-gyp-build-optional-packages requires detect-libc,
-// which was bundled. Windows was fine; WSL got MODULE_NOT_FOUND.
+// Found the hard way: msgpackr-extract's node-gyp-build-optional-packages
+// required detect-libc, which was bundled. Windows was fine; WSL got
+// MODULE_NOT_FOUND.
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // Read manifests off disk from the pnpm store rather than resolving them.
   // `require("<name>/package.json")` cannot do this job: under pnpm isolation a
-  // transitive package (detect-libc, msgpackr-extract, ffi-rs) is not reachable
+  // transitive package (node-addon-api, ffi-rs) is not reachable
   // by name from this file at all, and an `exports` map can refuse the
   // `/package.json` subpath outright (@ff-labs/fff-node). Both surface as "not
   // installed", which would let this test skip everything and pass while
@@ -163,9 +163,10 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         const found = [...installed.keys()].filter(isRuntimeExternal);
 
         // Without this the closure check below can pass vacuously: if nothing is
-        // read, nothing is checked. These are the packages whose closure actually
-        // broke WSL, so require them by name.
-        for (const required of ["node-pty", "node-gyp-build-optional-packages", "detect-libc"]) {
+        // read, nothing is checked. node-pty is the one native root every
+        // platform ships, and node-addon-api is its transitive runtime
+        // dependency, so require them by name.
+        for (const required of ["node-pty", "node-addon-api"]) {
           assert.ok(
             found.includes(required),
             `expected ${required} in the pnpm store; the closure check is only meaningful if it can read these (found ${found.length})`,
@@ -225,13 +226,13 @@ var x = 1;
 
   it("flags an external package that was inlined", () => {
     const source =
-      region("../../node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/lib/process.js") +
+      region("../../node_modules/.pnpm/node-addon-api@7.1.1/node_modules/node-addon-api/index.js") +
       region(
-        "../../node_modules/.pnpm/msgpackr-extract@3.0.4/node_modules/msgpackr-extract/index.js",
+        "../../node_modules/.pnpm/node-gyp-build-optional-packages@5.2.2/node_modules/node-gyp-build-optional-packages/index.js",
       );
     const result = findInlinedExternalPackages(source);
 
-    assert.deepStrictEqual(result.inlined, ["detect-libc", "msgpackr-extract"]);
+    assert.deepStrictEqual(result.inlined, ["node-addon-api", "node-gyp-build-optional-packages"]);
     assert.strictEqual(result.regionCount, 2);
   });
 
@@ -276,7 +277,7 @@ var x = 1;
   });
 
   it("reports no regions when the marker format is absent", () => {
-    const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
+    const result = findInlinedExternalPackages("var x = 1; // node_modules/node-pty/lib.js");
     assert.strictEqual(result.regionCount, 0);
     assert.deepStrictEqual(result.inlined, []);
   });

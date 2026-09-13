@@ -178,6 +178,26 @@ it.layer(NodeServices.layer)("sync-reference-repos", (it) => {
     }),
   );
 
+  it.effect("resolves a pkg.ing preview pin to its upstream commit", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const rootDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "sync-reference-repos-alchemy-preview-",
+      });
+      yield* fs.makeDirectory(path.join(rootDir, "infra", "relay"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(rootDir, "infra", "relay", "package.json"),
+        '{"dependencies":{"alchemy":"https://pkg.ing/alchemy/2365753e583e15d1476c28055f6b12d3adfdd777"}}',
+      );
+
+      assert.equal(
+        yield* resolveReferenceRepoRef(alchemyEffect, rootDir, false),
+        "2365753e583e15d1476c28055f6b12d3adfdd777",
+      );
+    }),
+  );
+
   it.effect("plans an add for a missing subtree and a pull for an existing subtree", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
