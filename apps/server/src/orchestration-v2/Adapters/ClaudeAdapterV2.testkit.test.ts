@@ -1,4 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
   ProviderInstanceId,
   ProviderSessionId,
@@ -13,24 +17,31 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 
+import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   CLAUDE_PROVIDER,
   ClaudeAgentSdkQueryRunnerError,
   makeClaudeUserMessage,
+  permissionResultFromDecision,
   type ClaudeAgentSdkQueryOptions,
 } from "./ClaudeAdapterV2.ts";
 import {
   CLAUDE_AGENT_SDK_REPLAY_PROTOCOL,
+  ClaudeOrchestratorReplayHarness,
+  ClaudeReplayFrameMismatchError,
   ClaudeReplayIncompleteError,
   ClaudeReplayRuntimeExitError,
   ClaudeReplayUnexpectedOutboundError,
   makeReplayQueryRunner,
   recordInterruptedClaudeQuery,
   recordMessagesUntilTurnResultAndFinalize,
+  resolveClaudeRecordingExecutablePath,
 } from "./ClaudeAdapterV2.testkit.ts";
 import { makeProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import { readProviderReplayTranscript } from "../testkit/ReplayTranscriptNdjson.ts";
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
+const isClaudeReplayFrameMismatchError = Schema.is(ClaudeReplayFrameMismatchError);
 const isClaudeReplayIncompleteError = Schema.is(ClaudeReplayIncompleteError);
 const isClaudeReplayRuntimeExitError = Schema.is(ClaudeReplayRuntimeExitError);
 const isClaudeReplayUnexpectedOutboundError = Schema.is(ClaudeReplayUnexpectedOutboundError);
@@ -767,4 +778,143 @@ describe("ClaudeAdapterV2 replay testkit", () => {
       assert.equal(terminalEntry.label, "result");
     }
   });
+
+  it.effect("rejects the denied-write transcript when an allow response is substituted", () =>
+    Effect.gen(function* () {
+      const rawTranscript = yield* readProviderReplayTranscript(
+        new URL(
+          "../testkit/fixtures/tool_call_denied_write/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+      ).pipe(Effect.provide(NodeServices.layer));
+      const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(rawTranscript);
+
+      const expectedOutboundFrame = (label: string): unknown => {
+        const entry = transcript.entries.find(
+          (candidate): candidate is Extract<ProviderReplayEntry, { type: "expect_outbound" }> =>
+            candidate.type === "expect_outbound" && candidate.label === label,
+        );
+        if (entry === undefined) {
+          throw new Error(`denied-write transcript is missing outbound frame ${label}.`);
+        }
+        return entry.frame;
+      };
+      const openFrame = expectedOutboundFrame("query.open") as {
+        readonly options: ClaudeAgentSdkQueryOptions;
+      };
+      const offerFrame = expectedOutboundFrame("prompt.offer:1") as {
+        readonly message: SDKUserMessage;
+      };
+
+      const canUseTool: NonNullable<ClaudeAgentSdkQueryOptions["canUseTool"]> = (
+        toolName,
+        toolInput,
+        options,
+      ) =>
+        Promise.resolve(
+          permissionResultFromDecision({
+            toolName,
+            decision: "accept",
+            toolInput,
+            toolUseID: options.toolUseID,
+            ...(options.suggestions === undefined ? {} : { suggestions: options.suggestions }),
+          }),
+        );
+
+      const runner = makeReplayQueryRunner(transcript);
+      const session = runner.open({
+        options: { ...openFrame.options, canUseTool },
+        threadId: ThreadId.make("thread-denied-write-allow-substitution"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-denied-write-allow-substitution",
+        ),
+      });
+      yield* session.offer(offerFrame.message);
+
+      const exit = yield* Effect.exit(Stream.runDrain(session.messages));
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause);
+        assert.isTrue(isClaudeAgentSdkQueryRunnerError(error));
+        if (isClaudeAgentSdkQueryRunnerError(error)) {
+          assert.isTrue(isClaudeReplayFrameMismatchError(error.cause));
+          if (isClaudeReplayFrameMismatchError(error.cause)) {
+            assert.equal(error.cause.label, "permission.response:Write");
+          }
+        }
+      }
+    }),
+  );
+});
+
+describe("resolveClaudeRecordingExecutablePath", () => {
+  const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
+  const NPM_SHIM = `${NPM_DIR}\\claude.cmd`;
+  const NPM_PACKAGE_EXE = `${NPM_DIR}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`;
+
+  function withRecordingResolution(input: {
+    readonly platform: "win32" | "darwin";
+    readonly resolvedCommand: string | undefined;
+    readonly existingFiles?: ReadonlyArray<string>;
+  }) {
+    const existing = new Set(input.existingFiles ?? []);
+    return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(HostProcessPlatform, input.platform),
+        Effect.provideService(SpawnExecutableResolution, () => input.resolvedCommand),
+        Effect.provideService(ClaudeExecutableFileCheck, (filePath) => existing.has(filePath)),
+      );
+  }
+
+  it.effect("returns the resolved path on non-Windows platforms", () =>
+    Effect.gen(function* () {
+      assert.equal(
+        yield* resolveClaudeRecordingExecutablePath({}).pipe(
+          withRecordingResolution({
+            platform: "darwin",
+            resolvedCommand: "/usr/local/bin/claude",
+          }),
+        ),
+        "/usr/local/bin/claude",
+      );
+    }),
+  );
+
+  it.effect("leaves SDK discovery in place when nothing resolves on PATH", () =>
+    Effect.gen(function* () {
+      assert.isUndefined(
+        yield* resolveClaudeRecordingExecutablePath({}).pipe(
+          withRecordingResolution({ platform: "darwin", resolvedCommand: undefined }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("follows a Windows launcher shim to its package entry", () =>
+    Effect.gen(function* () {
+      assert.equal(
+        yield* resolveClaudeRecordingExecutablePath({}).pipe(
+          withRecordingResolution({
+            platform: "win32",
+            resolvedCommand: NPM_SHIM,
+            existingFiles: [NPM_PACKAGE_EXE],
+          }),
+        ),
+        NPM_PACKAGE_EXE,
+      );
+    }),
+  );
+
+  it.effect(
+    "leaves SDK discovery in place for a Windows launcher shim without a package entry",
+    () =>
+      Effect.gen(function* () {
+        assert.isUndefined(
+          yield* resolveClaudeRecordingExecutablePath({}).pipe(
+            withRecordingResolution({ platform: "win32", resolvedCommand: NPM_SHIM }),
+          ),
+        );
+      }),
+  );
 });
