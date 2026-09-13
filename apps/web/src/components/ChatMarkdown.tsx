@@ -160,6 +160,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
+import { readWorkbenchRef } from "../state/taskWorkbench";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -1620,12 +1621,15 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     ...(relativePath && resource._tag !== "attachment"
       ? {
           onOpenFile: () =>
-            useRightPanelStore
-              .getState()
-              .openFile(
-                { environmentId: props.environmentId, threadId: resource.threadId },
-                relativePath,
-              ),
+            useRightPanelStore.getState().openFile(
+              readWorkbenchRef({
+                environmentId: props.environmentId,
+                threadId: resource.threadId,
+              }),
+              relativePath,
+              undefined,
+              props.workspaceRoot,
+            ),
         }
       : {}),
   };
@@ -2269,7 +2273,10 @@ function useChatMarkdownState({
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
         createAssetUrl,
         onOpenFile: threadRef
-          ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
+          ? (path) =>
+              useRightPanelStore
+                .getState()
+                .openFile(readWorkbenchRef(threadRef), path, undefined, cwd)
           : undefined,
       }).then(
         (preview) => {
@@ -2510,7 +2517,7 @@ function useChatMarkdownState({
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
-        useRightPanelStore.getState().openFile(threadRef, path, line);
+        useRightPanelStore.getState().openFile(readWorkbenchRef(threadRef), path, line, cwd);
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;

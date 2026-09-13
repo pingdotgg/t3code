@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import { taskWorkbenchRef, workbenchRefFor } from "@t3tools/client-runtime/state/task-workbench";
+import { TaskId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -292,5 +293,47 @@ describe("terminalUiStateStore actions", () => {
     store.clearTerminalUiState(THREAD_REF);
 
     expect(useTerminalUiStateStore.getState()).toBe(before);
+  });
+});
+
+describe("task terminal ownership", () => {
+  it("shares siblings, persists task keys, and preserves standalone tools on removal", () => {
+    const environmentId = EnvironmentId.make("task-environment");
+    const task = { environmentId, id: TaskId.make("shared") };
+    const first = scopeThreadRef(environmentId, ThreadId.make("first"));
+    const second = scopeThreadRef(environmentId, ThreadId.make("second"));
+    const owner = workbenchRefFor(first, { taskId: task.id }, task);
+    const siblingOwner = workbenchRefFor(second, { taskId: task.id }, task);
+    const store = useTerminalUiStateStore.getState();
+    store.ensureTerminal(first, "standalone", { open: true });
+    store.ensureTerminal(owner, "task-terminal", { open: true });
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        siblingOwner,
+      ).terminalIds,
+    ).toContain("task-terminal");
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        workbenchRefFor(first, { taskId: null }, task),
+      ).terminalIds,
+    ).toContain("standalone");
+    const restored = migratePersistedTerminalUiStateStoreState(
+      useTerminalUiStateStore.getState(),
+      1,
+    );
+    expect(
+      selectThreadTerminalUiState(
+        restored.terminalUiStateByThreadKey!,
+        taskWorkbenchRef({ environmentId, taskId: task.id }),
+      ).terminalIds,
+    ).toContain("task-terminal");
+    expect(
+      selectThreadTerminalUiState(
+        restored.terminalUiStateByThreadKey!,
+        taskWorkbenchRef({ environmentId: EnvironmentId.make("other"), taskId: task.id }),
+      ).terminalIds,
+    ).toEqual([]);
   });
 });

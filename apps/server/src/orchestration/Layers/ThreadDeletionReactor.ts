@@ -1,4 +1,5 @@
-import type { OrchestrationEvent } from "@t3tools/contracts";
+import { type OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import { taskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -6,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { PreviewManager } from "../../preview/Manager.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -15,7 +17,11 @@ import {
 } from "../Services/ThreadDeletionReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
 
-type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+type CleanupEvent = Extract<
+  OrchestrationEvent,
+  { type: "thread.deleted" | "task.deleted" | "task.archived" }
+>;
+type ThreadDeletedEvent = Extract<CleanupEvent, { type: "thread.deleted" }>;
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -24,7 +30,7 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
 }: {
   readonly effect: Effect.Effect<void, E, R>;
   readonly message: string;
-  readonly threadId: ThreadDeletedEvent["payload"]["threadId"];
+  readonly threadId: string;
 }): Effect.Effect<void, E, R> =>
   effect.pipe(
     Effect.catchCause((cause) => {
@@ -42,6 +48,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const previewManager = yield* PreviewManager;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -50,36 +57,43 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
-  const closeThreadTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: terminalManager.close({ threadId, deleteHistory: true }),
-      message: "thread deletion cleanup skipped terminal close",
+  const processCleanup = Effect.fn("ThreadDeletionReactor.processCleanup")(function* (
+    event: CleanupEvent,
+  ) {
+    const threadId =
+      event.type === "thread.deleted"
+        ? event.payload.threadId
+        : taskWorkbenchId(event.payload.taskId);
+    if (event.type === "thread.deleted") {
+      yield* stopProviderSession(event.payload.threadId);
+    }
+    yield* logCleanupCauseUnlessInterrupted({
+      effect: terminalManager.close({ threadId, deleteHistory: event.type !== "task.archived" }),
+      message: "resource cleanup skipped terminal close",
       threadId,
     });
-
-  const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
-    event: ThreadDeletedEvent,
-  ) {
-    const { threadId } = event.payload;
-    yield* stopProviderSession(threadId);
-    yield* closeThreadTerminals(threadId);
+    yield* logCleanupCauseUnlessInterrupted({
+      effect: previewManager.close({ threadId: ThreadId.make(threadId) }),
+      message: "resource cleanup skipped preview close",
+      threadId,
+    });
   });
 
-  const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>
-    processThreadDeleted(event).pipe(
+  const processCleanupSafely = (event: CleanupEvent) =>
+    processCleanup(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
         }
         return Effect.logWarning("thread deletion reactor failed to process event", {
           eventType: event.type,
-          threadId: event.payload.threadId,
+          aggregateId: event.aggregateId,
           cause: Cause.pretty(cause),
         });
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processThreadDeletedSafely);
+  const worker = yield* makeDrainableWorker(processCleanupSafely);
 
   // Highest event sequence the subscriber has handed to the worker. Waiting
   // through a successful thread.created sequence covers every deletion that
@@ -98,9 +112,12 @@ const make = Effect.gen(function* () {
           Stream.onStart(orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen))),
         ),
         (event) =>
-          (event.type === "thread.deleted" ? worker.enqueue(event) : Effect.void).pipe(
-            Effect.andThen(noteSeen(event.sequence)),
-          ),
+          (event.type === "thread.deleted" ||
+          event.type === "task.deleted" ||
+          event.type === "task.archived"
+            ? worker.enqueue(event)
+            : Effect.void
+          ).pipe(Effect.andThen(noteSeen(event.sequence))),
       ),
     );
   });

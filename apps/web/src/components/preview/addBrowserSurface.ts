@@ -15,6 +15,8 @@ export async function addBrowserSurface<E>(input: {
   readonly openPreview: OpenPreviewMutation<E>;
   /** Omit to use the configured default profile. */
   readonly profileId?: string | undefined;
+  /** Recheck after creation so a later panel choice keeps focus. */
+  readonly shouldActivate?: (() => boolean) | undefined;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const result = await openPreviewSession({
     openPreview: input.openPreview,
@@ -22,6 +24,7 @@ export async function addBrowserSurface<E>(input: {
     ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
   });
   return mapAtomCommandResult(result, (snapshot) => {
+    if (input.shouldActivate?.() === false) return;
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
 }

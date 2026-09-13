@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./taskWorkbench": {
+      "types": "./src/taskWorkbench.ts",
+      "import": "./src/taskWorkbench.ts"
+    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"

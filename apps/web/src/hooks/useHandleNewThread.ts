@@ -93,7 +93,8 @@ export function useNewThreadHandler() {
         return (
           readEnvironmentSupportsTasks(projectRef.environmentId) &&
           task != null &&
-          task.archivedAt === null
+          task.archivedAt === null &&
+          (options?.navigate !== false || task.primaryProjectId === projectRef.projectId)
         );
       };
       if (!taskContextAvailable()) return Promise.resolve(null);

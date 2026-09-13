@@ -51,6 +51,7 @@ import {
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  terminalLaunchLocation,
   reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -2446,5 +2447,44 @@ describe("restorePlanFollowUpComposer", () => {
       prompt: "Follow up on the plan",
       detectTrigger: true,
     });
+  });
+});
+
+describe("task terminal launch context", () => {
+  it("preserves a running terminal's cwd when a primary project changes", () => {
+    const existing = { cwd: "/projects/original", worktreePath: null };
+    const newPrimary = { cwd: "/projects/replacement", worktreePath: null };
+    expect(terminalLaunchLocation(existing, newPrimary)).toEqual(existing);
+    expect(terminalLaunchLocation(null, newPrimary)).toEqual(newPrimary);
+  });
+  it("keeps a member's old standalone checkout available after joining and leaving", () => {
+    const standalone = { cwd: "/worktrees/member", worktreePath: "/worktrees/member" };
+    expect(
+      terminalLaunchLocation(standalone, { cwd: "/projects/task", worktreePath: null }),
+    ).toEqual(standalone);
+  });
+});
+
+describe("task proactive panel observations", () => {
+  it("resets a pending member diff when the conversation or resource owner changes", () => {
+    const initial = observeProactivePanelUserChoice(null, {
+      threadKey: "first:task-owner",
+      runningTurnId: TurnId.make("first-turn"),
+      userActionRevision: 4,
+    });
+    const sibling = observeProactivePanelUserChoice(initial, {
+      threadKey: "second:task-owner",
+      runningTurnId: null,
+      userActionRevision: 5,
+    });
+    expect(sibling.runningTurnId).toBeUndefined();
+    expect(sibling.userActionRevision).toBe(5);
+    const moved = observeProactivePanelUserChoice(initial, {
+      threadKey: "first:other-owner",
+      runningTurnId: TurnId.make("first-turn"),
+      userActionRevision: 9,
+    });
+    expect(moved.threadKey).toBe("first:other-owner");
+    expect(moved.userActionRevision).toBe(9);
   });
 });

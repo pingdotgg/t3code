@@ -1,6 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
+import { readWorkbenchRef } from "./state/taskWorkbench";
 import { useRightPanelStore } from "./rightPanelStore";
 import { resolvePathLinkTarget } from "./terminal-links";
 
@@ -92,7 +93,9 @@ export function openDiffFilePrimaryAction({
   if (!workspaceFilePath) return;
 
   if (threadRef) {
-    useRightPanelStore.getState().openFile(threadRef, workspaceFilePath);
+    useRightPanelStore
+      .getState()
+      .openFile(readWorkbenchRef(threadRef), workspaceFilePath, undefined, activeCwd);
     return;
   }
 

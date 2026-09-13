@@ -17,6 +17,7 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { isAbsolutePath } from "./terminal-links";
 import { resolveStorage } from "./lib/storage";
 
 const RIGHT_PANEL_KINDS = [
@@ -58,6 +59,8 @@ export type RightPanelSurface =
       kind: "file";
       /** Workspace-relative, or absolute for a host file outside the workspace. */
       relativePath: string;
+      /** Explicit source checkout for files opened from a conversation or diff. */
+      cwd?: string;
       revealLine: number | null;
       revealRequestId: number;
       /** Present when the file lives in the thread's attachment store rather
@@ -108,6 +111,7 @@ const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
+  workbenchRoot?: string;
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
@@ -134,7 +138,7 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number, cwd?: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -162,6 +166,7 @@ interface RightPanelStoreState {
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
   reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
+  reconcileWorkbenchRoot: (ref: ScopedThreadRef, root: string) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
@@ -201,14 +206,19 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
 
+const fileSurfaceId = (relativePath: string, cwd?: string): `file:${string}` =>
+  cwd === undefined ? `file:${relativePath}` : `file:${JSON.stringify([cwd, relativePath])}`;
+
 const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  cwd?: string,
 ): RightPanelSurface => ({
-  id: `file:${relativePath}`,
+  id: fileSurfaceId(relativePath, cwd),
   kind: "file",
   relativePath,
+  ...(cwd === undefined ? {} : { cwd }),
   revealLine,
   revealRequestId,
 });
@@ -272,6 +282,7 @@ const upsertSurface = (
   surface: RightPanelSurface,
   activate = true,
 ): ThreadRightPanelState => ({
+  ...current,
   isOpen: true,
   surfaces: current.surfaces.some((entry) => entry.id === surface.id)
     ? current.surfaces
@@ -290,6 +301,7 @@ const updateThread = (
     !next.isOpen &&
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
+    next.workbenchRoot === undefined &&
     !next.dismissedDeviceSurfaceIds?.length
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
@@ -458,6 +470,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadKey,
                 {
                   isOpen,
+                  ...(typeof validThreadState?.workbenchRoot === "string"
+                    ? { workbenchRoot: validThreadState.workbenchRoot }
+                    : {}),
                   surfaces,
                   activeSurfaceId,
                   ...(Array.isArray(validThreadState?.dismissedDeviceSurfaceIds)
@@ -574,13 +589,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line, cwd) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
-            const surfaceId = `file:${relativePath}` as const;
+            const surfaceId = fileSurfaceId(relativePath, cwd);
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -589,8 +604,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
+              cwd,
             );
             return {
+              ...current,
               isOpen: true,
               activeSurfaceId: surface.id,
               surfaces: existing
@@ -781,6 +798,34 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: activeStillExists
                 ? current.activeSurfaceId
                 : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
+            };
+          }),
+        ),
+      reconcileWorkbenchRoot: (ref, root) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            if (current.workbenchRoot === root) return current;
+            const surfaces =
+              current.workbenchRoot === undefined
+                ? current.surfaces
+                : current.surfaces.filter(
+                    (surface) =>
+                      surface.kind !== "file" ||
+                      surface.cwd !== undefined ||
+                      surface.attachment !== undefined ||
+                      isAbsolutePath(surface.relativePath),
+                  );
+            const activeStillExists = surfaces.some(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            return {
+              ...current,
+              workbenchRoot: root,
+              surfaces,
+              isOpen: surfaces.length > 0 && current.isOpen,
+              activeSurfaceId: activeStillExists
+                ? current.activeSurfaceId
+                : (surfaces.at(-1)?.id ?? null),
             };
           }),
         ),

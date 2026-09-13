@@ -262,6 +262,10 @@
     "./state/task-grouping": {
       "types": "./src/state/taskGrouping.ts",
       "default": "./src/state/taskGrouping.ts"
+    },
+    "./state/task-workbench": {
+      "types": "./src/state/taskWorkbench.ts",
+      "default": "./src/state/taskWorkbench.ts"
     }
   },
   "scripts": {

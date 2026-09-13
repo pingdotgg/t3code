@@ -4,8 +4,11 @@ import {
   EventId,
   type OrchestrationEvent,
   ThreadId,
+  TaskId,
 } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
+import { taskWorkbenchId } from "@t3tools/shared/taskWorkbench";
+import * as PreviewManager from "../../preview/Manager.ts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -109,6 +112,7 @@ describe("ThreadDeletionReactor drain", () => {
         close: () => Effect.void,
       } as unknown as TerminalManager.TerminalManager["Service"];
       const layer = ThreadDeletionReactorLive.pipe(
+        Layer.provide(PreviewManager.layer),
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
@@ -136,4 +140,177 @@ describe("ThreadDeletionReactor drain", () => {
       ).pipe(Effect.provide(layer));
     }),
   );
+});
+
+describe("committed task resource cleanup", () => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const taskId = TaskId.make("cleanup-task");
+  const memberId = ThreadId.make("cleanup-member");
+  const taskResourceId = taskWorkbenchId(taskId);
+  const otherResourceId = taskWorkbenchId(TaskId.make("other-task"));
+  const event = (
+    sequence: number,
+    type:
+      | "task.deleted"
+      | "task.archived"
+      | "thread.deleted"
+      | "thread.archived"
+      | "thread.task-set",
+  ): OrchestrationEvent => {
+    const envelope = {
+      sequence,
+      eventId: EventId.make(`cleanup-${sequence}`),
+      occurredAt: now,
+      commandId: CommandId.make(`cleanup-${sequence}`),
+      causationEventId: null,
+      correlationId: CorrelationId.make(`cleanup-${sequence}`),
+      metadata: {},
+    };
+    switch (type) {
+      case "task.deleted":
+        return {
+          ...envelope,
+          aggregateKind: "task",
+          aggregateId: taskId,
+          type,
+          payload: { taskId, deletedAt: now },
+        };
+      case "task.archived":
+        return {
+          ...envelope,
+          aggregateKind: "task",
+          aggregateId: taskId,
+          type,
+          payload: { taskId, archivedAt: now, updatedAt: now },
+        };
+      case "thread.deleted":
+        return {
+          ...envelope,
+          aggregateKind: "thread",
+          aggregateId: memberId,
+          type,
+          payload: { threadId: memberId, deletedAt: now },
+        };
+      case "thread.archived":
+        return {
+          ...envelope,
+          aggregateKind: "thread",
+          aggregateId: memberId,
+          type,
+          payload: { threadId: memberId, archivedAt: now, updatedAt: now },
+        };
+      case "thread.task-set":
+        return {
+          ...envelope,
+          aggregateKind: "thread",
+          aggregateId: memberId,
+          type,
+          payload: { threadId: memberId, taskId: null, updatedAt: now },
+        };
+    }
+  };
+
+  const scenarios = [
+    {
+      name: "member deletion preserves shared task resources",
+      types: ["thread.deleted"],
+      closed: [memberId],
+      stopped: [memberId],
+      deleteHistory: true,
+    },
+    {
+      name: "member archive preserves shared task resources",
+      types: ["thread.archived"],
+      closed: [],
+      stopped: [],
+      deleteHistory: false,
+    },
+    {
+      name: "task delete keep preserves member resources and providers",
+      types: ["thread.task-set", "task.deleted"],
+      closed: [taskResourceId],
+      stopped: [],
+      deleteHistory: true,
+    },
+    {
+      name: "task delete delete cleans actual members and task resources",
+      types: ["thread.deleted", "task.deleted"],
+      closed: [memberId, taskResourceId],
+      stopped: [memberId],
+      deleteHistory: true,
+    },
+    {
+      name: "task archive closes task resources and preserves terminal history",
+      types: ["thread.archived", "task.archived"],
+      closed: [taskResourceId],
+      stopped: [],
+      deleteHistory: false,
+    },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    effectIt.effect(scenario.name, () =>
+      Effect.gen(function* () {
+        const stops: string[] = [];
+        const terminals = new Set<string>([memberId, taskResourceId, otherResourceId]);
+        const closes: Array<{ threadId: string; deleteHistory?: boolean | undefined }> = [];
+        const releaseEvents = yield* Deferred.make<void>();
+        const engine = Layer.mock(OrchestrationEngineService)({
+          latestSequence: Effect.succeed(0),
+          streamDomainEvents: Stream.fromEffect(Deferred.await(releaseEvents)).pipe(
+            Stream.flatMap(() =>
+              Stream.fromIterable(scenario.types.map((type, index) => event(index + 1, type))),
+            ),
+          ),
+        });
+        const layer = ThreadDeletionReactorLive.pipe(
+          Layer.provide(engine),
+          Layer.provide(
+            Layer.mock(ProviderService)({
+              stopSession: ({ threadId }) =>
+                Effect.sync(() => {
+                  stops.push(threadId);
+                }),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(TerminalManager.TerminalManager)({
+              close: (input) =>
+                Effect.sync(() => {
+                  closes.push(input);
+                  terminals.delete(input.threadId);
+                }),
+            }),
+          ),
+          Layer.provideMerge(PreviewManager.layer),
+        );
+        yield* Effect.gen(function* () {
+          const preview = yield* PreviewManager.PreviewManager;
+          for (const threadId of terminals)
+            yield* preview.open({
+              threadId: ThreadId.make(threadId),
+              url: "http://localhost:3000",
+            });
+          const reactor = yield* ThreadDeletionReactor;
+          yield* reactor.start();
+          yield* Deferred.succeed(releaseEvents, undefined);
+          yield* reactor.drainThrough(scenario.types.length);
+          expect(stops).toEqual(scenario.stopped);
+          expect(closes).toEqual(
+            scenario.closed.map((threadId) => ({
+              threadId,
+              deleteHistory: scenario.deleteHistory,
+            })),
+          );
+          for (const threadId of [memberId, taskResourceId, otherResourceId]) {
+            const retained = !scenario.closed.some((id) => id === threadId);
+            expect(terminals.has(threadId)).toBe(retained);
+            expect(
+              (yield* preview.list({ threadId: ThreadId.make(threadId) })).sessions,
+            ).toHaveLength(retained ? 1 : 0);
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+  }
 });

@@ -655,6 +655,14 @@ export function buildRunningThreadTurnInterruptInput(
   return buildThreadTurnInterruptInput(thread);
 }
 
+/** Existing sessions own their launch location; project edits affect only new terminals. */
+export function terminalLaunchLocation(
+  existing: { readonly cwd: string; readonly worktreePath: string | null } | null | undefined,
+  defaults: { readonly cwd: string; readonly worktreePath: string | null },
+) {
+  return existing ? { cwd: existing.cwd, worktreePath: existing.worktreePath } : defaults;
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

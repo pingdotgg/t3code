@@ -103,7 +103,7 @@ interface FilePreviewPanelProps {
   availableEditors: ReadonlyArray<EditorId>;
   revealLine: number | null;
   revealRequestId: number;
-  onOpenFile: (relativePath: string) => void;
+  onOpenFile: (relativePath: string, cwd?: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
   workspaceMutationId: string | null;
@@ -1090,7 +1090,7 @@ export default function FilePreviewPanel({
               <FileBreadcrumbs
                 cwd={cwd}
                 environmentId={environmentId}
-                onOpenFile={onOpenFile}
+                onOpenFile={(path) => onOpenFile(path, cwd)}
                 projectName={projectName}
                 relativePath={relativePath}
                 workspaceMutationId={workspaceMutationId}
@@ -1291,7 +1291,7 @@ export default function FilePreviewPanel({
               projectName={projectName}
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
-              onOpenFile={onOpenFile}
+              onOpenFile={(path) => onOpenFile(path, cwd)}
               workspaceMutationId={workspaceMutationId}
               {...(relativePath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }

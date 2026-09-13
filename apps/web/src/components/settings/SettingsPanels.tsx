@@ -1,3 +1,5 @@
+import { useTaskActions } from "../../hooks/useTaskActions";
+import { requestDeleteTask } from "../../taskDialogStore";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { ArchiveIcon, ArchiveX, ChevronRightIcon, SettingsIcon } from "lucide-react";
@@ -133,6 +135,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
+  archivedMemberRestoreTarget,
+  archivedTaskInventory,
   backgroundActivityOverrideSettings,
   backgroundActivitySharedPolicySettings,
   durationToSeconds,
@@ -2991,6 +2995,27 @@ export function ArchivedThreadsPanel() {
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(scope.environmentIds);
 
+  const taskActions = useTaskActions();
+  const archivedTasks = useMemo(
+    () =>
+      archivedTaskInventory(
+        archivedSnapshots,
+        scope.kind === "project" || scope.kind === "checkout"
+          ? new Set(scope.members.map((member) => `${member.environmentId}:${member.id}`))
+          : null,
+      ),
+    [archivedSnapshots, scope],
+  );
+  const restoreArchivedThread = useCallback(
+    (ref: ScopedThreadRef) => {
+      const target = archivedMemberRestoreTarget(archivedSnapshots, ref);
+      return target.kind === "task"
+        ? taskActions.unarchiveTask(target.ref)
+        : unarchiveThread(target.ref);
+    },
+    [archivedSnapshots, taskActions, unarchiveThread],
+  );
+
   const archivedGroups = useMemo(() => {
     const selectedProjectKeys =
       scope.kind === "project" || scope.kind === "checkout"
@@ -3055,7 +3080,7 @@ export function ArchivedThreadsPanel() {
       );
 
       if (clicked === "unarchive") {
-        const result = await unarchiveThread(threadRef);
+        const result = await restoreArchivedThread(threadRef);
         if (result._tag === "Success") {
           refreshArchivedThreads();
         } else if (!isAtomCommandInterrupted(result)) {
@@ -3087,12 +3112,45 @@ export function ArchivedThreadsPanel() {
         }
       }
     },
-    [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
+    [confirmAndDeleteThread, refreshArchivedThreads, restoreArchivedThread],
   );
 
   return (
     <SettingsPageContainer>
-      {archivedGroups.length === 0 ? (
+      {archivedTasks.length > 0 ? (
+        <SettingsSection id={searchableSetting("archive").id} title="Archived tasks">
+          {archivedTasks.map((task) => {
+            const ref = { environmentId: task.environmentId, taskId: task.id };
+            return (
+              <SettingsRow
+                key={`${task.environmentId}:${task.id}`}
+                title={task.name}
+                description={`Archived ${formatRelativeTimeLabel(task.archivedAt ?? task.createdAt)} · Restoring also restores its archived threads.`}
+                control={
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => {
+                        void taskActions.unarchiveTask(ref).then((result) => {
+                          if (result._tag === "Success") refreshArchivedThreads();
+                        });
+                      }}
+                    >
+                      <ArchiveX className="size-3.5" />
+                      Unarchive
+                    </Button>
+                    <Button variant="outline" size="xs" onClick={() => requestDeleteTask(ref)}>
+                      Delete…
+                    </Button>
+                  </div>
+                }
+              />
+            );
+          })}
+        </SettingsSection>
+      ) : null}
+      {archivedGroups.length === 0 && archivedTasks.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
           title={searchableSetting("archive").title}
@@ -3106,16 +3164,16 @@ export function ArchivedThreadsPanel() {
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
                 )}
                 {isLoadingArchive
-                  ? "Loading archived threads"
+                  ? "Loading archive"
                   : archiveError
-                    ? "Could not load archived threads"
-                    : "No archived threads"}
+                    ? "Could not load archive"
+                    : "No archived tasks or threads"}
               </span>
             }
             description={
               isLoadingArchive
                 ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
+                : (archiveError ?? "Archived tasks and threads will appear here.")
             }
           />
         </SettingsSection>
@@ -3123,7 +3181,11 @@ export function ArchivedThreadsPanel() {
         archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
             key={`${project.environmentId}:${project.id}`}
-            id={index === 0 ? searchableSetting("archive").id : undefined}
+            id={
+              index === 0 && archivedTasks.length === 0
+                ? searchableSetting("archive").id
+                : undefined
+            }
             title={project.title}
             icon={<ProjectFavicon project={project} />}
           >
@@ -3171,7 +3233,7 @@ export function ArchivedThreadsPanel() {
                     className="shrink-0"
                     onClick={() => {
                       void (async () => {
-                        const result = await unarchiveThread(
+                        const result = await restoreArchivedThread(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         if (result._tag === "Success") {

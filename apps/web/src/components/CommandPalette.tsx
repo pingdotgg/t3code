@@ -1,5 +1,8 @@
 "use client";
 
+import { useTaskWorkbench, readWorkbenchRef } from "../state/taskWorkbench";
+import { useThreadShell } from "../state/entities";
+
 import { requestNewTask } from "../taskDialogStore";
 import { useTasks, readEnvironmentSupportsTasks } from "../state/tasks";
 import { useTaskActions } from "../hooks/useTaskActions";
@@ -457,15 +460,19 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const toolThread = useThreadShell(routeThreadRef);
+  const { ref: toolRef } = useTaskWorkbench(
+    routeThreadRef,
+    toolThread,
+    routeTarget?.kind === "task" ? routeTarget.taskRef : null,
+  );
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    toolRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, toolRef).terminalOpen
       : false,
   );
   const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
-      : false,
+    toolRef ? selectActiveRightPanel(state.byThreadKey, toolRef) === "preview" : false,
   );
 
   useEffect(() => {
@@ -1836,7 +1843,7 @@ function OpenCommandPaletteDialog(props: {
         disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
         icon: <GitPullRequestArrowIcon className={ITEM_ICON_CLASS} />,
         run: async () => {
-          useRightPanelStore.getState().open(threadRef, "pull-requests");
+          useRightPanelStore.getState().open(readWorkbenchRef(threadRef), "pull-requests");
         },
       });
     }

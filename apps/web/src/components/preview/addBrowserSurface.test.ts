@@ -58,6 +58,51 @@ describe("addBrowserSurface", () => {
     });
   });
 
+  it.each(["file", "diff"] as const)(
+    "retains a delayed browser tab without replacing a newer %s selection",
+    async (selection) => {
+      let resolveRequested!: () => void;
+      const requested = new Promise<void>((resolve) => {
+        resolveRequested = resolve;
+      });
+      let resolveCreated!: (value: PreviewSessionSnapshot) => void;
+      const created = new Promise<PreviewSessionSnapshot>((resolve) => {
+        resolveCreated = resolve;
+      });
+      const initialRevision = useRightPanelStore.getState().getUserActionRevision(threadRef);
+      const shouldActivate = vi.fn(
+        () => useRightPanelStore.getState().getUserActionRevision(threadRef) === initialRevision,
+      );
+      const pending = addBrowserSurface({
+        threadRef,
+        shouldActivate,
+        openPreview: async () => {
+          resolveRequested();
+          return AsyncResult.success(await created);
+        },
+      });
+      await requested;
+      if (selection === "file") {
+        useRightPanelStore.getState().openFile(threadRef, "README.md");
+      } else {
+        useRightPanelStore.getState().open(threadRef, "diff");
+      }
+      const chosenPanel = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        threadRef,
+      );
+      resolveCreated(snapshot("tab-2"));
+      const result = await pending;
+
+      expect(result._tag).toBe("Success");
+      expect(shouldActivate).toHaveReturnedWith(false);
+      expect(Object.keys(readThreadPreviewState(threadRef).sessions)).toEqual(["tab-2"]);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+      ).toEqual(chosenPanel);
+    },
+  );
+
   it("creates another preview session when a browser tab is already active", async () => {
     const first = snapshot("tab-1");
     const second = snapshot("tab-2");

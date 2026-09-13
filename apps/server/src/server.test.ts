@@ -2,6 +2,8 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import { taskWorkbenchId } from "@t3tools/shared/taskWorkbench";
+import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -54,7 +56,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { assert, it } from "@effect/vitest";
+import { assert, it, it as effectTest } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -614,6 +616,7 @@ const buildAppUnderTest = (options?: {
       ProviderSessionDirectory.ProviderSessionDirectory["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
+    previewManager?: Partial<PreviewManager.PreviewManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
@@ -1021,6 +1024,7 @@ const buildAppUnderTest = (options?: {
             subscribeEvents: Effect.flatMap(PubSub.unbounded<PreviewEvent>(), (pubsub) =>
               PubSub.subscribe(pubsub),
             ),
+            ...options?.layers?.previewManager,
           }),
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
@@ -8351,6 +8355,181 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  effectTest.live(
+    "task lifecycle over WS cleans committed resources and HTTP reflects retained members",
+    () =>
+      Effect.acquireUseRelease(
+        makeOrchestrationIntegrationHarness({ provider: ProviderDriverKind.make("codex") }),
+        (harness) => {
+          const taskId = TaskId.make("cleanup-task-wire");
+          const projectId = ProjectId.make("cleanup-project-wire");
+          const threadId = ThreadId.make("cleanup-member-wire");
+          const resourceId = ThreadId.make(taskWorkbenchId(taskId));
+          const terminals = new Set<string>([threadId, resourceId]);
+          const closes: Array<{ threadId: string; deleteHistory?: boolean | undefined }> = [];
+          const stops: string[] = [];
+          const terminalManager = {
+            close: (input: { threadId: string; deleteHistory?: boolean | undefined }) =>
+              Effect.sync(() => {
+                closes.push(input);
+                terminals.delete(input.threadId);
+              }),
+          };
+          const cleanupLayer = ThreadDeletionReactorLive.pipe(
+            Layer.provide(
+              Layer.succeed(OrchestrationEngine.OrchestrationEngineService, harness.engine),
+            ),
+            Layer.provide(
+              Layer.mock(ProviderService.ProviderService)({
+                stopSession: ({ threadId }) =>
+                  Effect.sync(() => {
+                    stops.push(threadId);
+                  }),
+              }),
+            ),
+            Layer.provide(Layer.mock(TerminalManager.TerminalManager)(terminalManager)),
+            Layer.provideMerge(PreviewManager.layer),
+          );
+          return Effect.gen(function* () {
+            const preview = yield* PreviewManager.PreviewManager;
+            const cleanup = yield* ThreadDeletionReactor;
+            yield* cleanup.start();
+            yield* harness.engine.dispatch({
+              type: "project.create",
+              commandId: CommandId.make("cleanup-project"),
+              projectId,
+              title: "Cleanup",
+              workspaceRoot: harness.workspaceDir,
+              createdAt: taskWireNow,
+            });
+            yield* harness.engine.dispatch({
+              type: "task.create",
+              commandId: CommandId.make("cleanup-task"),
+              taskId,
+              primaryProjectId: projectId,
+              name: "Cleanup",
+              createdAt: taskWireNow,
+            });
+            yield* harness.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("cleanup-member"),
+              threadId,
+              projectId,
+              taskId,
+              title: "Member",
+              createdAt: taskWireNow,
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* preview.open({ threadId, url: "http://localhost:3000" });
+            yield* preview.open({ threadId: resourceId, url: "http://localhost:3000" });
+            yield* buildAppUnderTest({
+              layers: {
+                orchestrationEngine: harness.engine,
+                projectionSnapshotQuery: harness.snapshotQuery,
+                threadDeletionReactor: cleanup,
+                terminalManager,
+                previewManager: preview,
+              },
+            });
+            const wsUrl = yield* getWsServerUrl("/ws");
+            yield* Effect.scoped(
+              withWsRpcClient(wsUrl, (client) =>
+                Effect.gen(function* () {
+                  const archived = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "task.archive",
+                    commandId: CommandId.make("cleanup-archive"),
+                    taskId,
+                  });
+                  yield* cleanup.drainThrough(archived.sequence);
+                  assert.deepEqual(closes, [{ threadId: resourceId, deleteHistory: false }]);
+                  assert.deepEqual(stops, []);
+                  assert.equal((yield* preview.list({ threadId: resourceId })).sessions.length, 0);
+                  assert.equal((yield* preview.list({ threadId })).sessions.length, 1);
+                  const restored = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "task.unarchive",
+                    commandId: CommandId.make("cleanup-unarchive"),
+                    taskId,
+                  });
+                  yield* cleanup.drainThrough(restored.sequence);
+                  assert.equal(terminals.has(resourceId), false);
+                  assert.equal(closes.length, 1);
+                  terminals.add(resourceId);
+                  yield* preview.open({ threadId: resourceId, url: "http://localhost:3000" });
+                  const deleted = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "task.delete",
+                    commandId: CommandId.make("cleanup-keep"),
+                    taskId,
+                    threads: "keep",
+                  });
+                  yield* cleanup.drainThrough(deleted.sequence);
+                  assert.deepEqual(closes, [
+                    { threadId: resourceId, deleteHistory: false },
+                    { threadId: resourceId, deleteHistory: true },
+                  ]);
+                  assert.deepEqual(stops, []);
+                  assert.equal(terminals.has(threadId), true);
+                  assert.equal((yield* preview.list({ threadId })).sessions.length, 1);
+                  const baseUrl = yield* getHttpServerUrl();
+                  const cookie = yield* getAuthenticatedSessionCookieHeader();
+                  const response = yield* measureHttpGet({
+                    url: `${baseUrl}/api/orchestration/shell?includeTasks=true`,
+                    headers: { cookie },
+                  });
+                  assert.equal(response.status, 200);
+                  const snapshot = yield* decodeTransferShellSnapshot(
+                    Buffer.from(response.decodedBody).toString("utf8"),
+                  );
+                  assert.deepEqual(snapshot.tasks, []);
+                  assert.equal(
+                    snapshot.threads.find((thread) => thread.id === threadId)?.taskId,
+                    null,
+                  );
+
+                  const nextTaskId = TaskId.make("cleanup-task-delete-members");
+                  const nextResourceId = ThreadId.make(taskWorkbenchId(nextTaskId));
+                  yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "task.create",
+                    commandId: CommandId.make("cleanup-next-task"),
+                    taskId: nextTaskId,
+                    primaryProjectId: projectId,
+                    name: "Delete members",
+                    createdAt: taskWireNow,
+                  });
+                  yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "thread.task.set",
+                    commandId: CommandId.make("cleanup-next-member"),
+                    threadId,
+                    taskId: nextTaskId,
+                  });
+                  terminals.add(nextResourceId);
+                  yield* preview.open({ threadId: nextResourceId, url: "http://localhost:3000" });
+                  const deletedMembers = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                    type: "task.delete",
+                    commandId: CommandId.make("cleanup-delete-members"),
+                    taskId: nextTaskId,
+                    threads: "delete",
+                  });
+                  yield* cleanup.drainThrough(deletedMembers.sequence);
+                  assert.deepEqual(stops, [threadId]);
+                  assert.equal(terminals.size, 0);
+                  assert.equal((yield* preview.list({ threadId })).sessions.length, 0);
+                  assert.equal(
+                    (yield* preview.list({ threadId: nextResourceId })).sessions.length,
+                    0,
+                  );
+                }),
+              ),
+            );
+          }).pipe(Effect.provide(cleanupLayer));
+        },
+        (harness) => harness.dispose,
+      ).pipe(Effect.provide([NodeHttpServer.layerTest, NodeServices.layer])),
   );
 
   it.effect("task opt-in reaches HTTP, full/reset shell and archived snapshots", () =>

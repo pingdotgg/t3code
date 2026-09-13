@@ -1,3 +1,4 @@
+import { readWorkbenchRef } from "../../state/taskWorkbench";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -2602,7 +2603,14 @@ function UserMessageMentionChip(props: {
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
               if (ctx.threadRef)
-                useRightPanelStore.getState().openFile(ctx.threadRef, props.record.path);
+                useRightPanelStore
+                  .getState()
+                  .openFile(
+                    readWorkbenchRef(ctx.threadRef),
+                    props.record.path,
+                    undefined,
+                    ctx.workspaceRoot,
+                  );
             }}
           >
             <PierreEntryIcon

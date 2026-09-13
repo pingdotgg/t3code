@@ -2635,10 +2635,18 @@ export default function Sidebar() {
       const supportsSettlement = capabilities?.threadSettlement === true;
       const supportsSnooze = capabilities?.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
+      // Project views intentionally flatten tasks. Rearrange members in All projects,
+      // where their sibling ownership and complete order are visible.
+      const canArrangeInScope = scopedProjectKeys === null || thread.taskId == null;
+      if (capabilities?.threadActiveReorder === true && canArrangeInScope)
+        activeReorderable.add(threadKey);
       // Older servers retain their existing drag actions. Active placement
       // additionally requires its own ordering capability at the drop target.
-      if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
+      if (
+        canArrangeInScope &&
+        capabilities?.threadPinning === true &&
+        capabilities.threadPinReorder === true
+      ) {
         draggable.add(threadKey);
       }
       if (optimisticDrop?.key === threadKey) {

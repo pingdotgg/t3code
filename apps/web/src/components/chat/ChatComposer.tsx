@@ -1,3 +1,4 @@
+import { readWorkbenchRef } from "../../state/taskWorkbench";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -1604,7 +1605,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (preview) onExpandImage(preview);
       },
       openFile: setPreviewFileId,
-      openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
+      openMention: (path: string) =>
+        useRightPanelStore
+          .getState()
+          .openFile(readWorkbenchRef(routeThreadRef), path, undefined, gitCwd ?? undefined),
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
@@ -1629,7 +1633,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         openPrLink(event, url);
       },
     }),
-    [composerFiles, composerImages, environmentId, onExpandImage, openPrLink, routeThreadRef],
+    [
+      composerFiles,
+      composerImages,
+      environmentId,
+      onExpandImage,
+      openPrLink,
+      routeThreadRef,
+      gitCwd,
+    ],
   );
   const composerContextRecords = useMemo(
     () =>

@@ -1,3 +1,10 @@
+import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import type {
+  EnvironmentId,
+  OrchestrationTaskShell,
+  OrchestrationThreadShell,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
@@ -338,4 +345,48 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+/** Restore the archived container first so its restored member is visible in All projects. */
+export function archivedMemberRestoreTarget(
+  snapshots: ReadonlyArray<{
+    environmentId: EnvironmentId;
+    snapshot: {
+      threads: ReadonlyArray<Pick<OrchestrationThreadShell, "id" | "taskId">>;
+      tasks?: ReadonlyArray<Pick<OrchestrationTaskShell, "id" | "archivedAt">> | undefined;
+    };
+  }>,
+  threadRef: ScopedThreadRef,
+) {
+  const snapshot = snapshots.find(
+    (entry) => entry.environmentId === threadRef.environmentId,
+  )?.snapshot;
+  const member = snapshot?.threads.find((thread) => thread.id === threadRef.threadId);
+  const parent =
+    member?.taskId == null
+      ? null
+      : snapshot?.tasks?.find((task) => task.id === member.taskId && task.archivedAt !== null);
+  return parent
+    ? { kind: "task" as const, ref: { environmentId: threadRef.environmentId, taskId: parent.id } }
+    : { kind: "thread" as const, ref: threadRef };
+}
+
+export function archivedTaskInventory(
+  snapshots: ReadonlyArray<ArchivedSnapshotEntry>,
+  selectedProjectKeys: ReadonlySet<string> | null,
+) {
+  return snapshots
+    .flatMap(({ environmentId, snapshot }) =>
+      (snapshot.tasks ?? [])
+        .filter(
+          (task) =>
+            task.archivedAt !== null &&
+            (selectedProjectKeys === null ||
+              selectedProjectKeys.has(`${environmentId}:${task.primaryProjectId}`)),
+        )
+        .map((task) => ({ ...task, environmentId })),
+    )
+    .toSorted((left, right) =>
+      (right.archivedAt ?? right.createdAt).localeCompare(left.archivedAt ?? left.createdAt),
+    );
 }

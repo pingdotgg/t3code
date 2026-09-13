@@ -1,7 +1,11 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useParams } from "@tanstack/react-router";
+import { useMemo } from "react";
 
 import { useProjects } from "~/state/entities";
+import { useTaskWorkbench } from "~/state/taskWorkbench";
+import { resolveThreadRouteTarget } from "~/threadRoutes";
 
 import { useHandleNewThread } from "./useHandleNewThread";
 
@@ -13,29 +17,43 @@ export interface ActiveProjectTarget {
 }
 
 /**
- * Resolves the project workspace behind the active thread (or draft) so
- * project-scoped surfaces like the file picker and content search know which
- * workspace to query and which thread's right panel opens their results.
+ * File picker and content search follow the same workbench root as the file tree.
  */
 export function useActiveProjectTarget(): ActiveProjectTarget | null {
   const { activeDraftThread, activeThread } = useHandleNewThread();
   const projects = useProjects();
+  const route = useParams({ strict: false, select: resolveThreadRouteTarget });
   const thread = activeThread ?? activeDraftThread;
   const threadId = activeThread?.id ?? activeDraftThread?.threadId;
-  const project = thread
+  const environmentId = thread?.environmentId;
+  const threadRef = useMemo(
+    () => (environmentId && threadId ? scopeThreadRef(environmentId, threadId) : null),
+    [environmentId, threadId],
+  );
+  const { ref: workbenchRef, task } = useTaskWorkbench(
+    threadRef,
+    thread,
+    route?.kind === "task" ? route.taskRef : null,
+  );
+  const project = task
     ? projects.find(
         (candidate) =>
-          candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+          candidate.environmentId === task.environmentId && candidate.id === task.primaryProjectId,
       )
-    : null;
-  const cwd = thread?.worktreePath ?? project?.workspaceRoot;
+    : thread
+      ? projects.find(
+          (candidate) =>
+            candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+        )
+      : null;
+  const cwd = task ? project?.workspaceRoot : (thread?.worktreePath ?? project?.workspaceRoot);
 
-  if (!thread || !threadId || !project || !cwd) return null;
+  if (!workbenchRef || !project || !cwd) return null;
 
   return {
     environmentId: project.environmentId,
     cwd,
     projectName: project.title,
-    threadRef: scopeThreadRef(thread.environmentId, threadId),
+    threadRef: workbenchRef,
   };
 }

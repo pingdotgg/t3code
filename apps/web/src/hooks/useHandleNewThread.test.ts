@@ -19,6 +19,7 @@ const testState = vi.hoisted(() => {
     readonly threadId: string;
   } | null = null;
   let taskAvailable = true;
+  let taskPrimaryProjectId = "project-remote";
   let hasContent = false;
   const router = {
     state: {
@@ -41,6 +42,12 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    get taskPrimaryProjectId() {
+      return taskPrimaryProjectId;
+    },
+    setTaskPrimaryProjectId(value: string) {
+      taskPrimaryProjectId = value;
+    },
     setTaskAvailable: (value: boolean) => {
       taskAvailable = value;
     },
@@ -70,6 +77,7 @@ const testState = vi.hoisted(() => {
     ) {
       storedDraft = nextStoredDraft;
       taskAvailable = true;
+      taskPrimaryProjectId = "project-remote";
       hasContent = false;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
@@ -181,7 +189,10 @@ vi.mock("../state/entities", () => ({
   useThread: () => null,
 }));
 vi.mock("../state/tasks", () => ({
-  readTask: () => (testState.taskAvailable ? { archivedAt: null } : null),
+  readTask: () =>
+    testState.taskAvailable
+      ? { archivedAt: null, primaryProjectId: testState.taskPrimaryProjectId }
+      : null,
   readEnvironmentSupportsTasks: () => true,
 }));
 vi.mock("../state/server", () => ({
@@ -338,6 +349,14 @@ describe("task draft preparation", () => {
       result?.draftId,
       expect.objectContaining({ taskId }),
     );
+  });
+  it("discards page defaults if the primary project changes while they load", async () => {
+    testState.reset(null);
+    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    testState.setTaskPrimaryProjectId("new-primary");
+    testState.completeProjectFileRead(null);
+    expect(await pending).toBeNull();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
   it("does not create a draft when its task disappears during defaults resolution", async () => {
     testState.reset(null);

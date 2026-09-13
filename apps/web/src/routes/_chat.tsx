@@ -1,3 +1,4 @@
+import { useTaskWorkbench } from "../state/taskWorkbench";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -63,18 +64,21 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
+  const { ref: workbenchRef } = useTaskWorkbench(
+    routeThreadRef,
+    activeThread ?? activeDraftThread,
+    routeTarget?.kind === "task" ? routeTarget.taskRef : null,
+  );
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    workbenchRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, workbenchRef).terminalOpen
       : false,
   );
   // The `previewOpen` shortcut-context flag here uses the store-only value;
   // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
   // which we invoke via the action bus to avoid duplicating the rule.
   const previewOpen = useRightPanelStore((state) =>
-    routeThreadRef
-      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
-      : false,
+    workbenchRef ? selectActiveRightPanel(state.byThreadKey, workbenchRef) === "preview" : false,
   );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {

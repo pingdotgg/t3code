@@ -2,6 +2,10 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { readWorkbenchRef } from "./state/taskWorkbench";
+
+vi.mock("./state/taskWorkbench", () => ({ readWorkbenchRef: vi.fn((ref) => ref) }));
+
 import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "./diffFileActions";
 import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
 
@@ -13,6 +17,7 @@ const THREAD_REF = scopeThreadRef(
 describe("openDiffFilePrimaryAction", () => {
   beforeEach(() => {
     useRightPanelStore.setState({ byThreadKey: {} });
+    vi.mocked(readWorkbenchRef).mockImplementation((ref) => ref);
   });
 
   it("opens diff files in the thread file viewer", () => {
@@ -29,9 +34,31 @@ describe("openDiffFilePrimaryAction", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({
       isOpen: true,
-      activeSurfaceId: "file:apps/web/src/components/DiffPanel.tsx",
+      surfaces: [{ relativePath: "apps/web/src/components/DiffPanel.tsx", cwd: "/repo/project" }],
     });
     expect(openInEditor).not.toHaveBeenCalled();
+  });
+
+  it("opens sibling diffs in the shared task panel with each source checkout", () => {
+    const taskRef = scopeThreadRef(THREAD_REF.environmentId, ThreadId.make("task:shared"));
+    vi.mocked(readWorkbenchRef).mockReturnValue(taskRef);
+    for (const activeCwd of ["/checkout/first", "/checkout/second"]) {
+      openDiffFilePrimaryAction({
+        threadRef: THREAD_REF,
+        filePath: "README.md",
+        activeCwd,
+        openInEditor: vi.fn(),
+      });
+    }
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, taskRef);
+    expect(panel.surfaces).toMatchObject([
+      { relativePath: "README.md", cwd: "/checkout/first" },
+      { relativePath: "README.md", cwd: "/checkout/second" },
+    ]);
+    expect(panel.surfaces[0]?.id).not.toEqual(panel.surfaces[1]?.id);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF).isOpen,
+    ).toBe(false);
   });
 
   it("falls back to the editor without thread context", () => {
@@ -64,7 +91,7 @@ describe("openDiffFilePrimaryAction", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({
       isOpen: true,
-      activeSurfaceId: "file:Dockerfile",
+      surfaces: [{ relativePath: "Dockerfile", cwd: "/repo/frontend" }],
     });
     expect(openInEditor).not.toHaveBeenCalled();
   });

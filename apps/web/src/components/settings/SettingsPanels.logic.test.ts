@@ -1,4 +1,9 @@
 import {
+  EnvironmentId,
+  ProjectId,
+  type OrchestrationTaskShell,
+  TaskId,
+  ThreadId,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   ProviderDriverKind,
@@ -9,6 +14,8 @@ import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundA
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  archivedMemberRestoreTarget,
+  archivedTaskInventory,
   backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
@@ -278,6 +285,80 @@ describe("getChangedBrowserSettingLabels", () => {
       "Recording frame rate",
       "Open links in",
       "Floating preview",
+    ]);
+  });
+});
+
+describe("archived task recovery", () => {
+  it("restores the archived parent in the member's own environment", () => {
+    const local = EnvironmentId.make("local");
+    const remote = EnvironmentId.make("remote");
+    const id = TaskId.make("same-task-id");
+    const threadId = ThreadId.make("member");
+    const snapshots = [
+      {
+        environmentId: local,
+        snapshot: {
+          threads: [{ id: threadId, taskId: id }],
+          tasks: [{ id, archivedAt: "2026-09-13T00:00:00.000Z" }],
+        },
+      },
+      { environmentId: remote, snapshot: { threads: [{ id: threadId, taskId: id }], tasks: [] } },
+    ];
+    expect(archivedMemberRestoreTarget(snapshots, { environmentId: local, threadId })).toEqual({
+      kind: "task",
+      ref: { environmentId: local, taskId: id },
+    });
+    expect(archivedMemberRestoreTarget(snapshots, { environmentId: remote, threadId })).toEqual({
+      kind: "thread",
+      ref: { environmentId: remote, threadId },
+    });
+  });
+  it("keeps standalone and legacy members directly restorable", () => {
+    const environmentId = EnvironmentId.make("local");
+    const threadId = ThreadId.make("member");
+    const ref = { environmentId, threadId };
+    expect(
+      archivedMemberRestoreTarget(
+        [{ environmentId, snapshot: { threads: [{ id: threadId }] } }],
+        ref,
+      ),
+    ).toEqual({ kind: "thread", ref });
+  });
+});
+
+describe("archived task inventory", () => {
+  it("keeps empty tasks discoverable, filters by scoped primary project, and tolerates old snapshots", () => {
+    const local = EnvironmentId.make("local");
+    const remote = EnvironmentId.make("remote");
+    const primaryProjectId = ProjectId.make("project");
+    const stamp = "2026-09-13T00:00:00.000Z";
+    const task: OrchestrationTaskShell = {
+      id: TaskId.make("task"),
+      name: "Empty task",
+      description: null,
+      primaryProjectId,
+      createdAt: stamp,
+      updatedAt: stamp,
+      archivedAt: stamp,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: null,
+      snoozedAt: null,
+      snoozedUntil: null,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+    };
+    const snapshot = { snapshotSequence: 1, updatedAt: stamp, threads: [], projects: [] };
+    const entries = [
+      { environmentId: local, snapshot: { ...snapshot, tasks: [task] } },
+      { environmentId: remote, snapshot: { ...snapshot, tasks: [task] } },
+      { environmentId: EnvironmentId.make("old-server"), snapshot },
+    ];
+    expect(archivedTaskInventory(entries, null)).toHaveLength(2);
+    expect(archivedTaskInventory(entries, new Set([`${local}:${primaryProjectId}`]))).toEqual([
+      { ...task, environmentId: local },
     ]);
   });
 });

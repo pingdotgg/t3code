@@ -21,6 +21,67 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("keeps same-named files from sibling checkouts distinct across persistence", () => {
+    const taskRef = scopeThreadRef(refA.environmentId, ThreadId.make("task:shared"));
+    const store = useRightPanelStore.getState();
+    store.openFile(taskRef, "README.md", 12, "/checkout/first");
+    store.openFile(taskRef, "README.md", 24, "/checkout/second");
+    store.openFile(taskRef, "README.md");
+    const before = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, taskRef);
+    expect(before.surfaces).toHaveLength(3);
+    expect(new Set(before.surfaces.map((surface) => surface.id)).size).toBe(3);
+    const persisted = JSON.parse(
+      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
+    );
+    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+    store.openFile(taskRef, "README.md", 40, "/checkout/first");
+    const restored = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      taskRef,
+    );
+    expect(restored.surfaces).toHaveLength(3);
+    expect(restored.surfaces[0]).toMatchObject({
+      cwd: "/checkout/first",
+      revealLine: 40,
+      revealRequestId: 2,
+    });
+    expect(restored.surfaces[1]).toMatchObject({ cwd: "/checkout/second", revealLine: 24 });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([]);
+  });
+
+  it("reconciles a changed primary root while retaining explicit files and runtime tabs", () => {
+    const taskRef = scopeThreadRef(refA.environmentId, ThreadId.make("task:root-change"));
+    const store = useRightPanelStore.getState();
+    store.openFile(taskRef, "README.md");
+    store.reconcileWorkbenchRoot(taskRef, "/primary/one");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, taskRef).surfaces,
+    ).toHaveLength(1);
+    store.openFile(taskRef, "README.md", undefined, "/member/checkout");
+    store.openFile(taskRef, "/host/notes.txt");
+    store.openTerminal(taskRef, "running-terminal");
+    store.openBrowser(taskRef, "running-browser");
+    store.openFile(taskRef, "README.md");
+    const revision = store.getUserActionRevision(taskRef);
+    store.reconcileWorkbenchRoot(taskRef, "/primary/two");
+    const after = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, taskRef);
+    expect(after.surfaces.map((surface) => surface.kind)).toEqual([
+      "file",
+      "file",
+      "terminal",
+      "preview",
+    ]);
+    expect(after.surfaces[0]).toMatchObject({ cwd: "/member/checkout" });
+    expect(after.activeSurfaceId).toBe("browser:running-browser");
+    expect(store.getUserActionRevision(taskRef)).toBe(revision);
+    store.reconcileWorkbenchRoot(taskRef, "/primary/two");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, taskRef)).toBe(
+      after,
+    );
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {
