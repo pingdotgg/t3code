@@ -1,7 +1,29 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { FilesystemBrowseError } from "./filesystem.ts";
+import { FilesystemBrowseError, FilesystemBrowseInput } from "./filesystem.ts";
+
+const decodeInput = Schema.decodeUnknownSync(FilesystemBrowseInput);
+const encodeInput = Schema.encodeSync(FilesystemBrowseInput);
+
+describe("FilesystemBrowseInput", () => {
+  it("keeps directory readability validation opt-in for existing clients", () => {
+    expect(decodeInput({ partialPath: "/workspace/" })).not.toHaveProperty(
+      "requireReadableDirectory",
+    );
+  });
+
+  it.each([true, false])("preserves readability validation mode %s across the wire", (required) => {
+    const input = { partialPath: "/workspace/", requireReadableDirectory: required };
+    expect(encodeInput(decodeInput(input))).toEqual(input);
+  });
+
+  it("rejects non-boolean readability validation modes", () => {
+    expect(() =>
+      decodeInput({ partialPath: "/workspace/", requireReadableDirectory: "true" }),
+    ).toThrow();
+  });
+});
 
 describe("FilesystemBrowseError", () => {
   it("derives a stable message from browse context while retaining the cause", () => {

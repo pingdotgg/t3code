@@ -2763,6 +2763,28 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           serverScoped
+          {...searchableSetting("open-default-folder-on-startup")}
+          description="Open a local draft in the “Add project starts in” folder when this app starts. Saved only for this environment."
+          resetAction={
+            settings.openDefaultFolderOnStartup ? (
+              <SettingResetButton
+                label="open default folder on startup"
+                onClick={() => updateSettings({ openDefaultFolderOnStartup: false })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.openDefaultFolderOnStartup}
+              onCheckedChange={(checked) =>
+                updateSettings({ openDefaultFolderOnStartup: Boolean(checked) })
+              }
+              aria-label="Open default folder on startup"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
           settingKeys={["addProjectBaseDirectory"]}
           {...searchableSetting("add-project-starts-in")}
           description='Leave empty to use "~/" when the Add Project browser opens.'

@@ -49,6 +49,32 @@ describe("ServerSettings default permissions", () => {
   });
 });
 
+describe("ServerSettings startup folder", () => {
+  it("preserves existing startup behavior when older settings omit the preference", () => {
+    expect(decodeServerSettings({}).openDefaultFolderOnStartup).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.openDefaultFolderOnStartup).toBe(false);
+  });
+
+  it.each([true, false])("round-trips and patches the enabled state %s", (enabled) => {
+    const settings = decodeServerSettings({
+      openDefaultFolderOnStartup: enabled,
+      addProjectBaseDirectory: "/tmp/example-project",
+    });
+    expect(decodeServerSettings(encodeServerSettings(settings))).toMatchObject({
+      openDefaultFolderOnStartup: enabled,
+      addProjectBaseDirectory: "/tmp/example-project",
+    });
+    expect(decodeServerSettingsPatch({ openDefaultFolderOnStartup: enabled })).toEqual({
+      openDefaultFolderOnStartup: enabled,
+    });
+  });
+
+  it("leaves the preference unchanged for unrelated patches and rejects invalid values", () => {
+    expect(decodeServerSettingsPatch({})).not.toHaveProperty("openDefaultFolderOnStartup");
+    expect(() => decodeServerSettingsPatch({ openDefaultFolderOnStartup: "true" })).toThrow();
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

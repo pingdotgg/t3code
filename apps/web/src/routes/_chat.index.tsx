@@ -1,10 +1,12 @@
-import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
-import { NoProjectsHero } from "../components/NoProjectsHero";
+import { openCommandPalette } from "../commandPaletteBus";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
@@ -13,23 +15,177 @@ import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   useAllEnvironmentShellsBootstrapped,
+  readProjects,
+  waitForProject,
   useProjects,
   useThreadShells,
 } from "../state/entities";
-import { useEnvironments } from "../state/environments";
+import { useEnvironments, useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
+import { isHostedStaticApp } from "../hostedPairing";
+import { primaryServerConfigAtom } from "../state/server";
+import { environmentShell } from "../state/shell";
+import { useEnvironmentQuery } from "../state/query";
+import { filesystemEnvironment } from "../state/filesystem";
+import { projectEnvironment } from "../state/projects";
+import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { inferProjectTitleFromPath } from "../lib/projectPaths";
+import { newProjectId } from "../lib/utils";
+import { resolveStartupFolderProject } from "../lib/startupFolder";
+
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
-  const { environments, isReady } = useEnvironments();
+  const { environments } = useEnvironments();
 
-  if (authGateState.status === "hosted-static") {
-    if (!isReady) return null;
-    if (environments.length === 0) return <HostedStaticOnboardingState />;
+  if (authGateState.status === "hosted-static" && environments.length === 0) {
+    return <HostedStaticOnboardingState />;
   }
 
-  return <IndexDraftLanding />;
+  return <ConfiguredIndexLanding />;
+}
+
+function ConfiguredIndexLanding() {
+  const environmentId = usePrimaryEnvironmentId();
+  const config = useAtomValue(primaryServerConfigAtom);
+  // Schema defaults are not the saved preference. Wait for the owning server
+  // before allowing the recent-project landing to navigate to another machine.
+  if (!isHostedStaticApp() && config === null) return null;
+  return config?.settings.openDefaultFolderOnStartup && environmentId !== null ? (
+    <StartupFolderLanding
+      key={JSON.stringify([environmentId, config.settings.addProjectBaseDirectory])}
+      environmentId={environmentId}
+      directory={config.settings.addProjectBaseDirectory}
+    />
+  ) : (
+    <IndexDraftLanding />
+  );
+}
+
+function StartupFolderLanding({
+  directory,
+  environmentId,
+}: {
+  directory: string;
+  environmentId: EnvironmentId;
+}) {
+  const environment = useEnvironment(environmentId);
+  const shell = useEnvironmentQuery(
+    environment === null ? null : environmentShell.stateAtom(environment.environmentId),
+  );
+  const browse = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const openThread = useNewThreadHandler();
+  const router = useRouter();
+  const startedAttemptRef = useRef<number | null>(null);
+  const mountedRef = useRef(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const ready =
+    environment?.connection.phase === "connected" &&
+    shell.data?.status === "live" &&
+    shell.data.snapshot._tag === "Some";
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const start = useEffectEvent(async () => {
+    if (!environment) return;
+    const requestingHref = router.state.location.href;
+    const isCurrent = () =>
+      mountedRef.current &&
+      appAtomRegistry.get(primaryEnvironmentIdAtom) === environmentId &&
+      router.state.location.href === requestingHref;
+    try {
+      const projectRef = await resolveStartupFolderProject({
+        environmentId,
+        directory,
+        isCurrent,
+        browse: async (partialPath) => {
+          const result = await browse({
+            environmentId,
+            input: { partialPath, requireReadableDirectory: true },
+          });
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          return result.value;
+        },
+        readProjects,
+        createProject: async (workspaceRoot) => {
+          const projectId = newProjectId();
+          const result = await createProject({
+            environmentId,
+            input: {
+              projectId,
+              title: inferProjectTitleFromPath(workspaceRoot),
+              workspaceRoot,
+              createWorkspaceRootIfMissing: false,
+              defaultModelSelection: null,
+            },
+          });
+          if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          return projectId;
+        },
+        waitForProject,
+      });
+      if (projectRef === null || !isCurrent()) return;
+      await openThread(projectRef, {
+        replace: true,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        startFromOrigin: false,
+      });
+    } catch {
+      if (isCurrent()) setFailure(directory.trim() || "~/");
+    }
+  });
+
+  useEffect(() => {
+    if (!ready || startedAttemptRef.current === retry) return;
+    startedAttemptRef.current = retry;
+    void start();
+  }, [ready, retry]);
+
+  if (failure === null) return null;
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+      <Empty className="flex-1">
+        <EmptyHeader className="max-w-md">
+          <EmptyTitle>Couldn’t open the default folder</EmptyTitle>
+          <EmptyDescription>
+            Check that {failure} exists and is accessible on this environment, or change the startup
+            folder in General settings.
+          </EmptyDescription>
+          <div className="mt-5 flex justify-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                setFailure(null);
+                setRetry((value) => value + 1);
+              }}
+            >
+              Try again
+            </Button>
+            <Button size="sm" variant="outline" render={<Link to="/settings/general" />}>
+              Open settings
+            </Button>
+          </div>
+        </EmptyHeader>
+      </Empty>
+    </SidebarInset>
+  );
 }
 
 /**
@@ -103,6 +259,35 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
           </div>
         </EmptyHeader>
       </Empty>
+    </SidebarInset>
+  );
+}
+
+function NoProjectsHero() {
+  const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+        <Empty className="flex-1">
+          <div className="w-full max-w-lg px-8 py-12">
+            <EmptyHeader className="max-w-none">
+              <EmptyTitle className="text-foreground text-2xl sm:text-3xl">
+                What should we work on?
+              </EmptyTitle>
+              <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
+                Add a project to start your first thread.
+              </EmptyDescription>
+              <div className="mt-6 flex justify-center">
+                <Button size="sm" onClick={openAddProject}>
+                  <PlusIcon className="size-4" />
+                  Add project
+                </Button>
+              </div>
+            </EmptyHeader>
+          </div>
+        </Empty>
+      </div>
     </SidebarInset>
   );
 }
