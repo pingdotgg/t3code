@@ -97,8 +97,9 @@ shortcut; assign one in **Settings → Keybindings**.
 `thread.archive` and `thread.delete` act on the open, saved thread. Neither has a
 default shortcut; assign them in **Settings → Keybindings**. Both respect your
 confirmation settings. Archive is unavailable while a turn is running. Deletion
-is permanent and may separately ask whether to delete an unused worktree. Use
-`!terminalFocus` in the rule to keep the shortcut out of terminal input.
+is permanent and may separately ask whether to delete an unused worktree. New
+bindings added in Settings default to `!terminalFocus` so they do not intercept
+terminal input. You can edit or remove this condition.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
