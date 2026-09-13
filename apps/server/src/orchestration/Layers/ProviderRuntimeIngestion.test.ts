@@ -3153,12 +3153,14 @@ describe("ProviderRuntimeIngestion", () => {
       (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
     );
 
+    // Each delta lands well outside the pacing window of the one before.
+    let deltaCount = 0;
     const emitDelta = (eventId: string, delta: string) =>
       harness.emit({
         type: "content.delta",
         eventId: asEventId(eventId),
         provider: codex,
-        createdAt: now,
+        createdAt: new Date(Date.parse(now) + ++deltaCount * 1_000).toISOString(),
         threadId,
         turnId,
         itemId,
@@ -3210,6 +3212,55 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(
       "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail without newline",
     );
+  });
+
+  it("holds paragraphs that finish inside the pacing window and lands them together", async () => {
+    const harness = await createHarness();
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-paced");
+    const itemId = asItemId("item-paced");
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const at = (offsetMs: number) => new Date(t0 + offsetMs).toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-paced-started"),
+      provider: codex,
+      createdAt: at(0),
+      threadId,
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+    const emitDelta = (eventId: string, delta: string, offsetMs: number) =>
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(eventId),
+        provider: codex,
+        createdAt: at(offsetMs),
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+    const messageText = async () =>
+      (await harness.readModel()).threads
+        .find((t) => t.id === threadId)
+        ?.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`)?.text;
+
+    emitDelta("evt-paced-1", "One.\n\n", 0);
+    emitDelta("evt-paced-2", "Two.\n\n", 100);
+    emitDelta("evt-paced-3", "Three.\n\n", 200);
+    await harness.drain();
+    // The first paragraph lands right away. The next two are inside the window.
+    expect(await messageText()).toBe("One.\n\n");
+
+    emitDelta("evt-paced-4", "Four.\n\n", 500);
+    await harness.drain();
+    expect(await messageText()).toBe("One.\n\nTwo.\n\nThree.\n\nFour.\n\n");
   });
 
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {

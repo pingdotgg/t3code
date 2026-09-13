@@ -1899,7 +1899,7 @@ code {
 @media (prefers-reduced-motion: no-preference) {
   .chat-markdown[data-streaming] > *,
   .chat-markdown[data-streaming] .chat-markdown-shiki {
-    transition: opacity 240ms ease-out;
+    transition: opacity 600ms ease-out;
 
     @starting-style {
       opacity: 0;
