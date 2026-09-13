@@ -201,7 +201,8 @@ export function TaskSidebar(props: {
             >
               {(bag) => {
                 const style = {
-                  transform: CSS.Transform.toString(bag.transform),
+                  // Match thread rows: divider dimensions must not scale the dragged card.
+                  transform: CSS.Translate.toString(bag.transform),
                   transition: bag.transition,
                 };
                 if (item.kind === "thread") {
