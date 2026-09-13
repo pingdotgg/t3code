@@ -254,8 +254,12 @@ const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] =
   return Effect.fail(
     unsupported(
       input,
-      input.capabilities.turns.supportsInterrupt ? "interrupt_restart_steering" : "active_steering",
-      "providerInstanceId cannot steer active turns directly or by interrupt-and-restart",
+      input.forceRestart || input.capabilities.turns.supportsInterrupt
+        ? "interrupt_restart_steering"
+        : "active_steering",
+      input.forceRestart
+        ? "providerInstanceId cannot satisfy an explicit interrupt-and-restart request"
+        : "providerInstanceId cannot steer active turns directly or by interrupt-and-restart",
     ),
   );
 };
