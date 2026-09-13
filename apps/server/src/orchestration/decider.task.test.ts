@@ -125,7 +125,6 @@ it.layer(NodeServices.layer)("task decisions", (it) => {
         const moved = yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId });
         model = moved.model;
         expect(moved.events.map((event) => event.type)).toEqual([
-          "task.meta-updated",
           "thread.unpinned",
           "thread.task-set",
         ]);
@@ -549,10 +548,7 @@ it.layer(NodeServices.layer)("task lifecycle", (it) => {
       ({ model } = yield* apply(model, { type: "thread.settle", commandId, threadId }));
       ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
       const moved = yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId });
-      expect(moved.events.map((event) => event.type)).toEqual([
-        "task.meta-updated",
-        "thread.task-set",
-      ]);
+      expect(moved.events.map((event) => event.type)).toEqual(["thread.task-set"]);
       model = {
         ...moved.model,
         tasks: moved.model.tasks.map((task) => ({
@@ -590,6 +586,159 @@ it.layer(NodeServices.layer)("task result wake and membership activity", (it) =>
     const model = yield* seed;
     return (yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId })).model;
   });
+  it.effect("a fresh error wakes snooze without rewinding the task settlement anchor", () =>
+    Effect.gen(function* () {
+      let model = yield* memberSeed;
+      ({ model } = yield* apply(model, { type: "thread.settle", commandId, threadId }));
+      ({ model } = yield* apply(model, {
+        type: "task.snooze",
+        commandId,
+        taskId,
+        snoozedUntil: wakeAt,
+      }));
+      const latestActivityAt = "2026-01-03T00:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(latestActivityAt));
+      ({ model } = yield* apply(model, {
+        type: "task.meta.update",
+        commandId,
+        taskId,
+        name: "Updated while snoozed",
+      }));
+      const result = yield* apply(model, {
+        type: "thread.session.set",
+        commandId,
+        threadId,
+        createdAt: latestActivityAt,
+        session: {
+          threadId,
+          status: "error",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Delayed failure",
+          updatedAt: resultAt,
+        },
+      });
+      expect(result.events.map((event) => event.type)).toEqual([
+        "task.unsettled",
+        "task.unsnoozed",
+        "thread.session-set",
+      ]);
+      for (const event of result.events.slice(0, 2)) {
+        expect(event.occurredAt).toBe(resultAt);
+        expect(event.payload).toMatchObject({ updatedAt: latestActivityAt });
+      }
+      expect(result.model.tasks[0]).toMatchObject({
+        snoozedUntil: null,
+        updatedAt: latestActivityAt,
+      });
+      const policy = {
+        task: result.model.tasks[0]!,
+        members: result.model.threads.map((thread) => ({
+          ...thread,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+        })),
+        settings: { sidebarAutoSettleAfterDays: 3 },
+      };
+      const oldBoundary = Date.parse(resultAt) + 3 * 86_400_000;
+      const boundary = Date.parse(latestActivityAt) + 3 * 86_400_000;
+      expect(resolveTaskAutoSettlementAt({ ...policy, nowMs: oldBoundary + 1 })).toBeNull();
+      expect(resolveTaskAutoSettlementAt({ ...policy, nowMs: boundary })).toBeNull();
+      expect(resolveTaskAutoSettlementAt({ ...policy, nowMs: boundary + 1 })).toBe(
+        latestActivityAt,
+      );
+    }),
+  );
+  for (const activityAt of [now, resultAt]) {
+    it.effect(
+      `membership at ${activityAt} omits unchanged metadata and retains wake companions`,
+      () =>
+        Effect.gen(function* () {
+          let model = yield* memberSeed;
+          const otherTaskId = TaskId.make("other-task");
+          ({ model } = yield* apply(model, { ...taskCreate, taskId: otherTaskId }));
+          model = {
+            ...model,
+            tasks: model.tasks.map((task) => ({ ...task, updatedAt: resultAt })),
+          };
+          yield* TestClock.setTime(Date.parse(activityAt));
+          for (const command of [
+            { type: "thread.task.set", commandId, threadId, taskId: null },
+            { type: "thread.task.set", commandId, threadId, taskId: otherTaskId },
+            { type: "thread.archive", commandId, threadId },
+            { type: "thread.delete", commandId, threadId },
+            {
+              ...threadCreate,
+              threadId: ThreadId.make("created-member"),
+              taskId,
+              createdAt: activityAt,
+            },
+          ] satisfies OrchestrationCommand[]) {
+            const result = yield* apply(model, command);
+            expect(result.events).toHaveLength(1);
+            expect(result.events[0]?.aggregateKind).toBe("thread");
+            expect(result.model.tasks).toEqual(model.tasks);
+          }
+          const parked = {
+            ...model,
+            tasks: model.tasks.map((task) => ({
+              ...task,
+              snoozedAt: now,
+              snoozedUntil: wakeAt,
+            })),
+          };
+          const resumed = yield* apply(parked, {
+            ...threadCreate,
+            threadId: ThreadId.make("resumed-member"),
+            taskId,
+            createdAt: activityAt,
+          });
+          expect(resumed.events.map((event) => event.type)).toEqual([
+            "task.unsettled",
+            "task.unsnoozed",
+            "thread.created",
+          ]);
+          expect(resumed.model.tasks[0]).toMatchObject({ updatedAt: resultAt, snoozedUntil: null });
+          for (const event of resumed.events.slice(0, 2)) {
+            expect(event.occurredAt).toBe(activityAt);
+            expect(event.payload).toMatchObject({ updatedAt: resultAt });
+          }
+        }),
+    );
+  }
+  for (const lifecycle of ["archived", "deleted"] as const) {
+    it.effect(`${lifecycle} tasks receive no membership activity`, () =>
+      Effect.gen(function* () {
+        const original = yield* memberSeed;
+        const model = {
+          ...original,
+          tasks: original.tasks.map((task) => ({
+            ...task,
+            archivedAt: lifecycle === "archived" ? now : null,
+            deletedAt: lifecycle === "deleted" ? now : null,
+          })),
+        };
+        yield* TestClock.setTime(Date.parse(resultAt));
+        for (const command of [
+          { type: "thread.task.set", commandId, threadId, taskId: null },
+          { type: "thread.archive", commandId, threadId },
+          { type: "thread.delete", commandId, threadId },
+        ] satisfies OrchestrationCommand[]) {
+          const result = yield* apply(model, command);
+          expect(result.events).toHaveLength(1);
+          expect(result.model.tasks).toEqual(model.tasks);
+        }
+        const restored = yield* apply(
+          { ...model, threads: model.threads.map((thread) => ({ ...thread, archivedAt: now })) },
+          { type: "thread.unarchive", commandId, threadId },
+        );
+        expect(restored.events.map((event) => event.type)).toEqual(["thread.unarchived"]);
+        expect(restored.model.tasks).toEqual(model.tasks);
+      }),
+    );
+  }
   for (const kind of ["error", "checkpoint", "session-completion"] as const) {
     for (const snoozedAt of [now, resultAt, wakeAt, null]) {
       it.effect(`${kind} compares its effective result timestamp with snooze ${snoozedAt}`, () =>

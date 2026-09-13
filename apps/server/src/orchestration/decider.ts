@@ -221,6 +221,8 @@ const taskReengagementEvents = Effect.fn("taskReengagementEvents")(function* ({
       candidate.deletedAt === null,
   );
   if (!task || (task.settledOverride === null && task.snoozedUntil === null)) return [];
+  const updatedAt =
+    Date.parse(task.updatedAt) > Date.parse(occurredAt) ? task.updatedAt : occurredAt;
   const events: PlannedOrchestrationEvent[] = [];
   events.push({
     ...(yield* withEventBase({
@@ -230,7 +232,7 @@ const taskReengagementEvents = Effect.fn("taskReengagementEvents")(function* ({
       occurredAt,
     })),
     type: "task.unsettled",
-    payload: { taskId: task.id, reason: "activity", updatedAt: occurredAt },
+    payload: { taskId: task.id, reason: "activity", updatedAt },
   });
   if (task.snoozedUntil !== null)
     events.push({
@@ -241,7 +243,7 @@ const taskReengagementEvents = Effect.fn("taskReengagementEvents")(function* ({
         occurredAt,
       })),
       type: "task.unsnoozed",
-      payload: { taskId: task.id, reason: "activity", updatedAt: occurredAt },
+      payload: { taskId: task.id, reason: "activity", updatedAt },
     });
   return events;
 });
@@ -286,21 +288,21 @@ const taskMembershipActivityEvents = Effect.fn("taskMembershipActivityEvents")(f
   const events: PlannedOrchestrationEvent[] = [...companions];
   for (const taskId of new Set(taskIds)) {
     const task = readModel.tasks.find(
-      (candidate) => candidate.id === taskId && candidate.deletedAt === null,
+      (candidate) =>
+        candidate.id === taskId && candidate.deletedAt === null && candidate.archivedAt === null,
     );
     if (!task) continue;
-    const updatedAt =
-      Date.parse(task.updatedAt) > Date.parse(occurredAt) ? task.updatedAt : occurredAt;
-    if (
-      companions.some(
-        (event) =>
-          event.aggregateKind === "task" &&
-          event.aggregateId === taskId &&
-          "updatedAt" in event.payload &&
-          event.payload.updatedAt === updatedAt,
-      )
-    )
-      continue;
+    const effectiveUpdatedAt = companions.reduce(
+      (latest, event) =>
+        event.aggregateKind === "task" &&
+        event.aggregateId === taskId &&
+        "updatedAt" in event.payload &&
+        Date.parse(event.payload.updatedAt) > Date.parse(latest)
+          ? event.payload.updatedAt
+          : latest,
+      task.updatedAt,
+    );
+    if (Date.parse(occurredAt) <= Date.parse(effectiveUpdatedAt)) continue;
     events.push({
       ...(yield* withEventBase({
         aggregateKind: "task",
@@ -309,7 +311,7 @@ const taskMembershipActivityEvents = Effect.fn("taskMembershipActivityEvents")(f
         occurredAt,
       })),
       type: "task.meta-updated",
-      payload: { taskId: task.id, updatedAt },
+      payload: { taskId: task.id, updatedAt: occurredAt },
     });
   }
   return events;
