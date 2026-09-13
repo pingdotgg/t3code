@@ -1,6 +1,7 @@
 const maxLineLength = 4096;
+// Cursor also uses RetriableError for agent-loop failures; preserve those diagnostics.
 const transportError =
-  /^Error: (?:RetriableError: .+|ConnectError: \[(?:unavailable|aborted|deadline_exceeded)\].*)$/;
+  /^Error: (?:RetriableError: (?!\[internal\]).+|ConnectError: \[(?:unavailable|aborted|deadline_exceeded)\].*)$/;
 const serverError = "Something went wrong communicating with the server. Please try again.";
 
 interface ReplyState {
