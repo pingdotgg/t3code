@@ -68,6 +68,18 @@ jobs:
       - name: Verify preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
+
+      - name: Smoke the built server under Bun
+        timeout-minutes: 2
+        env:
+          # The standalone child must discard inherited launcher state.
+          T3_SERVICE_LAUNCHER_CONTEXT: '{"protocol":2,"childVersion":"0.0.0"}'
+        run: node scripts/server-runtime-smoke.ts
+
   # Everything except `t3` (apps/server). `--parallel` drops the package
   # dependency ordering that `vp run` applies by default: these `test` tasks
   # declare no `dependsOn` and resolve workspace deps from source, so ordering

@@ -50,26 +50,31 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
-/**
- * External only so the bundler never has to resolve them.
- *
- * These are reached through a runtime-conditional dynamic import that Node
- * never takes, and they resolve `bun:*` specifiers that do not exist when
- * bundling for Node. Because Node never loads them, their dependency closure
- * does not need to be external — only the entry point must stay unbundled.
- */
-export const CLI_BUILD_ONLY_EXTERNAL_PREFIXES = [
-  "@effect/platform-bun",
-  "@effect/sql-sqlite-bun",
-] as const;
-
-export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
-  ...CLI_RUNTIME_EXTERNAL_PREFIXES,
-  ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
-] as const;
-
 export function isRuntimeExternalCliDependency(id: string): boolean {
   return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
+/**
+ * Bun's own module namespace, supplied by the Bun runtime rather than by disk.
+ *
+ * `@effect/platform-bun` and `@effect/sql-sqlite-bun` used to be external for
+ * exactly one reason: they import `bun` and `bun:sqlite`, which cannot resolve
+ * while bundling for Node. Externalizing the packages to dodge that was wrong.
+ * Both import `effect`, so a Bun-hosted server loaded a *second* `effect` from
+ * node_modules beside the bundle. Effect hangs each request's pre-response
+ * handler off a module-level WeakMap, so the bundled copy wrote handlers the
+ * platform server's copy never read: CORS headers, gzip and auth headers all
+ * vanished from real responses while OPTIONS preflight (answered inline, no
+ * WeakMap) kept working.
+ *
+ * Externalizing the `bun:*` specifiers instead keeps a single `effect` graph.
+ * Nothing has to resolve them at build time, and nothing has to resolve them
+ * under Node either: every import of a Bun module sits behind a
+ * `typeof Bun !== "undefined"` dynamic import, so it lands in a chunk that only
+ * a Bun-hosted server loads.
+ */
+export function isBunRuntimeModule(id: string): boolean {
+  return id === "bun" || id.startsWith("bun:");
 }
 
 /**
@@ -83,7 +88,7 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * inlined while node-pty (a declared dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return isBunRuntimeModule(id) || isRuntimeExternalCliDependency(id);
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */
@@ -148,5 +153,70 @@ export function findInlinedExternalPackages(source: string): {
     regionCount,
     inlined: [...inlined].sort(),
     inlinedPackages: [...inlinedPackages].sort(),
+  };
+}
+
+/**
+ * Walk the emitted chunk graph and report Bun modules the Node runtime can reach.
+ *
+ * Bundling `@effect/platform-bun` and `@effect/sql-sqlite-bun` moved a
+ * `bun:sqlite` import from node_modules into the bundle. That is only safe
+ * because rolldown keeps it in a chunk reached solely through `import()`, which
+ * Node never evaluates. Nothing else enforces that: a stray static import of
+ * `@effect/sql-sqlite-bun/SqliteClient` from an eagerly loaded module would
+ * hoist `bun:sqlite` into the entry chunk and every `node bin.mjs` would die
+ * with ERR_UNSUPPORTED_ESM_URL_SCHEME. Rolldown only warns about the merge
+ * (INEFFECTIVE_DYNAMIC_IMPORT) and still exits 0.
+ *
+ * So this follows static edges only — `import`/`export ... from "./chunk.mjs"`
+ * — from the entry chunks, exactly the graph Node loads eagerly, and reports
+ * any Bun specifier inside it. Dynamic `import("./chunk.mjs")` is deliberately
+ * not an edge.
+ *
+ * `chunks` maps chunk file name to source; `reachable` is returned so a caller
+ * can tell "no violations" apart from "the walk never left the entry".
+ */
+export function findEagerBunRuntimeImports(
+  chunks: ReadonlyMap<string, string>,
+  entryChunks: Iterable<string>,
+): {
+  readonly reachable: ReadonlyArray<string>;
+  readonly violations: ReadonlyArray<{ readonly chunk: string; readonly specifier: string }>;
+} {
+  // Anchored at a line start so `import(...)` and specifier strings inside
+  // bundled code cannot match. `[^;]*?` keeps a match inside one statement
+  // while still spanning the line breaks rolldown puts in long import lists.
+  const staticImportPattern =
+    /^[ \t]*(?:import|export)\s[^;]*?\bfrom\s*["']([^"']+)["']|^[ \t]*import\s*["']([^"']+)["']/gm;
+
+  const seen = new Set<string>();
+  const queue = [...entryChunks];
+  const violations: Array<{ chunk: string; specifier: string }> = [];
+
+  for (const chunk of queue) {
+    if (seen.has(chunk)) continue;
+    seen.add(chunk);
+
+    const source = chunks.get(chunk);
+    if (source === undefined) continue;
+
+    for (const match of source.matchAll(staticImportPattern)) {
+      const specifier = match[1] ?? match[2];
+      if (specifier === undefined) continue;
+
+      if (specifier.startsWith(".")) {
+        // Chunks are emitted flat beside their entry, so the basename is the key.
+        const target = specifier.slice(specifier.lastIndexOf("/") + 1);
+        if (!seen.has(target)) queue.push(target);
+        continue;
+      }
+
+      if (isBunRuntimeModule(specifier)) violations.push({ chunk, specifier });
+    }
+  }
+
+  return {
+    reachable: [...seen].filter((chunk) => chunks.has(chunk)).sort(),
+    violations,
   };
 }
