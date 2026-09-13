@@ -19,15 +19,16 @@ export interface ListOperationsRequest extends Omit<
  * Provide `AppRunner.ListOperationsHttp` on the hosting function's Effect
  * to implement the binding.
  *
- * @binding
- * @section Tracking Operations
- * @example Track a deployment to completion
+ * ### Tracking Operations
+ * **Example:** Track a deployment to completion
  * ```typescript
  * const listOperations = yield* AppRunner.ListOperations(service);
  * const { OperationSummaryList } = yield* listOperations({ MaxResults: 5 });
  * const deployment = OperationSummaryList?.find((op) => op.Id === operationId);
  * // deployment?.Status -> "IN_PROGRESS" | "SUCCEEDED" | ...
  * ```
+ *
+ * @binding
  */
 export interface ListOperations extends Binding.Service<
   ListOperations,

@@ -75,7 +75,7 @@ export const layer = (config: {
  * @see {@link layer} for creating a `Resource` layer from explicit metadata
  * @see {@link layerFromEnv} for merging attributes with OpenTelemetry environment variables
  *
- * @category configuration
+ * @category converting
  * @since 4.0.0
  */
 export const configToAttributes = (options: {

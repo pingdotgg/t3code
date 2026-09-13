@@ -11,9 +11,8 @@ import type { Stack } from "./Stack.ts";
  * stack's resources — e.g. look up a resource created by the template by its
  * logical id from inside a function runtime. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.DescribeStackResourcesHttp)`.
- * @binding
- * @section Reading Stack Resources
- * @example Resolve a Resource's Physical Id
+ * ### Reading Stack Resources
+ * **Example:** Resolve a Resource's Physical Id
  * ```typescript
  * const describeStackResources =
  *   yield* AWS.CloudFormation.DescribeStackResources(stack);
@@ -23,6 +22,8 @@ import type { Stack } from "./Stack.ts";
  * });
  * const physicalId = StackResources?.[0]?.PhysicalResourceId;
  * ```
+ *
+ * @binding
  */
 export interface DescribeStackResources extends Binding.Service<
   DescribeStackResources,

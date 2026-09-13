@@ -29,6 +29,7 @@ import * as SqlClient from "../sql/SqlClient.ts"
 import type { Row } from "../sql/SqlConnection.ts"
 import { isSqlError, type SqlError } from "../sql/SqlError.ts"
 import { PersistenceError } from "./ClusterError.ts"
+import type * as EntityAddress from "./EntityAddress.ts"
 import type * as Envelope from "./Envelope.ts"
 import * as MessageStorage from "./MessageStorage.ts"
 import { SaveResultEncoded } from "./MessageStorage.ts"
@@ -40,13 +41,13 @@ import * as Snowflake from "./Snowflake.ts"
 const withTracerDisabled = Effect.withTracerEnabled(false)
 
 /**
- * Creates a SQL-backed `MessageStorage` implementation, running its migrations
+ * Creates a SQL-backed encoded message storage driver, running its migrations
  * and using the optional table prefix.
  *
  * **When to use**
  *
- * Use when you need the SQL-backed `MessageStorage` service directly, such as
- * when composing a custom layer or providing your own `Snowflake.Generator`.
+ * Use when you need the SQL-backed encoded driver directly, such as when
+ * composing a custom message storage adapter.
  *
  * **Details**
  *
@@ -58,18 +59,17 @@ const withTracerDisabled = Effect.withTracerEnabled(false)
  * Changing `prefix` after deployment points the runtime at a different set of
  * tables, including the migration history table.
  *
- * @see {@link layer} for a ready-made layer using the default prefix and generator
- * @see {@link layerWith} for a ready-made layer with a custom table prefix
+ * @see {@link make} for the decoded `MessageStorage` constructor
  *
  * @category constructors
  * @since 4.0.0
  */
-export const make: (options?: {
+export const makeEncoded: (options?: {
   readonly prefix?: string | undefined
 }) => Effect.Effect<
-  MessageStorage.MessageStorage["Service"],
+  MessageStorage.Encoded,
   never,
-  SqlClient.SqlClient | Snowflake.Generator | Crypto.Crypto
+  SqlClient.SqlClient | Crypto.Crypto
 > = Effect.fnUntraced(function*(options) {
   const sql = (yield* SqlClient.SqlClient).withoutTransforms()
   const crypto = yield* Crypto.Crypto
@@ -372,8 +372,58 @@ export const make: (options?: {
     orElse: () => sql.literal("FOR UPDATE")
   })
 
-  const getUnprocessedMessages = sql.onDialectOrElse({
-    pg: () => (shardIds: ReadonlyArray<string>, now: number) =>
+  const emptyFragment = sql.literal("")
+  // mssql only limits with OFFSET/FETCH, which requires the ORDER BY that
+  // both queries already have
+  const limitFragment = sql.onDialectOrElse({
+    mssql: () => (limit: number) => sql.literal(`OFFSET 0 ROWS FETCH NEXT ${Math.floor(limit)} ROWS ONLY`),
+    orElse: () => (limit: number) => sql.literal(`LIMIT ${Math.floor(limit)}`)
+  })
+  const groupAddresses = (addresses: ReadonlyArray<EntityAddress.EntityAddress>) => {
+    const byShard = new Map<string, Map<string, Array<EntityAddress.EntityAddress>>>()
+    for (const address of addresses) {
+      const shardId = address.shardId.toString()
+      let byEntityType = byShard.get(shardId)
+      if (byEntityType === undefined) {
+        byShard.set(shardId, byEntityType = new Map())
+      }
+      const group = byEntityType.get(address.entityType)
+      if (group === undefined) {
+        byEntityType.set(address.entityType, [address])
+      } else {
+        group.push(address)
+      }
+    }
+    return Array.from(
+      byShard,
+      ([shardId, byEntityType]) =>
+        Array.from(byEntityType, ([entityType, addresses]) => ({ shardId, entityType, addresses }))
+    ).flat()
+  }
+  type UnprocessedOptions = {
+    readonly limit?: number | undefined
+    readonly addresses?: ReadonlyArray<EntityAddress.EntityAddress> | undefined
+  }
+  const unprocessedFilters = (options?: UnprocessedOptions | undefined) => ({
+    addressFilter: options?.addresses !== undefined
+      ? sql`AND (${
+        sql.or(
+          groupAddresses(options.addresses).map((group) =>
+            sql.and([
+              sql`m.shard_id = ${group.shardId}`,
+              sql`m.entity_type = ${group.entityType}`,
+              sql.in("m.entity_id", group.addresses.map((address) => address.entityId))
+            ])
+          )
+        )
+      })`
+      : emptyFragment,
+    limit: options?.limit !== undefined ? limitFragment(options.limit) : emptyFragment
+  })
+  type UnprocessedFilters = ReturnType<typeof unprocessedFilters>
+
+  const getUnprocessedMessagesForDialect = sql.onDialectOrElse({
+    pg: () => (shardIds: ReadonlyArray<string>, now: number, filters: UnprocessedFilters) =>
       sql<MessageJoinRow>`
         WITH messages AS (
           UPDATE ${messagesTableSql} m
@@ -382,6 +432,7 @@ export const make: (options?: {
             SELECT m.*
             FROM ${messagesTableSql} m
             WHERE m.shard_id IN (${sql.literal(shardIds.map(wrapString).join(","))})
+            ${filters.addressFilter}
             AND NOT EXISTS (
               SELECT 1 FROM ${repliesTableSql}
               WHERE request_id = m.request_id
@@ -390,6 +441,8 @@ export const make: (options?: {
             AND m.processed = ${sqlFalse}
             AND (m.last_read IS NULL OR m.last_read < ${tenMinutesAgo})
             AND (m.deliver_at IS NULL OR m.deliver_at <= ${sql.literal(String(now))})
+            ORDER BY m.rowid ASC
+            ${filters.limit}
             FOR UPDATE
           ) AS ids
           LEFT JOIN ${repliesTableSql} r ON r.id = ids.last_reply_id
@@ -398,12 +451,13 @@ export const make: (options?: {
         )
         SELECT * FROM messages ORDER BY rowid ASC
       `,
-    orElse: () => (shardIds: ReadonlyArray<string>, now: number) =>
+    orElse: () => (shardIds: ReadonlyArray<string>, now: number, filters: UnprocessedFilters) =>
       sql<MessageJoinRow>`
         SELECT m.*, r.id as reply_reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
         FROM ${messagesTableSql} m
         LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
         WHERE m.shard_id IN (${sql.literal(shardIds.map(wrapString).join(","))})
+        ${filters.addressFilter}
         AND NOT EXISTS (
           SELECT 1 FROM ${repliesTableSql}
           WHERE request_id = m.request_id
@@ -413,6 +467,7 @@ export const make: (options?: {
         AND (m.last_read IS NULL OR m.last_read < ${tenMinutesAgo})
         AND (m.deliver_at IS NULL OR m.deliver_at <= ${sql.literal(String(now))})
         ORDER BY m.rowid ASC
+        ${filters.limit}
         ${forUpdate}
       `.unprepared.pipe(
         Effect.tap((rows) => {
@@ -428,8 +483,16 @@ export const make: (options?: {
         sql.withTransaction
       )
   })
+  const getUnprocessedMessages = (
+    shardIds: ReadonlyArray<string>,
+    now: number,
+    options?: UnprocessedOptions | undefined
+  ) =>
+    options?.addresses?.length === 0
+      ? Effect.succeed([])
+      : getUnprocessedMessagesForDialect(shardIds, now, unprocessedFilters(options))
 
-  return yield* MessageStorage.makeEncoded({
+  const encoded: MessageStorage.Encoded = {
     saveEnvelope: ({ deliverAt, envelope, primaryKey }) =>
       Effect.suspend(() => {
         let insert: Effect.Effect<ReadonlyArray<Row>, SqlError | PlatformError.PlatformError>
@@ -579,8 +642,8 @@ export const make: (options?: {
       ),
 
     unprocessedMessages: Effect.fnUntraced(
-      function*(shardIds, now) {
-        const rows = yield* getUnprocessedMessages(shardIds, now)
+      function*(shardIds, now, options) {
+        const rows = yield* getUnprocessedMessages(shardIds, now, options)
         if (rows.length === 0) {
           return []
         }
@@ -623,19 +686,30 @@ export const make: (options?: {
       )
     },
 
-    resetAddress: (address) =>
-      sql`
+    resetAddresses: (addresses) =>
+      addresses.length === 0
+        ? Effect.void
+        : sql`
         UPDATE ${messagesTableSql}
         SET last_read = NULL
         WHERE processed = ${sqlFalse}
-        AND shard_id = ${address.shardId.toString()}
-        AND entity_type = ${address.entityType}
-        AND entity_id = ${address.entityId}
-      `.pipe(
-        Effect.asVoid,
-        PersistenceError.refail,
-        withTracerDisabled
-      ),
+        AND (${
+          sql.or(
+            groupAddresses(addresses).map(
+              (group) =>
+                sql.and([
+                  sql`shard_id = ${group.shardId}`,
+                  sql`entity_type = ${group.entityType}`,
+                  sql.in("entity_id", group.addresses.map((address) => address.entityId))
+                ])
+            )
+          )
+        })
+        `.pipe(
+          Effect.asVoid,
+          PersistenceError.refail,
+          withTracerDisabled
+        ),
 
     clearAddress: (address) =>
       sql`
@@ -675,8 +749,24 @@ export const make: (options?: {
       sql.withTransaction(effect).pipe(
         Effect.catchIf(isSqlError, Effect.die)
       )
-  })
+  }
+  return encoded
 }, withTracerDisabled)
+
+/**
+ * Creates a SQL-backed `MessageStorage` implementation, running its migrations
+ * and using the optional table prefix.
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export const make: (options?: {
+  readonly prefix?: string | undefined
+}) => Effect.Effect<
+  MessageStorage.MessageStorage["Service"],
+  never,
+  SqlClient.SqlClient | Snowflake.Generator | Crypto.Crypto
+> = (options) => Effect.flatMap(makeEncoded(options), MessageStorage.makeEncoded)
 
 /**
  * Layer that provides SQL-backed `MessageStorage` using the default table prefix
@@ -1025,6 +1115,20 @@ const migrations = (options?: {
           // sqlite
           Effect.void
       })
+    }),
+    "0003_pg_messages_rowid_index": Effect.gen(function*() {
+      const sql = (yield* SqlClient.SqlClient).withoutTransforms()
+      const messagesTableSql = sql(messagesTable)
+      const rowIdIndex = `${messagesTable}_rowid_idx`
+
+      yield* sql.onDialectOrElse({
+        pg: () =>
+          sql`
+            CREATE INDEX IF NOT EXISTS ${sql(rowIdIndex)}
+            ON ${messagesTableSql} (rowid)
+          `,
+        orElse: () => Effect.void
+      })
     })
   })
 }
@@ -1041,7 +1145,7 @@ const replyKind = {
 } as const satisfies Record<Reply.Reply<any>["_tag"], number | null>
 
 const replyFromRow = (row: ReplyRow): Reply.Encoded =>
-  Number(row.kind) === replyKind.WithExit ?
+  row.kind !== null && Number(row.kind) === replyKind.WithExit ?
     {
       _tag: "WithExit",
       id: String(row.id),

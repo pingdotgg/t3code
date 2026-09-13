@@ -6,7 +6,6 @@
  *
  * @since 4.0.0
  */
-import type * as v1 from "kubernetes-types/core/v1.d.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import * as FileSystem from "../../FileSystem.ts"
@@ -20,6 +19,7 @@ import * as HttpClient from "../http/HttpClient.ts"
 import * as HttpClientError from "../http/HttpClientError.ts"
 import * as HttpClientRequest from "../http/HttpClientRequest.ts"
 import * as HttpClientResponse from "../http/HttpClientResponse.ts"
+import type { Pod as K8sPod } from "./K8sTypes.ts"
 
 /**
  * Service tag for the HTTP client used to call the Kubernetes API.
@@ -129,7 +129,7 @@ export const makeGetPods: (
 export const makeCreatePod = Effect.gen(function*() {
   const client = yield* K8sHttpClient
 
-  return Effect.fnUntraced(function*(spec: v1.Pod) {
+  return Effect.fnUntraced(function*(spec: K8sPod) {
     spec = {
       apiVersion: "v1",
       kind: "Pod",

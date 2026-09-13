@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.BatchUpdateFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Resolve a Finding
+ * ### Working with Findings
+ * **Example:** Resolve a Finding
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchUpdateFindings = yield* AWS.SecurityHub.BatchUpdateFindings();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Workflow: { Status: "RESOLVED" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchUpdateFindings extends Binding.Service<
   BatchUpdateFindings,

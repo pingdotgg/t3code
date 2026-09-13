@@ -24,6 +24,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   archiveThread,
   createProject,
+  revertThreadCheckpoint,
+  reorderActiveThread,
   settleThread,
   stopThreadSession,
   unsettleThread,
@@ -100,6 +102,27 @@ describe("environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
+  it.effect("uses a distinct command when keeping workspace changes", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+      for (const restoreFiles of [undefined, true, false]) {
+        yield* revertThreadCheckpoint({
+          commandId: CommandId.make("rewind-command"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          ...(restoreFiles !== undefined ? { restoreFiles } : {}),
+          createdAt: "2026-06-06T00:01:00.000Z",
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      }
+      expect(dispatched.map((command) => command.type)).toEqual([
+        "thread.checkpoint.revert",
+        "thread.checkpoint.revert",
+        "thread.conversation.revert",
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("preserves caller metadata for idempotent queued commands", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];
@@ -168,6 +191,26 @@ describe("environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("sends an active order key without changing activity timestamps", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+      yield* reorderActiveThread({
+        commandId: CommandId.make("reorder-command"),
+        threadId: ThreadId.make("thread-1"),
+        orderKey: "mf",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(dispatched).toEqual([
+        {
+          type: "thread.active.reorder",
+          commandId: "reorder-command",
+          threadId: "thread-1",
+          orderKey: "mf",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

@@ -14,14 +14,13 @@ export interface BatchGetTracesRequest extends xray.BatchGetTracesRequest {}
  * X-Ray trace reads are account-scoped: IAM does not support resource-level
  * permissions for `xray:BatchGetTraces`, so the binding grants the action on
  * `*`.
- * @binding
- * @section Reading Traces
- * @example Fetch full traces from a Handler
+ * ### Reading Traces
+ * **Example:** Fetch full traces from a Handler
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
  * export default MyFunction.make(
- *   { main: import.meta.url, url: true, tracing: "Active" },
+ *   { main: import.meta.url, functionUrl: true, tracing: "Active" },
  *   Effect.gen(function* () {
  *     // init — bind the operation (grants xray:BatchGetTraces)
  *     const batchGetTraces = yield* XRay.BatchGetTraces();
@@ -40,6 +39,8 @@ export interface BatchGetTracesRequest extends xray.BatchGetTracesRequest {}
  *   }).pipe(Effect.provide(XRay.BatchGetTracesHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface BatchGetTraces extends Binding.Service<
   BatchGetTraces,

@@ -109,13 +109,10 @@ const pathFromSequence = (
   }
 
   const index = terrain.nodes.get(start)!
-  const node = Graph.getNode(terrain.graph, index).pipe(
-    Option.getOrThrowWith(() => new Error(`Start location ${start} not found in terrain`))
-  )
-
   const output: Types.Mutable<Graph.PathResult<number>> = {
-    distance: node.weight,
-    costs: [node.weight],
+    distance: 0,
+    costs: [],
+    edges: [],
     path: [index]
   }
 
@@ -144,6 +141,12 @@ const pathFromSequence = (
 
     output.distance += node.weight
     output.costs.push(node.weight)
+    const previousIndex = output.path[output.path.length - 1]
+    const edge = Graph.edgesBetween(terrain.graph, previousIndex, index)[0]
+    if (edge === undefined) {
+      throw new Error(`No edge from ${previousIndex} to ${index}`)
+    }
+    output.edges.push(edge)
     output.path.push(index)
   }
 

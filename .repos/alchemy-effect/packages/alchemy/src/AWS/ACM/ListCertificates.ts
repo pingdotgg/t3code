@@ -13,9 +13,8 @@ export interface ListCertificatesRequest extends acm.ListCertificatesRequest {}
  * in the account. Note that the default filter only returns `RSA_2048`
  * certificates; pass `Includes.keyTypes` to widen it. Provide the
  * implementation with `Effect.provide(AWS.ACM.ListCertificatesHttp)`.
- * @binding
- * @section Inspecting Certificates
- * @example List Certificates Expiring Soon
+ * ### Inspecting Certificates
+ * **Example:** List Certificates Expiring Soon
  * ```typescript
  * // init — account-level binding takes no resource
  * const listCertificates = yield* AWS.ACM.ListCertificates();
@@ -30,6 +29,8 @@ export interface ListCertificatesRequest extends acm.ListCertificatesRequest {}
  *     summary.NotAfter.getTime() - Date.now() < 30 * 24 * 60 * 60 * 1000,
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListCertificates extends Binding.Service<
   ListCertificates,

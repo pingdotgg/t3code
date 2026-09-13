@@ -25,6 +25,12 @@ export default Cloudflare.Worker(
           return HttpServerResponse.text(pong);
         }
 
+        // The env var a `Binding.Service` bound onto the container.
+        if (url.pathname === "/bound-env") {
+          const value = yield* object.boundEnv();
+          return yield* HttpServerResponse.json({ value: value ?? null });
+        }
+
         // Seed R2 through the DO's native binding.
         if (request.method === "PUT" && url.pathname === "/seed") {
           const key = url.searchParams.get("key") ?? "";

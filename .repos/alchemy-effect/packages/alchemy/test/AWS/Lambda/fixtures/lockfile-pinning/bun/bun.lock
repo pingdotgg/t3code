@@ -1,0 +1,11 @@
+{
+  // Bun lockfiles are JSONC.
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": { "dependencies": { "make-dir": "^3.0.0" } },
+  },
+  "packages": {
+    "make-dir": ["make-dir@3.0.0", "", { "dependencies": { "semver": "^6.0.0" } }],
+    "semver": ["semver@6.3.0", "", {}],
+  },
+}

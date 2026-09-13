@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildReviewSubmissionJson,
+  buildPullRequestStackMembershipsGraphQlQuery,
+  decodePullRequestStackMembershipsJson,
   buildReviewerRequestJson,
   decodeBaseComparisonJson,
   decodePullRequestActivityJson,
@@ -11,6 +13,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
@@ -20,6 +23,7 @@ import {
   decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -163,6 +167,17 @@ describe("pull request search decoding", () => {
       },
     });
   }
+
+  it("keeps stack membership beside search results without extra per-PR reads", () => {
+    const raw = JSON.parse(searchJson(["SUCCESS", null]));
+    raw.data.search.nodes[0].stack = { number: 3, size: 2, baseRefName: "main" };
+    raw.data.search.nodes[0].stackEntry = { position: 1 };
+    const batch = expectSuccess(decodePullRequestSearchJson(JSON.stringify(raw)));
+    expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, position: 1, base: "main" });
+    expect(batch.items[1]?.stack).toBeUndefined();
+    expect(pullRequestSearchGraphQlQuery(20, true)).toContain("stackEntry");
+    expect(pullRequestSearchGraphQlQuery(20)).not.toContain("stackEntry");
+  });
 
   it("maps the rollup enum the search answers with onto the same three words", () => {
     // The search asks GitHub for the verdict rather than the checks behind it, so this path sees
@@ -1498,5 +1513,144 @@ describe("how far a branch trails its base", () => {
 
   it("refuses a body that is not the answer to this question", () => {
     expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("host-native stack decoding", () => {
+  /** A stack as the preview lists it, bottom to top, with the fields it answers today. */
+  function stack(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 42,
+      number: 3,
+      node_id: "STK_kwDO",
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: { ref: "main", sha: "abc" },
+      open: true,
+      created_at: "2026-09-01T00:00:00Z",
+      pull_requests: [
+        {
+          number: 10,
+          head: { ref: "feat/one" },
+          state: "closed",
+          merged_at: "2026-09-02T00:00:00Z",
+        },
+        { number: 11, head: { ref: "feat/two" }, state: "open", merged_at: null },
+        { number: 12, head: { ref: "feat/three" }, state: "closed", merged_at: null },
+      ],
+      ...overrides,
+    };
+  }
+
+  /** The one stack a listing answered with, which these reads all expect to find. */
+  function expectStack(overrides: Record<string, unknown> = {}) {
+    const decoded = expectSuccess(decodePullRequestStacksJson(JSON.stringify([stack(overrides)])));
+    if (decoded === null) throw new Error("expected a stack");
+    return decoded;
+  }
+
+  it("reads the first stack, bottom to top, with merged_at outranking state", () => {
+    expect(expectStack()).toEqual({
+      id: "42",
+      number: 3,
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: "main",
+      layers: [
+        { number: 10, headBranch: "feat/one", state: "merged" },
+        { number: 11, headBranch: "feat/two", state: "open" },
+        { number: 12, headBranch: "feat/three", state: "closed" },
+      ],
+    });
+  });
+
+  it("retains the detailed layer titles, draft state and expected revision", () => {
+    expect(
+      expectStack({
+        pull_requests: [
+          {
+            number: 11,
+            title: "Second layer",
+            draft: true,
+            head: { ref: "feat/two", sha: "abc123" },
+            state: "open",
+            merged_at: null,
+          },
+        ],
+      }).layers,
+    ).toEqual([
+      {
+        number: 11,
+        title: "Second layer",
+        isDraft: true,
+        headSha: "abc123",
+        headBranch: "feat/two",
+        state: "open",
+      },
+    ]);
+  });
+
+  it("accepts a base named as a bare branch, which is what the preview started out sending", () => {
+    expect(expectStack({ base: "develop" }).base).toBe("develop");
+  });
+
+  it("prefers the page a person opens over the API URL, where the host reports one", () => {
+    expect(expectStack({ html_url: "https://github.com/acme/web/stacks/3" }).url).toBe(
+      "https://github.com/acme/web/stacks/3",
+    );
+  });
+
+  it("falls back to the node id, then the number, for a stack without an id", () => {
+    expect(expectStack({ id: undefined }).id).toBe("STK_kwDO");
+    expect(expectStack({ id: null, node_id: null }).id).toBe("3");
+  });
+
+  it("reads an empty listing as not stacked", () => {
+    expect(expectSuccess(decodePullRequestStacksJson("[]"))).toBeNull();
+  });
+
+  it("refuses a stack without a number or without its pull requests", () => {
+    expect(
+      Result.isSuccess(decodePullRequestStacksJson(JSON.stringify([stack({ number: undefined })]))),
+    ).toBe(false);
+    expect(
+      Result.isSuccess(
+        decodePullRequestStacksJson(JSON.stringify([stack({ pull_requests: undefined })])),
+      ),
+    ).toBe(false);
+    expect(Result.isSuccess(decodePullRequestStacksJson("{"))).toBe(false);
+  });
+});
+
+describe("pull request stack membership batches", () => {
+  it("maps aliases while skipping missing pull requests and incomplete memberships", () => {
+    const memberships = expectSuccess(
+      decodePullRequestStackMembershipsJson(
+        JSON.stringify({
+          data: {
+            s0: {
+              pullRequest: {
+                stack: { number: 3, size: 2, baseRefName: "main" },
+                stackEntry: { position: 1 },
+              },
+            },
+            s1: null,
+            s2: { pullRequest: null },
+            s3: { pullRequest: { stack: null, stackEntry: null } },
+            s4: { pullRequest: { stack: { number: 3, size: 2, baseRefName: "main" } } },
+          },
+        }),
+      ),
+    );
+    expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
+  });
+
+  it("refuses malformed responses and unsafe query selectors", () => {
+    expect(Result.isFailure(decodePullRequestStackMembershipsJson('{"errors":[]}'))).toBe(true);
+    expect(buildPullRequestStackMembershipsGraphQlQuery('acme/web") { x } #', [1])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [0])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [1.5])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
+      "pullRequest(number: 8)",
+    );
   });
 });

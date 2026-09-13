@@ -56,8 +56,8 @@ export interface CrawlerEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Crawler Events
- * @example Run Downstream Work After a Crawl
+ * ### Consuming Crawler Events
+ * **Example:** Run Downstream Work After a Crawl
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

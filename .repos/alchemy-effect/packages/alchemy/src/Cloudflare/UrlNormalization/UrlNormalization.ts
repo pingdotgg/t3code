@@ -88,11 +88,8 @@ export type UrlNormalization = Resource<
  * singleton and PUTs the desired `{ scope, type }` only when the observed
  * configuration differs. Destroy issues the API's true reset operation
  * (DELETE), returning the zone to Cloudflare defaults.
- * @resource
- * @product URL Normalization
- * @category Rules & Configuration
- * @section Managing URL normalization
- * @example Normalize URLs sent to the origin too
+ * ### Managing URL normalization
+ * **Example:** Normalize URLs sent to the origin too
  * ```typescript
  * yield* Cloudflare.UrlNormalization.UrlNormalization("UrlNormalization", {
  *   zoneId: zone.zoneId,
@@ -100,7 +97,7 @@ export type UrlNormalization = Resource<
  * });
  * ```
  *
- * @example Strict RFC 3986 normalization
+ * **Example:** Strict RFC 3986 normalization
  * ```typescript
  * yield* Cloudflare.UrlNormalization.UrlNormalization("UrlNormalization", {
  *   zoneId: zone.zoneId,
@@ -109,7 +106,7 @@ export type UrlNormalization = Resource<
  * });
  * ```
  *
- * @example Disable URL normalization
+ * **Example:** Disable URL normalization
  * ```typescript
  * yield* Cloudflare.UrlNormalization.UrlNormalization("UrlNormalization", {
  *   zoneId: zone.zoneId,
@@ -118,6 +115,10 @@ export type UrlNormalization = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/rules/normalization/
+ *
+ * @resource
+ * @product URL Normalization
+ * @category Rules & Configuration
  */
 export const UrlNormalization = Resource<UrlNormalization>(TypeId, {
   aliases: ["Cloudflare.UrlNormalization"],

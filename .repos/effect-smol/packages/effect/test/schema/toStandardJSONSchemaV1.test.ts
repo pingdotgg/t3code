@@ -1,6 +1,6 @@
 import { assertTrue, deepStrictEqual } from "@effect/vitest/utils"
-import type { StandardJSONSchemaV1 } from "@standard-schema/spec"
 import { Schema } from "effect"
+import type { StandardJSONSchemaV1 } from "effect/StandardSchema"
 import { describe, it } from "vitest"
 
 function standardConvertToJSONSchemaInput(

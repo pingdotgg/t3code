@@ -16,7 +16,7 @@ export class ResourceExplorerTestFunction extends Lambda.Function<Lambda.Functio
 export default ResourceExplorerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // search over a fresh index can be slow on cold start — AWS's 3s
     // default intermittently times out
     timeout: Duration.seconds(30),

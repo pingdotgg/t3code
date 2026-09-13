@@ -111,11 +111,8 @@ export type PageRule = Resource<TypeId, Props, Attributes, never, Providers>;
  * state `read` scans the zone for a rule with the same target and reports
  * it as `Unowned` — the engine refuses to take it over unless `--adopt`
  * (or `adopt(true)`) is set.
- * @resource
- * @product Page Rules
- * @category Rules & Configuration
- * @section Caching
- * @example Cache everything under a path
+ * ### Caching
+ * **Example:** Cache everything under a path
  * ```typescript
  * yield* Cloudflare.PageRule.PageRule("CacheImages", {
  *   zoneId: zone.zoneId,
@@ -127,8 +124,8 @@ export type PageRule = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @section Redirects
- * @example Permanent redirect with forwarding_url
+ * ### Redirects
+ * **Example:** Permanent redirect with forwarding_url
  * ```typescript
  * // forwarding_url cannot be combined with most other actions.
  * yield* Cloudflare.PageRule.PageRule("RedirectOldBlog", {
@@ -143,8 +140,8 @@ export type PageRule = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @section Security
- * @example Force HTTPS and raise the security level
+ * ### Security
+ * **Example:** Force HTTPS and raise the security level
  * ```typescript
  * yield* Cloudflare.PageRule.PageRule("SecureAdmin", {
  *   zoneId: zone.zoneId,
@@ -157,8 +154,8 @@ export type PageRule = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @section Staged rollout
- * @example Create the rule disabled, flip to active later
+ * ### Staged rollout
+ * **Example:** Create the rule disabled, flip to active later
  * ```typescript
  * yield* Cloudflare.PageRule.PageRule("BypassCacheBeta", {
  *   zoneId: zone.zoneId,
@@ -169,6 +166,10 @@ export type PageRule = Resource<TypeId, Props, Attributes, never, Providers>;
  * ```
  *
  * @see https://developers.cloudflare.com/rules/page-rules/
+ *
+ * @resource
+ * @product Page Rules
+ * @category Rules & Configuration
  */
 export const PageRule = Resource<PageRule>(TypeId, {
   aliases: ["Cloudflare.PageRule"],

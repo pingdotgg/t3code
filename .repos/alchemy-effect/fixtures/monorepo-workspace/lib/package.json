@@ -1,0 +1,6 @@
+{
+  "name": "@fixtures-internal/monorepo-workspace-lib",
+  "private": true,
+  "description": "Sibling workspace package imported by app/ across the package boundary. NOT a bun workspace member (the root glob is fixtures/*, one level up) — the app reaches it by relative import, which is exactly the cross-boundary module id the build-output collector must classify as an external workspace.",
+  "type": "module"
+}

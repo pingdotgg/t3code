@@ -32,9 +32,8 @@ export type LogEventSinkError =
  * warning, never retried. The remaining valid events in the batch are still
  * ingested by the API.
  *
- * @binding
- * @section Streaming Log Events
- * @example Drain a Stream of Events into a Log Stream
+ * ### Streaming Log Events
+ * **Example:** Drain a Stream of Events into a Log Stream
  * ```typescript
  * const sink = yield* AWS.Logs.LogEventSink(logGroup, {
  *   logStreamName: "audit-stream",
@@ -47,12 +46,12 @@ export type LogEventSinkError =
  * );
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // LogEventSinkHttp batches over the PutLogEvents binding, so provide
  * // PutLogEventsHttp into it with Layer.provideMerge.
  * export default IngestFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const logGroup = yield* AWS.Logs.LogGroup("IngestLogs", {});
  *     yield* AWS.Logs.LogStream("IngestStream", {
@@ -71,6 +70,8 @@ export type LogEventSinkError =
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface LogEventSink extends Binding.Service<
   LogEventSink,

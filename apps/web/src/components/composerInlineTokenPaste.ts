@@ -1,4 +1,15 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import { ComposerContextId } from "@t3tools/contracts";
+import type { AssistantCitation, ComposerContextClipboardFragment } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  decodeComposerContextFragment,
+  decodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
+import {
+  collectComposerContextReferences,
+  formatComposerContextReference,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import {
   $createLineBreakNode,
   $createTextNode,
@@ -16,7 +27,19 @@ import { collectComposerPromptInlineTokens } from "../composer-editor-mentions";
 interface ComposerInlineTokenPasteOptions {
   createMentionNode: (path: string) => LexicalNode;
   createCitationNode: (citation: AssistantCitation, source: string) => LexicalNode;
+  createContextReferenceNode: (reference: {
+    kind: string;
+    contextId: string;
+    label: string;
+  }) => LexicalNode;
   getExpandedAbsoluteOffsetForPoint: (node: LexicalNode, pointOffset: number) => number;
+  /**
+   * Imports the records behind a structured paste into the draft. Returns the ids that had
+   * to change (a re-attached binary gets a fresh local id) so the pasted links follow.
+   */
+  importContextFragment?: (
+    fragment: ComposerContextClipboardFragment,
+  ) => ReadonlyMap<string, string>;
 }
 
 export function registerComposerInlineTokenPaste(
@@ -32,15 +55,19 @@ export function registerComposerInlineTokenPaste(
       if (event.clipboardData.files.length > 0) {
         return false;
       }
-      const text = event.clipboardData.getData("text/plain");
-      if (text.length === 0) {
+      const pastedText = event.clipboardData.getData("text/plain");
+      if (pastedText.length === 0) {
         return false;
       }
+      const text = importPastedComposerText(event.clipboardData, options.importContextFragment);
       // Token grammar requires trailing whitespace; a virtual newline lets a
       // mention at the very end of the pasted text still parse.
       const tokens = collectComposerPromptInlineTokens(`${text}\n`).filter(
         (token) =>
-          (token.type === "mention" || token.type === "citation") && token.end <= text.length,
+          (token.type === "mention" ||
+            token.type === "citation" ||
+            token.type === "context-reference") &&
+          token.end <= text.length,
       );
       if (tokens.length === 0) {
         return false;
@@ -91,7 +118,13 @@ export function registerComposerInlineTokenPaste(
         nodes.push(
           token.type === "citation"
             ? options.createCitationNode(token.citation, token.source)
-            : options.createMentionNode(token.value),
+            : token.type === "context-reference"
+              ? options.createContextReferenceNode({
+                  kind: token.kind,
+                  contextId: token.contextId,
+                  label: token.label,
+                })
+              : options.createMentionNode(token.value),
         );
         cursor = token.end;
       }
@@ -109,4 +142,59 @@ export function registerComposerInlineTokenPaste(
     },
     COMMAND_PRIORITY_HIGH,
   );
+}
+
+/** Clipboard records referenced by the copied text, including dependent screenshots. */
+export function readPastedComposerContext(
+  clipboardData: Pick<DataTransfer, "getData">,
+): ComposerContextClipboardFragment | null {
+  const pastedText = clipboardData.getData("text/plain");
+  // Only records whose links are in the pasted text get imported; a fragment may carry
+  // more (it was built for a larger copy) and must not start transfers for those.
+  const decodedFragment =
+    decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
+    decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
+  if (decodedFragment === null) return null;
+  const pastedIds = new Set<string>(
+    collectComposerContextReferences(pastedText).map((occurrence) => occurrence.contextId),
+  );
+  for (const record of decodedFragment.records) {
+    if (
+      record.kind === "preview-annotation" &&
+      !("payload" in record) &&
+      pastedIds.has(record.contextId) &&
+      record.screenshotContextId
+    ) {
+      pastedIds.add(record.screenshotContextId);
+    }
+  }
+  return {
+    ...decodedFragment,
+    records: decodedFragment.records.filter((record) => pastedIds.has(record.contextId)),
+  };
+}
+
+/** Imports the same structured clipboard payload for focused paste and paste-to-focus. */
+export function importPastedComposerText(
+  clipboardData: Pick<DataTransfer, "getData">,
+  importContextFragment?: ComposerInlineTokenPasteOptions["importContextFragment"],
+): string {
+  const pastedText = clipboardData.getData("text/plain");
+  const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
+  const rewrittenIds =
+    fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
+  const text =
+    rewrittenIds && rewrittenIds.size > 0
+      ? replaceComposerContextReferences(pastedText, (occurrence) => {
+          const nextId = rewrittenIds.get(occurrence.contextId);
+          return nextId
+            ? formatComposerContextReference({
+                ...occurrence,
+                contextId: ComposerContextId.make(nextId),
+                kind: occurrence.kind === "element" ? "preview-annotation" : occurrence.kind,
+              })
+            : occurrence.source;
+        })
+      : pastedText;
+  return text;
 }

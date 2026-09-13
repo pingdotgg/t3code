@@ -7,4 +7,4 @@ const schema = Schema.Struct({
   c: Schema.Array(Schema.String)
 })
 
-SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
+export const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))

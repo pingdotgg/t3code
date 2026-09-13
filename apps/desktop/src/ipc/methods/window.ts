@@ -34,6 +34,9 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as Electron from "electron";
+import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -305,7 +308,16 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (pane) {
     const shell = yield* ElectronShell.ElectronShell;
-    return yield* shell.openSystemSettings(pane);
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin") return false;
+    const owner = Electron.BrowserWindow.getFocusedWindow();
+    const opened = yield* shell.openSystemSettings(pane);
+    if (opened && environment.isPackaged) {
+      const permissions = yield* MacPermissions.MacPermissions;
+      const isGranted = yield* safariPermissionCheck;
+      yield* permissions.showHelper(pane, owner, isGranted);
+    }
+    return opened;
   }),
 });
 
@@ -330,6 +342,32 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const pasteAsText = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PASTE_AS_TEXT_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.isDestroyed() ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const focused = Electron.webContents.getFocusedWebContents();
+    if (
+      focused &&
+      !focused.isDestroyed() &&
+      Electron.BrowserWindow.fromWebContents(focused) === window.value
+    ) {
+      focused.paste();
+    }
   }),
 });
 
@@ -377,5 +415,17 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
         Effect.orElseSucceed((): PickedThemeFile => ({ name, size: 0, text: "" })),
       );
     });
+  }),
+});
+
+export const checkSystemPermission = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
+  payload: SystemSettingsPaneSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin") return false;
+    const check = yield* safariPermissionCheck;
+    return yield* Effect.promise(check);
   }),
 });

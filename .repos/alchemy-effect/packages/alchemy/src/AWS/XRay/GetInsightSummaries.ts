@@ -13,9 +13,8 @@ export interface GetInsightSummariesRequest
  * provide the implementation with `Effect.provide(XRay.GetInsightSummariesHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetInsightSummaries`, so the binding grants it on `*`.
- * @binding
- * @section Insights
- * @example List recent insights for a group
+ * ### Insights
+ * **Example:** List recent insights for a group
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -31,6 +30,8 @@ export interface GetInsightSummariesRequest
  * });
  * const insights = result.InsightSummaries ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetInsightSummaries extends Binding.Service<
   GetInsightSummaries,

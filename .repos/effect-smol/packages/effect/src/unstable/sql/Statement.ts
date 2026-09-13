@@ -99,7 +99,7 @@ export type Transformer = (
  * Context reference for an optional current SQL statement transformer applied
  * before statement execution.
  *
- * @category transformer
+ * @category services
  * @since 4.0.0
  */
 export const CurrentTransformer = Context.Reference<Transformer | undefined>("effect/sql/CurrentTransformer", {
@@ -738,7 +738,7 @@ const emptyFragment = fragment([literal("")])
  * Dialect-specific compiler that converts a SQL `Fragment` into SQL text and
  * bind parameters, with a no-transform variant.
  *
- * @category compiler
+ * @category models
  * @since 4.0.0
  */
 export interface Compiler {
@@ -754,7 +754,7 @@ export interface Compiler {
  * Callbacks used by `makeCompiler` to render dialect placeholders,
  * identifiers, insert helpers, update helpers, and custom SQL segments.
  *
- * @category compiler
+ * @category models
  * @since 4.0.0
  */
 export type CompilerOptions<C extends Custom<any, any, any, any> = any> = {
@@ -789,7 +789,7 @@ export type CompilerOptions<C extends Custom<any, any, any, any> = any> = {
 /**
  * Creates a dialect-specific SQL `Compiler` from rendering callbacks.
  *
- * @category compiler
+ * @category constructors
  * @since 4.0.0
  */
 export const makeCompiler = <C extends Custom<any, any, any, any> = any>(
@@ -799,21 +799,24 @@ export const makeCompiler = <C extends Custom<any, any, any, any> = any>(
   self.options = options
   self.dialect = options.dialect
   self.disableTransforms = false
+  self.statementCache = new WeakMap<Fragment, CompiledStatement>()
+  self.statementCacheNoTransform = new WeakMap<Fragment, CompiledStatement>()
   return self
 }
+
+type CompiledStatement = readonly [sql: string, binds: ReadonlyArray<unknown>]
 
 interface CompilerImpl extends Compiler {
   readonly options: CompilerOptions
   readonly disableTransforms: boolean
+  readonly statementCache: WeakMap<Fragment, CompiledStatement>
+  readonly statementCacheNoTransform: WeakMap<Fragment, CompiledStatement>
   compile(
     statement: Fragment,
     withoutTransform?: boolean,
     placeholderOverride?: (u: unknown) => string
-  ): readonly [sql: string, binds: ReadonlyArray<unknown>]
+  ): CompiledStatement
 }
-
-const statementCacheSymbol = Symbol.for("effect/unstable/sql/Statement/statementCache")
-const statementCacheNoTransformSymbol = Symbol.for("effect/unstable/sql/Statement/statementCacheNoTransform")
 
 const CompilerProto = {
   compile(
@@ -824,9 +827,10 @@ const CompilerProto = {
   ): readonly [sql: string, binds: ReadonlyArray<unknown>] {
     const opts = this.options
     withoutTransform = withoutTransform || this.disableTransforms
-    const cacheSymbol = withoutTransform ? statementCacheNoTransformSymbol : statementCacheSymbol
-    if (cacheSymbol in statement) {
-      return (statement as any)[cacheSymbol]
+    const cache = withoutTransform ? this.statementCacheNoTransform : this.statementCache
+    const cached = cache.get(statement)
+    if (cached !== undefined) {
+      return cached
     }
 
     const segments = statement.segments
@@ -1033,7 +1037,8 @@ const CompilerProto = {
     if (placeholderOverride !== undefined) {
       return result
     }
-    return (statement as any)[cacheSymbol] = result
+    cache.set(statement, result)
+    return result
   },
 
   get withoutTransform() {
@@ -1049,7 +1054,7 @@ const CompilerProto = {
  * Creates a SQLite compiler that uses `?` placeholders and quoted identifiers,
  * optionally transforming identifier names before escaping.
  *
- * @category compiler
+ * @category constructors
  * @since 4.0.0
  */
 export const makeCompilerSqlite = (transform?: ((_: string) => string) | undefined): Compiler =>
@@ -1092,7 +1097,7 @@ export function defaultEscape(c: string) {
  * Classifies a JavaScript value as a SQL primitive kind, treating `undefined`
  * as `null` and defaulting unrecognized objects to `string`.
  *
- * @category predicates
+ * @category converting
  * @since 4.0.0
  */
 export const primitiveKind = (value: unknown): PrimitiveKind => {
@@ -1254,23 +1259,6 @@ const StatementProto: Omit<
   StatementImpl<any>,
   "segments" | "acquirer" | "compiler" | "spanAttributes" | "transformRows"
 > = {
-  ...Effectable.Prototype<StatementImpl<any>>({
-    label: "Statement",
-    evaluate(fiber) {
-      const span = internalEffect.makeSpanUnsafe(fiber, "sql.execute", { kind: "client" })
-      const clock = fiber.getRef(Clock)
-      const timingEnabled = fiber.getRef(TracerTimingEnabled)
-      return Effect.onExit(
-        this.withConnectionSpan(
-          "execute",
-          (connection, sql, params) => connection.execute(sql, params, this.transformRows),
-          false,
-          span
-        ),
-        (exit) => internalEffect.endSpan(span, exit, clock, timingEnabled)
-      )
-    }
-  }),
   [FragmentTypeId]: FragmentTypeId,
   withConnection<XA, E>(
     this: StatementImpl<any>,
@@ -1373,6 +1361,24 @@ const StatementProto: Omit<
       (connection, sql, params) => connection.executeUnprepared(sql, params, self.transformRows)
     )
   },
+
+  ...Effectable.Prototype<StatementImpl<any>>({
+    label: "Statement",
+    evaluate(fiber) {
+      const span = internalEffect.makeSpanUnsafe(fiber, "sql.execute", { kind: "client" })
+      const clock = fiber.getRef(Clock)
+      const timingEnabled = fiber.getRef(TracerTimingEnabled)
+      return Effect.onExit(
+        this.withConnectionSpan(
+          "execute",
+          (connection, sql, params) => connection.execute(sql, params, this.transformRows),
+          false,
+          span
+        ),
+        (exit) => internalEffect.endSpan(span, exit, clock, timingEnabled)
+      )
+    }
+  }),
 
   compile(
     this: StatementImpl<any>,

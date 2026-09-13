@@ -105,13 +105,16 @@ test.provider.skipIf(!!process.env.FAST)(
           Effect.retry({
             // Cap the exponential at 3s — uncapped, the sleeps double each
             // attempt and a handful of misses burns minutes of the test
-            // timeout on a single send.
+            // timeout on a single send. 30 attempts ≈ 85s total budget:
+            // fresh workers.dev URLs serve 404 well past the ~40s a
+            // 15-attempt budget covers when the account is under
+            // full-suite deploy load.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("3 seconds"),
               ]),
-              Schedule.recurs(15),
+              Schedule.recurs(30),
             ]),
           }),
         );
@@ -165,16 +168,19 @@ test.provider.skipIf(!!process.env.FAST)(
                 );
           }),
           Effect.retry({
-            // Cap the exponential at 4s so 40 attempts sample for ~2.5 minutes.
-            // Uncapped, the doubling sleeps pass the whole 240s test budget
-            // after ~9 attempts and the test dies in a single long sleep even
-            // though the consumer would have caught up moments later.
+            // Cap the exponential at 4s so 75 attempts sample for ~5 minutes.
+            // Uncapped, the doubling sleeps pass the whole test budget after
+            // ~9 attempts and the test dies in a single long sleep even
+            // though the consumer would have caught up moments later. The
+            // ~5 minute ceiling matters under full-suite load: queue consumer
+            // scheduling lags well past 2.5 minutes when the account is
+            // deploying hundreds of workers concurrently.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("4 seconds"),
               ]),
-              Schedule.recurs(40),
+              Schedule.recurs(75),
             ]),
           }),
         );
@@ -206,5 +212,7 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  // The send readiness budget (~85s) plus two DO catch-up polls (~2.5 min
+  // cap each) can legitimately stack under full-suite load.
+  { timeout: 600_000 },
 );
