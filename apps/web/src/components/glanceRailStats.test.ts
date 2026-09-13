@@ -2,9 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveGlanceRailGitPosition,
+  resolveGlanceRailUsage,
   summarizeGlanceRail,
   type GlanceRailGitStatusSignal,
   type GlanceRailThreadSignal,
+  type GlanceRailUsageSignal,
 } from "./glanceRailStats";
 
 function thread(overrides: Partial<GlanceRailThreadSignal> = {}): GlanceRailThreadSignal {
@@ -66,5 +68,63 @@ describe("resolveGlanceRailGitPosition", () => {
     [status({ isRepo: false }), { state: "not-repository", label: "Not a Git repo" }],
   ])("presents the branch position", (input, expected) => {
     expect(resolveGlanceRailGitPosition(input)).toEqual(expected);
+  });
+});
+
+describe("resolveGlanceRailUsage", () => {
+  const usage = (overrides: Partial<GlanceRailUsageSignal> = {}): GlanceRailUsageSignal => ({
+    accountLabel: "Codex Personal",
+    windows: [
+      {
+        id: "weekly",
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 25,
+      },
+      {
+        id: "session",
+        kind: "session",
+        label: "Session",
+        usedPercent: 40,
+      },
+    ],
+    ...overrides,
+  });
+
+  it("shows the active account's session headroom", () => {
+    expect(resolveGlanceRailUsage(usage())).toEqual({
+      accountLabel: "Codex Personal",
+      windowLabel: "Session",
+      remainingPercent: 60,
+    });
+  });
+
+  it("falls back to the first window when no session window is published", () => {
+    expect(
+      resolveGlanceRailUsage(
+        usage({
+          windows: [
+            {
+              id: "weekly",
+              kind: "weekly",
+              label: "Weekly",
+              usedPercent: 25,
+            },
+          ],
+        }),
+      ),
+    ).toEqual({
+      accountLabel: "Codex Personal",
+      windowLabel: "Weekly",
+      remainingPercent: 75,
+    });
+  });
+
+  it.each([
+    [null, "without a provider account"],
+    [usage({ windows: [] }), "without usage windows"],
+    [usage({ unavailable: true }), "when usage is unavailable"],
+  ])("omits the readout %s", (input) => {
+    expect(resolveGlanceRailUsage(input)).toBeNull();
   });
 });

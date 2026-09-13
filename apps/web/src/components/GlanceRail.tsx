@@ -1,7 +1,16 @@
+/**
+ * Desktop-only blue edge rail for quick project/thread glance information.
+ * The hover drawer keeps lightweight status readouts and navigation actions
+ * close at hand without becoming another persistent sidebar.
+ *
+ * @module GlanceRail
+ */
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 import {
   ActivityIcon,
+  GaugeIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   ListFilterIcon,
@@ -13,20 +22,25 @@ import {
 import { useState, type ReactNode } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useActiveProjectTarget } from "../hooks/useActiveProjectTarget";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { cn } from "../lib/utils";
-import { useThreadShells } from "../state/entities";
+import { useProject, useThreadShell, useThreadShells } from "../state/entities";
+import { environmentPresentations } from "../state/presentation";
 import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  resolveGlanceRailUsage,
   resolveGlanceRailGitPosition,
   summarizeGlanceRail,
+  type GlanceRailUsage,
   type GlanceRailGitPosition,
 } from "./glanceRailStats";
 import { readPullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 
-type StatScope = "all" | "project";
+type GlanceRailStatScope = "all" | "project";
 
 const DOCK_ITEM_CLASS =
   "group/dock-item relative flex min-h-14 w-full origin-right transform-gpu items-center gap-3 rounded-xl px-2.5 py-2 text-right outline-hidden ring-ring transition-transform duration-150 ease-out hover:z-10 hover:-translate-x-1 hover:scale-[1.02] focus-visible:z-10 focus-visible:-translate-x-1 focus-visible:scale-[1.02] focus-visible:ring-2 motion-reduce:transform-none motion-reduce:transition-none motion-reduce:hover:translate-x-0 motion-reduce:hover:scale-100 motion-reduce:focus-visible:translate-x-0 motion-reduce:focus-visible:scale-100";
@@ -99,6 +113,50 @@ function DockReadout({
   );
 }
 
+function UsageRemainingReadout({ usage }: { readonly usage: GlanceRailUsage }) {
+  const accountAndWindow = `${usage.accountLabel} · ${usage.windowLabel}`;
+  const summary = `${accountAndWindow}: ${usage.remainingPercent}% remaining`;
+
+  return (
+    <div
+      aria-label={summary}
+      className={cn(DOCK_ITEM_CLASS, "cursor-default")}
+      data-glance-rail-usage=""
+    >
+      <span className="min-w-0 flex-1 text-right">
+        <span className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground">
+            Usage remaining
+          </span>
+          <span className="shrink-0 text-xs font-semibold tabular-nums text-sidebar-foreground">
+            {usage.remainingPercent}%
+          </span>
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-sidebar-muted-foreground">
+          {accountAndWindow}
+        </span>
+        <span
+          aria-label={summary}
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={usage.remainingPercent}
+          className="relative mt-1.5 block h-1.5 overflow-hidden rounded-full bg-sidebar"
+          role="progressbar"
+        >
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-0 left-0 rounded-full bg-primary"
+            style={{ width: `${usage.remainingPercent}%` }}
+          />
+        </span>
+      </span>
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-sidebar-border/70 bg-sidebar text-sidebar-muted-foreground shadow-xs/5 transition-transform duration-150 ease-out group-hover/dock-item:scale-110 motion-reduce:transition-none motion-reduce:group-hover/dock-item:scale-100">
+        <GaugeIcon aria-hidden="true" className="size-5" />
+      </span>
+    </div>
+  );
+}
+
 const GIT_POSITION_TONE = {
   synced: "text-success-foreground",
   ahead: "text-info-foreground",
@@ -108,10 +166,48 @@ const GIT_POSITION_TONE = {
 } as const satisfies Record<GlanceRailGitPosition["state"], string>;
 
 export function GlanceRail() {
-  const [statScope, setStatScope] = useState<StatScope>("all");
+  const [statScope, setStatScope] = useState<GlanceRailStatScope>("project");
   const activeProjectTarget = useActiveProjectTarget();
   const handleNewThread = useNewThreadHandler();
   const threads = useThreadShells();
+  const activeThreadShell = useThreadShell(activeProjectTarget?.threadRef ?? null);
+  const activeProject = useProject(
+    activeProjectTarget === null
+      ? null
+      : scopeProjectRef(activeProjectTarget.environmentId, activeProjectTarget.projectId),
+  );
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const activeServerConfig =
+    activeProjectTarget === null
+      ? null
+      : (presentations.get(activeProjectTarget.environmentId)?.serverConfig ?? null);
+  const activeProjectDefaultModelSelection =
+    activeServerConfig === null || activeProject === null
+      ? null
+      : resolveProjectSettings(activeServerConfig.settings, activeProject.id, activeProject)
+          .settings.defaultModelSelection;
+  const composerActiveProvider = useComposerDraftStore((store) =>
+    activeProjectTarget === null
+      ? null
+      : (store.getComposerDraft(activeProjectTarget.threadRef)?.activeProvider ?? null),
+  );
+  const providerForInstance = (instanceId: string | null | undefined) =>
+    activeServerConfig?.providers.find((provider) => provider.instanceId === instanceId) ?? null;
+  const activeProvider =
+    providerForInstance(composerActiveProvider) ??
+    providerForInstance(activeThreadShell?.session?.providerInstanceId) ??
+    providerForInstance(activeThreadShell?.modelSelection.instanceId) ??
+    providerForInstance(activeProjectDefaultModelSelection?.instanceId);
+  const usageLimits = activeProvider?.usageLimits;
+  const usage = resolveGlanceRailUsage(
+    activeProvider === null || usageLimits === undefined
+      ? null
+      : {
+          accountLabel: activeProvider.displayName?.trim() || String(activeProvider.driver),
+          unavailable: usageLimits.unavailable !== undefined,
+          windows: usageLimits.windows,
+        },
+  );
   const effectiveStatScope =
     statScope === "project" && activeProjectTarget !== null ? "project" : "all";
   const filteredThreads =
@@ -209,7 +305,12 @@ export function GlanceRail() {
                       onClick={() => setStatScope("project")}
                       type="button"
                     >
-                      Current
+                      <span
+                        className="block max-w-40 truncate"
+                        title={activeProjectTarget?.projectName}
+                      >
+                        {activeProjectTarget?.projectName ?? "No project"}
+                      </span>
                     </button>
                   </span>
                 </span>
@@ -256,6 +357,7 @@ export function GlanceRail() {
                 title="Threads"
                 value={stats.threads}
               />
+              {usage ? <UsageRemainingReadout usage={usage} /> : null}
 
               <div aria-hidden="true" className="mx-2 h-px bg-sidebar-border/70" />
 
