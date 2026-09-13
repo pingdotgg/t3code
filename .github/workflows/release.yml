@@ -147,7 +147,8 @@ jobs:
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "preview" ]]; then
-            # Temporary channel for dogfooding the archive-based CLI runtime.
+            # Manual-only test train: exercises the whole release flow for a
+            # commit end users must never receive. Never scheduled.
             # Same versioning as nightly under its own prerelease identifier.
             # A preview release is reachable only by downloading it by hand:
             # it is never published to npm, its desktop builds carry no update

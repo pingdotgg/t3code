@@ -325,6 +325,35 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const targetVersion = input.requestedVersion ?? (yield* resolveNewestVersion(channel));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
+  // Preview is a maintainers' dogfooding train: it is cut by hand from
+  // unmerged branches, receives no fixes, and is never offered to anyone.
+  // Reaching it from stable or nightly takes an explicit ask and an explicit
+  // acknowledgement; the flag alone is not enough from a script.
+  const currentChannel = cliReleaseChannelOf(currentVersion);
+  if (targetChannel === "preview" && currentChannel !== "preview") {
+    yield* Console.log(
+      [
+        `t3@${targetVersion} is a preview build.`,
+        "  Preview builds are cut by maintainers from unreleased branches to exercise the release",
+        "  pipeline. They can be broken, receive no fixes, and are never offered as updates; you",
+        `  will have to switch back to ${currentChannel} yourself with \`t3 update --channel ${currentChannel} --allow-downgrade\`.`,
+      ].join("\n"),
+    );
+    if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+      return yield* new CliUpdateError({
+        reason:
+          "Refusing to install a preview build without confirmation. Run this from a terminal to confirm, or pass --channel preview from an interactive shell.",
+      });
+    }
+    const confirmed = yield* Prompt.run(
+      Prompt.confirm({ message: "Install the preview build anyway?", initial: false }),
+    ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
+    if (!confirmed) {
+      yield* Console.log("Left as is.");
+      return;
+    }
+  }
+
   // Work out everything that will be touched before touching anything, so the
   // user sees one plan and one question rather than a surprise restart.
   const status = yield* service.status;
