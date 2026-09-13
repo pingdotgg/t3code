@@ -226,7 +226,7 @@ describe("AcpSessionRuntime", () => {
     () =>
       Effect.gen(function* () {
         const toolStarted = yield* Deferred.make<void>();
-        const cancelReceived = yield* Deferred.make<void>();
+        const cancelFailed = yield* Deferred.make<void>();
         let promptRequests = 0;
         const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
         const runtime = yield* AcpSessionRuntime.make({
@@ -235,7 +235,34 @@ describe("AcpSessionRuntime", () => {
             ...mockRuntimeOptions.spawn,
             env: {
               T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
-              T3_ACP_FAIL_CANCEL: "1",
+            },
+          },
+          protocolLogging: {
+            logOutgoing: true,
+            logger: (event) => {
+              if (
+                event.direction === "outgoing" &&
+                typeof event.payload === "object" &&
+                event.payload !== null &&
+                "_tag" in event.payload &&
+                event.payload._tag === "Notification" &&
+                "tag" in event.payload &&
+                event.payload.tag === "session/cancel"
+              ) {
+                return Deferred.succeed(cancelFailed, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new EffectAcpErrors.AcpTransportError({
+                        operation: "call-rpc",
+                        method: "session/cancel",
+                        detail: "Broken pipe",
+                        cause: undefined,
+                      }),
+                    ),
+                  ),
+                ) as unknown as Effect.Effect<void, never>;
+              }
+              return Effect.void;
             },
           },
           cancelBehavior: "wait-for-prompt",
@@ -254,9 +281,6 @@ describe("AcpSessionRuntime", () => {
             if (event._tag === "ToolCallUpdated" && event.toolCall.status === "inProgress") {
               return Deferred.succeed(toolStarted, undefined);
             }
-            if (event._tag === "ThoughtDelta" && event.text === "native-cancel-received") {
-              return Deferred.succeed(cancelReceived, undefined);
-            }
             return Effect.void;
           }),
           Effect.forkChild,
@@ -269,7 +293,7 @@ describe("AcpSessionRuntime", () => {
           .pipe(Effect.forkChild);
         yield* Deferred.await(toolStarted);
         const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
-        yield* Deferred.await(cancelReceived);
+        yield* Deferred.await(cancelFailed);
         const replacement = yield* runtime
           .prompt({
             prompt: [{ type: "text", text: "second" }],
