@@ -6,15 +6,22 @@ import { expect, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
   CommandId,
+  EventId,
   RuntimeRequestId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2Command,
+  type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import { OrchestratorCommandRejectedError, OrchestratorDispatchError } from "./Orchestrator.ts";
+import {
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorDispatchError,
+} from "./Orchestrator.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
@@ -232,7 +239,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
   }).pipe(Effect.provide(intakeTestLayer)),
 );
 
-it.effect("releases claimed copies when dispatch rejects the command before commit", () =>
+it.effect("releases claimed copies when the command was already rejected", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
@@ -240,6 +247,8 @@ it.effect("releases claimed copies when dispatch rejects the command before comm
       NodePath.join(config.attachmentsDir, `${pendingId}.png`),
       new Uint8Array([1, 2, 3]),
     );
+    // A retry of a previously rejected command claims fresh copies, then the
+    // orchestrator replays the rejection without touching them.
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-rejected"),
@@ -262,10 +271,10 @@ it.effect("releases claimed copies when dispatch rejects the command before comm
         Layer.mock(ThreadManagementService)({
           dispatch: (command) =>
             Effect.fail(
-              new OrchestratorCommandRejectedError({
+              new OrchestratorCommandPreviouslyRejectedError({
                 commandId: command.commandId,
                 commandType: command.type,
-                cause: "rejected in test",
+                detail: "rejected earlier",
               }),
             ),
         }),
@@ -276,6 +285,97 @@ it.effect("releases claimed copies when dispatch rejects the command before comm
     expect(
       NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-rejected-"),
+      ),
+    ).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect("releases claimed copies when dispatch replays an earlier accepted response", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-replay");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    // The first attempt was accepted but its response was lost. The retry's
+    // dispatch replays the stored events, which reference the first claim's
+    // attachment id — not this attempt's fresh copy.
+    const earlierAttachment = {
+      type: "image" as const,
+      id: ChatAttachmentId.make("thread-replay-00000000-0000-4000-8000-0000000000aa"),
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const now = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
+    const storedEvents: OrchestrationV2StoredEvent[] = [
+      {
+        sequence: 1,
+        commandId: null,
+        event: {
+          id: EventId.make("evt-earlier-answer"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make("item-earlier"),
+            type: "user_input_request",
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: null,
+            completedAt: now,
+            updatedAt: now,
+            requestId: RuntimeRequestId.make("request-replay"),
+            questions: [],
+            questionAnswer: {
+              requestId: "request-replay",
+              answers: { q: ["one"] },
+              attachmentsByQuestionId: { q: [earlierAttachment] },
+            },
+          },
+        },
+      },
+    ];
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-replay"),
+      threadId,
+      requestId: RuntimeRequestId.make("request-replay"),
+      answers: { q: ["one"] },
+      attachmentsByQuestionId: {
+        q: [
+          {
+            type: "image",
+            id: pendingId,
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService)({
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Success");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-replay-"),
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);

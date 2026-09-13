@@ -30,10 +30,10 @@ function dispatchWasNotAccepted(
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
-  claimed: AttachmentClaims.ClaimedAttachments,
+  claimedPaths: ReadonlyArray<string>,
   accepted: ReadonlyArray<ChatAttachment>,
 ) {
-  if (claimed.claimedPaths.length === 0) return;
+  if (claimedPaths.length === 0) return;
   const config = yield* ServerConfig.ServerConfig;
   const retained = new Set(
     accepted.map((attachment) =>
@@ -44,7 +44,7 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
     ),
   );
   yield* AttachmentClaims.releaseClaimedAttachments(
-    claimed.claimedPaths.filter((path) => !retained.has(path)),
+    claimedPaths.filter((path) => !retained.has(path)),
   );
 });
 
@@ -81,7 +81,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         ),
       );
       return { answers, attachmentsByQuestionId };
-    }).pipe(Effect.tapError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
+    }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
     return yield* threads
       .dispatch({
         ...command,
@@ -89,6 +89,17 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         attachmentsByQuestionId: prepared.attachmentsByQuestionId,
       })
       .pipe(
+        Effect.tap((result) => {
+          // A replayed receipt reports the first attempt's attachments, so
+          // this attempt's copies go unreferenced and are released. With no
+          // recorded answer the outcome is ambiguous and everything stays.
+          const accepted = result.storedEvents.flatMap(({ event }) =>
+            event.type === "turn-item.updated" && event.payload.type === "user_input_request"
+              ? Object.values(event.payload.questionAnswer?.attachmentsByQuestionId ?? {}).flat()
+              : [],
+          );
+          return accepted.length > 0 ? releaseUnusedClaims(claimedPaths, accepted) : Effect.void;
+        }),
         Effect.tapError((error) =>
           dispatchWasNotAccepted(error)
             ? AttachmentClaims.releaseClaimedAttachments(claimedPaths)
@@ -122,7 +133,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     .pipe(
       Effect.tap((result) =>
         releaseUnusedClaims(
-          claimed,
+          claimed.claimedPaths,
           result.storedEvents.flatMap(({ event }) =>
             event.type === "message.updated" ? event.payload.attachments : [],
           ),
@@ -142,7 +153,7 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
-    Effect.tap((result) => releaseUnusedClaims(claimed, result.message.attachments)),
+    Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
     Effect.tapError((error) =>
       dispatchWasNotAccepted(error)
         ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
@@ -187,7 +198,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     .pipe(
       Effect.tap((result) =>
         releaseUnusedClaims(
-          claimed,
+          claimed.claimedPaths,
           result.projection.messages.flatMap((message) => message.attachments),
         ),
       ),

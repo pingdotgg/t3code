@@ -127,7 +127,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           return normalized;
         }),
       { concurrency: 1 },
-    ).pipe(Effect.tapError(() => releaseClaimedAttachments(claimedPaths)));
+    ).pipe(Effect.onError(() => releaseClaimedAttachments(claimedPaths)));
     return { attachments, claimedPaths } satisfies ClaimedAttachments;
   },
 );
