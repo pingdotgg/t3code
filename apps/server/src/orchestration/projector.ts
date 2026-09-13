@@ -3,6 +3,7 @@ import type {
   OrchestrationProject,
   OrchestrationReadModel,
   ThreadId,
+  TurnId,
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
   ThreadPullRequestLink,
@@ -14,12 +15,12 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
+import { compareCreatedOrder } from "@t3tools/shared/chronology";
 import {
   legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
@@ -52,11 +53,20 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+
+function turnCreatedSequence(thread: OrchestrationThread, turnId: TurnId, sequence: number) {
+  if (thread.latestTurn?.turnId === turnId) return thread.latestTurn.createdSequence;
+  return (
+    thread.messages.find((message) => message.role === "assistant" && message.turnId === turnId)
+      ?.createdSequence ?? sequence
+  );
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -230,11 +240,7 @@ function retainThreadMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
+      .toSorted(compareCreatedOrder)
       .slice(0, missingUserCount);
     for (const message of fallbackUserMessages) {
       retainedMessageIds.add(message.id);
@@ -256,11 +262,7 @@ function retainThreadMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
+      .toSorted(compareCreatedOrder)
       .slice(0, missingAssistantCount);
     for (const message of fallbackAssistantMessages) {
       retainedMessageIds.add(message.id);
@@ -292,6 +294,9 @@ function compareThreadActivities(
   left: OrchestrationThread["activities"][number],
   right: OrchestrationThread["activities"][number],
 ): number {
+  if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+    return compareCreatedOrder(left, right);
+  }
   if (left.sequence !== undefined && right.sequence !== undefined) {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
@@ -751,10 +756,12 @@ export function projectEvent(
           return nextBase;
         }
 
+        const existingMessage = thread.messages.find((entry) => entry.id === payload.messageId);
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
           {
             id: payload.messageId,
+            createdSequence: existingMessage?.createdSequence ?? event.sequence,
             role: payload.role,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
@@ -768,12 +775,12 @@ export function projectEvent(
           "message",
         );
 
-        const existingMessage = thread.messages.find((entry) => entry.id === message.id);
         const messages = existingMessage
           ? thread.messages.map((entry) =>
               entry.id === message.id
                 ? {
                     ...entry,
+                    createdSequence: message.createdSequence,
                     text: message.streaming
                       ? `${entry.text}${message.text}`
                       : message.text.length > 0
@@ -800,6 +807,38 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          const pendingMessage = thread.messages.find(
+            (message) => message.id === thread.pendingTurnStart?.messageId,
+          );
+          if (
+            pendingMessage?.text.trim().toLowerCase() === "/compact" &&
+            (pendingMessage.attachments?.length ?? 0) === 0
+          )
+            return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              pendingTurnStart: {
+                messageId: payload.messageId,
+                createdSequence:
+                  thread.messages.find((message) => message.id === payload.messageId)
+                    ?.createdSequence ?? event.sequence,
+              },
+            }),
+          };
+        }),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
@@ -828,10 +867,23 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
+            ...((session.status === "running" && session.activeTurnId !== null) ||
+            session.status === "error" ||
+            session.status === "stopped" ||
+            session.status === "interrupted" ||
+            (session.status === "ready" &&
+              event.commandId?.startsWith("server:provider-session-set:"))
+              ? { pendingTurnStart: null }
+              : {}),
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
                 ? {
                     turnId: session.activeTurnId,
+                    createdSequence:
+                      thread.session?.activeTurnId === session.activeTurnId
+                        ? turnCreatedSequence(thread, session.activeTurnId, event.sequence)
+                        : (thread.pendingTurnStart?.createdSequence ??
+                          turnCreatedSequence(thread, session.activeTurnId, event.sequence)),
                     state: "running",
                     requestedAt:
                       thread.latestTurn?.turnId === session.activeTurnId
@@ -877,14 +929,17 @@ export function projectEvent(
           return nextBase;
         }
 
+        const existingPlan = thread.proposedPlans.find(
+          (entry) => entry.id === payload.proposedPlan.id,
+        );
         const proposedPlans = [
           ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
-          payload.proposedPlan,
+          {
+            ...payload.proposedPlan,
+            createdSequence: existingPlan?.createdSequence ?? event.sequence,
+          },
         ]
-          .toSorted(
-            (left, right) =>
-              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          )
+          .toSorted(compareCreatedOrder)
           .slice(-200);
 
         return {
@@ -945,31 +1000,37 @@ export function projectEvent(
         // checkpoint, but don't settle a turn its session is still running.
         const turnStillRunning =
           thread.session?.status === "running" && thread.session.activeTurnId === payload.turnId;
+        // A delayed checkpoint must not discard the active turn's initiating anchor.
+        const latestTurnStillRunning =
+          thread.session?.status === "running" &&
+          thread.latestTurn?.turnId === thread.session.activeTurnId;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurn: turnStillRunning
-              ? thread.latestTurn
-              : {
-                  turnId: payload.turnId,
-                  state:
-                    thread.latestTurn?.turnId === payload.turnId &&
-                    thread.latestTurn.state === "interrupted"
-                      ? "interrupted"
-                      : checkpointStatusToLatestTurnState(payload.status),
-                  requestedAt:
-                    thread.latestTurn?.turnId === payload.turnId
-                      ? thread.latestTurn.requestedAt
-                      : payload.completedAt,
-                  startedAt:
-                    thread.latestTurn?.turnId === payload.turnId
-                      ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                      : payload.completedAt,
-                  completedAt: payload.completedAt,
-                  assistantMessageId: payload.assistantMessageId,
-                },
+            latestTurn:
+              turnStillRunning || latestTurnStillRunning
+                ? thread.latestTurn
+                : {
+                    turnId: payload.turnId,
+                    createdSequence: turnCreatedSequence(thread, payload.turnId, event.sequence),
+                    state:
+                      thread.latestTurn?.turnId === payload.turnId &&
+                      thread.latestTurn.state === "interrupted"
+                        ? "interrupted"
+                        : checkpointStatusToLatestTurnState(payload.status),
+                    requestedAt:
+                      thread.latestTurn?.turnId === payload.turnId
+                        ? thread.latestTurn.requestedAt
+                        : payload.completedAt,
+                    startedAt:
+                      thread.latestTurn?.turnId === payload.turnId
+                        ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                        : payload.completedAt,
+                    completedAt: payload.completedAt,
+                    assistantMessageId: payload.assistantMessageId,
+                  },
             updatedAt: event.occurredAt,
           }),
         };
@@ -1005,6 +1066,14 @@ export function projectEvent(
               ? null
               : {
                   turnId: latestCheckpoint.turnId,
+                  createdSequence:
+                    (thread.latestTurn?.turnId === latestCheckpoint.turnId
+                      ? thread.latestTurn.createdSequence
+                      : undefined) ??
+                    messages.findLast(
+                      (message) =>
+                        message.role === "user" && !isImportedAgentSessionMessageId(message.id),
+                    )?.createdSequence,
                   state: checkpointStatusToLatestTurnState(latestCheckpoint.status),
                   requestedAt: latestCheckpoint.completedAt,
                   startedAt: latestCheckpoint.completedAt,
@@ -1042,7 +1111,12 @@ export function projectEvent(
           const activities = retainThreadActivities(
             [
               ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
+              {
+                ...payload.activity,
+                createdSequence:
+                  thread.activities.find((entry) => entry.id === payload.activity.id)
+                    ?.createdSequence ?? event.sequence,
+              },
             ].toSorted(compareThreadActivities),
           );
 
@@ -1050,6 +1124,12 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              ...((payload.activity.kind === "provider.turn.start.failed" ||
+                payload.activity.kind === "context-compaction") &&
+              Predicate.isObject(payload.activity.payload) &&
+              payload.activity.payload.requestId === thread.pendingTurnStart?.messageId
+                ? { pendingTurnStart: null }
+                : {}),
               updatedAt: event.occurredAt,
             }),
           };

@@ -12,6 +12,45 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
+  it.effect("keeps first event order through streaming and repeated message updates", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-clock-rollback");
+      const first = {
+        messageId: MessageId.make("message-before-rollback"),
+        threadId,
+        turnId: null,
+        role: "user" as const,
+        text: "first",
+        isStreaming: false,
+        createdAt: "2026-09-01T12:00:00.000Z",
+        updatedAt: "2026-09-01T12:00:00.000Z",
+        createdSequence: 10,
+      };
+      const second = {
+        ...first,
+        messageId: MessageId.make("message-after-rollback"),
+        text: "second",
+        createdAt: "2026-09-01T01:00:00.000Z",
+        updatedAt: "2026-09-01T01:00:00.000Z",
+        createdSequence: 20,
+      };
+      yield* repository.upsert(first);
+      yield* repository.appendStreaming(second);
+      yield* repository.appendStreaming({ ...second, text: " continued", createdSequence: 30 });
+      yield* repository.upsert({ ...first, text: "edited first", createdSequence: 40 });
+      const rows = yield* repository.listByThreadId({ threadId });
+      assert.deepEqual(
+        rows.map((row) => [row.messageId, row.createdSequence, row.text]),
+        [
+          [first.messageId, 10, "edited first"],
+          [second.messageId, 20, "second continued"],
+        ],
+      );
+      assert.strictEqual(yield* repository.getLatestUserMessageAt({ threadId }), second.createdAt);
+    }),
+  );
+
   it.effect("finds the latest live user-message time within one thread", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

@@ -75,6 +75,7 @@ export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+  readonly local?: boolean;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 

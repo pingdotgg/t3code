@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Arr from "effect/Array";
 import { shallow } from "zustand/vanilla/shallow";
+import { compareCreatedOrder } from "@t3tools/shared/chronology";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   commandDetailRepeatsCommand,
@@ -57,6 +58,7 @@ export interface WorkLogEntry {
   questionAnswer?: UserInputAttachmentAnswerPayload;
   id: string;
   createdAt: string;
+  createdSequence?: number;
   turnId?: TurnId | null;
   /** Stable provider identity across in-progress and completed lifecycle updates. */
   toolCallId?: string;
@@ -136,18 +138,21 @@ export type TimelineEntry =
       id: string;
       kind: "message";
       createdAt: string;
+      createdSequence?: number;
       message: ChatMessage;
     }
   | {
       id: string;
       kind: "proposed-plan";
       createdAt: string;
+      createdSequence?: number;
       proposedPlan: ProposedPlan;
     }
   | {
       id: string;
       kind: "work";
       createdAt: string;
+      createdSequence?: number;
       entry: WorkLogEntry;
     };
 
@@ -357,27 +362,26 @@ export function findLatestProposedPlan(
   if (latestTurnId) {
     const matchingTurnPlan = [...proposedPlans]
       .filter((proposedPlan) => proposedPlan.turnId === latestTurnId)
-      .toSorted(
-        (left, right) =>
-          left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
-      )
+      .toSorted(compareProposedPlans)
       .at(-1);
     if (matchingTurnPlan) {
       return toLatestProposedPlanState(matchingTurnPlan);
     }
   }
 
-  const latestPlan = [...proposedPlans]
-    .toSorted(
-      (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id),
-    )
-    .at(-1);
+  const latestPlan = [...proposedPlans].toSorted(compareProposedPlans).at(-1);
   if (!latestPlan) {
     return null;
   }
 
   return toLatestProposedPlanState(latestPlan);
+}
+
+function compareProposedPlans(left: ProposedPlan, right: ProposedPlan): number {
+  if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+    return compareCreatedOrder(left, right);
+  }
+  return left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id);
 }
 
 export function hasActionableProposedPlan(
@@ -574,6 +578,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
+    ...(activity.createdSequence !== undefined
+      ? { createdSequence: activity.createdSequence }
+      : {}),
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
@@ -861,6 +868,9 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    ...(previous.createdSequence !== undefined
+      ? { createdSequence: previous.createdSequence }
+      : {}),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -1386,6 +1396,9 @@ function compareActivitiesByOrder(
   left: OrchestrationThreadActivity,
   right: OrchestrationThreadActivity,
 ): number {
+  if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+    return compareCreatedOrder(left, right);
+  }
   if (left.sequence !== undefined && right.sequence !== undefined) {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
@@ -1428,6 +1441,7 @@ function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {
     id: message.id,
     kind: "message",
     createdAt: message.createdAt,
+    ...(message.createdSequence !== undefined ? { createdSequence: message.createdSequence } : {}),
     message,
   };
 }
@@ -1437,6 +1451,9 @@ function timelineEntryFromProposedPlan(proposedPlan: ProposedPlan): TimelineEntr
     id: proposedPlan.id,
     kind: "proposed-plan",
     createdAt: proposedPlan.createdAt,
+    ...(proposedPlan.createdSequence !== undefined
+      ? { createdSequence: proposedPlan.createdSequence }
+      : {}),
     proposedPlan,
   };
 }
@@ -1446,11 +1463,23 @@ function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
     id: workEntry.id,
     kind: "work",
     createdAt: workEntry.createdAt,
+    ...(workEntry.createdSequence !== undefined
+      ? { createdSequence: workEntry.createdSequence }
+      : {}),
     entry: workEntry,
   };
 }
 
-function compareTimelineEntriesByCreatedAt(left: TimelineEntry, right: TimelineEntry): number {
+function compareTimelineEntriesByOrder(left: TimelineEntry, right: TimelineEntry): number {
+  if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+    if (left.createdSequence === right.createdSequence) {
+      const leftLocal = left.kind === "message" && left.message.local === true;
+      const rightLocal = right.kind === "message" && right.message.local === true;
+      if (leftLocal !== rightLocal) return leftLocal ? -1 : 1;
+      if (leftLocal && rightLocal) return 0;
+    }
+    return compareCreatedOrder(left, right);
+  }
   return left.createdAt.localeCompare(right.createdAt);
 }
 
@@ -1466,8 +1495,8 @@ function timelineEntrySourceOrder(entry: TimelineEntry): number {
 }
 
 function shouldTakePreviousTimelineEntry(previous: TimelineEntry, suffix: TimelineEntry): boolean {
-  const createdAtComparison = compareTimelineEntriesByCreatedAt(previous, suffix);
-  if (createdAtComparison !== 0) return createdAtComparison < 0;
+  const order = compareTimelineEntriesByOrder(previous, suffix);
+  if (order !== 0) return order < 0;
   // The original full derivation sorts a source-ordered array with a stable
   // comparator. On a tie, messages precede plans, plans precede work, and an
   // older item in the same source array precedes a newly appended item.
@@ -1491,7 +1520,7 @@ function mergeTimelineEntrySuffix(
   const previousLast = previous.at(-1);
   let suffixIsOrdered = true;
   for (let index = 1; index < suffix.length; index += 1) {
-    if (compareTimelineEntriesByCreatedAt(suffix[index - 1]!, suffix[index]!) > 0) {
+    if (compareTimelineEntriesByOrder(suffix[index - 1]!, suffix[index]!) > 0) {
       suffixIsOrdered = false;
       break;
     }
@@ -1683,7 +1712,7 @@ export function deriveTimelineEntriesWithState(
       .map(timelineEntryFromProposedPlan);
     const workRows = workEntries.slice(previous.workEntries.length).map(timelineEntryFromWork);
     const suffix = [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
-      compareTimelineEntriesByCreatedAt,
+      compareTimelineEntriesByOrder,
     );
     return {
       messages,
@@ -1701,7 +1730,7 @@ export function deriveTimelineEntriesWithState(
     proposedPlans,
     workEntries,
     entries: [...messageRows, ...proposedPlanRows, ...workRows].toSorted(
-      compareTimelineEntriesByCreatedAt,
+      compareTimelineEntriesByOrder,
     ),
   };
 }
@@ -1717,12 +1746,20 @@ export function deriveTimelineEntries(
 export function inferCheckpointTurnCountByTurnId(
   summaries: ReadonlyArray<TurnDiffSummary>,
 ): Record<TurnId, number> {
-  const sorted = [...summaries].toSorted((a, b) => a.completedAt.localeCompare(b.completedAt));
+  const sorted = [...summaries].toSorted((a, b) =>
+    a.checkpointTurnCount !== undefined && b.checkpointTurnCount !== undefined
+      ? a.checkpointTurnCount - b.checkpointTurnCount
+      : a.checkpointTurnCount !== undefined
+        ? 1
+        : b.checkpointTurnCount !== undefined
+          ? -1
+          : a.completedAt.localeCompare(b.completedAt),
+  );
   const result: Record<TurnId, number> = {};
   for (let index = 0; index < sorted.length; index += 1) {
     const summary = sorted[index];
     if (!summary) continue;
-    result[summary.turnId] = index + 1;
+    result[summary.turnId] = summary.checkpointTurnCount ?? index + 1;
   }
   return result;
 }

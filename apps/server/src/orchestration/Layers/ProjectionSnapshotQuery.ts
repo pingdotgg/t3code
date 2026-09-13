@@ -111,6 +111,7 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
+    createdSequence: Schema.NullOr(NonNegativeInt),
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
@@ -118,7 +119,9 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
 const ProjectionTurnStartMessageDbRowSchema = ProjectionThreadMessageDbRowSchema.mapFields(
   Struct.assign({ hasOtherUserMessages: Schema.Number }),
 );
-const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
+const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan.mapFields(
+  Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
+);
 const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFields(
   Struct.assign({
     snapshot: Schema.NullOr(Schema.fromJsonString(ThreadPullRequestSnapshot)),
@@ -136,6 +139,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
     sequence: Schema.NullOr(NonNegativeInt),
+    createdSequence: Schema.NullOr(NonNegativeInt),
   }),
 );
 const ProjectionThreadActivityIdRowSchema = Schema.Struct({
@@ -158,6 +162,7 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   turnId: TurnId,
   state: Schema.String,
   requestedAt: IsoDateTime,
+  createdSequence: Schema.NullOr(NonNegativeInt),
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
@@ -212,12 +217,11 @@ const ThreadActivityKindsLookupInput = Schema.Struct({
 const ThreadActivityIdsLookupInput = Schema.Struct({
   activityIds: Schema.Array(ProjectionThreadActivity.fields.activityId),
 });
-// Windowed reads order turns by the stable keyset (anchor, turn key), where
-// anchor is requested_at and turn key is
-// COALESCE(turn_id, ''). Both are event-derived, so cursors survive the
-// revert projector's row-id rewrite and full projection rebuilds.
+// Creation sequences preserve ingestion order when the host clock moves backward.
+// Timestamp and turn id break ties for legacy rows without a sequence.
 const ThreadTurnWindowLookupInput = Schema.Struct({
   threadId: ThreadId,
+  beforeSequence: NonNegativeInt,
   // Exclusive keyset upper bound. Sentinels "~"/"" mean unbounded ("~" sorts
   // after every ISO timestamp).
   beforeAnchorAt: Schema.String,
@@ -226,17 +230,18 @@ const ThreadTurnWindowLookupInput = Schema.Struct({
   maxRawTurns: Schema.Number,
 });
 const ProjectionTurnWindowRowSchema = Schema.Struct({
-  // The turn's timeline anchor, used to bound rows that have no turn linkage
-  // (user messages and turnless activities) to the same page window.
+  anchorSequence: NonNegativeInt,
+  // Timestamp tie-breaker for legacy turns without a creation sequence.
   anchorAt: Schema.String,
   turnKey: Schema.String,
 });
 const ThreadTurnRangeLookupInput = Schema.Struct({
   threadId: ThreadId,
+  minSequence: NonNegativeInt,
+  beforeSequence: NonNegativeInt,
   // Turn-linked rows are bounded by the keyset range [min, before) over
-  // (anchor, turn key); turnless rows by the matching [minAnchorAt,
-  // beforeAnchorAt) time range. Unbounded ends use sentinels: "" for the
-  // lower bound, "~" (sorts after ISO dates) for the upper bound.
+  // (creation sequence, anchor, turn key). Turnless rows use their creation
+  // sequence, falling back to timestamps only for legacy unsequenced rows.
   minAnchorAt: Schema.String,
   minTurnKey: Schema.String,
   beforeAnchorAt: Schema.String,
@@ -345,6 +350,7 @@ function mapLatestTurn(
             ? "completed"
             : "running",
     requestedAt: row.requestedAt,
+    ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     assistantMessageId: row.assistantMessageId,
@@ -412,6 +418,7 @@ function mapProposedPlanRow(
     planMarkdown: row.planMarkdown,
     implementedAt: row.implementedAt,
     implementationThreadId: row.implementationThreadId,
+    ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -472,6 +479,7 @@ function mapThreadActivityRow(
     turnId: row.turnId,
     createdAt: row.createdAt,
     ...(row.sequence !== null ? { sequence: row.sequence } : {}),
+    ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
   };
 }
 
@@ -688,10 +696,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
-        ORDER BY thread_id ASC, created_at ASC, message_id ASC
+        ORDER BY thread_id ASC, COALESCE(created_sequence, 0) ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -707,10 +716,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           plan_markdown AS "planMarkdown",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
-        ORDER BY thread_id ASC, created_at ASC, plan_id ASC
+        ORDER BY thread_id ASC, COALESCE(created_sequence, 0) ASC, created_at ASC, plan_id ASC
       `,
   });
 
@@ -796,11 +806,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM projection_thread_activities
         ORDER BY
           thread_id ASC,
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -907,6 +918,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.turn_id AS "turnId",
           turns.state,
           turns.requested_at AS "requestedAt",
+          turns.created_sequence AS "createdSequence",
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
@@ -931,6 +943,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.turn_id AS "turnId",
           turns.state,
           turns.requested_at AS "requestedAt",
+          turns.created_sequence AS "createdSequence",
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
@@ -957,6 +970,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.turn_id AS "turnId",
           turns.state,
           turns.requested_at AS "requestedAt",
+          turns.created_sequence AS "createdSequence",
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
@@ -1038,6 +1052,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   WHEN 'user' THEN 0
                   ELSE 1
                 END ASC,
+                COALESCE(messages.created_sequence, 0) DESC,
                 messages.created_at DESC,
                 messages.message_id ASC
             ) AS thread_match_rank
@@ -1285,6 +1300,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         context_json AS "context",
         is_streaming AS "isStreaming",
         created_at AS "createdAt",
+        created_sequence AS "createdSequence",
         updated_at AS "updatedAt",
         EXISTS (
           SELECT 1
@@ -1317,11 +1333,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -1337,11 +1354,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           plan_markdown AS "planMarkdown",
           implemented_at AS "implementedAt",
           implementation_thread_id AS "implementationThreadId",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_proposed_plans
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, plan_id ASC
+        ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, plan_id ASC
       `,
   });
 
@@ -1380,6 +1398,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM (
           SELECT
@@ -1391,17 +1410,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             summary,
             payload_json,
             sequence,
+            created_sequence,
             created_at
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
           ORDER BY
-            sequence DESC,
+            COALESCE(created_sequence, 0) DESC,
             created_at DESC,
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
         ) AS recent_activities
         ORDER BY
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -1420,12 +1440,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         summary,
         payload_json AS "payload",
         sequence,
+        created_sequence AS "createdSequence",
         created_at AS "createdAt"
       FROM projection_thread_activities
       WHERE thread_id = ${threadId}
         AND kind IN ('user-input.requested', 'user-input.resolved')
         AND json_extract(payload_json, '$.requestId') = ${requestId}
-      ORDER BY sequence DESC, created_at DESC, activity_id DESC
+      ORDER BY COALESCE(created_sequence, 0) DESC, created_at DESC, activity_id DESC
       LIMIT 1
     `,
   });
@@ -1450,7 +1471,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
         ORDER BY
-          sequence DESC,
+          COALESCE(created_sequence, 0) DESC,
           created_at DESC,
           activity_id DESC
         LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
@@ -1471,6 +1492,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM projection_thread_activities
         -- The selectors already scoped these globally unique ids to the
@@ -1493,6 +1515,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM (
           SELECT
@@ -1504,18 +1527,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             summary,
             payload_json,
             sequence,
+            created_sequence,
             created_at
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
             AND ${sql.in("kind", activityKinds)}
           ORDER BY
-            sequence DESC,
+            COALESCE(created_sequence, 0) DESC,
             created_at DESC,
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
         ) AS recent_activities
         ORDER BY
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -1551,6 +1575,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turns.turn_id AS "turnId",
           turns.state,
           turns.requested_at AS "requestedAt",
+          turns.created_sequence AS "createdSequence",
           turns.started_at AS "startedAt",
           turns.completed_at AS "completedAt",
           turns.assistant_message_id AS "assistantMessageId",
@@ -1588,19 +1613,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // Resolves a page of recent turns for a windowed thread detail read. Walks
-  // back from the exclusive (beforeAnchorAt, beforeTurnKey) keyset boundary
-  // (sentinels "~"/"" mean unbounded, i.e. the first page) until it has seen
-  // `userTurnLimit` user-anchored turns — turns whose pending message is a
-  // user message; subagent/fan-out turns between them ride along — or hits the
-  // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
-  // CTE applies the keyset bound and LIMIT before the window functions run;
-  // its ORDER BY uses raw columns so the migration-037
-  // (thread_id, requested_at, turn_id) index serves both range and order with
-  // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
-  // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
-  // real id.) The caller derives the continuation cursor from the oldest
-  // returned row.
   // Highest thread-DETAIL event sequence for this thread that the projection
   // has applied (bounded by the global snapshot sequence read in the same
   // transaction). This is the thread-scoped watermark a windowed page carries
@@ -1631,61 +1643,96 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const resolveLegacyTurnCursor = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      beforeTurnId: Schema.String,
+      beforeAnchorAt: Schema.String,
+    }),
+    Result: ProjectionTurnWindowRowSchema,
+    execute: ({ threadId, beforeTurnId, beforeAnchorAt }) => sql`
+      SELECT COALESCE(created_sequence, 0) AS "anchorSequence",
+        requested_at AS "anchorAt", COALESCE(turn_id, '') AS "turnKey"
+      FROM projection_turns
+      WHERE thread_id = ${threadId}
+        AND (turn_id = ${beforeTurnId} OR (turn_id IS NULL AND ${beforeTurnId} = ''))
+        AND requested_at = ${beforeAnchorAt}
+      LIMIT 1
+    `,
+  });
+
   const listTurnWindowRows = SqlSchema.findAll({
     Request: ThreadTurnWindowLookupInput,
     Result: ProjectionTurnWindowRowSchema,
-    execute: ({ threadId, beforeAnchorAt, beforeTurnKey, userTurnLimit, maxRawTurns }) =>
+    execute: ({
+      threadId,
+      beforeSequence,
+      beforeAnchorAt,
+      beforeTurnKey,
+      userTurnLimit,
+      maxRawTurns,
+    }) =>
       sql`
         WITH candidates AS (
           SELECT
+            COALESCE(turns.created_sequence, 0) AS anchor_sequence,
             turns.requested_at AS anchor_at,
             COALESCE(turns.turn_id, '') AS turn_key,
             turns.pending_message_id
           FROM projection_turns AS turns
           WHERE turns.thread_id = ${threadId}
+            AND COALESCE(turns.created_sequence, 0) <= ${beforeSequence}
             AND (
-              turns.requested_at < ${beforeAnchorAt}
+              COALESCE(turns.created_sequence, 0) < ${beforeSequence}
               OR (
-                turns.requested_at = ${beforeAnchorAt}
-                AND COALESCE(turns.turn_id, '') < ${beforeTurnKey}
+                COALESCE(turns.created_sequence, 0) = ${beforeSequence}
+                AND (
+                  turns.requested_at < ${beforeAnchorAt}
+                  OR (turns.requested_at = ${beforeAnchorAt} AND COALESCE(turns.turn_id, '') < ${beforeTurnKey})
+                )
               )
             )
-          ORDER BY turns.requested_at DESC, turns.turn_id DESC
+          ORDER BY COALESCE(turns.created_sequence, 0) DESC, turns.requested_at DESC, turns.turn_id DESC
           LIMIT ${maxRawTurns}
         ),
         walked AS (
           SELECT
+            candidates.anchor_sequence,
             candidates.anchor_at,
             candidates.turn_key,
             CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END AS is_user_turn,
             SUM(CASE WHEN messages.role = 'user' THEN 1 ELSE 0 END) OVER (
-              ORDER BY candidates.anchor_at DESC, candidates.turn_key DESC
+              ORDER BY candidates.anchor_sequence DESC, candidates.anchor_at DESC, candidates.turn_key DESC
             ) AS user_turns_seen
           FROM candidates
           LEFT JOIN projection_thread_messages AS messages
             ON messages.message_id = candidates.pending_message_id
         )
         SELECT
+          anchor_sequence AS "anchorSequence",
           anchor_at AS "anchorAt",
           turn_key AS "turnKey"
         FROM walked
         WHERE user_turns_seen < ${userTurnLimit}
           OR (user_turns_seen = ${userTurnLimit} AND is_user_turn = 1)
-        ORDER BY anchor_at ASC, turn_key ASC
+        ORDER BY anchor_sequence ASC, anchor_at ASC, turn_key ASC
       `,
   });
 
-  // Windowed variants of the two heavy collections. Turn-linked rows are
-  // bounded by the page's (anchor, turn key) keyset range over
-  // projection_turns; rows with no turn linkage (user messages always, and
-  // turnless activities like pre-turn context-window updates) are bounded by
-  // the matching turn-anchor time range so they land on the same page as the
-  // turns around them. Proposed plans and checkpoints stay unwindowed: they
-  // are metadata-scale.
+  // Turn-linked rows follow the selected turn range. Turnless rows follow
+  // creation sequences, falling back to timestamps only for legacy rows.
   const listThreadMessageRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
-    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+    execute: ({
+      threadId,
+      minSequence,
+      beforeSequence,
+      minAnchorAt,
+      minTurnKey,
+      beforeAnchorAt,
+      beforeTurnKey,
+    }) =>
       sql`
         SELECT
           message_id AS "messageId",
@@ -1696,6 +1743,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -1705,28 +1753,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               SELECT turn_id FROM projection_turns
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
+                AND COALESCE(created_sequence, 0) >= ${minSequence}
+                AND COALESCE(created_sequence, 0) <= ${beforeSequence}
                 AND (
-                  requested_at > ${minAnchorAt}
-                  OR (
-                    requested_at = ${minAnchorAt}
-                    AND turn_id >= ${minTurnKey}
-                  )
+                  (COALESCE(created_sequence, 0), requested_at, turn_id) >= (${minSequence}, ${minAnchorAt}, ${minTurnKey})
                 )
                 AND (
-                  requested_at < ${beforeAnchorAt}
-                  OR (
-                    requested_at = ${beforeAnchorAt}
-                    AND turn_id < ${beforeTurnKey}
-                  )
+                  (COALESCE(created_sequence, 0), requested_at, turn_id) < (${beforeSequence}, ${beforeAnchorAt}, ${beforeTurnKey})
                 )
             )
             OR (
               turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
+              AND (
+                COALESCE(created_sequence, 0) > ${minSequence}
+                OR (COALESCE(created_sequence, 0) = ${minSequence}
+                  AND (${minSequence} > 0 OR created_at >= ${minAnchorAt}))
+              )
+              AND (
+                COALESCE(created_sequence, 0) < ${beforeSequence}
+                OR (COALESCE(created_sequence, 0) = ${beforeSequence}
+                  AND ${beforeSequence} = 0 AND created_at < ${beforeAnchorAt})
+              )
             )
           )
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -1742,7 +1792,7 @@ pending_approval_requests AS (
             activity.activity_id,
             ROW_NUMBER() OVER (
               PARTITION BY pending.request_id
-              ORDER BY activity.created_at DESC, activity.activity_id DESC
+              ORDER BY COALESCE(activity.created_sequence, 0) DESC, activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_approval_requests AS pending
           CROSS JOIN projection_thread_activities AS activity
@@ -1762,7 +1812,7 @@ pending_approval_requests AS (
             activity.kind,
             ROW_NUMBER() OVER (
               PARTITION BY json_extract(activity.payload_json, '$.requestId')
-              ORDER BY activity.created_at DESC, activity.activity_id DESC
+              ORDER BY COALESCE(activity.created_sequence, 0) DESC, activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_user_input_thread AS pending
           CROSS JOIN projection_thread_activities AS activity
@@ -1815,11 +1865,12 @@ pending_approval_requests AS (
           activity.summary,
           activity.payload_json AS "payload",
           activity.sequence,
+          activity.created_sequence AS "createdSequence",
           activity.created_at AS "createdAt"
         FROM pinned_activity_ids AS pinned
         INNER JOIN projection_thread_activities AS activity
           ON activity.activity_id = pinned.activity_id
-        ORDER BY activity.created_at ASC, activity.activity_id ASC
+        ORDER BY COALESCE(activity.created_sequence, 0) ASC, activity.created_at ASC, activity.activity_id ASC
       `,
   });
 
@@ -1837,7 +1888,15 @@ pending_approval_requests AS (
   const listThreadActivityRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+    execute: ({
+      threadId,
+      minSequence,
+      beforeSequence,
+      minAnchorAt,
+      minTurnKey,
+      beforeAnchorAt,
+      beforeTurnKey,
+    }) =>
       sql`
         SELECT
           activity_id AS "activityId",
@@ -1848,6 +1907,7 @@ pending_approval_requests AS (
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM (
           SELECT
@@ -1859,6 +1919,7 @@ pending_approval_requests AS (
             summary,
             payload_json,
             sequence,
+            created_sequence,
             created_at
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
@@ -1867,35 +1928,37 @@ pending_approval_requests AS (
                 SELECT turn_id FROM projection_turns
                 WHERE thread_id = ${threadId}
                   AND turn_id IS NOT NULL
+                  AND COALESCE(created_sequence, 0) >= ${minSequence}
+                  AND COALESCE(created_sequence, 0) <= ${beforeSequence}
                   AND (
-                    requested_at > ${minAnchorAt}
-                    OR (
-                      requested_at = ${minAnchorAt}
-                      AND turn_id >= ${minTurnKey}
-                    )
+                    (COALESCE(created_sequence, 0), requested_at, turn_id) >= (${minSequence}, ${minAnchorAt}, ${minTurnKey})
                   )
                   AND (
-                    requested_at < ${beforeAnchorAt}
-                    OR (
-                      requested_at = ${beforeAnchorAt}
-                      AND turn_id < ${beforeTurnKey}
-                    )
+                    (COALESCE(created_sequence, 0), requested_at, turn_id) < (${beforeSequence}, ${beforeAnchorAt}, ${beforeTurnKey})
                   )
               )
               OR (
                 turn_id IS NULL
-                AND created_at >= ${minAnchorAt}
-                AND created_at < ${beforeAnchorAt}
+                AND (
+                COALESCE(created_sequence, 0) > ${minSequence}
+                OR (COALESCE(created_sequence, 0) = ${minSequence}
+                  AND (${minSequence} > 0 OR created_at >= ${minAnchorAt}))
+              )
+              AND (
+                COALESCE(created_sequence, 0) < ${beforeSequence}
+                OR (COALESCE(created_sequence, 0) = ${beforeSequence}
+                  AND ${beforeSequence} = 0 AND created_at < ${beforeAnchorAt})
+              )
               )
             )
           ORDER BY
-            sequence DESC,
+            COALESCE(created_sequence, 0) DESC,
             created_at DESC,
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
         ) AS recent_activities
         ORDER BY
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -1904,7 +1967,15 @@ pending_approval_requests AS (
   const listThreadActivityIdsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadActivityIdRowSchema,
-    execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
+    execute: ({
+      threadId,
+      minSequence,
+      beforeSequence,
+      minAnchorAt,
+      minTurnKey,
+      beforeAnchorAt,
+      beforeTurnKey,
+    }) =>
       sql`
         SELECT activity_id AS "activityId"
         FROM projection_thread_activities
@@ -1914,29 +1985,31 @@ pending_approval_requests AS (
               SELECT turn_id FROM projection_turns
               WHERE thread_id = ${threadId}
                 AND turn_id IS NOT NULL
+                AND COALESCE(created_sequence, 0) >= ${minSequence}
+                AND COALESCE(created_sequence, 0) <= ${beforeSequence}
                 AND (
-                  requested_at > ${minAnchorAt}
-                  OR (
-                    requested_at = ${minAnchorAt}
-                    AND turn_id >= ${minTurnKey}
-                  )
+                  (COALESCE(created_sequence, 0), requested_at, turn_id) >= (${minSequence}, ${minAnchorAt}, ${minTurnKey})
                 )
                 AND (
-                  requested_at < ${beforeAnchorAt}
-                  OR (
-                    requested_at = ${beforeAnchorAt}
-                    AND turn_id < ${beforeTurnKey}
-                  )
+                  (COALESCE(created_sequence, 0), requested_at, turn_id) < (${beforeSequence}, ${beforeAnchorAt}, ${beforeTurnKey})
                 )
             )
             OR (
               turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
+              AND (
+                COALESCE(created_sequence, 0) > ${minSequence}
+                OR (COALESCE(created_sequence, 0) = ${minSequence}
+                  AND (${minSequence} > 0 OR created_at >= ${minAnchorAt}))
+              )
+              AND (
+                COALESCE(created_sequence, 0) < ${beforeSequence}
+                OR (COALESCE(created_sequence, 0) = ${beforeSequence}
+                  AND ${beforeSequence} = 0 AND created_at < ${beforeAnchorAt})
+              )
             )
           )
         ORDER BY
-          sequence DESC,
+          COALESCE(created_sequence, 0) DESC,
           created_at DESC,
           activity_id DESC
         LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
@@ -1975,10 +2048,47 @@ pending_approval_requests AS (
       `,
   });
 
+  const listPendingTurnStarts = SqlSchema.findAll({
+    Request: Schema.optional(ThreadId),
+    Result: Schema.Struct({
+      threadId: ThreadId,
+      messageId: MessageId,
+      createdSequence: Schema.NullOr(NonNegativeInt),
+    }),
+    execute: (threadId) => sql`
+      SELECT thread_id AS "threadId", pending_message_id AS "messageId", created_sequence AS "createdSequence"
+      FROM projection_turns
+      WHERE turn_id IS NULL AND state = 'pending' AND checkpoint_turn_count IS NULL AND pending_message_id IS NOT NULL
+        AND ${threadId === undefined ? sql`1 = 1` : sql`thread_id = ${threadId}`}
+    `,
+  });
+  const pendingTurnStarts = (threadId?: ThreadId) =>
+    listPendingTurnStarts(threadId).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.pendingTurnStarts:query",
+          "ProjectionSnapshotQuery.pendingTurnStarts:decode",
+        ),
+      ),
+      Effect.map(
+        (rows) =>
+          new Map(
+            rows.map((row) => [
+              row.threadId,
+              {
+                messageId: row.messageId,
+                ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
+              },
+            ]),
+          ),
+      ),
+    );
+
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
         Effect.all([
+          pendingTurnStarts(),
           listProjectRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2064,6 +2174,7 @@ pending_approval_requests AS (
       .pipe(
         Effect.flatMap(
           ([
+            pendingStarts,
             projectRows,
             threadRows,
             messageRows,
@@ -2101,6 +2212,7 @@ pending_approval_requests AS (
                 const threadMessages = messagesByThread.get(row.threadId) ?? [];
                 threadMessages.push({
                   id: row.messageId,
+                  ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -2118,6 +2230,7 @@ pending_approval_requests AS (
                 const threadProposedPlans = proposedPlansByThread.get(row.threadId) ?? [];
                 threadProposedPlans.push({
                   id: row.planId,
+                  ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
                   turnId: row.turnId,
                   planMarkdown: row.planMarkdown,
                   implementedAt: row.implementedAt,
@@ -2133,6 +2246,7 @@ pending_approval_requests AS (
                 const threadActivities = activitiesByThread.get(row.threadId) ?? [];
                 threadActivities.push({
                   id: row.activityId,
+                  ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
                   tone: row.tone,
                   kind: row.kind,
                   summary: row.summary,
@@ -2181,6 +2295,7 @@ pending_approval_requests AS (
                           ? "completed"
                           : "running",
                   requestedAt: row.requestedAt,
+                  ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
                   startedAt: row.startedAt,
                   completedAt: row.completedAt,
                   assistantMessageId: row.assistantMessageId,
@@ -2247,6 +2362,9 @@ pending_approval_requests AS (
                   repositoryIdentities.get(row.projectId),
                 ),
                 branchPullRequest: row.branchPullRequest,
+                ...(pendingStarts.has(row.threadId)
+                  ? { pendingTurnStart: pendingStarts.get(row.threadId) }
+                  : {}),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -3225,6 +3343,7 @@ pending_approval_requests AS (
         turnId: row.turnId,
         streaming: row.isStreaming === 1,
         createdAt: row.createdAt,
+        ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
         updatedAt: row.updatedAt,
         ...(row.attachments !== null ? { attachments: row.attachments } : {}),
         ...(row.context !== null ? { context: row.context } : {}),
@@ -3237,6 +3356,8 @@ pending_approval_requests AS (
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
   interface ThreadDetailBounds {
+    readonly minSequence: number;
+    readonly beforeSequence: number;
     readonly minAnchorAt: string;
     readonly minTurnKey: string;
     readonly beforeAnchorAt: string;
@@ -3305,7 +3426,7 @@ pending_approval_requests AS (
 
     return activities.toSorted(
       (left, right) =>
-        (left.sequence ?? -1) - (right.sequence ?? -1) ||
+        (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
         left.createdAt.localeCompare(right.createdAt) ||
         left.id.localeCompare(right.id),
     );
@@ -3360,7 +3481,7 @@ pending_approval_requests AS (
                 ]
                   .toSorted(
                     (left, right) =>
-                      (left.sequence ?? -1) - (right.sequence ?? -1) ||
+                      (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
                       left.createdAt.localeCompare(right.createdAt) ||
                       left.activityId.localeCompare(right.activityId),
                   )
@@ -3369,6 +3490,7 @@ pending_approval_requests AS (
             );
 
       const [
+        pendingStarts,
         threadRow,
         messageRows,
         proposedPlanRows,
@@ -3378,6 +3500,7 @@ pending_approval_requests AS (
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
+        pendingTurnStarts(threadId),
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -3462,6 +3585,7 @@ pending_approval_requests AS (
                 ?.repositoryIdentity,
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
+        ...(pendingStarts.has(threadId) ? { pendingTurnStart: pendingStarts.get(threadId) } : {}),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
@@ -3479,6 +3603,7 @@ pending_approval_requests AS (
         messages: messageRows.map((row) => {
           const message = {
             id: row.messageId,
+            ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
             role: row.role,
             text: row.text,
             turnId: row.turnId,
@@ -3565,10 +3690,24 @@ pending_approval_requests AS (
             window.beforeCursor === undefined
               ? null
               : decodeThreadDetailPageCursor(window.beforeCursor);
-          const cursor = decodedCursor?.threadId === threadId ? decodedCursor : null;
+          let cursor = decodedCursor?.threadId === threadId ? decodedCursor : null;
+          if (cursor !== null && cursor.beforeSequence === undefined) {
+            const boundary = yield* resolveLegacyTurnCursor(cursor).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadDetailSnapshot:resolveLegacyTurnCursor:query",
+                  "ProjectionSnapshotQuery.getThreadDetailSnapshot:resolveLegacyTurnCursor:decodeRow",
+                ),
+              ),
+            );
+            cursor = Option.isSome(boundary)
+              ? { ...cursor, beforeSequence: boundary.value.anchorSequence }
+              : null;
+          }
 
           const windowRows = yield* listTurnWindowRows({
             threadId,
+            beforeSequence: cursor?.beforeSequence ?? Number.MAX_SAFE_INTEGER,
             beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
             beforeTurnKey: cursor?.beforeTurnId ?? "",
             userTurnLimit: window.turnLimit,
@@ -3587,6 +3726,7 @@ pending_approval_requests AS (
             oldest !== undefined &&
             (yield* listTurnWindowRows({
               threadId,
+              beforeSequence: oldest.anchorSequence,
               beforeAnchorAt: oldest.anchorAt,
               beforeTurnKey: oldest.turnKey,
               userTurnLimit: 1,
@@ -3610,6 +3750,8 @@ pending_approval_requests AS (
             oldest === undefined && cursor === null
               ? undefined
               : {
+                  minSequence: hasMore ? (oldest?.anchorSequence ?? 0) : 0,
+                  beforeSequence: cursor?.beforeSequence ?? Number.MAX_SAFE_INTEGER,
                   minAnchorAt: hasMore ? (oldest?.anchorAt ?? "") : "",
                   minTurnKey: hasMore ? (oldest?.turnKey ?? "") : "",
                   beforeAnchorAt: cursor?.beforeAnchorAt ?? ANCHOR_UNBOUNDED,
@@ -3618,7 +3760,14 @@ pending_approval_requests AS (
           // Empty window behind a cursor: nothing older remains.
           const emptyBounds =
             oldest === undefined && cursor !== null
-              ? { minAnchorAt: "", minTurnKey: "", beforeAnchorAt: "", beforeTurnKey: "" }
+              ? {
+                  minSequence: 0,
+                  beforeSequence: 0,
+                  minAnchorAt: "",
+                  minTurnKey: "",
+                  beforeAnchorAt: "",
+                  beforeTurnKey: "",
+                }
               : undefined;
 
           const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds, {
@@ -3652,6 +3801,7 @@ pending_approval_requests AS (
                 hasMore && oldest !== undefined
                   ? encodeThreadDetailPageCursor({
                       threadId,
+                      beforeSequence: oldest.anchorSequence,
                       beforeAnchorAt: oldest.anchorAt,
                       beforeTurnId: oldest.turnKey,
                     })

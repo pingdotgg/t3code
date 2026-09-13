@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
+import { ChatAttachment, NonNegativeInt, OrchestrationMessageContext } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -22,6 +22,7 @@ import {
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
+    createdSequence: Schema.NullOr(NonNegativeInt),
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
@@ -39,6 +40,7 @@ function toProjectionThreadMessage(
     text: row.text,
     isStreaming: row.isStreaming === 1,
     createdAt: row.createdAt,
+    ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
     ...(row.context !== null ? { context: row.context } : {}),
@@ -64,6 +66,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json,
           context_json,
           is_streaming,
+          created_sequence,
           created_at,
           updated_at
         )
@@ -90,6 +93,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             )
           ),
           ${row.isStreaming ? 1 : 0},
+          ${row.createdSequence ?? null},
           ${row.createdAt},
           ${row.updatedAt}
         )
@@ -108,6 +112,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.context_json
           ),
           is_streaming = excluded.is_streaming,
+          created_sequence = COALESCE(projection_thread_messages.created_sequence, excluded.created_sequence),
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
       `;
@@ -130,6 +135,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json,
           context_json,
           is_streaming,
+          created_sequence,
           created_at,
           updated_at
         )
@@ -142,6 +148,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${nextAttachmentsJson},
           ${nextContextJson},
           1,
+          ${row.createdSequence ?? null},
           ${row.createdAt},
           ${row.updatedAt}
         )
@@ -160,6 +167,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             projection_thread_messages.context_json
           ),
           is_streaming = 1,
+          created_sequence = COALESCE(projection_thread_messages.created_sequence, excluded.created_sequence),
           updated_at = excluded.updated_at
       `;
     },
@@ -179,6 +187,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
@@ -218,11 +227,12 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
+          created_sequence AS "createdSequence",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-        ORDER BY created_at ASC, message_id ASC
+        ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, message_id ASC
       `,
   });
 
@@ -232,10 +242,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       latestUserMessageAt: Schema.NullOr(ProjectionThreadMessage.fields.createdAt),
     }),
     execute: ({ threadId }) => sql`
-      SELECT MAX(created_at) AS "latestUserMessageAt"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId} AND role = 'user'
-        AND message_id NOT GLOB 'import:*'
+      SELECT (
+        SELECT created_at
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND role = 'user'
+          AND message_id NOT GLOB 'import:*'
+        ORDER BY COALESCE(created_sequence, 0) DESC, created_at DESC, message_id DESC
+        LIMIT 1
+      ) AS "latestUserMessageAt"
     `,
   });
 

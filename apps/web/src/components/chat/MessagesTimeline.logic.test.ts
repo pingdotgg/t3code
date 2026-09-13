@@ -382,6 +382,19 @@ describe("streaming row projection", () => {
       };
       return { user, assistant, checkpoint };
     });
+    const createdSequences = new Map(
+      [
+        ...history.flatMap(({ user, assistant }) => [user, assistant]),
+        ...initial.messages,
+        ...initial.work,
+      ]
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .map((entry, index) => [entry.id, index + 1]),
+    );
+    const work = initial.work.map((entry) => ({
+      ...entry,
+      createdSequence: createdSequences.get(entry.id)!,
+    }));
     const liveMessage = initial.messages.at(-1)!;
     let thread: OrchestrationThread = {
       id: ThreadId.make("streaming-thread"),
@@ -407,7 +420,7 @@ describe("streaming row projection", () => {
       messages: [
         ...history.flatMap(({ user, assistant }) => [user, assistant]),
         ...initial.messages,
-      ],
+      ].map((message) => ({ ...message, createdSequence: createdSequences.get(message.id)! })),
       proposedPlans: [],
       activities: [],
       checkpoints: history.map(({ checkpoint }) => checkpoint),
@@ -428,12 +441,7 @@ describe("streaming row projection", () => {
       const selected = registry.get(details.detailAtom(ref));
       if (selected === null) throw new Error("Missing thread detail");
       const messages = selected.messages.map((message) => preview(message, () => imageUrl));
-      timeline = deriveTimelineEntriesWithState(
-        messages,
-        selected.proposedPlans,
-        initial.work,
-        timeline,
-      );
+      timeline = deriveTimelineEntriesWithState(messages, selected.proposedPlans, work, timeline);
       projection = deriveMessagesTimelineRowsWithState(
         {
           timelineEntries: timeline.entries,
@@ -452,7 +460,7 @@ describe("streaming row projection", () => {
     const send = (text: string, sequence: number, streaming = true) => {
       const result = applyThreadDetailEvent(thread, {
         eventId: EventId.make(`delta-${sequence}`),
-        sequence,
+        sequence: createdSequences.size + sequence,
         commandId: null,
         causationEventId: null,
         correlationId: null,
@@ -1090,6 +1098,57 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("settles a clock-corrected turn without showing a fabricated duration", () => {
+    const turnId = TurnId.make("clock-turn");
+    const before = "2026-09-06T12:00:00.000Z";
+    const after = "2026-09-06T01:00:00.000Z";
+    const messages: ChatMessage[] = [
+      {
+        id: MessageId.make("clock-user"),
+        role: "user",
+        text: "Check",
+        turnId: null,
+        streaming: false,
+        createdAt: before,
+        updatedAt: before,
+        createdSequence: 10,
+      },
+      {
+        id: MessageId.make("clock-answer"),
+        role: "assistant",
+        text: "Done",
+        turnId,
+        streaming: false,
+        createdAt: after,
+        updatedAt: after,
+        createdSequence: 12,
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries(
+        messages,
+        [],
+        [
+          {
+            id: "clock-work",
+            tone: "tool",
+            label: "Checked",
+            turnId,
+            createdAt: after,
+            createdSequence: 11,
+          },
+        ],
+      ),
+      latestTurn: { turnId, state: "completed", startedAt: before, completedAt: after },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: true,
+    });
+    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({ label: "Worked" });
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
   it("keeps context compaction visible outside folded work", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

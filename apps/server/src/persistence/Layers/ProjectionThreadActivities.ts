@@ -22,6 +22,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
     sequence: Schema.NullOr(NonNegativeInt),
+    createdSequence: Schema.NullOr(NonNegativeInt),
   }),
 );
 
@@ -38,6 +39,7 @@ function toProjectionThreadActivity(
     payload: row.payload,
     ...(row.sequence !== null ? { sequence: row.sequence } : {}),
     createdAt: row.createdAt,
+    ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
   };
 }
 
@@ -68,6 +70,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               summary,
               payload_json,
               sequence,
+              created_sequence,
               created_at
             )
             VALUES (
@@ -79,6 +82,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               ${row.summary},
               ${JSON.stringify(row.payload)},
               ${row.sequence ?? null},
+              ${row.createdSequence ?? null},
               ${row.createdAt}
             )
             ON CONFLICT (activity_id)
@@ -90,6 +94,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
               summary = excluded.summary,
               payload_json = excluded.payload_json,
               sequence = excluded.sequence,
+              created_sequence = COALESCE(projection_thread_activities.created_sequence, excluded.created_sequence),
               created_at = excluded.created_at
           `,
   });
@@ -108,18 +113,18 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM (
           SELECT *
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
             ${activityKinds === undefined ? sql`` : sql`AND ${sql.in("kind", activityKinds)}`}
-          ORDER BY sequence DESC, created_at DESC, activity_id DESC
+          ORDER BY COALESCE(created_sequence, 0) DESC, created_at DESC, activity_id DESC
           ${limit === undefined ? sql`` : sql`LIMIT ${limit}`}
         ) AS recent_activities
         ORDER BY
-          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -139,6 +144,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
@@ -148,8 +154,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
             'provider.user-input.respond.failed'
           )
         ORDER BY
-          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
-          sequence ASC,
+          COALESCE(created_sequence, 0) ASC,
           created_at ASC,
           activity_id ASC
       `,
@@ -169,6 +174,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           summary,
           payload_json AS "payload",
           sequence,
+          created_sequence AS "createdSequence",
           created_at AS "createdAt"
         FROM projection_thread_activities
         WHERE thread_id = ${threadId}
@@ -184,7 +190,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
             END,
             ${taskTitleWhitespace}
           )) > 0
-        ORDER BY sequence DESC, created_at DESC, activity_id DESC
+        ORDER BY COALESCE(created_sequence, 0) DESC, created_at DESC, activity_id DESC
         LIMIT 1
       `,
   });

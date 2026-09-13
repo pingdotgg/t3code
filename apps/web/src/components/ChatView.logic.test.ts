@@ -17,6 +17,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
 import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
+import { deriveTimelineEntries } from "../session-logic";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -51,6 +52,7 @@ import {
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  readLocalMessageSequenceForSend,
   reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -967,6 +969,73 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("local message order after send preparation", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("anchors after messages received while preparing the captured thread's send", async () => {
+    const startedAt = "2026-09-06T12:00:00.000Z";
+    const correctedAt = "2026-09-06T01:00:00.000Z";
+    const original = makeThread({
+      messages: [
+        {
+          id: MessageId.make("initial"),
+          role: "user",
+          text: "Run",
+          turnId: null,
+          streaming: false,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          createdSequence: 10,
+        },
+      ],
+    });
+    const threadAtom = Atom.make<Thread | null>(original);
+    const unrelatedAtom = Atom.make<Thread | null>(makeThread({ id: ThreadId.make("other") }));
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockImplementation((ref) =>
+      ref.environmentId === original.environmentId && ref.threadId === original.id
+        ? threadAtom
+        : unrelatedAtom,
+    );
+    let finishPreparation: () => void = () => {};
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    const send = (async () => {
+      await preparation;
+      return readLocalMessageSequenceForSend(original);
+    })();
+    const received = {
+      ...original.messages[0]!,
+      id: MessageId.make("received"),
+      role: "assistant" as const,
+      createdAt: correctedAt,
+      createdSequence: 20,
+    };
+    appAtomRegistry.set(threadAtom, { ...original, messages: [...original.messages, received] });
+    finishPreparation();
+    const sequence = await send;
+    expect(sequence).toBe(21);
+    const optimistic = {
+      ...received,
+      id: MessageId.make("optimistic"),
+      role: "user" as const,
+      local: true,
+      createdSequence: sequence,
+    };
+    expect(
+      deriveTimelineEntries([...original.messages, received, optimistic], [], []).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["initial", "received", "optimistic"]);
+  });
+
+  it("uses the captured thread when server detail is unavailable", () => {
+    const detail = Atom.make<Thread | null>(null);
+    vi.spyOn(environmentThreadDetails, "detailAtom").mockReturnValue(detail);
+    expect(readLocalMessageSequenceForSend(makeThread())).toBeUndefined();
+  });
+});
 
 const completedTurn = {
   turnId: TurnId.make("turn-1"),

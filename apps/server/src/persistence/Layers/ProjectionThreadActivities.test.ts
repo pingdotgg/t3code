@@ -13,6 +13,41 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadActivityRepository", (it) => {
+  it.effect(
+    "selects the newest task and limited rows by persisted order after clock rollback",
+    () =>
+      Effect.gen(function* () {
+        const repository = yield* ProjectionThreadActivityRepository;
+        const threadId = ThreadId.make("clock-task");
+        for (const [index, createdAt] of [
+          "2026-03-01T12:00:00.000Z",
+          "2026-03-01T01:00:00.000Z",
+        ].entries()) {
+          yield* repository.upsert({
+            activityId: EventId.make(`clock-task-${index}`),
+            threadId,
+            turnId: null,
+            tone: "info",
+            kind: "task.progress",
+            summary: "Progress",
+            payload: { taskId: "task", title: `Title ${index}` },
+            sequence: 100 - index,
+            createdSequence: index + 1,
+            createdAt,
+          });
+        }
+        assert.deepEqual(
+          (yield* repository.listByThreadId({ threadId, limit: 1 })).map((row) => row.activityId),
+          ["clock-task-1"],
+        );
+        const latest = yield* repository.getLatestTaskActivity({ threadId, taskId: "task" });
+        assert.equal(latest._tag, "Some");
+        if (latest._tag === "Some") {
+          assert.equal(latest.value.activityId, "clock-task-1");
+          assert.equal(latest.value.createdSequence, 2);
+        }
+      }),
+  );
   it.effect("reads only the latest matching task activity", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadActivityRepository;

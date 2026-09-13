@@ -50,6 +50,7 @@ import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { nextLocalMessageSequence } from "@t3tools/shared/chronology";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
@@ -417,6 +418,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  readLocalMessageSequenceForSend,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
@@ -3250,7 +3252,13 @@ export default function ChatView(props: ChatViewProps) {
     if (pendingMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
-    return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
+    return [
+      ...serverMessagesWithPreviewHandoff,
+      ...pendingMessages.map((message) => ({
+        ...message,
+        local: true,
+      })),
+    ];
   }, [
     attachmentPreviewHandoffByMessageId,
     displayServerMessages,
@@ -7298,11 +7306,15 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       scrollToEnd();
     }
+    const messageCreatedSequence = isServerThread
+      ? readLocalMessageSequenceForSend(activeThread)
+      : nextLocalMessageSequence(activeThread);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
         id: messageIdForSend,
         role: "user",
+        createdSequence: messageCreatedSequence,
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
