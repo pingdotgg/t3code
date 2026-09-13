@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -1545,7 +1546,10 @@ const make = Effect.gen(function* () {
     }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      }),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

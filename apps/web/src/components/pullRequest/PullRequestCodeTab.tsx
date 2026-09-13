@@ -485,7 +485,11 @@ function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        const collapsed = isFileDiffCollapsed(
+          fileKey,
+          foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded"),
+          toggledFiles,
+        );
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -538,6 +542,7 @@ function PullRequestCodeTab({
       foldOverride,
       pendingComments,
       placedThreadIds,
+      settings.diffFilesCollapsed,
       toggledFiles,
     ],
   );
@@ -971,6 +976,7 @@ function PullRequestCodeTab({
               environmentId={environmentId}
               reference={reference}
               verdicts={review.verdicts}
+              requestChangesSummaryRequired={detail.provider === "forgejo"}
               onSubmitted={() => {
                 onRefresh();
                 setReviewOpen(false);

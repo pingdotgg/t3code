@@ -145,6 +145,7 @@ import {
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
+  stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
@@ -726,6 +727,7 @@ export function PullRequestDetailPanel({
         detail.number,
         detail.headBranch,
         detail.headRepositoryNameWithOwner,
+        repositoryUrl,
       )
     : null;
   const branchRefsQuery = useEnvironmentQuery(
@@ -783,11 +785,14 @@ export function PullRequestDetailPanel({
     if (!coreDetail) return;
     const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
     if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
+      // Let an existing read settle before revalidating the new revision. Interrupting a
+      // mutation's activity refresh can leave SWR displaying its previous value.
+      if (activityQuery.isPending) return;
       activityQuery.refresh();
       setRefreshToken((token) => token + 1);
     }
     activityRevision.current = next;
-  }, [activityQuery.refresh, coreDetail, tabScopeKey]);
+  }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
   // Reuse activity and diff until core detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
@@ -1026,8 +1031,22 @@ export function PullRequestDetailPanel({
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
     const key = composerTargetKey(target);
+    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
+    const repeatedCommentIds = new Set(
+      (task.reviewComments ?? [])
+        .filter((comment) => previousCommentIds.has(comment.id))
+        .map((comment) => comment.id),
+    );
+    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
+      draft?.prompt ?? "",
+      draft?.reviewComments ?? [],
+      repeatedCommentIds,
+    );
     const prompt = handoffPrompt(
-      { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByDraft.get(key) },
+      {
+        prompt: promptWithoutPreviousHandoff,
+        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+      },
       task.prompt,
     );
     lastHandoffPromptByDraft.set(key, task.prompt);
@@ -1036,6 +1055,13 @@ export function PullRequestDetailPanel({
       target,
       handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
     );
+    for (const comment of task.reviewComments ?? []) {
+      if (!repeatedCommentIds.has(comment.id)) continue;
+      store.addReviewComment(target, comment, {
+        allowDuplicateReference: true,
+        insertAtCaret: false,
+      });
+    }
   };
 
   /**
@@ -1246,6 +1272,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1259,6 +1287,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1273,6 +1303,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         comment: selection.comment,
         request: selection.request,
       }),

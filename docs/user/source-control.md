@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -16,6 +16,26 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 ```bash
 gh auth login
 ```
+
+### Forgejo and Gitea
+
+Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or
+[Gitea CLI (`tea`)](https://gitea.com/gitea/tea) 0.16 or later on your T3 Code server.
+Sign in with `fj --host https://your-server auth add-token` or `tea login add`.
+Repeat for each server you use, including Codeberg.
+
+T3 Code prefers a matching `fj` login and falls back to `tea` when `fj` is unavailable
+or has no login for that server. Once an account is selected, failed actions stay on that
+account. Settings shows the detected CLI. Forgejo and Gitea share one integration entry.
+Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `tea` because
+fj 0.6 does not preserve the subpath when checking its account.
+
+When cloning or publishing, use a full repository URL to select a specific server.
+You can use `owner/repo` when only one fj server is configured, or with your default `tea`
+login when fj is unavailable or unconfigured. With multiple fj servers, use the full URL.
+If you have multiple `tea` accounts on one server, select one with
+`tea login default <login-name>`. Git push and clone also need Git credentials or an SSH key
+for that server.
 
 ### GitLab
 

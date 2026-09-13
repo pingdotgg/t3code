@@ -1134,6 +1134,12 @@ const PROVIDER_REQUIREMENT: Partial<
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
   },
+  forgejo: {
+    missing:
+      "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
+    unauthenticated:
+      "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
+  },
   gitlab: {
     missing:
       "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
@@ -1161,9 +1167,24 @@ const PROVIDER_REQUIREMENT: Partial<
  * knows its hosts before the listing answers, and the two must agree on what they are called.
  */
 export function pullRequestHostOf(
-  identity: { readonly canonicalKey?: string | undefined } | null | undefined,
+  identity:
+    | {
+        readonly canonicalKey?: string | undefined;
+        readonly locator?: { readonly remoteUrl: string } | undefined;
+      }
+    | null
+    | undefined,
   kind: SourceControlProviderKind,
 ): string {
+  if (kind === "forgejo") {
+    try {
+      const remote = new URL(identity?.locator?.remoteUrl ?? "");
+      if (remote.protocol === "http:" || remote.protocol === "https:")
+        return remote.host.toLowerCase();
+    } catch {
+      // SSH remotes retain their canonical host; the CLI resolves their web endpoint.
+    }
+  }
   const host = identity?.canonicalKey?.split("/")[0]?.trim();
   return host === undefined || host.length === 0 ? kind : host.toLowerCase();
 }
