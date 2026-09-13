@@ -5,12 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import {
-  EnvironmentId,
-  type ProjectListEntriesResult,
-  type ProjectReadFileResult,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   isWorkspaceBrowserPreviewPath,
@@ -53,6 +48,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
+import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
@@ -341,15 +337,11 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
-  const entriesQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && !fileInspector.supported
-      ? projectEnvironment.listEntries({
-          environmentId,
-          input: { cwd },
-        })
-      : null,
-  );
-  const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
+  const entriesQuery = useFileTreeEntries({
+    environmentId,
+    cwd: fileInspector.supported ? null : cwd,
+    searchQuery,
+  });
   const handleReturnToThread = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -557,10 +549,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         </>
       )}
       <FileTreeBrowser
-        entries={entriesData?.entries ?? []}
+        key={JSON.stringify([environmentId, cwd])}
+        entries={entriesQuery.entries}
+        loadedDirectories={entriesQuery.loadedDirectories}
+        onLoadDirectory={entriesQuery.loadDirectory}
         error={entriesQuery.error}
         isPending={entriesQuery.isPending}
         searchQuery={searchQuery}
+        searchTruncated={entriesQuery.searchTruncated}
         selectedPath={null}
         onPreviewFile={handlePreviewFile}
         onRefresh={entriesQuery.refresh}
@@ -583,6 +579,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const iconColor = useUniwindTheme()["--color-icon"];
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
@@ -763,6 +760,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => setModeOverride({ path: relativePath, mode: "source" }),
           } as const)
         : null,
+      // Only the source body wraps; a rendered preview lays itself out.
+      resolvedActiveMode === "source"
+        ? ({
+            id: "word-wrap",
+            title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+            icon: "text.alignleft",
+            inline: false,
+            onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
+          } as const)
+        : null,
       ...(mediaSource
         ? mediaActions.actions
             .filter(({ id }) => id !== "open-file")
@@ -783,6 +790,17 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               onPress: () => copyTextWithHaptic(relativePath),
             } as const,
           ]),
+      // Selecting a long file by hand is painful on a phone, so copying the whole thing is
+      // the action most readers actually want. The attachment screen already offers it.
+      fileData?.contents != null
+        ? ({
+            id: "copy-contents",
+            title: fileData.truncated ? "Copy preview" : "Copy contents",
+            icon: "doc.on.doc",
+            inline: false,
+            onPress: () => copyTextWithHaptic(fileData.contents),
+          } as const)
+        : null,
       isPdfFile({ name: relativePath }) && previewUri !== null
         ? ({
             id: "open-pdf",
@@ -821,6 +839,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         : null,
     ].filter((action) => action !== null);
   }, [
+    appearance.codeWordBreak,
+    setCodeWordBreak,
     assetPreviewUri,
     assetPreview.refresh,
     previewUri,
@@ -833,6 +853,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     resolvedActiveMode,
     mediaSource,
     mediaActions.actions,
+    fileData?.contents,
+    fileData?.truncated,
   ]);
 
   const androidFileMenuActions = useMemo<MenuAction[]>(

@@ -1,5 +1,6 @@
 import {
   BUILT_IN_THEMES,
+  T3_CHAT_THEME,
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
@@ -29,7 +30,9 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
-export type MobileThemeVariable = `--color-${string}`;
+// Closed set: every key `createMobileThemeVariables` writes. Reads of a
+// misspelled variable then fail to compile instead of yielding undefined.
+export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
 export function normalizeMobileThemeId(value: unknown): MobileThemeId {
@@ -136,9 +139,9 @@ function withAlpha(color: string, alpha: number): string {
 
 function rgbChannels(color: string): readonly [number, number, number] | null {
   const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
-  return match
-    ? [Number.parseInt(match[1], 16), Number.parseInt(match[2], 16), Number.parseInt(match[3], 16)]
-    : null;
+  if (!match) return null;
+  const [, red = "0", green = "0", blue = "0"] = match;
+  return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
 }
 
 /**
@@ -216,18 +219,15 @@ function readableMessageAccent(accent: string, surface: string): string {
 }
 
 export function themeColorWithAlpha(color: string, alpha: number): string {
-  const hex = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
-  if (hex) {
-    return `rgba(${Number.parseInt(hex[1], 16)}, ${Number.parseInt(hex[2], 16)}, ${Number.parseInt(hex[3], 16)}, ${alpha})`;
+  const channels = rgbChannels(color);
+  if (channels) {
+    return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
   }
   const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/.exec(color);
   return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
 }
 
-export function createMobileThemeVariables(
-  colors: ThemeColors,
-  appearance: MobileThemeAppearance,
-): MobileThemeVariables {
+export function createMobileThemeVariables(colors: ThemeColors, appearance: MobileThemeAppearance) {
   const c = nativeColors(colors);
   return {
     "--color-screen": c.canvas,
@@ -315,7 +315,7 @@ export function createMobileThemeVariables(
 }
 
 export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
-  createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light"),
+  createMobileThemeVariables(T3_CHAT_THEME.colors, "light"),
 ) as ReadonlyArray<MobileThemeVariable>;
 
 export function getMobileThemeVariables(
@@ -323,7 +323,7 @@ export function getMobileThemeVariables(
   appearance: MobileThemeAppearance,
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   const baseVariables = createMobileThemeVariables(colors, appearance);
 
@@ -337,7 +337,7 @@ export function getMobileThemePreviewColors(
 ): ThemePreviewColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you")
     return STANDARD_THEME_PREVIEW_COLORS[appearance];
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {
     canvas: themeColorToNativeColor(colors.canvas),

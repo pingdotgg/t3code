@@ -12,6 +12,7 @@ export function ComposerEditor({
   skills: _skills,
   selection,
   onPasteImages,
+  onPasteText: _onPasteText,
   style,
   textStyle,
   contentInsetVertical = 0,
@@ -65,4 +66,5 @@ export type {
   ComposerEditorHandle,
   ComposerEditorProps,
   ComposerEditorSelection,
+  ComposerTextPaste,
 } from "./T3ComposerEditor.types";
