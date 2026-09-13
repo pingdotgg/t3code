@@ -29,7 +29,7 @@ function appIdentity() {
     build:
       (Platform.OS === "ios"
         ? Constants.platform?.ios?.buildNumber
-        : Constants.expoConfig?.android?.versionCode?.toString()) ?? "dev",
+        : Constants.platform?.android?.versionCode?.toString()) ?? "dev",
   };
 }
 
