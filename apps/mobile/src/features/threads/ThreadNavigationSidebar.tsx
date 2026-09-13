@@ -1,3 +1,4 @@
+import { resolveTaskCreateContext } from "../tasks/taskCreateContext";
 import { readMobileTaskMove } from "./use-mobile-task-order";
 import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "./TaskListRow";
@@ -273,6 +274,11 @@ function ThreadNavigationSidebarPane(
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+  const taskCreateContext = resolveTaskCreateContext({
+    environmentId: options.selectedEnvironmentId,
+    projectKey: selectedProjectKey,
+    projectScope: selectedProjectScope,
+  });
   const selectedProjectRefs = useMemo(
     () =>
       selectedProjectScope === null
@@ -1196,7 +1202,7 @@ function ThreadNavigationSidebarPane(
               <LegendList
                 data={listItems}
                 drawDistance={500}
-                ListHeaderComponent={TaskCreateListButton}
+                ListHeaderComponent={<TaskCreateListButton {...taskCreateContext} />}
                 estimatedItemSize={64}
                 extraData={listExtraData}
                 getItemType={(item) =>
@@ -1259,7 +1265,7 @@ function ThreadNavigationSidebarPane(
             <LegendList
               data={listItems}
               drawDistance={500}
-              ListHeaderComponent={TaskCreateListButton}
+              ListHeaderComponent={<TaskCreateListButton {...taskCreateContext} />}
               estimatedItemSize={64}
               extraData={listExtraData}
               getItemType={(item) =>

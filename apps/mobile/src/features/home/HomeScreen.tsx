@@ -1,3 +1,4 @@
+import { resolveTaskCreateContext } from "../tasks/taskCreateContext";
 import { readMobileTaskMove } from "../threads/use-mobile-task-order";
 import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "../threads/TaskListRow";
@@ -340,6 +341,11 @@ export function HomeScreen(props: HomeScreenProps) {
           ) ?? null),
     [projectScopes, props.selectedProjectKey],
   );
+  const taskCreateContext = resolveTaskCreateContext({
+    environmentId: props.selectedEnvironmentId,
+    projectKey: props.selectedProjectKey,
+    projectScope: selectedProjectScope,
+  });
   const selectedProjectRefKeys = useMemo(
     () =>
       selectedProjectScope === null
@@ -1087,7 +1093,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
-      <TaskCreateListButton />
+      <TaskCreateListButton {...taskCreateContext} />
     </>
   );
 
@@ -1205,7 +1211,7 @@ export function HomeScreen(props: HomeScreenProps) {
             ListHeaderComponent={
               <>
                 {listHeader}
-                <TaskCreateListButton />
+                <TaskCreateListButton {...taskCreateContext} />
               </>
             }
             ListEmptyComponent={listEmpty}

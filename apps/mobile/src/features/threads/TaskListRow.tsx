@@ -12,6 +12,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { TaskActionsMenu } from "../tasks/TaskActionsMenu";
 import { useMobileTaskList } from "./use-mobile-task-list";
 import { mobileTaskKey, type MobileTaskListItem } from "./taskList";
+import type { TaskCreateContext } from "../tasks/taskCreateContext";
 
 export const TaskListRow = memo(function TaskListRow({ item }: { item: MobileTaskListItem }) {
   const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
@@ -120,14 +121,19 @@ export const TaskListRow = memo(function TaskListRow({ item }: { item: MobileTas
   );
 });
 
-export function TaskCreateListButton() {
+export function TaskCreateListButton(context: TaskCreateContext) {
   const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
   const { capableIds } = useMobileTaskList();
-  if (capableIds.size === 0) return null;
+  if (
+    capableIds.size === 0 ||
+    (context.environmentId !== undefined &&
+      ![...capableIds].some((id) => id === context.environmentId))
+  )
+    return null;
   return (
     <Pressable
       accessibilityRole="button"
-      onPress={() => navigation.navigate("TaskCreate", {})}
+      onPress={() => navigation.navigate("TaskCreate", context)}
       className="mx-4 min-h-11 flex-row items-center gap-2"
     >
       <SymbolView name="folder.badge.plus" size={17} />

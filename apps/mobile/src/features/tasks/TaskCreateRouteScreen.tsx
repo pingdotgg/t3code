@@ -9,50 +9,50 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import { taskEnvironment } from "../../state/tasks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { TaskMetadataForm } from "./TaskMetadataForm";
+import {
+  resolveTaskCreateProject,
+  taskCreateCommand,
+  taskCreateProjects,
+  type TaskCreateContext,
+} from "./taskCreateContext";
 
-export function TaskCreateRouteScreen({
-  route,
-}: StaticScreenProps<
-  { readonly environmentId?: string; readonly projectId?: string } | undefined
->) {
+export function TaskCreateRouteScreen({ route }: StaticScreenProps<TaskCreateContext | undefined>) {
   const navigation = useNavigation();
   const allProjects = useProjects();
   const configs = useServerConfigs();
-  const projects = allProjects.filter(
-    (project) => configs.get(project.environmentId)?.environment.capabilities.tasks === true,
-  );
+  const projects = taskCreateProjects({
+    projects: allProjects,
+    capableIds: new Set(
+      [...configs].flatMap(([id, config]) =>
+        config.environment.capabilities.tasks === true ? [id] : [],
+      ),
+    ),
+    context: route.params,
+  });
   const [selection, setSelection] = useState<{
     environmentId: EnvironmentId;
     projectId: ProjectId;
   } | null>(null);
-  const selected = selection
-    ? projects.find(
-        (project) =>
-          project.environmentId === selection.environmentId && project.id === selection.projectId,
-      )
-    : (projects.find(
-        (project) =>
-          project.environmentId === route.params?.environmentId &&
-          project.id === route.params?.projectId,
-      ) ?? projects[0]);
+  const selected = resolveTaskCreateProject({ projects, selection, context: route.params });
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const create = useAtomCommand(taskEnvironment.create, { reportFailure: false });
   async function submit() {
-    if (!selected || !name.trim() || busy) return;
-    setBusy(true);
+    if (busy) return;
     const taskId = TaskId.make(randomUUID());
+    const command = taskCreateCommand({
+      projects,
+      selection,
+      context: route.params,
+      taskId,
+      name,
+      description,
+    });
+    if (command === null) return;
+    setBusy(true);
     try {
-      const result = await create({
-        environmentId: selected.environmentId,
-        input: {
-          taskId,
-          name: name.trim(),
-          description: description.trim() || null,
-          primaryProjectId: selected.id,
-        },
-      });
+      const result = await create(command);
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
         Alert.alert(
@@ -61,7 +61,7 @@ export function TaskCreateRouteScreen({
         );
       } else
         navigation.dispatch(
-          StackActions.replace("Task", { environmentId: selected.environmentId, taskId }),
+          StackActions.replace("Task", { environmentId: command.environmentId, taskId }),
         );
     } finally {
       setBusy(false);
