@@ -228,3 +228,15 @@ describe("formatElapsedDurationLabel", () => {
     expect(formatElapsedDurationLabel("2026-04-03T12:00:00.000Z")).toBe("4d");
   });
 });
+
+describe("explicit relative-time clock", () => {
+  it("uses the supplied minute instead of the wall clock", () => {
+    const completedAt = "2026-09-07T01:00:00Z";
+    expect(formatRelativeTimeLabel(completedAt, Date.parse("2026-09-07T01:01:00Z"))).toBe("1m ago");
+    expect(formatRelativeTimeLabel(completedAt, Date.parse("2026-09-07T01:02:00Z"))).toBe("2m ago");
+    expect(formatRelativeTime(completedAt, Date.parse("2026-09-07T01:02:00Z"))).toEqual({
+      value: "2m",
+      suffix: "ago",
+    });
+  });
+});

@@ -33,6 +33,7 @@ const ENTRY: ConnectionCatalogEntry = {
       wsBaseUrl: "wss://environment.example.test",
     }),
   ),
+  enabled: true,
 };
 
 function supervisorState(overrides: Partial<SupervisorConnectionState>): SupervisorConnectionState {

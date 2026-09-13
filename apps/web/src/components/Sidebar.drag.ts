@@ -103,6 +103,7 @@ export function createSidebarSortingStrategy(input: {
   snoozedThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
+  compact?: boolean;
   /** Space each pinned boundary opens for its label while dragging. The
    * markers stay zero height at rest, so nothing is reserved until pickup. */
   boundaryLabelHeight?: number;
@@ -140,11 +141,14 @@ export function createSidebarSortingStrategy(input: {
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
-    // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
-    const scale =
-      slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
-    cardHeight ??= 82 * scale;
-    slimHeight ??= 36 * scale;
+    // Compact icons use h-7; expanded cards include their vertical padding.
+    const scale = input.compact
+      ? (cardHeight ?? slimHeight ?? 28) / 28
+      : slimHeight !== undefined
+        ? slimHeight / 36
+        : (headerScale ?? (cardHeight ?? 82) / 82);
+    cardHeight ??= (input.compact ? 28 : 82) * scale;
+    slimHeight ??= (input.compact ? 28 : 36) * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
     const group = groups[target.section];
     const order =
@@ -190,27 +194,58 @@ export function createSidebarSortingStrategy(input: {
     }
     marker("settled-header");
     section("settled");
-    const result = items.map(() => hidden);
-    let top = rects[0].top;
-    for (const item of projected) {
+    const heights = projected.map((item) => {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
-      if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
       const fallback =
         item.kind === "thread" && (item.section === "pinned" || item.section === "active")
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
-      const height =
-        item.kind === "marker" &&
+      return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
-          ? labelHeight
-          : item.kind === "marker" && item.marker.endsWith("placeholder")
-            ? slimHeight
-            : moved
-              ? fallback
-              : (rect?.height ?? fallback);
-      top += height + 1;
+        ? labelHeight
+        : item.kind === "marker" && item.marker.endsWith("placeholder")
+          ? slimHeight
+          : moved
+            ? fallback
+            : (rect?.height ?? fallback);
+    });
+    const firstShelf = items.findIndex(
+      (item) =>
+        item.kind === "marker" &&
+        (item.marker === "snoozed-header" || item.marker === "settled-header"),
+    );
+    const shelfRect = rects[firstShelf];
+    const beforeShelf = rects[firstShelf - 1];
+    const lastRect = rects.at(-1);
+    // Consume the shelf's auto margin as drag labels and resized rows need
+    // room, keeping the combined shelves at their measured bottom.
+    let shelfSpace =
+      !input.compact &&
+      shelfRect &&
+      beforeShelf &&
+      lastRect &&
+      shelfRect.top > beforeShelf.bottom + 1
+        ? Math.max(
+            0,
+            lastRect.bottom - rects[0].top - heights.reduce((sum, height) => sum + height + 1, -1),
+          )
+        : 0;
+    const result = items.map(() => hidden);
+    let top = rects[0].top;
+    for (const [projectedIndex, item] of projected.entries()) {
+      if (
+        item.kind === "marker" &&
+        (item.marker === "snoozed-header" || item.marker === "settled-header")
+      ) {
+        top += shelfSpace;
+        shelfSpace = 0;
+      }
+      const index = indices.get(sidebarListItemId(item));
+      const rect = index === undefined ? undefined : rects[index];
+      if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
+      top += heights[projectedIndex]! + 1;
     }
     result[activeIndex] = stationary;
     return result;

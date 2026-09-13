@@ -880,12 +880,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
-          yield* projectionThreadPullRequestRepository.delete({
+          const links = yield* projectionThreadPullRequestRepository.listByThreadId({
             threadId: event.payload.threadId,
-            host: event.payload.host.toLowerCase(),
-            repository: event.payload.repository.toLowerCase(),
-            number: event.payload.number,
           });
+          const link = links.find((candidate) =>
+            threadPullRequestKeysEqual(candidate, event.payload),
+          );
+          if (link !== undefined) {
+            yield* projectionThreadPullRequestRepository.delete({
+              threadId: event.payload.threadId,
+              host: link.host,
+              repository: link.repository,
+              number: link.number,
+            });
+          }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.payload.updatedAt,
