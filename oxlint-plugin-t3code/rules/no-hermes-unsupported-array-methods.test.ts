@@ -34,10 +34,24 @@ describe("t3code/no-hermes-unsupported-array-methods", () => {
   );
 
   rule.invalid(
-    "reports toSpliced via computed access",
+    "reports toSpliced via computed access with a copy-then-splice remediation",
     `const next = items["toSpliced"](0, 1);`,
     (output) => {
       assert.match(output, /Array#toSpliced/);
+      assert.match(output, /const copy = \[\.\.\.array\]; copy\.splice\(\.\.\.\); use copy/);
     },
+  );
+
+  rule.invalid(
+    "reports a static template-literal property name",
+    "const reversed = items[`toReversed`]();",
+    (output) => {
+      assert.match(output, /Array#toReversed/);
+    },
+  );
+
+  rule.valid(
+    "ignores a template-literal property with substitutions",
+    "const value = items[`to${suffix}`]();",
   );
 });

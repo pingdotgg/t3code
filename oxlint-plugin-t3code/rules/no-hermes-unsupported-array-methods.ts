@@ -6,7 +6,8 @@ import { defineRule } from "@oxlint/plugins";
 const UNSUPPORTED_METHODS = new Map([
   ["toSorted", "[...array].sort(...)"],
   ["toReversed", "[...array].reverse()"],
-  ["toSpliced", "[...array].splice(...)"],
+  // splice returns the removed elements, so the copy itself is the result.
+  ["toSpliced", "const copy = [...array]; copy.splice(...); use copy"],
 ]);
 
 export default defineRule({
@@ -27,7 +28,9 @@ export default defineRule({
             ? property.name
             : property.type === "Literal" && typeof property.value === "string"
               ? property.value
-              : null;
+              : property.type === "TemplateLiteral" && property.expressions.length === 0
+                ? (property.quasis[0]?.value.cooked ?? null)
+                : null;
         if (name === null) return;
         const replacement = UNSUPPORTED_METHODS.get(name);
         if (replacement === undefined) return;
