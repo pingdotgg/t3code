@@ -151,7 +151,10 @@ function shellState(snapshot: OrchestrationShellSnapshot): EnvironmentShellState
   };
 }
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT_ID]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT_ID],
+  disabledEnvironmentIds: ReadonlySet<EnvironmentId> = new Set(),
+) {
   const shellStateAtoms = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make(AsyncResult.success(shellState(SNAPSHOT))),
   );
@@ -171,6 +174,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT
             wsBaseUrl: "wss://example.test",
           }),
           profile: Option.none(),
+          enabled: !disabledEnvironmentIds.has(environmentId),
         },
       ]),
     ),
@@ -359,6 +363,23 @@ describe("environment entity projections", () => {
       disposeList();
       harness.registry.dispose();
     }
+  });
+
+  it("hides projects and threads of a switched-off environment while keeping its cache", () => {
+    const offEnvironmentId = EnvironmentId.make("off-environment");
+    const harness = makeHarness([ENVIRONMENT_ID, offEnvironmentId], new Set([offEnvironmentId]));
+    const projects = harness.registry.get(harness.projects.projectsAtom);
+    const threads = harness.registry.get(harness.threadShells.threadShellsAtom);
+
+    expect(projects.every((project) => project.environmentId === ENVIRONMENT_ID)).toBe(true);
+    expect(projects).toHaveLength(2);
+    expect(threads.every((thread) => thread.environmentId === ENVIRONMENT_ID)).toBe(true);
+    expect(threads).toHaveLength(2);
+    // The per-environment atoms still read the cached snapshot, so switching
+    // back on restores the rows without a refetch.
+    expect(
+      harness.registry.get(harness.projects.environmentProjectsAtom(offEnvironmentId)),
+    ).toHaveLength(2);
   });
 
   it("keeps scoped identities and list order across project and environment changes", () => {

@@ -33,7 +33,9 @@ import { type RelayEnvironmentView, useConnectionController } from "./useConnect
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
-  readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onSetEnvironmentEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
+  /** Long-press on a saved row. The callback owns the confirm. */
+  readonly onRemoveEnvironment: (environmentId: EnvironmentId) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -97,11 +99,6 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
-  const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
-    [controller],
-  );
-
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
@@ -144,8 +141,10 @@ function CloudEnvironmentRowsContent(
               key={environment.environmentId}
               environment={environment}
               borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
-              onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+              onSetEnabled={(enabled) =>
+                props.onSetEnvironmentEnabled(environment.environmentId, enabled)
+              }
+              onRemove={() => props.onRemoveEnvironment(environment.environmentId)}
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
@@ -204,38 +203,42 @@ function CloudEnvironmentRowsContent(
   );
 }
 
+/**
+ * A saved T3 Connect environment. The switch turns it on or off; off keeps the
+ * registration and cache but drops the connection and hides its errors.
+ * Long-press removes it from this device.
+ */
 function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly onConnect: () => void;
-  readonly onDisconnect: () => void;
+  readonly onSetEnabled: (enabled: boolean) => void;
+  readonly onRemove: () => void;
   readonly onToggleError: () => void;
 }) {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
+  const enabled = props.environment.isEnabled;
   return (
-    <View>
+    <Pressable
+      accessibilityHint="Long press to remove from this device"
+      onLongPress={props.onRemove}
+    >
       <CloudEnvironmentRowShell
         borderTop={props.borderTop}
-        connectionError={props.environment.connectionError}
-        connectionErrorTraceId={props.environment.connectionErrorTraceId}
-        connectionState={props.environment.connectionState}
+        connectionError={enabled ? props.environment.connectionError : null}
+        connectionErrorTraceId={enabled ? props.environment.connectionErrorTraceId : null}
+        connectionState={enabled ? props.environment.connectionState : "available"}
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
         machine={resolveEnvironmentMachineKind(serverConfig)}
-        onValueChange={(enabled) => {
-          if (enabled) {
-            props.onConnect();
-            return;
-          }
-          props.onDisconnect();
-        }}
+        onValueChange={props.onSetEnabled}
         onToggleError={props.onToggleError}
-        value={props.environment.connectionState !== "available"}
+        {...(enabled ? {} : { statusText: "Off" })}
+        value={enabled}
       />
-    </View>
+    </Pressable>
   );
 }
 

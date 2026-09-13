@@ -22,9 +22,11 @@ import {
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
+  setConnectionEnabledInCatalog,
 } from "./storageDocument.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
+const decodeCatalogDocument = Schema.decodeUnknownSync(ConnectionCatalogDocument);
 
 const RELAY_TARGET = new RelayConnectionTarget({
   environmentId: ENVIRONMENT_ID,
@@ -201,6 +203,54 @@ describe("ConnectionCatalogDocument", () => {
 
     expect(putRemoteDpopTokenInCatalog(bearer, REMOTE_TOKEN)).toBe(bearer);
     expect(putRemoteDpopTokenInCatalog(otherRelay, REMOTE_TOKEN)).toBe(otherRelay);
+  });
+
+  it("decodes a document written before the disabled list existed", () => {
+    const decoded = decodeCatalogDocument({
+      schemaVersion: 1,
+      targets: [],
+      profiles: [],
+      credentials: [],
+      remoteDpopTokens: [],
+    });
+
+    expect(decoded.disabledEnvironmentIds).toEqual([]);
+  });
+
+  it("switches a saved environment off and back on without touching its records", () => {
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+
+    const disabled = setConnectionEnabledInCatalog(registered, ENVIRONMENT_ID, false);
+    expect(disabled.disabledEnvironmentIds).toEqual([ENVIRONMENT_ID]);
+    expect(disabled.targets).toEqual(registered.targets);
+    expect(disabled.credentials).toEqual(registered.credentials);
+    // Idempotent: switching off twice stores the id once.
+    expect(
+      setConnectionEnabledInCatalog(disabled, ENVIRONMENT_ID, false).disabledEnvironmentIds,
+    ).toEqual([ENVIRONMENT_ID]);
+
+    expect(
+      setConnectionEnabledInCatalog(disabled, ENVIRONMENT_ID, true).disabledEnvironmentIds,
+    ).toEqual([]);
+    // Re-registering (editing label or URL) keeps the flag.
+    expect(
+      registerConnectionInCatalog(
+        disabled,
+        new BearerConnectionRegistration({
+          target: BEARER_TARGET,
+          profile: BEARER_PROFILE,
+          credential: BEARER_CREDENTIAL,
+        }),
+      ).disabledEnvironmentIds,
+    ).toEqual([ENVIRONMENT_ID]);
+    expect(removeConnectionFromCatalog(disabled, BEARER_TARGET).disabledEnvironmentIds).toEqual([]);
   });
 
   it("persists the normalized SSH profile beside its target", () => {

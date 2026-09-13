@@ -51,6 +51,7 @@ function catalogState(environmentIds: readonly EnvironmentId[]): EnvironmentCata
                   label: environmentId,
                 }),
           profile: Option.none(),
+          enabled: true,
         },
       ]),
     ),

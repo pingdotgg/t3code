@@ -24,7 +24,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-import type { EnvironmentCatalogState } from "./connections.ts";
+import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
@@ -342,7 +342,7 @@ export function createEnvironmentShellSummaryAtom(input: {
     let firstError: string | null = null;
     let latestSnapshotUpdatedAt: string | null = null;
 
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const state = get(input.shellStateValueAtom(environmentId));
       hasSynchronizingShell ||= state.status === "synchronizing";
       hasCachedShell ||= state.status === "cached";
@@ -383,7 +383,7 @@ export function createEnvironmentServerConfigsAtom(input: {
   let previousServerConfigs = EMPTY_SERVER_CONFIGS;
   return Atom.make((get) => {
     const next = new Map<EnvironmentId, ServerConfig>();
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const config = get(input.serverConfigValueAtom(environmentId));
       if (config !== null) {
         next.set(environmentId, config);

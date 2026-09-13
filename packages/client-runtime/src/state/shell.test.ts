@@ -20,6 +20,7 @@ function environmentEntry(environmentId: EnvironmentId, label: string) {
       wsBaseUrl: `wss://${environmentId}.example.test`,
     }),
     profile: Option.none(),
+    enabled: true,
   };
 }
 
