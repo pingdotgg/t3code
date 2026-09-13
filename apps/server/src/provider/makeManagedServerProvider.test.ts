@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettingsError,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -190,6 +191,61 @@ describe("makeManagedServerProvider", () => {
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("awaitFirstProbe settles only after the initial provider check completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const releaseCheck = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
+          refreshInterval: "1 hour",
+        });
+
+        const settled = yield* Ref.make(false);
+        const waiter = yield* provider.awaitFirstProbe.pipe(
+          Effect.andThen(Ref.set(settled, true)),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(settled), false);
+
+        yield* Deferred.succeed(releaseCheck, undefined);
+        yield* Fiber.join(waiter);
+        assert.strictEqual(yield* Ref.get(settled), true);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshot);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("awaitFirstProbe settles when the initial provider check fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.fail(
+            new ServerSettingsError({
+              settingsPath: "/tmp/settings.json",
+              operation: "read-file",
+              cause: new Error("settings unreadable"),
+            }),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* provider.awaitFirstProbe;
+        assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>

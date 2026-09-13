@@ -826,7 +826,11 @@ export const ProviderRegistryLive = Layer.effect(
         return [true, next] as const;
       });
       if (!claimed) return yield* Ref.get(providersRef);
-      return yield* instance.snapshotForCwd(input.cwd).pipe(
+      // A workspace snapshot is captured once per cwd and never revisited, so
+      // taking it from the boot placeholder would leave the / menu without
+      // provider commands for the rest of the session.
+      return yield* instance.snapshot.awaitFirstProbe.pipe(
+        Effect.andThen(instance.snapshotForCwd(input.cwd)),
         Effect.flatMap((scopedSnapshot) =>
           scopedSnapshot.status === "error"
             ? Ref.get(providersRef)

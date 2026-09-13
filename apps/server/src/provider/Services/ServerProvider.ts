@@ -13,6 +13,12 @@ export interface ServerProviderShape {
     readonly fresh?: boolean;
   }) => Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
+  /**
+   * Settles once the first status probe has completed, whichever way it
+   * went. Until then `getSnapshot` is the boot placeholder, which carries no
+   * slash commands and must not be captured as a per-workspace snapshot.
+   */
+  readonly awaitFirstProbe: Effect.Effect<void>;
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
   /**
