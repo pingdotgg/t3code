@@ -94,6 +94,12 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`thread.archive` and `thread.delete` act on the open, saved thread. Neither has a
+default shortcut; assign them in **Settings → Keybindings**. Both respect your
+confirmation settings. Archive is unavailable while a turn is running. Deletion
+is permanent and may separately ask whether to delete an unused worktree. Use
+`!terminalFocus` in the rule to keep the shortcut out of terminal input.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).

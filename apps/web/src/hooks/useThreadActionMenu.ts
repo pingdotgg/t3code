@@ -88,7 +88,7 @@ export function useThreadActionMenu(input: {
     unsnoozeThread,
     pinThread,
     confirmAndUnpinThread,
-    archiveThread,
+    confirmAndArchiveThread,
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -97,7 +97,6 @@ export function useThreadActionMenu(input: {
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
-  const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
@@ -281,14 +280,8 @@ export function useThreadActionMenu(input: {
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
           case "archive": {
-            if (confirmThreadArchive) {
-              const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
-              );
-              if (confirmed._tag === "Failure" || !confirmed.value) return;
-            }
             let didArchive = false;
-            const result = await archiveThread(threadRef, {
+            const result = await confirmAndArchiveThread(threadRef, {
               onArchived: () => {
                 didArchive = true;
               },
@@ -333,8 +326,7 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
-      archiveThread,
-      confirmThreadArchive,
+      confirmAndArchiveThread,
       confirmThreadDelete,
       confirmAndUnpinThread,
       copyBranchToClipboard,

@@ -1253,3 +1253,33 @@ describe("composer and pull request shortcuts", () => {
     });
   }
 });
+
+describe("thread archive and delete shortcuts", () => {
+  for (const command of ["thread.archive", "thread.delete"] as const) {
+    it(`resolves ${command} on both platforms and respects terminal focus`, () => {
+      const keybindings = [
+        {
+          command,
+          shortcut: modShortcut("a", { shiftKey: true }),
+          whenAst: whenNot(whenIdentifier("terminalFocus")),
+        },
+      ];
+      for (const platform of ["MacIntel", "Win32"]) {
+        const key = event({
+          key: "a",
+          shiftKey: true,
+          metaKey: platform === "MacIntel",
+          ctrlKey: platform === "Win32",
+        });
+        assert.equal(
+          resolveShortcutCommand(key, keybindings, { platform, context: { terminalFocus: false } }),
+          command,
+        );
+        assert.equal(
+          resolveShortcutCommand(key, keybindings, { platform, context: { terminalFocus: true } }),
+          null,
+        );
+      }
+    });
+  }
+});
