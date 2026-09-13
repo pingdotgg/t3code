@@ -67,7 +67,9 @@ const CHART_HEIGHT = 180;
 export function UsageRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<UsageTab>("usage");
+  // Limits first: remaining quota and reset time are what most people open
+  // the screen for.
+  const [tab, setTab] = useState<UsageTab>("limits");
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
