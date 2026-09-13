@@ -147,15 +147,41 @@ describe("buildProjectGroups", () => {
     );
   });
 
-  it("keeps the repository label when shared titles match its repository name", () => {
+  it("keeps the shared title when it matches the repository name across machines", () => {
     const projects = [
       makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
+      makeProject("second", "/work/t3code-2", {
+        title: "t3code",
+        environmentId: EnvironmentId.make("remote"),
+      }),
+    ];
+
+    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
+      "t3code",
+    );
+  });
+
+  it("falls back to the repository label until grouped project titles agree", () => {
+    const projects = [
+      makeProject("first", "/work/t3code", { title: "local-checkout" }),
+      makeProject("second", "/work/t3code-2", {
+        title: "remote-checkout",
+        environmentId: EnvironmentId.make("remote"),
+      }),
     ];
 
     expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
       "T3 Code",
     );
+
+    const renamedProjects = projects.map((project) => ({ ...project, title: "t3code" }));
+    for (const mode of ["repository", "repository_path"] as const) {
+      const input = { projects: renamedProjects, settings: settings(mode) };
+      expect(buildProjectGroups(input)[0]?.label).toBe("t3code");
+      expect(
+        buildProjectGroups({ ...input, projects: renamedProjects.toReversed() })[0]?.label,
+      ).toBe("t3code");
+    }
   });
 
   it("keeps physical clones in separate groups when requested", () => {
