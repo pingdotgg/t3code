@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   mountBrowser: vi.fn<DesktopPreviewBridge["browser"]["mount"]>(),
   layoutBrowser: vi.fn<DesktopPreviewBridge["browser"]["layout"]>(),
+  browserInput: vi.fn<DesktopPreviewBridge["browser"]["input"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
   activeRecordings: new Set<string>(),
   captureBrowserViewStream: vi.fn<() => Promise<MediaStream>>(),
@@ -33,6 +34,7 @@ vi.mock("~/components/preview/previewBridge", () => ({
     browser: {
       mount: mocks.mountBrowser,
       layout: mocks.layoutBrowser,
+      input: mocks.browserInput,
       onCursorChange: () => () => undefined,
     },
     getPreviewConfig: mocks.getPreviewConfig,
@@ -80,6 +82,7 @@ beforeEach(() => {
   mocks.closeTab.mockReset().mockResolvedValue(undefined);
   mocks.mountBrowser.mockReset().mockResolvedValue(undefined);
   mocks.layoutBrowser.mockReset().mockResolvedValue(undefined);
+  mocks.browserInput.mockReset().mockResolvedValue(undefined);
   mocks.captureBrowserViewStream.mockReset();
   mocks.getPreviewConfig.mockReset().mockResolvedValue({
     partition: "persist:t3-preview-work",
@@ -202,7 +205,7 @@ describe("HostedBrowserView settings hydration", () => {
   });
 });
 
-describe("HostedBrowserView capture recovery", () => {
+describe("HostedBrowserView capture and input", () => {
   const mount = async () => {
     mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
     await ensureClientSettingsHydrated();
@@ -213,6 +216,7 @@ describe("HostedBrowserView capture recovery", () => {
       srcObject: null as MediaStream | null,
       getBoundingClientRect: () => rect,
       scrollTo: () => undefined,
+      focus: () => undefined,
       scrollLeft: 0,
       scrollTop: 0,
       style: {},
@@ -245,6 +249,33 @@ describe("HostedBrowserView capture recovery", () => {
     } as unknown as MediaStream;
     return { track, stream };
   };
+
+  it.each([
+    [1, "middle"],
+    [2, "right"],
+  ] as const)("releases button %s when its pointer is canceled", async (button, nativeButton) => {
+    mocks.captureBrowserViewStream.mockResolvedValue(media().stream);
+    const { node } = await mount();
+    const video = renderer!.root.findByType("video");
+    const event = {
+      currentTarget: node,
+      preventDefault: vi.fn(),
+      pointerId: 7,
+      clientX: 20,
+      clientY: 30,
+      detail: 1,
+      buttons: 0,
+    };
+    await act(() => video.props.onPointerDown({ ...event, type: "pointerdown", button }));
+    await act(() => video.props.onPointerCancel({ ...event, type: "pointercancel", button: -1 }));
+    expect(mocks.browserInput.mock.calls.map(([, input]) => input)).toEqual([
+      expect.objectContaining({ type: "mouseDown", button: nativeButton }),
+      expect.objectContaining({ type: "mouseUp", button: nativeButton }),
+    ]);
+    // The canceled pointer no longer owns a button.
+    await act(() => video.props.onPointerCancel({ ...event, type: "pointercancel", button: -1 }));
+    expect(mocks.browserInput).toHaveBeenCalledTimes(2);
+  });
 
   it("recovers a transient startup failure and a subsequently ended track", async () => {
     vi.useFakeTimers();

@@ -32,6 +32,8 @@ import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
+const isBrowserRecordingUnavailableError = Schema.is(BrowserRecordingUnavailableError);
+
 const browserModifiers = (
   event: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "altKey" | "metaKey" | "buttons">,
 ) => {
@@ -72,6 +74,7 @@ export function HostedBrowserView(props: {
   const [captureAttempt, setCaptureAttempt] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const focusingFromPointer = useRef(false);
+  const pressedButtons = useRef(new Map<number, number>());
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const presentation = useBrowserSurfaceStore(
@@ -252,7 +255,7 @@ export function HostedBrowserView(props: {
         })
         .catch((error) => {
           if (disposed) return;
-          if (!Schema.is(BrowserRecordingUnavailableError)(error) && ++failures < 3)
+          if (!isBrowserRecordingUnavailableError(error) && ++failures < 3)
             retry = setTimeout(capture, failures * 250);
           else {
             setFailedCaptureAttempt(captureAttempt);
@@ -331,7 +334,13 @@ export function HostedBrowserView(props: {
         )?.catch(reportError);
       return;
     }
+    const button = down
+      ? event.button
+      : (pressedButtons.current.get(event.pointerId) ?? event.button);
+    if (!down) pressedButtons.current.delete(event.pointerId);
+    if (button < 0) return;
     if (down) {
+      pressedButtons.current.set(event.pointerId, button);
       // Keep DOM focus on the browser while the native page handles input.
       focusingFromPointer.current = true;
       event.currentTarget.focus({ preventScroll: true });
@@ -343,7 +352,7 @@ export function HostedBrowserView(props: {
         type: down ? "mouseDown" : "mouseUp",
         x: event.clientX - rect.x,
         y: event.clientY - rect.y,
-        button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+        button: button === 2 ? "right" : button === 1 ? "middle" : "left",
         clickCount: Math.max(1, event.detail),
         modifiers: browserModifiers(event),
       })
