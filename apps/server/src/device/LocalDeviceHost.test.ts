@@ -112,3 +112,52 @@ it.effect(
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("host spawn targets", () => {
+  const SDK_ROOT = "/test/home/Library/Android/sdk";
+  const sdkFiles = (root: string) => [
+    `${root}/platform-tools/adb`,
+    `${root}/emulator/emulator`,
+    `${root}/cmdline-tools/latest/bin/avdmanager`,
+  ];
+  const spawnTarget = (command: string, files: ReadonlySet<string>) =>
+    LocalDeviceHost.__testing
+      .hostSpawn(command)
+      .pipe(
+        Effect.provideService(HostProcessEnvironment, { HOME: "/test/home", PATH: "" }),
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({ exists: (file) => Effect.succeed(files.has(file)) }),
+        ),
+        Effect.provide(NodePath.layer),
+      );
+
+  it.effect("spawns the emulator by absolute path so it need not be on PATH", () =>
+    Effect.gen(function* () {
+      const target = yield* spawnTarget("emulator", new Set(sdkFiles(SDK_ROOT)));
+      expect(target.command).toBe(`${SDK_ROOT}/emulator/emulator`);
+      expect(target.env.ANDROID_HOME).toBe(SDK_ROOT);
+    }),
+  );
+
+  it.effect("leaves commands other than the emulator alone", () =>
+    Effect.gen(function* () {
+      const target = yield* spawnTarget("xcrun", new Set(sdkFiles(SDK_ROOT)));
+      expect(target.command).toBe("xcrun");
+    }),
+  );
+
+  it.effect("picks up an SDK installed after an earlier spawn resolved nothing", () =>
+    Effect.gen(function* () {
+      // Availability re-resolves on every check, so spawns have to as well.
+      // Caching the location meant an SDK that appeared after startup left the
+      // two disagreeing: Android reported available while the spawn fell back
+      // to a bare `emulator`, failing the whole device list with exit code 127.
+      const files = new Set<string>();
+      expect((yield* spawnTarget("emulator", files)).command).toBe("emulator");
+      for (const file of sdkFiles(SDK_ROOT)) files.add(file);
+      expect((yield* spawnTarget("emulator", files)).command).toBe(`${SDK_ROOT}/emulator/emulator`);
+    }),
+  );
+});
