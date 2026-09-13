@@ -273,6 +273,10 @@ function itemSummary({
   return <span>Available</span>;
 }
 
+/**
+ * Shows a discovered tool's status and expandable details. Set `expandForSearchTarget`
+ * to reveal settings inside the row when navigating from settings search.
+ */
 function DiscoveryItemRow({
   item,
   expandForSearchTarget,
@@ -363,6 +367,11 @@ function DiscoveryItemRow({
   );
 }
 
+/**
+ * Edits a hosting CLI override on the environment where discovery ran. Saves on
+ * blur, cancels the draft on Escape, and restores PATH lookup when reset.
+ * Mount only when that server advertises support for hosting CLI paths.
+ */
 function HostingCliPathSettings({
   environmentId,
   command,
@@ -632,6 +641,10 @@ function EmptySourceControlDiscovery({
   );
 }
 
+/**
+ * Combines scoped source-control settings with tool discovery on the selected
+ * representative environment. CLI overrides stay local to that environment.
+ */
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // Discovery scans one machine's tools, so it shows the representative

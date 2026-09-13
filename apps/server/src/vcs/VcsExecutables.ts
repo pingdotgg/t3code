@@ -23,6 +23,7 @@ export class VcsExecutables extends Context.Service<
 
 const OVERRIDABLE_COMMANDS: ReadonlySet<string> = new Set(SOURCE_CONTROL_CLI_COMMANDS);
 
+/** Narrows logical command names to the hosting CLIs with configurable executable paths. */
 function isOverridable(command: string): command is SourceControlCliCommand {
   return OVERRIDABLE_COMMANDS.has(command);
 }

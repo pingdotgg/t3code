@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsExecutables from "./VcsExecutables.ts";
 
+/** Resolves a command using isolated settings and the host's path services, without spawning it. */
 const resolveWith = (paths: Partial<Record<"gh" | "glab" | "az", string>>, command: string) =>
   Effect.gen(function* () {
     const executables = yield* VcsExecutables.VcsExecutables;
