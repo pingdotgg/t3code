@@ -14,20 +14,20 @@ describe("Ollama HTTP provider", () => {
     expect(ollamaApiUrl("https://ollama.com/api", "/chat")).toBe("https://ollama.com/api/chat");
   });
 
-  it("discovers models from a mocked /api/tags response", async () => {
-    const calls: Request[] = [];
-    const result = await Effect.runPromise(
-      probeOllama(settings, {}, async (input, init) => {
+  it.effect("discovers models from a mocked /api/tags response", () =>
+    Effect.gen(function* () {
+      const calls: Request[] = [];
+      const result = yield* probeOllama(settings, {}, async (input, init) => {
         calls.push(new Request(String(input), init));
         return new Response(
           JSON.stringify({ models: [{ name: "llama3.2", details: { family: "llama" } }] }),
           { status: 200 },
         );
-      }),
-    );
-    expect(calls[0]?.url).toBe("http://ollama.test/api/tags");
-    expect(result.models.map((model) => model.slug)).toEqual(["llama3.2"]);
-  });
+      });
+      expect(calls[0]?.url).toBe("http://ollama.test/api/tags");
+      expect(result.models.map((model) => model.slug)).toEqual(["llama3.2"]);
+    }),
+  );
 
   it.effect("does not leave a provider status probe pending when Ollama hangs", () =>
     Effect.gen(function* () {

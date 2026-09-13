@@ -29,6 +29,7 @@ function authHeaders(
 }
 const emptyCapabilities = { optionDescriptors: [] } as const;
 const OLLAMA_PROBE_TIMEOUT = "10 seconds";
+const isOllamaProbeError = Schema.is(OllamaProbeError);
 
 export function probeOllama(
   settings: OllamaSettings,
@@ -65,7 +66,7 @@ export function probeOllama(
       };
     },
     catch: (cause) =>
-      Schema.is(OllamaProbeError)(cause)
+      isOllamaProbeError(cause)
         ? cause
         : new OllamaProbeError({ detail: "Ollama request failed.", cause }),
   });

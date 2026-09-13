@@ -849,45 +849,6 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         );
       });
 
-    /** Surface Devin plan.md as T3's proposed-plan card (while writing + on exit). */
-    const emitProposedPlanCompleted = (
-      ctx: DevinSessionContext,
-      turnId: TurnId | undefined,
-      stamp: { readonly eventId: EventId; readonly createdAt: string },
-      planMarkdown: string,
-      raw: { readonly method: string; readonly payload: unknown },
-    ) =>
-      Effect.gen(function* () {
-        const trimmed = planMarkdown.trim();
-        if (trimmed.length === 0) {
-          ctx.lastKnownProposedPlanMarkdown = "";
-          ctx.lastKnownProposedPlanTurnId = turnId;
-          return;
-        }
-        // Turn-scoped dedupe: identical text on a later turn must still emit.
-        if (
-          ctx.lastKnownProposedPlanMarkdown === trimmed &&
-          ctx.lastKnownProposedPlanTurnId === turnId
-        ) {
-          return;
-        }
-        ctx.lastKnownProposedPlanMarkdown = trimmed;
-        ctx.lastKnownProposedPlanTurnId = turnId;
-        yield* offerRuntimeEvent({
-          type: "turn.proposed.completed",
-          ...stamp,
-          provider: PROVIDER,
-          threadId: ctx.threadId,
-          turnId,
-          payload: { planMarkdown: trimmed },
-          raw: {
-            source: "acp.devin.extension",
-            method: raw.method,
-            payload: raw.payload,
-          },
-        });
-      });
-
     const requireSession = (
       threadId: ThreadId,
     ): Effect.Effect<DevinSessionContext, ProviderAdapterSessionNotFoundError> => {

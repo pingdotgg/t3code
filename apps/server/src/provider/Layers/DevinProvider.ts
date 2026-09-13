@@ -335,6 +335,7 @@ const runDevinCliCommand = (
 const discoverDevinModelsViaAcpInitialize = (
   devinSettings: DevinSettings,
   environment: NodeJS.ProcessEnv,
+  cwd: string,
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -342,7 +343,7 @@ const discoverDevinModelsViaAcpInitialize = (
       devinSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const initialized = yield* acp.initialize();
@@ -352,7 +353,7 @@ const discoverDevinModelsViaAcpInitialize = (
 export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(function* (
   devinSettings: DevinSettings,
   environment: NodeJS.ProcessEnv = process.env,
-  cwd?: string,
+  cwd: string = process.cwd(),
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -477,7 +478,7 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
         ? { status: "unauthenticated" }
         : { status: "unknown" };
 
-  const acpExit = yield* discoverDevinModelsViaAcpInitialize(devinSettings, environment).pipe(
+  const acpExit = yield* discoverDevinModelsViaAcpInitialize(devinSettings, environment, cwd).pipe(
     Effect.timeoutOption(DEVIN_ACP_INITIALIZE_TIMEOUT_MS),
     Effect.exit,
   );
