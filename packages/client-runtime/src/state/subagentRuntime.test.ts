@@ -181,6 +181,38 @@ describe("foldSubagentActivities", () => {
     expect(agents[0]!.completedAt).toBe("2026-08-01T11:00:00.000Z");
   });
 
+  it("maps cancelled status to a terminal cancelled state", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "task-cancelled", taskType: "local_agent" }),
+      activity("task.completed", {
+        taskId: "task-cancelled",
+        status: "cancelled",
+        summary: "user cancelled",
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    const agent = agents[0]!;
+    expect(agent.status).toBe("cancelled");
+    expect(agent.result).toBe("user cancelled");
+    expect(agent.completedAt).not.toBeNull();
+  });
+
+  it("maps interrupted status to a terminal interrupted state", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "task-interrupted", taskType: "local_agent" }),
+      activity("task.completed", {
+        taskId: "task-interrupted",
+        status: "interrupted",
+        summary: "context window exceeded",
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    const agent = agents[0]!;
+    expect(agent.status).toBe("interrupted");
+    expect(agent.result).toBe("context window exceeded");
+    expect(agent.completedAt).not.toBeNull();
+  });
+
   it("reactivation increments the run count and clears result/error", () => {
     const agents = fold([
       activity("task.started", { taskId: "task-4", taskType: "local_agent" }),
