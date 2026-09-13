@@ -20,6 +20,35 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings default permissions", () => {
+  it("keeps full access for settings saved before a default was configured", () => {
+    expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");
+    expect(DEFAULT_SERVER_SETTINGS.defaultRuntimeMode).toBe("full-access");
+  });
+
+  it.each(["approval-required", "auto-accept-edits", "auto", "full-access"])(
+    "round-trips %s as an environment default and project override",
+    (defaultRuntimeMode) => {
+      const input = {
+        defaultRuntimeMode,
+        projectSettingsOverrides: { project: { defaultRuntimeMode } },
+      };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
+
+  it("rejects unsupported permission defaults", () => {
+    expect(() => decodeServerSettings({ defaultRuntimeMode: "unsupported" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ defaultRuntimeMode: "unsupported" })).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        projectSettingsOverrides: { project: { defaultRuntimeMode: "unsupported" } },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 
@@ -758,4 +787,17 @@ describe("ServerSettings environment icon", () => {
     const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
     expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
   });
+});
+
+const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
+
+it("validates remote device hosts and rejects ambiguous host ids", () => {
+  const host = { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 };
+  expect(decodeDeviceHostSettings({ deviceHosts: [host] }).deviceHosts).toEqual([host]);
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [host, host] })).toThrow();
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, id: "local" }] })).toThrow();
+  expect(() =>
+    decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
+  ).toThrow();
+  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
