@@ -589,9 +589,9 @@ it.layer(layer)("AntigravityAdapter", (it) => {
     }),
   );
 
-  it.effect("waits for native cancellation before a steer changes the model", () =>
+  it.effect("queues a follow-up turn until the in-flight prompt completes", () =>
     Effect.gen(function* () {
-      const h = yield* makeHarness({ holdCancel: true });
+      const h = yield* makeHarness();
       yield* h.adapter.startSession({
         threadId,
         cwd: process.cwd(),
@@ -609,38 +609,34 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       const second = yield* h.adapter
         .sendTurn({
           threadId,
-          input: "Steer the turn",
+          input: "Follow-up prompt",
           modelSelection: { instanceId, model: nativeAlternative },
         })
         .pipe(Effect.forkChild);
-      expect(yield* h.nextCancellation).toBe(1);
-      expect(h.calls.slice(marker)).toEqual(["cancel:1"]);
-      yield* h.emitNative({
-        _tag: "ContentDelta",
-        text: "The first prompt stopped.",
-        rawPayload: {},
-      });
-      yield* Deferred.succeed(h.cancelRelease, undefined);
+
+      expect(h.hasActivePrompt()).toBe(true);
+      expect(h.calls.slice(marker)).toEqual([]);
+
+      yield* Deferred.succeed(initialPrompt.result, { stopReason: "end_turn" });
+      const firstResult = yield* Fiber.join(first);
+
       const replacement = yield* h.nextPrompt;
       expect(replacement.content).toEqual([
-        { type: "text", text: "Steer the turn" },
+        { type: "text", text: "Follow-up prompt" },
         {
           type: "text",
           text: expect.stringContaining(`Antigravity harness, as ${nativeAlternative}`),
         },
       ]);
       expect(h.calls.slice(marker)).toEqual([
-        "cancel:1",
-        "drained:1",
         `model:${nativeAlternative}`,
         "mode:default",
         "prompt:2",
       ]);
       yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
-      const [oldResult, newResult] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
-      expect(oldResult.turnId).toBe(newResult.turnId);
-      yield* h.waitForEvent((event) => event.type === "turn.completed");
-      expect(h.seen.filter((event) => event.type === "turn.completed")).toHaveLength(1);
+      const secondResult = yield* Fiber.join(second);
+      expect(firstResult.turnId).not.toBe(secondResult.turnId);
+      expect(h.seen.filter((event) => event.type === "turn.completed")).toHaveLength(2);
       expect((yield* h.adapter.listSessions())[0]).toMatchObject({
         status: "ready",
         activeTurnId: undefined,
@@ -685,7 +681,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         runtimeMode: "approval-required",
       });
       const first = yield* h.adapter.sendTurn({ threadId, input: "First" }).pipe(Effect.forkChild);
-      yield* h.nextPrompt;
+      const prompt1 = yield* h.nextPrompt;
       h.controls.failModel = true;
       const failed = yield* h.adapter
         .sendTurn({
@@ -693,9 +689,12 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           input: "Replacement",
           modelSelection: { instanceId, model: nativeAlternative },
         })
-        .pipe(Effect.exit);
-      expect(Exit.isFailure(failed)).toBe(true);
+        .pipe(Effect.forkChild);
+      yield* Deferred.succeed(prompt1.result, { stopReason: "end_turn" });
       yield* Fiber.join(first);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+      const failedExit = yield* Fiber.join(failed).pipe(Effect.exit);
+      expect(Exit.isFailure(failedExit)).toBe(true);
       const ended = yield* h.waitForEvent((event) => event.type === "turn.completed");
       expect(ended.payload.state).toBe("failed");
       expect((yield* h.adapter.listSessions())[0]).toMatchObject({
@@ -1090,6 +1089,8 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           const steering = yield* h.adapter
             .sendTurn({ threadId, input: "Change direction" })
             .pipe(Effect.forkChild);
+          yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+          yield* Fiber.join(sending);
           const replacement = yield* h.nextPrompt;
           yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
           yield* Fiber.join(steering);
@@ -1101,12 +1102,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           taskId: "trajectory:4",
           title: "Antigravity subagent batch",
           taskType: "subagent_batch",
-          status:
-            stop === "disconnect"
-              ? "failed"
-              : stop === "cancel" || stop === "steer"
-                ? "cancelled"
-                : "idle",
+          status: stop === "disconnect" ? "failed" : stop === "cancel" ? "cancelled" : "idle",
         });
         if (stop === "disconnect")
           yield* h.waitForEvent((event) => event.type === "session.exited");
