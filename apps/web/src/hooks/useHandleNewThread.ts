@@ -150,6 +150,10 @@ export function useNewThreadHandler() {
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
+      /**
+       * Resolve the destination's environment mode without waiting on a
+       * project file owned by an unavailable environment.
+       */
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         // Retrying environments suspend file queries until reconnection. Opening
         // a local draft must not wait for that optional defaults file.
