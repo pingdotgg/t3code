@@ -253,6 +253,37 @@ describe("sidebar collision detection", () => {
 });
 
 describe("sidebar drag projection", () => {
+  it.each([
+    ["a1", "a2"],
+    ["a1", sidebarMarkerId("settled-header")],
+    ["z", "a2"],
+  ])("keeps sparse shelves at the bottom when dragging %s over %s", (active, over) => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("snoozed-header"),
+      thread("z", "snoozed"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: over === sidebarMarkerId("settled-header") ? ["a1", "s"] : ["s"],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+      snoozedThreadCount: 1,
+    });
+    const args = layout(items, active, over);
+    for (const rect of args.rects.slice(4)) {
+      rect.top += 400;
+      rect.bottom += 400;
+    }
+    const lastIndex = items.length - 1;
+    expect(strategy({ ...args, index: lastIndex })).toEqual(stationary);
+  });
+
   const pinned = [
     pinnedHeader,
     thread("p1", "pinned"),

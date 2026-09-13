@@ -582,6 +582,22 @@ describe("upgradeLegacyContextMessage", () => {
     ]);
   });
 
+  it("keeps adjacent trailing reviews in place, including their original spacing", () => {
+    const upgraded = upgradeLegacyContextMessage(`Compare ${review}  ${review}`);
+    expect(upgraded.text).toBe(
+      "Compare [f.ts line](t3-context://v1/review-comment/legacy_review-comment_1)  [f.ts line](t3-context://v1/review-comment/legacy_review-comment_2)",
+    );
+  });
+
+  it("keeps a trailing review beside a terminal chip whose payload follows it", () => {
+    const upgraded = upgradeLegacyContextMessage(
+      `@build:7 ${review}\n\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>`,
+    );
+    expect(upgraded.text).toBe(
+      "[Build line 7](t3-context://v1/terminal/legacy_terminal_1) [f.ts line](t3-context://v1/review-comment/legacy_review-comment_1)",
+    );
+  });
+
   it("handles the combined legacy send order: terminal, element, preview, review", () => {
     const text = [
       "See ￼",
