@@ -74,13 +74,14 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
 /**
  * Installs `t3@<version>` into the pinned runtime directory unless a complete
  * install is already there, and returns its paths. The sentinel is written
- * only after npm exits 0; checking the entry file alone is not enough. npm
- * extracts files before running native builds (node-pty), so a killed
- * install leaves a plausible-looking but broken tree behind.
+ * only after npm succeeds and validation passes. npm can skip native builds
+ * (node-pty) or be killed after extracting files, leaving a plausible-looking
+ * but broken tree behind.
  */
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
   readonly version: string;
+  readonly execPath: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly runner: ProcessRunner.ProcessRunner["Service"];
@@ -88,6 +89,40 @@ interface PinnedRuntimeInstallInput {
     paths: PinnedRuntimePaths,
   ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
 }
+
+const validatePinnedRuntime = Effect.fn("cloud.pinned_runtime.validate")(function* (
+  input: PinnedRuntimeInstallInput,
+  paths: PinnedRuntimePaths,
+) {
+  // Resolve from the candidate, using the Node executable that will run it.
+  // npm can exit successfully even when it skips node-pty's native build.
+  const step = "loading node-pty in the pinned t3 runtime";
+  yield* input.runner
+    .run({
+      command: input.execPath,
+      args: [
+        "--input-type=commonjs",
+        "--eval",
+        "require('node:module').createRequire(process.argv[1])('node-pty');",
+        paths.entryPath,
+      ],
+      timeout: Duration.seconds(30),
+    })
+    .pipe(
+      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
+      Effect.filterOrFail(
+        (result) => result.code === 0,
+        (result) =>
+          new PinnedRuntimeInstallError({
+            step,
+            exitCode: Number(result.code),
+            stdoutLength: result.stdout.length,
+            stderrLength: result.stderr.length,
+          }),
+      ),
+    );
+  yield* input.validate(paths);
+});
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,
@@ -106,7 +141,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const alreadyPinned =
     entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
   if (alreadyPinned) {
-    yield* input.validate(paths);
+    yield* validatePinnedRuntime(input, paths);
     return paths;
   }
   if (versionDirExists) {
@@ -152,6 +187,19 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
+    // npm 12 requires project-scoped build approvals in the root manifest.
+    // Its CLI allow-scripts flag only applies to global installs and npm exec.
+    yield* fs
+      .writeFileString(
+        input.path.join(stagingDir, "package.json"),
+        '{"private":true,"allowScripts":{"node-pty":true,"msgpackr-extract":true}}\n',
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({ step: "preparing native build approvals", cause }),
+        ),
+      );
     const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
     const installArgs = [
       "install",
@@ -195,7 +243,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       );
 
-    yield* input.validate(stagingPaths);
+    yield* validatePinnedRuntime(input, stagingPaths);
     yield* fs
       .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)
       .pipe(
@@ -233,7 +281,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       ),
     );
-    if (!published) yield* input.validate(paths);
+    if (!published) yield* validatePinnedRuntime(input, paths);
     return paths;
   }).pipe(
     Effect.ensuring(fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore)),

@@ -211,6 +211,27 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect("preserves the running service when a cached runtime cannot load node-pty", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, control, runtime } = yield* makeHarness();
+      const plan = yield* service.install();
+      const stateBefore = yield* fs.readFileString(statePath);
+      const unitBefore = yield* fs.readFileString(plan.unitPath);
+      control.failCommand = commands.find((command) => command.includes("--input-type=commonjs"));
+      expect(control.failCommand).toBeDefined();
+      commands.length = 0;
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error.message).toContain("loading node-pty");
+      expect(yield* fs.readFileString(statePath)).toBe(stateBefore);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unitBefore);
+      expect(yield* fs.exists(runtime.sentinelPath)).toBe(true);
+      expect(commands).not.toContain("systemctl --user stop t3code.service");
+      expect(commands).not.toContain("systemctl --user restart t3code.service");
+    }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>
