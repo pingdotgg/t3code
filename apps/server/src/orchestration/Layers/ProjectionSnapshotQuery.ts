@@ -1320,6 +1320,43 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
   });
 
+  const getThreadSessionLifecycleContextRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: Schema.Struct({
+      id: ThreadId,
+      archivedAt: Schema.NullOr(Schema.String),
+      session: Schema.NullOr(ProjectionThreadSessionDbRowSchema),
+    }),
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          threads.thread_id AS id,
+          threads.archived_at AS "archivedAt",
+          sessions.thread_id AS "threadId",
+          sessions.status,
+          sessions.provider_name AS "providerName",
+          sessions.provider_instance_id AS "providerInstanceId",
+          sessions.runtime_mode AS "runtimeMode",
+          sessions.active_turn_id AS "activeTurnId",
+          sessions.last_error AS "lastError",
+          sessions.updated_at AS "updatedAt"
+        FROM projection_threads AS threads
+        LEFT JOIN projection_thread_sessions AS sessions
+          ON sessions.thread_id = threads.thread_id
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            id: row.id,
+            archivedAt: row.archivedAt,
+            session: row.threadId === null ? null : row,
+          })),
+        ),
+      ),
+  });
+
   const getTurnStartMessageRow = SqlSchema.findOneOption({
     Request: TurnStartMessageLookupInput,
     Result: ProjectionTurnStartMessageDbRowSchema,
@@ -3430,6 +3467,23 @@ pending_approval_requests AS (
       }));
     });
 
+  const getThreadSessionLifecycleContext: ProjectionSnapshotQueryShape["getThreadSessionLifecycleContext"] =
+    Effect.fn("ProjectionSnapshotQuery.getThreadSessionLifecycleContext")(function* (threadId) {
+      const context = yield* getThreadSessionLifecycleContextRow({ threadId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadSessionLifecycleContext:query",
+            "ProjectionSnapshotQuery.getThreadSessionLifecycleContext:decodeRow",
+          ),
+        ),
+      );
+      return Option.map(context, (row) => ({
+        id: row.id,
+        archivedAt: row.archivedAt,
+        session: row.session === null ? null : mapSessionRow(row.session),
+      }));
+    });
+
   const getTurnStartMessage: ProjectionSnapshotQueryShape["getTurnStartMessage"] = Effect.fn(
     "ProjectionSnapshotQuery.getTurnStartMessage",
   )(function* (input) {
@@ -3920,6 +3974,7 @@ pending_approval_requests AS (
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadRuntimeContext,
+    getThreadSessionLifecycleContext,
     getTurnStartMessage,
     getThreadDetailById,
     getThreadDetailSnapshot,

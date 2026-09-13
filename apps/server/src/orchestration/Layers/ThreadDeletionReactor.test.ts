@@ -92,10 +92,12 @@ describe("ThreadDeletionReactor drain", () => {
       const latestSequence = yield* Ref.make(0);
       const engine = {
         latestSequence: Ref.get(latestSequence),
-        streamDomainEvents: Stream.concat(
-          Stream.make(deletedEvent(1)),
-          Stream.fromEffect(Deferred.await(releaseSecondEvent)).pipe(
-            Stream.map(() => deletedEvent(2)),
+        subscribeDomainEvents: Effect.succeed(
+          Stream.concat(
+            Stream.make(deletedEvent(1)),
+            Stream.fromEffect(Deferred.await(releaseSecondEvent)).pipe(
+              Stream.map(() => deletedEvent(2)),
+            ),
           ),
         ),
       } as unknown as OrchestrationEngineShape;
@@ -221,7 +223,7 @@ describe("committed task resource cleanup", () => {
     {
       name: "member archive preserves shared task resources",
       types: ["thread.archived"],
-      closed: [],
+      closed: [memberId],
       stopped: [],
       deleteHistory: false,
     },
@@ -242,7 +244,7 @@ describe("committed task resource cleanup", () => {
     {
       name: "task archive closes task resources and preserves terminal history",
       types: ["thread.archived", "task.archived"],
-      closed: [taskResourceId],
+      closed: [memberId, taskResourceId],
       stopped: [],
       deleteHistory: false,
     },
@@ -257,9 +259,11 @@ describe("committed task resource cleanup", () => {
         const releaseEvents = yield* Deferred.make<void>();
         const engine = Layer.mock(OrchestrationEngineService)({
           latestSequence: Effect.succeed(0),
-          streamDomainEvents: Stream.fromEffect(Deferred.await(releaseEvents)).pipe(
-            Stream.flatMap(() =>
-              Stream.fromIterable(scenario.types.map((type, index) => event(index + 1, type))),
+          subscribeDomainEvents: Effect.succeed(
+            Stream.fromEffect(Deferred.await(releaseEvents)).pipe(
+              Stream.flatMap(() =>
+                Stream.fromIterable(scenario.types.map((type, index) => event(index + 1, type))),
+              ),
             ),
           ),
         });

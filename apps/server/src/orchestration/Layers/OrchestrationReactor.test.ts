@@ -42,6 +42,7 @@ describe("OrchestrationReactor", () => {
         ),
         Layer.provideMerge(
           Layer.succeed(ProviderCommandReactor, {
+            drainThrough: () => Effect.void,
             start: () => {
               started.push("provider-command-reactor");
               return Effect.void;

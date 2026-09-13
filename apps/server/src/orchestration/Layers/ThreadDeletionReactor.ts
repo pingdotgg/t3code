@@ -19,7 +19,7 @@ import { forkParked } from "../../serverActivation.ts";
 
 type CleanupEvent = Extract<
   OrchestrationEvent,
-  { type: "thread.deleted" | "task.deleted" | "task.archived" }
+  { type: "thread.deleted" | "thread.archived" | "task.deleted" | "task.archived" }
 >;
 type ThreadDeletedEvent = Extract<CleanupEvent, { type: "thread.deleted" }>;
 
@@ -61,14 +61,17 @@ const make = Effect.gen(function* () {
     event: CleanupEvent,
   ) {
     const threadId =
-      event.type === "thread.deleted"
+      event.type === "thread.deleted" || event.type === "thread.archived"
         ? event.payload.threadId
         : taskWorkbenchId(event.payload.taskId);
     if (event.type === "thread.deleted") {
       yield* stopProviderSession(event.payload.threadId);
     }
     yield* logCleanupCauseUnlessInterrupted({
-      effect: terminalManager.close({ threadId, deleteHistory: event.type !== "task.archived" }),
+      effect: terminalManager.close({
+        threadId,
+        deleteHistory: event.type === "thread.deleted" || event.type === "task.deleted",
+      }),
       message: "resource cleanup skipped terminal close",
       threadId,
     });
@@ -104,20 +107,19 @@ const make = Effect.gen(function* () {
     SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
 
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
+    // Startup keeps commands gated and other roots parked until start returns.
+    // Capture the pre-subscription head while commits are still excluded.
+    yield* orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen));
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
-      Stream.runForEach(
-        orchestrationEngine.streamDomainEvents.pipe(
-          // Events that landed before the subscription are not replayed, so
-          // start the watermark at the current head instead of zero.
-          Stream.onStart(orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen))),
-        ),
-        (event) =>
-          (event.type === "thread.deleted" ||
-          event.type === "task.deleted" ||
-          event.type === "task.archived"
-            ? worker.enqueue(event)
-            : Effect.void
-          ).pipe(Effect.andThen(noteSeen(event.sequence))),
+      Stream.runForEach(domainEvents, (event) =>
+        (event.type === "thread.deleted" ||
+        event.type === "thread.archived" ||
+        event.type === "task.deleted" ||
+        event.type === "task.archived"
+          ? worker.enqueue(event)
+          : Effect.void
+        ).pipe(Effect.andThen(noteSeen(event.sequence))),
       ),
     );
   });

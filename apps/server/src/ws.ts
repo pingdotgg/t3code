@@ -69,6 +69,8 @@ import {
   TaskId,
   type TerminalAttachStreamEvent,
   type TerminalError,
+  TerminalSessionLookupError,
+  PreviewSessionLookupError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
@@ -96,6 +98,7 @@ import {
 } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderCommandReactor } from "./orchestration/Services/ProviderCommandReactor.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
@@ -500,6 +503,39 @@ const makeWsRpcLayer = (
             );
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
+      const providerCommandReactor = yield* ProviderCommandReactor;
+      const drainLifecycleThrough = Effect.fn("ws.drainLifecycleThrough")(function* (
+        sequence: number,
+      ) {
+        yield* threadDeletionReactor.drainThrough(sequence);
+        yield* providerCommandReactor.drainThrough(sequence);
+      });
+      const drainCurrentLifecycle = orchestrationEngine.latestSequence.pipe(
+        Effect.flatMap(drainLifecycleThrough),
+      );
+      const fenceResourceAllocation = <E>(threadId: string, unavailable: E) =>
+        Effect.gen(function* () {
+          const taskId = threadId.startsWith("task:") ? TaskId.make(threadId.slice(5)) : null;
+          if (taskId !== null) {
+            yield* drainCurrentLifecycle;
+            const task = yield* projectionSnapshotQuery.getTaskShellById(taskId);
+            if (Option.isNone(task) || task.value.archivedAt !== null)
+              return yield* Effect.fail(unavailable);
+            return;
+          }
+          // Draft terminals have no conversation yet. Existing threads need a
+          // second lookup after cleanup before a reopened incarnation can allocate.
+          const thread = yield* projectionSnapshotQuery.getThreadSessionLifecycleContext(
+            ThreadId.make(threadId),
+          );
+          if (Option.isNone(thread)) return;
+          yield* drainCurrentLifecycle;
+          const current = yield* projectionSnapshotQuery.getThreadSessionLifecycleContext(
+            ThreadId.make(threadId),
+          );
+          if (Option.isNone(current) || current.value.archivedAt !== null)
+            return yield* Effect.fail(unavailable);
+        }).pipe(Effect.mapError(() => unavailable));
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Every command dispatched on this connection carries the connecting
       // client's origin, including server-generated bootstrap sub-commands:
@@ -1175,7 +1211,7 @@ const makeWsRpcLayer = (
               // every delete for the prior incarnation committed before it.
               // Drain through that event before setup or turn start can own
               // terminals and provider sessions under the reused thread id.
-              yield* threadDeletionReactor.drainThrough(created.sequence);
+              yield* drainLifecycleThrough(created.sequence);
               createdThread = true;
             }
 
@@ -1268,13 +1304,19 @@ const makeWsRpcLayer = (
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
-            : dispatchFromClient(normalizedCommand).pipe(
+            : (normalizedCommand.type === "thread.unarchive" ||
+              normalizedCommand.type === "task.unarchive"
+                ? drainCurrentLifecycle.pipe(Effect.andThen(dispatchFromClient(normalizedCommand)))
+                : dispatchFromClient(normalizedCommand)
+              ).pipe(
                 Effect.tap(({ sequence }) =>
-                  // Returning from thread.create is the handoff point at which
-                  // clients may start resources for the new incarnation. Use
-                  // its event sequence as the exact deletion-cleanup fence.
-                  normalizedCommand.type === "thread.create"
-                    ? threadDeletionReactor.drainThrough(sequence)
+                  // Reopening hands runtime ownership to a new incarnation.
+                  // Its committed sequence also covers cleanup queued while
+                  // the command was waiting to dispatch.
+                  normalizedCommand.type === "thread.create" ||
+                  normalizedCommand.type === "thread.unarchive" ||
+                  normalizedCommand.type === "task.unarchive"
+                    ? drainLifecycleThrough(sequence)
                     : Effect.void,
                 ),
                 Effect.mapError((cause) =>
@@ -1364,70 +1406,10 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // Archive removes the thread from the client, so this transport
-              // closes its session and terminals after the command lands.
-              // Settlement cleanup is driven by thread.settled events in the
-              // provider reactor, including settlements that have no client.
-              const archiveCommand =
-                normalizedCommand.type === "thread.archive" ? normalizedCommand : undefined;
-              // Best-effort on purpose: the user's archive must not
-              // fail because this cleanup read blipped, so a failed read
-              // logs and skips the stop instead of propagating.
-              const shouldStopSessionAfterCommand = archiveCommand
-                ? yield* projectionSnapshotQuery.getThreadShellById(archiveCommand.threadId).pipe(
-                    Effect.map(
-                      Option.match({
-                        onNone: () => false,
-                        onSome: (thread) =>
-                          thread.session !== null && thread.session.status !== "stopped",
-                      }),
-                    ),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(
-                        "failed to read thread session state before session-stop check",
-                        { threadId: archiveCommand.threadId, cause },
-                      ).pipe(Effect.as(false)),
-                    ),
-                  )
-                : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
-              if (archiveCommand) {
-                if (shouldStopSessionAfterCommand) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-archive:${archiveCommand.commandId}`,
-                      ),
-                      threadId: archiveCommand.threadId,
-                      createdAt: yield* nowIso,
-                    });
-
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("failed to stop provider session during archive", {
-                        threadId: archiveCommand.threadId,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
-
-                // Archive removes the thread from view, so its user-opened
-                // terminal panes close with it.
-                yield* terminalManager.close({ threadId: archiveCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: archiveCommand.threadId,
-                      error: error.message,
-                    }),
-                  ),
-                );
-              }
               return result;
             }).pipe(
               Effect.mapError((cause) =>
@@ -2721,16 +2703,41 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            fenceResourceAllocation(
+              input.threadId,
+              new TerminalSessionLookupError({
+                threadId: input.threadId,
+                terminalId: input.terminalId ?? "default",
+              }),
+            ).pipe(Effect.andThen(terminalManager.open(input))),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
-            Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
+            Stream.unwrap(
+              (input.cwd !== undefined
+                ? fenceResourceAllocation(
+                    input.threadId,
+                    new TerminalSessionLookupError({
+                      threadId: input.threadId,
+                      terminalId: input.terminalId,
+                    }),
+                  )
+                : Effect.void
+              ).pipe(
+                Effect.as(
+                  Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
+                    Effect.acquireRelease(
+                      terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                      (unsubscribe) => Effect.sync(unsubscribe),
+                    ),
+                  ),
+                ),
               ),
             ),
             { "rpc.aggregate": "terminal" },
@@ -2748,9 +2755,19 @@ const makeWsRpcLayer = (
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            fenceResourceAllocation(
+              input.threadId,
+              new TerminalSessionLookupError({
+                threadId: input.threadId,
+                terminalId: input.terminalId ?? "default",
+              }),
+            ).pipe(Effect.andThen(terminalManager.restart(input))),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
@@ -2778,9 +2795,16 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.previewOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
-            "rpc.aggregate": "preview",
-          }),
+          observeRpcEffect(
+            WS_METHODS.previewOpen,
+            fenceResourceAllocation(
+              input.threadId,
+              new PreviewSessionLookupError({ threadId: input.threadId, tabId: "" }),
+            ).pipe(Effect.andThen(previewManager.open(input))),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
         [WS_METHODS.previewNavigate]: (input) =>
           observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
             "rpc.aggregate": "preview",

@@ -23,12 +23,14 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -74,7 +76,8 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
-      | "thread.settled";
+      | "thread.settled"
+      | "thread.archived";
   }
 >;
 
@@ -358,6 +361,21 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const backgroundThreadWork = new Map<ThreadId, Set<Fiber.Fiber<unknown, unknown>>>();
+  const trackThreadWork = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.withFiber((fiber) => {
+      const fibers = backgroundThreadWork.get(threadId) ?? new Set<Fiber.Fiber<unknown, unknown>>();
+      backgroundThreadWork.set(threadId, fibers);
+      fibers.add(fiber);
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            fibers.delete(fiber);
+            if (fibers.size === 0) backgroundThreadWork.delete(threadId);
+          }),
+        ),
+      );
+    });
   const compactingThreadIds = new Set<ThreadId>();
   type QueuedTurnStart = Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>;
   // Turn starts received while a thread compacts, replayed in order once its session is restored.
@@ -1530,7 +1548,8 @@ const make = Effect.gen(function* () {
             ),
           ),
         ),
-        Effect.forkScoped,
+        (effect) => trackThreadWork(event.payload.threadId, effect),
+        Effect.forkScoped({ startImmediately: true }),
       );
       return;
     }
@@ -1572,7 +1591,8 @@ const make = Effect.gen(function* () {
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
       Effect.ensuring(resumed ? Deferred.succeed(resumed.sent, undefined) : Effect.void),
-      Effect.forkScoped,
+      (effect) => trackThreadWork(event.payload.threadId, effect),
+      Effect.forkScoped({ startImmediately: true }),
     );
   });
 
@@ -1766,15 +1786,20 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processSessionStopRequested = Effect.fn("processSessionStopRequested")(function* (
-    event: Extract<ProviderIntentEvent, { type: "thread.session-stop-requested" }>,
-  ) {
-    const thread = yield* resolveThreadShell(event.payload.threadId);
+  const stopThreadSession = Effect.fn("stopThreadSession")(function* (input: {
+    threadId: ThreadId;
+    createdAt: string;
+    onlyIfArchived?: boolean;
+  }) {
+    const thread = Option.getOrNull(
+      yield* projectionSnapshotQuery.getThreadSessionLifecycleContext(input.threadId),
+    );
     if (!thread) {
       return;
     }
 
-    const now = event.payload.createdAt;
+    if (input.onlyIfArchived && thread.archivedAt === null) return;
+    const now = input.createdAt;
     const wasCompacting = compactingThreadIds.has(thread.id);
     stoppingThreadIds.add(thread.id);
     const clearStopping = Effect.sync(() => void stoppingThreadIds.delete(thread.id));
@@ -1782,6 +1807,13 @@ const make = Effect.gen(function* () {
       thread.id,
       "The session was stopped during context compaction. Send this message again to continue.",
     ).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          input.onlyIfArchived
+            ? Fiber.interruptAll(backgroundThreadWork.get(thread.id) ?? [])
+            : Effect.void,
+        ),
+      ),
       Effect.andThen(
         thread.session && thread.session.status !== "stopped"
           ? providerService.stopSession({ threadId: thread.id })
@@ -1875,7 +1907,14 @@ const make = Effect.gen(function* () {
         yield* processUserInputResponseRequested(event);
         return;
       case "thread.session-stop-requested":
-        yield* processSessionStopRequested(event);
+        yield* stopThreadSession(event.payload);
+        return;
+      case "thread.archived":
+        yield* stopThreadSession({
+          threadId: event.payload.threadId,
+          createdAt: event.occurredAt,
+          onlyIfArchived: true,
+        });
         return;
       case "thread.settled": {
         const thread = yield* projectionSnapshotQuery.getThreadShellById(event.payload.threadId);
@@ -1888,7 +1927,9 @@ const make = Effect.gen(function* () {
         }
         yield* orchestrationEngine.dispatch({
           type: "thread.session.stop",
-          commandId: CommandId.make(`session-stop-for-settle:${event.commandId ?? event.eventId}`),
+          commandId: CommandId.make(
+            `session-stop-for-settle:${event.commandId ?? event.eventId}:${event.payload.threadId}`,
+          ),
           threadId: event.payload.threadId,
           createdAt: event.occurredAt,
           onlyIfSettled: true,
@@ -1919,7 +1960,42 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const pendingThreadWork = new Map<ThreadId, Deferred.Deferred<void>>();
+  const worker = yield* makeDrainableWorker(
+    (input: { event: ProviderIntentEvent; done: Deferred.Deferred<void> }) =>
+      processDomainEventSafely(input.event).pipe(
+        Effect.ensuring(
+          Deferred.succeed(input.done, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (pendingThreadWork.get(input.event.payload.threadId) === input.done)
+                  pendingThreadWork.delete(input.event.payload.threadId);
+              }),
+            ),
+          ),
+        ),
+      ),
+  );
+  // Wait only for this thread's earlier session creation, then cancel its
+  // background sends before stopping it. Unrelated provider work stays independent.
+  const lifecycleWorker = yield* makeDrainableWorker(
+    (input: { event: ProviderIntentEvent; priorWork: Deferred.Deferred<void> | undefined }) =>
+      (input.priorWork === undefined ? Effect.void : Deferred.await(input.priorWork)).pipe(
+        Effect.andThen(processDomainEventSafely(input.event)),
+      ),
+  );
+  const seenSequence = yield* SubscriptionRef.make(0);
+  const noteSeen = (sequence: number) =>
+    SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
+  const drainThrough: ProviderCommandReactorShape["drainThrough"] = Effect.fn(
+    "ProviderCommandReactor.drainThrough",
+  )(function* (target) {
+    yield* SubscriptionRef.changes(seenSequence).pipe(
+      Stream.filter((seen) => seen >= target),
+      Stream.runHead,
+    );
+    yield* lifecycleWorker.drain;
+  });
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
@@ -1934,7 +2010,12 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
-      if (
+      if (event.type === "thread.archived") {
+        yield* lifecycleWorker.enqueue({
+          event,
+          priorWork: pendingThreadWork.get(event.payload.threadId),
+        });
+      } else if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
@@ -1944,11 +2025,17 @@ const make = Effect.gen(function* () {
         event.type === "thread.session-stop-requested" ||
         event.type === "thread.settled"
       ) {
-        return yield* worker.enqueue(event);
+        const done = yield* Deferred.make<void>();
+        pendingThreadWork.set(event.payload.threadId, done);
+        yield* worker.enqueue({ event, done });
       }
+      yield* noteSeen(event.sequence);
     });
 
     // Subscribe before returning, even while event handling waits for server activation.
+    // Startup keeps commands gated and other roots parked until start returns.
+    // Capture the pre-subscription head while commits are still excluded.
+    yield* orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen));
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
@@ -1980,8 +2067,10 @@ const make = Effect.gen(function* () {
 
   return {
     start,
+    drainThrough,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* lifecycleWorker.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;

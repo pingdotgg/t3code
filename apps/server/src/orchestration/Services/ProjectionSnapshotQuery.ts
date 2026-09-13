@@ -229,6 +229,14 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
+  /** Read session cleanup facts, including archived threads but excluding deleted ones. */
+  readonly getThreadSessionLifecycleContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<Pick<OrchestrationThreadShell, "id" | "archivedAt" | "session">>,
+    ProjectionRepositoryError
+  >;
+
   /** Read the active thread and session facts used to ingest provider events. */
   readonly getThreadRuntimeContext: (
     threadId: ThreadId,

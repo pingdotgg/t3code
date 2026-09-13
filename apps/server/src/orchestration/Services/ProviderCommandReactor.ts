@@ -31,6 +31,9 @@ export interface ProviderCommandReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Wait for archive cleanup through a committed sequence, excluding provider turn work. */
+  readonly drainThrough: (sequence: number) => Effect.Effect<void>;
 }
 
 /**

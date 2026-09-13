@@ -1,7 +1,7 @@
 /**
  * ThreadDeletionReactor - Thread deletion cleanup reactor service interface.
  *
- * Owns background workers that react to thread deletion and task archive/deletion domain events and
+ * Owns background workers that react to thread/task archive and deletion domain events and
  * perform best-effort runtime cleanup for provider sessions, terminals and previews.
  *
  * @module ThreadDeletionReactor
@@ -15,7 +15,7 @@ import type * as Scope from "effect/Scope";
  */
 export interface ThreadDeletionReactorShape {
   /**
-   * Start reacting to committed thread deletion and task archive/deletion events.
+   * Start reacting to committed thread/task archive and deletion events.
    *
    * The returned effect must be run in a scope so all worker fibers can be
    * finalized on shutdown.
@@ -25,8 +25,8 @@ export interface ThreadDeletionReactorShape {
   /**
    * Resolves once every cleanup event at or before the supplied event
    * sequence has been handed to the worker and the worker is empty and idle.
-   * A successful thread.create sequence is the fence callers use before the
-   * new incarnation can own runtime resources.
+   * Callers fence creation, unarchive and resource allocation before the new
+   * incarnation can own runtime resources.
    */
   readonly drainThrough: (sequence: number) => Effect.Effect<void>;
 }

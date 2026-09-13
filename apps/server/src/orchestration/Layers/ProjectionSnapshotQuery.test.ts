@@ -1063,9 +1063,34 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           "None",
         );
       }
+      // Lifecycle cleanup can read archived session facts without decoding unrelated metadata.
+      yield* sql`UPDATE projection_threads SET model_selection_json = 'invalid-json' WHERE thread_id = 'thread-archived'`;
+      const lifecycle = Option.getOrThrow(
+        yield* snapshotQuery.getThreadSessionLifecycleContext(ThreadId.make("thread-archived")),
+      );
+      assert.deepEqual(lifecycle, {
+        id: ThreadId.make("thread-archived"),
+        archivedAt: "2026-04-06T00:00:06.000Z",
+        session: null,
+      });
+      assert.equal(
+        (yield* snapshotQuery.getThreadSessionLifecycleContext(ThreadId.make("thread-active")))
+          ._tag,
+        "Some",
+      );
+      assert.equal(
+        (yield* snapshotQuery.getThreadSessionLifecycleContext(ThreadId.make("thread-missing")))
+          ._tag,
+        "None",
+      );
       yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-06T00:00:08.000Z' WHERE thread_id = 'thread-active'`;
       assert.equal(
         (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
+        "None",
+      );
+      assert.equal(
+        (yield* snapshotQuery.getThreadSessionLifecycleContext(ThreadId.make("thread-active")))
+          ._tag,
         "None",
       );
     }),
