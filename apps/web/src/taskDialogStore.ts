@@ -3,7 +3,8 @@ import { create } from "zustand";
 
 type TaskDialogRequest =
   | { kind: "create"; projectRef: ScopedProjectRef | null }
-  | { kind: "rename" | "delete"; taskRef: ScopedTaskRef };
+  | { kind: "rename" | "delete"; taskRef: ScopedTaskRef }
+  | { kind: "add-threads"; taskRef: ScopedTaskRef };
 
 export const useTaskDialogStore = create<{
   request: TaskDialogRequest | null;
@@ -23,4 +24,7 @@ export function requestRenameTask(taskRef: ScopedTaskRef) {
 }
 export function requestDeleteTask(taskRef: ScopedTaskRef) {
   useTaskDialogStore.getState().open({ kind: "delete", taskRef });
+}
+export function requestAddThreadsToTask(taskRef: ScopedTaskRef) {
+  useTaskDialogStore.getState().open({ kind: "add-threads", taskRef });
 }

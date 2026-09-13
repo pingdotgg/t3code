@@ -24,6 +24,7 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { TaskStatus } from "../sidebar/TaskCard";
+import { requestAddThreadsToTask } from "../../taskDialogStore";
 
 function EditableMetadata({
   value,
@@ -260,9 +261,19 @@ export function TaskPageBody({
           </div>
         </header>
         <section className="flex flex-col gap-2" aria-label="Task threads">
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || task.archivedAt !== null}
+              onClick={() => requestAddThreadsToTask(taskRef)}
+            >
+              Add threads…
+            </Button>
+          </div>
           {Object.values(groups).every((members) => members.length === 0) ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-              No threads yet. Start one below, or move existing threads here from their menu.
+              No threads yet. Add existing threads, or start a new one below.
             </p>
           ) : null}
           {(["live", "snoozed", "settled"] as const).map((kind) =>

@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { readLocalApi } from "../localApi";
 import { readTask, readEnvironmentSupportsTasks } from "../state/tasks";
 import { readThreadShells } from "../state/entities";
-import { requestDeleteTask, requestRenameTask } from "../taskDialogStore";
+import { requestAddThreadsToTask, requestDeleteTask, requestRenameTask } from "../taskDialogStore";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import { taskSettleBlocker, taskSnoozeBlocker } from "@t3tools/client-runtime/state/task-grouping";
 import { useClientSettings } from "./useSettings";
@@ -31,6 +31,12 @@ export function useTaskActionMenu(
         const snoozed = task.snoozedUntil !== null && Date.parse(task.snoozedUntil) > Date.now();
         const items: ContextMenuItem<string>[] = [
           { id: "open", label: "Open task" },
+          {
+            id: "add-threads",
+            label: "Add threads…",
+            disabled: task.archivedAt !== null,
+            icon: "plus",
+          },
           {
             id: "new-thread",
             label: "New thread in task",
@@ -78,6 +84,9 @@ export function useTaskActionMenu(
           return;
         }
         switch (action) {
+          case "add-threads":
+            requestAddThreadsToTask(taskRef);
+            break;
           case "open":
             await actions.openTask(taskRef);
             break;

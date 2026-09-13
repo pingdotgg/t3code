@@ -3,7 +3,7 @@
 import { useTaskWorkbench, readWorkbenchRef } from "../state/taskWorkbench";
 import { useThreadShell } from "../state/entities";
 
-import { requestNewTask } from "../taskDialogStore";
+import { requestAddThreadsToTask, requestNewTask } from "../taskDialogStore";
 import { useTasks, readEnvironmentSupportsTasks } from "../state/tasks";
 import { useTaskActions } from "../hooks/useTaskActions";
 import { taskMembershipDestinations } from "./taskActions.logic";
@@ -1681,6 +1681,19 @@ function OpenCommandPaletteDialog(props: {
     });
   }
   if (activeTask && readEnvironmentSupportsTasks(activeTask.environmentId)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:add-threads-to-task",
+      title: `Add threads to ${activeTask.name}`,
+      searchTerms: ["add existing threads to task", activeTask.name],
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        requestAddThreadsToTask({
+          environmentId: activeTask.environmentId,
+          taskId: activeTask.id,
+        });
+      },
+    });
     actionItems.push({
       kind: "action",
       value: "action:new-thread-in-task",

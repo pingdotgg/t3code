@@ -25,7 +25,10 @@ worktree**, each background submission creates its own worktree.
 
 Choose **New task** from the sidebar or command palette, give it a name, and select
 its primary project. A task can start empty and contain threads from different
-projects in the same environment. Use a thread's **Move to task** menu to group it
+projects in the same environment. On web and desktop, choose **Add threads…** from
+the task page or its actions to search and select existing threads, then choose
+**Add to task**. Threads already in another task move to the selected task.
+Use a thread's **Move to task** menu to group it
 or move it to another task; **Remove from task** returns it to the ordinary thread
 list without changing its conversation or checkout.
 
