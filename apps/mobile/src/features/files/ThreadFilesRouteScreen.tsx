@@ -281,7 +281,7 @@ function useThreadFilesWorkspace(params: {
   const threadId = routeThreadId !== null ? ThreadId.make(routeThreadId) : null;
   const taskId = workbench.task?.id ?? (routeTaskId ? TaskId.make(routeTaskId) : null);
   return {
-    cwd: routeCwd ?? workbench.worktreePath ?? workbench.workspaceRoot,
+    cwd: routeCwd ?? (workbench.resolution.status === "ready" ? workbench.resolution.cwd : null),
     environmentId,
     projectName: routeProjectName ?? workbench.project?.title ?? "Files",
     selectedThread,

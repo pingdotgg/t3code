@@ -1,6 +1,12 @@
+import {
+  resolveProjectScriptLaunch,
+  workbenchLaunchKey,
+  scriptNeedsNewTerminal,
+  executeProjectScript,
+} from "../projectScriptExecution";
 import { taskWorkbenchRef } from "@t3tools/client-runtime/state/task-workbench";
 import { TaskPageBody } from "./tasks/TaskPageBody";
-import { useTaskWorkbench } from "../state/taskWorkbench";
+import { readWorkbench, useTaskWorkbench } from "../state/taskWorkbench";
 import { buildTaskWorkbenchContext } from "./tasks/TaskPage.logic";
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
 import { readTask, readEnvironmentSupportsTasks, useTasks } from "../state/tasks";
@@ -50,7 +56,6 @@ import {
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
   RuntimeMode,
-  TerminalOpenInput,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
@@ -66,6 +71,7 @@ import {
 import {
   parseScopedThreadKey,
   scopedThreadKey,
+  scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
@@ -241,7 +247,8 @@ import {
 import { cn, randomHex, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
-import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import ProjectScriptsControl, { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { useT3ProjectFileScripts } from "../hooks/useT3ProjectFileScripts";
 import {
   buildProjectScript,
   commandForProjectScript,
@@ -1925,12 +1932,18 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const { ref: resolvedWorkbenchRef, task: workbenchTask } = useTaskWorkbench(
-    activeThreadRef,
-    activeThread,
+  const {
+    ref: resolvedWorkbenchRef,
+    task: workbenchTask,
+    resolution: workbench,
+    project: workbenchProject,
+  } = useTaskWorkbench(
+    routeThreadRef,
+    activeThreadShell ?? activeThread,
     taskPage,
+    activeThread?.worktreePath,
   );
-  const workbenchRef = resolvedWorkbenchRef ?? routeThreadRef;
+  const workbenchRef = resolvedWorkbenchRef!;
   const workbenchKey = scopedThreadKey(workbenchRef);
   const currentWorkbenchKeyRef = useRef<string | null>(workbenchKey);
   useLayoutEffect(() => {
@@ -2142,14 +2155,7 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
-  const workbenchProjectRef = useMemo(
-    () =>
-      workbenchTask
-        ? scopeProjectRef(workbenchTask.environmentId, workbenchTask.primaryProjectId)
-        : activeProjectRef,
-    [workbenchTask, activeProjectRef],
-  );
-  const workbenchProject = useProject(workbenchProjectRef);
+  const workbenchProjectRef = workbench.status === "ready" ? workbench.projectRef : null;
   const retainedWorkbenchContexts = useRef(new Map<string, WorkbenchLaunchContext>());
   const resourceContext = useMemo(
     () =>
@@ -2161,10 +2167,8 @@ export default function ChatView(props: ChatViewProps) {
   if (resourceContext)
     retainedWorkbenchContexts.current.set(scopedThreadKey(workbenchRef), resourceContext);
 
-  const workbenchWorktreePath = workbenchTask ? null : (activeThread?.worktreePath ?? null);
-  const workbenchRoot = workbenchTask
-    ? (workbenchProject?.workspaceRoot ?? null)
-    : (workbenchWorktreePath ?? workbenchProject?.workspaceRoot ?? null);
+  const workbenchWorktreePath = workbench.status === "ready" ? workbench.worktreePath : null;
+  const workbenchRoot = workbench.status === "ready" ? workbench.cwd : null;
 
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
@@ -2172,8 +2176,12 @@ export default function ChatView(props: ChatViewProps) {
     [activeProject, settings],
   );
   const activeProjectScripts = useMemo(
-    () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
-    [activeProject, settings],
+    () => (workbenchProject ? resolveProjectScripts(settings, workbenchProject) : []),
+    [workbenchProject, settings],
+  );
+  const taskPageFileScripts = useT3ProjectFileScripts(
+    environmentId,
+    taskPage ? (workbenchProject?.workspaceRoot ?? null) : null,
   );
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
   const handleNewThreadInActiveProject = useCallback(() => {
@@ -2234,12 +2242,18 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
+    if (
+      !activeThreadRef ||
+      !activeEnvironmentBootstrapComplete ||
+      (workbench.status === "unavailable" && workbench.reason === "loading")
+    )
+      return;
     useRightPanelStore.getState().reconcileFileSurfaces(workbenchRef, workbenchProject !== null);
     if (workbenchRoot)
       useRightPanelStore.getState().reconcileWorkbenchRoot(workbenchRef, workbenchRoot);
   }, [
     activeEnvironmentBootstrapComplete,
+    workbench,
     workbenchProject,
     workbenchRoot,
     workbenchRef,
@@ -2252,7 +2266,7 @@ export default function ChatView(props: ChatViewProps) {
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
-    registerFaviconProjectForThread(workbenchRef, workbenchProjectRef ?? activeProjectRef);
+    if (workbenchProjectRef) registerFaviconProjectForThread(workbenchRef, workbenchProjectRef);
   }, [activeProjectRef, workbenchProjectRef, workbenchRef, activeThreadRef]);
   useEffect(() => {
     if (!clientSettingsHydrated || !activeThreadRef || !workbenchProject) return;
@@ -4001,127 +4015,107 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const runProjectScript = useCallback(
-    async (
-      script: ProjectScript,
-      options?: {
-        cwd?: string;
-        env?: Record<string, string>;
-        worktreePath?: string | null;
-        preferNewTerminal?: boolean;
-        rememberAsLastInvoked?: boolean;
-      },
-    ) => {
-      if (!activeThreadId || !activeProject || !activeThread || !workbenchProject) return;
-      if (options?.rememberAsLastInvoked !== false) {
-        setLastInvokedScriptByProjectId((current) => {
-          if (current[activeProject.id] === script.id) return current;
-          return { ...current, [activeProject.id]: script.id };
-        });
-      }
-      const targetCwd = options?.cwd ?? workbenchRoot ?? activeProject.workspaceRoot;
+    async (requestedScript: ProjectScript) => {
+      const launch = resolveProjectScriptLaunch({
+        workbench,
+        project: workbenchProject ? { ...workbenchProject, scripts: activeProjectScripts } : null,
+        scriptId: requestedScript.id,
+      });
+      if (!launch) return;
+      const capturedKey = workbenchLaunchKey(workbench);
+      const isCurrent = () =>
+        currentWorkbenchKeyRef.current === scopedThreadKey(launch.ownerRef) &&
+        workbenchLaunchKey(readWorkbench(routeThreadRef, taskPage)) === capturedKey;
+      if (!isCurrent()) return;
+      setLastInvokedScriptByProjectId((current) =>
+        current[launch.projectKey] === launch.script.id
+          ? current
+          : { ...current, [launch.projectKey]: launch.script.id },
+      );
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
       const existingSummary = activeThreadKnownSessions.find(
         (session) => session.target.terminalId === baseTerminalId,
       )?.state.summary;
-      const wantsNewTerminal =
-        Boolean(options?.preferNewTerminal) ||
-        isBaseTerminalBusy ||
-        (existingSummary != null && existingSummary.cwd !== targetCwd);
-      const shouldCreateNewTerminal = wantsNewTerminal;
-      const targetWorktreePath = options?.worktreePath ?? workbenchWorktreePath;
-
-      setTerminalUiLaunchContext({
-        threadId: workbenchId,
-        cwd: targetCwd,
-        worktreePath: targetWorktreePath,
+      const shouldCreateNewTerminal = scriptNeedsNewTerminal({
+        busy: runningTerminalIds.includes(baseTerminalId),
+        knownTerminal: activeKnownTerminalIds.includes(baseTerminalId),
+        existingCwd: existingSummary?.cwd,
+        cwd: launch.cwd,
       });
-      setTerminalOpen(true);
-      if (!workbenchRef) {
-        return;
-      }
-      setTerminalFocusRequestId((value) => value + 1);
-
-      const runtimeEnv = projectScriptRuntimeEnv({
-        project: {
-          cwd: workbenchProject.workspaceRoot,
-        },
-        worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
-      });
-      const targetTerminalId = shouldCreateNewTerminal
+      const terminalId = shouldCreateNewTerminal
         ? nextTerminalId(allocatableActiveTerminalIds)
         : baseTerminalId;
-      const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
-        ? {
-            threadId: workbenchId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            cols: SCRIPT_TERMINAL_COLS,
-            rows: SCRIPT_TERMINAL_ROWS,
-          }
-        : {
-            threadId: workbenchId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-          };
-
-      if (shouldCreateNewTerminal) {
-        storeNewTerminal(workbenchRef, targetTerminalId);
-      } else {
-        storeSetActiveTerminal(workbenchRef, targetTerminalId);
-      }
-
-      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
-      if (openResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(openResult)) {
-          const error = squashAtomCommandFailure(openResult);
+      setTerminalUiLaunchContext({
+        threadId: launch.ownerRef.threadId,
+        cwd: launch.cwd,
+        worktreePath: launch.worktreePath,
+      });
+      setTerminalOpen(true);
+      setTerminalFocusRequestId((value) => value + 1);
+      if (shouldCreateNewTerminal) storeNewTerminal(launch.ownerRef, terminalId);
+      else storeSetActiveTerminal(launch.ownerRef, terminalId);
+      const reportFailure = (result: AtomCommandResult<unknown, unknown>) => {
+        if (
+          result._tag === "Failure" &&
+          !isAtomCommandInterrupted(result) &&
+          isCurrent() &&
+          activeThreadId
+        ) {
+          const error = squashAtomCommandFailure(result);
           setThreadError(
             activeThreadId,
-            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+            error instanceof Error
+              ? error.message
+              : `Failed to run script "${launch.script.name}".`,
           );
         }
-        return;
-      }
-
-      const writeResult = await writeTerminal({
-        environmentId,
-        input: {
-          threadId: workbenchId,
-          terminalId: targetTerminalId,
-          data: `${script.command}\r`,
+      };
+      await executeProjectScript({
+        isCurrent,
+        open: async () => {
+          const result = await openTerminal({
+            environmentId: launch.ownerRef.environmentId,
+            input: {
+              threadId: launch.ownerRef.threadId,
+              terminalId,
+              cwd: launch.cwd,
+              ...(launch.worktreePath !== null ? { worktreePath: launch.worktreePath } : {}),
+              env: launch.env,
+              ...(shouldCreateNewTerminal
+                ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+                : {}),
+            },
+          });
+          reportFailure(result);
+          return result._tag === "Success";
+        },
+        write: async () => {
+          const result = await writeTerminal({
+            environmentId: launch.ownerRef.environmentId,
+            input: {
+              threadId: launch.ownerRef.threadId,
+              terminalId,
+              data: `${launch.script.command}\r`,
+            },
+          });
+          reportFailure(result);
         },
       });
-      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
-      }
     },
     [
-      activeProject,
+      workbench,
       workbenchProject,
+      activeProjectScripts,
+      routeThreadRef,
+      taskPage,
       activeThreadKnownSessions,
-      activeThread,
       activeThreadId,
-      workbenchRef,
-      workbenchId,
-      workbenchRoot,
-      workbenchWorktreePath,
-      gitCwd,
       setTerminalOpen,
       setThreadError,
       storeNewTerminal,
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
-      environmentId,
       openTerminal,
       activeKnownTerminalIds,
       allocatableActiveTerminalIds,
@@ -4197,7 +4191,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!workbenchProject) {
         return AsyncResult.success(undefined);
       }
       const nextId = nextProjectScriptId(
@@ -4215,22 +4209,22 @@ export default function ChatView(props: ChatViewProps) {
         : [...activeProjectScripts, nextScript];
 
       return persistProjectScripts({
-        projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectId: workbenchProject.id,
+        projectCwd: workbenchProject.workspaceRoot,
         previousScripts: activeProjectScripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(nextId),
       });
     },
-    [activeProject, activeProjectScripts, persistProjectScripts],
+    [workbenchProject, activeProjectScripts, persistProjectScripts],
   );
   const updateProjectScript = useCallback(
     async (
       scriptId: string,
       input: NewProjectScriptInput,
     ): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!workbenchProject) {
         return AsyncResult.success(undefined);
       }
       const existingScript = activeProjectScripts.find((script) => script.id === scriptId);
@@ -4248,19 +4242,19 @@ export default function ChatView(props: ChatViewProps) {
       );
 
       return persistProjectScripts({
-        projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectId: workbenchProject.id,
+        projectCwd: workbenchProject.workspaceRoot,
         previousScripts: activeProjectScripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
       });
     },
-    [activeProject, activeProjectScripts, persistProjectScripts],
+    [workbenchProject, activeProjectScripts, persistProjectScripts],
   );
   const deleteProjectScript = useCallback(
     async (scriptId: string): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!workbenchProject) {
         return AsyncResult.success(undefined);
       }
       const nextScripts = activeProjectScripts.filter((script) => script.id !== scriptId);
@@ -4268,8 +4262,8 @@ export default function ChatView(props: ChatViewProps) {
       const deletedName = activeProjectScripts.find((s) => s.id === scriptId)?.name;
 
       const result = await persistProjectScripts({
-        projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectId: workbenchProject.id,
+        projectCwd: workbenchProject.workspaceRoot,
         previousScripts: activeProjectScripts,
         nextScripts,
         keybinding: null,
@@ -4292,7 +4286,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return result;
     },
-    [activeProject, activeProjectScripts, persistProjectScripts],
+    [workbenchProject, activeProjectScripts, persistProjectScripts],
   );
 
   const handleRuntimeModeChange = useCallback(
@@ -4349,7 +4343,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const createBrowserSurface = useCallback(
     (profileId?: string) => {
-      if (!workbenchRef) return;
+      if (!workbenchRef || workbench.status !== "ready") return;
       const userActionRevision = useRightPanelStore.getState().getUserActionRevision(workbenchRef);
       void addBrowserSurface({
         threadRef: workbenchRef,
@@ -4373,7 +4367,7 @@ export default function ChatView(props: ChatViewProps) {
         }
       });
     },
-    [workbenchRef, workbenchKey, routeThreadKey, openPreview],
+    [workbench, workbenchRef, workbenchKey, routeThreadKey, openPreview],
   );
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
@@ -6653,7 +6647,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject) return;
+      if (!scriptId || !workbenchProject) return;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
       if (!script) return;
       event.preventDefault();
@@ -6663,7 +6657,7 @@ export default function ChatView(props: ChatViewProps) {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
-    activeProject,
+    workbenchProject,
     activeRightPanelSurface,
     activeProjectScripts,
     addTerminalSurface,
@@ -8889,7 +8883,24 @@ export default function ChatView(props: ChatViewProps) {
           ) : null}
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
           {taskPage && !isServerThread ? (
-            <div className="min-w-0 px-4 text-sm font-medium">{workbenchTask?.name ?? "Task"}</div>
+            <div className="flex min-w-0 flex-1 items-center justify-between px-4 pr-16">
+              <span className="truncate text-sm font-medium">{workbenchTask?.name ?? "Task"}</span>
+              {workbenchProject && workbenchProjectRef ? (
+                <ProjectScriptsControl
+                  key={scopedProjectKey(workbenchProjectRef)}
+                  scripts={activeProjectScripts}
+                  fileScripts={taskPageFileScripts}
+                  preferredScriptId={
+                    lastInvokedScriptByProjectId[scopedProjectKey(workbenchProjectRef)] ?? null
+                  }
+                  keybindings={keybindings}
+                  onRunScript={runProjectScript}
+                  onAddScript={saveProjectScript}
+                  onUpdateScript={updateProjectScript}
+                  onDeleteScript={deleteProjectScript}
+                />
+              ) : null}
+            </div>
           ) : (
             <ChatHeader
               {...(!supportsPullRequests || activeProjectRepository === null
@@ -8902,9 +8913,12 @@ export default function ChatView(props: ChatViewProps) {
               isServerThread={isServerThread}
               activeProject={activeProject}
               openInCwd={gitCwd}
-              activeProjectScripts={activeProjectScripts}
+              scriptProject={workbenchProject}
+              activeProjectScripts={workbenchProject ? activeProjectScripts : undefined}
               preferredScriptId={
-                activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+                workbenchProjectRef
+                  ? (lastInvokedScriptByProjectId[scopedProjectKey(workbenchProjectRef)] ?? null)
+                  : null
               }
               keybindings={keybindings}
               availableEditors={availableEditors}

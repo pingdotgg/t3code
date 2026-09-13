@@ -154,3 +154,50 @@ describe("pending terminal launches", () => {
     });
   });
 });
+
+import { ProjectId } from "@t3tools/contracts";
+import { resolveWorkbench } from "@t3tools/client-runtime/state/task-workbench";
+import { pendingTerminalLaunchMatchesWorkbench } from "./terminalLaunchContext";
+
+it("cancels staged script input when the scoped primary project changes or becomes unavailable", () => {
+  const environmentId = EnvironmentId.make("environment");
+  const taskRef = { environmentId, taskId: TaskId.make("task") };
+  const project = { environmentId, id: ProjectId.make("primary"), workspaceRoot: "/primary" };
+  const input = {
+    threadRef: null,
+    thread: null,
+    taskRef,
+    task: { ...taskRef, id: taskRef.taskId, primaryProjectId: project.id },
+    tasksSupported: true,
+    authoritative: true,
+    projects: [project],
+  };
+  const workbench = resolveWorkbench(input);
+  if (workbench.status !== "ready") throw new Error("Expected task workbench");
+  const launch = {
+    projectRef: workbench.projectRef,
+    projectCwd: "/primary",
+    cwd: "/primary",
+    worktreePath: null,
+    initialInput: "dev\r",
+  };
+  expect(pendingTerminalLaunchMatchesWorkbench(launch, workbench)).toBe(true);
+  expect(
+    pendingTerminalLaunchMatchesWorkbench(
+      launch,
+      resolveWorkbench({ ...input, projects: [{ ...project, workspaceRoot: "/new-primary" }] }),
+    ),
+  ).toBe(false);
+  expect(
+    pendingTerminalLaunchMatchesWorkbench(launch, resolveWorkbench({ ...input, task: null })),
+  ).toBe(false);
+  expect(
+    pendingTerminalLaunchMatchesWorkbench(
+      {
+        ...launch,
+        projectRef: { ...workbench.projectRef, environmentId: EnvironmentId.make("other") },
+      },
+      workbench,
+    ),
+  ).toBe(false);
+});

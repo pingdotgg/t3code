@@ -60,6 +60,7 @@ interface ChatHeaderProps {
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
+  scriptProject: EnvironmentProject | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -129,6 +130,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadTitle,
   isServerThread,
   activeProject,
+  scriptProject,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -164,7 +166,7 @@ export const ChatHeader = memo(function ChatHeader({
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const fileScripts = useT3ProjectFileScripts(
     activeThreadEnvironmentId,
-    activeProjectScripts ? activeProjectCwd : null,
+    activeProjectScripts ? (scriptProject?.workspaceRoot ?? null) : null,
   );
   const remoteOpenState = useRemoteOpenState(activeThreadEnvironmentId);
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -435,6 +437,9 @@ export const ChatHeader = memo(function ChatHeader({
       >
         {activeProjectScripts && (
           <ProjectScriptsControl
+            key={
+              scriptProject ? `${scriptProject.environmentId}:${scriptProject.id}` : "unavailable"
+            }
             scripts={activeProjectScripts}
             fileScripts={fileScripts}
             keybindings={keybindings}

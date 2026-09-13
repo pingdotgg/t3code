@@ -62,6 +62,7 @@ import {
 import {
   resolveTerminalOpenLocation,
   takePendingTerminalLaunch,
+  pendingTerminalLaunchMatchesWorkbench,
   type PendingTerminalLaunch,
 } from "./terminalLaunchContext";
 import {
@@ -175,6 +176,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const conversationThread = selectedThread?.id === params.threadId ? selectedThread : null;
   const selectedThreadDetail = useSelectedThreadDetail();
   const {
+    resolution: workbenchResolution,
     ownerRef: terminalOwner,
     project: workbenchProject,
     worktreePath,
@@ -245,6 +247,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }));
   const pendingLaunch =
     pendingLaunchEntry.key === launchTargetKey ? pendingLaunchEntry.launch : null;
+  const pendingLaunchValid =
+    !pendingLaunch || pendingTerminalLaunchMatchesWorkbench(pendingLaunch, workbenchResolution);
   const hasResolvedPendingLaunch = pendingLaunchEntry.key === launchTargetKey;
   const [initialAttachGridEntry, setInitialAttachGridEntry] = useState(() => ({
     key: launchTargetKey,
@@ -282,7 +286,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     runningSession !== null &&
     runningSession.target.terminalId !== terminalId;
   const launchLocationCandidate = useMemo(() => {
-    if (!terminalOwner || !workbenchProject?.workspaceRoot) {
+    if (
+      !terminalOwner ||
+      !workbenchProject?.workspaceRoot ||
+      !pendingLaunchValid ||
+      (workbenchLoading && !activeKnownSession)
+    ) {
       return null;
     }
     if (pendingLaunch) {
@@ -299,11 +308,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       threadDetailWorktreePath: null,
     });
   }, [
-    activeKnownSession?.state.summary,
+    activeKnownSession,
+    pendingLaunchValid,
+    workbenchLoading,
     pendingLaunch,
     terminalOwner,
     worktreePath,
-    workbenchProject?.workspaceRoot,
+    workbenchProject,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({
     key: launchTargetKey,
@@ -315,6 +326,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     () =>
       terminalOwner !== null &&
       launchLocation !== null &&
+      pendingLaunchValid &&
+      (!workbenchLoading || activeKnownSession !== null) &&
       hasResolvedPendingLaunch &&
       initialAttachGridSize !== null &&
       hasResolvedFontPreference &&
@@ -333,6 +346,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           }
         : null,
     [
+      pendingLaunchValid,
+      workbenchLoading,
+      activeKnownSession,
       hasMeasuredSurface,
       hasResolvedFontPreference,
       hasResolvedPendingLaunch,
@@ -629,6 +645,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     const initialInput = pendingLaunch?.initialInput;
     if (
       !initialInput ||
+      !pendingLaunchValid ||
+      workbenchLoading ||
       !terminalOwner ||
       terminal.version === 0 ||
       sentInitialInputKeyRef.current === launchTargetKey
@@ -647,6 +665,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [
     launchTargetKey,
     pendingLaunch?.initialInput,
+    pendingLaunchValid,
+    workbenchLoading,
     terminalOwner,
     terminal.version,
     terminalId,
@@ -905,7 +925,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       );
     }
-  }, [navigation, params, terminalOwner, terminalId, terminalMenuSessions]);
+  }, [navigation, params, terminalOwner, terminalId, terminalMenuSessions, workbenchLoading]);
 
   useEffect(() => {
     // Detached (hidden surface or environment drop): forget the running
@@ -974,7 +994,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const handleOpenNewTerminal = useCallback(() => {
-    if (!terminalOwner) {
+    if (!terminalOwner || workbenchLoading) {
       return;
     }
 
@@ -987,7 +1007,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       }),
     );
-  }, [navigation, params, terminalOwner, terminalId, terminalMenuSessions]);
+  }, [navigation, params, terminalOwner, terminalId, terminalMenuSessions, workbenchLoading]);
 
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));

@@ -40,3 +40,90 @@ describe("task workbench resource identity", () => {
     ).toBe(first);
   });
 });
+
+import { ProjectId } from "@t3tools/contracts";
+import { resolveWorkbench, type WorkbenchInput } from "./taskWorkbench.ts";
+const primary = { environmentId, id: ProjectId.make("primary"), workspaceRoot: "/primary" };
+const foreign = { environmentId, id: ProjectId.make("foreign"), workspaceRoot: "/foreign" };
+const input: WorkbenchInput = {
+  threadRef: first,
+  thread: { environmentId, taskId: task.id, projectId: foreign.id, worktreePath: "/checkout" },
+  task: { ...task, primaryProjectId: primary.id },
+  projects: [primary, foreign],
+  tasksSupported: true,
+  authoritative: true,
+};
+describe("resolved workbench", () => {
+  it("resolves siblings, a foreign member and an empty task identically", () => {
+    const resolved = resolveWorkbench(input);
+    expect(resolved).toMatchObject({
+      status: "ready",
+      ownerRef: taskWorkbenchRef({ environmentId, taskId: task.id }),
+      projectRef: { environmentId, projectId: primary.id },
+      cwd: "/primary",
+      workspaceRoot: "/primary",
+      worktreePath: null,
+    });
+    expect(resolveWorkbench({ ...input, threadRef: second })).toEqual(resolved);
+    expect(
+      resolveWorkbench({
+        ...input,
+        thread: null,
+        threadRef: null,
+        taskRef: { environmentId, taskId: task.id },
+      }),
+    ).toEqual(resolved);
+  });
+  it("keeps old-server tools on the member checkout", () => {
+    expect(resolveWorkbench({ ...input, tasksSupported: false, task: null })).toMatchObject({
+      status: "ready",
+      ownerRef: first,
+      cwd: "/checkout",
+      workspaceRoot: "/foreign",
+    });
+  });
+  it("does not authorize launches from a cached task snapshot", () => {
+    expect(resolveWorkbench({ ...input, authoritative: false })).toEqual({
+      status: "unavailable",
+      reason: "loading",
+    });
+  });
+  it("blocks missing task/project shells and distinguishes authoritative removal", () => {
+    expect(resolveWorkbench({ ...input, task: null, authoritative: false })).toEqual({
+      status: "unavailable",
+      reason: "loading",
+    });
+    expect(resolveWorkbench({ ...input, task: null })).toEqual({
+      status: "unavailable",
+      reason: "missing",
+    });
+    expect(resolveWorkbench({ ...input, projects: [foreign] }).status).toBe("unavailable");
+    expect(resolveWorkbench({ ...input, thread: null }).status).toBe("unavailable");
+  });
+  it("validates scoped primary-project identity and updates roots without changing owner", () => {
+    expect(
+      resolveWorkbench({
+        ...input,
+        projects: [{ ...primary, environmentId: EnvironmentId.make("two") }, foreign],
+      }).status,
+    ).toBe("unavailable");
+    expect(
+      resolveWorkbench({
+        ...input,
+        task: { ...input.task!, environmentId: EnvironmentId.make("two") },
+      }).status,
+    ).toBe("unavailable");
+    expect(
+      resolveWorkbench({ ...input, task: { ...input.task!, primaryProjectId: foreign.id } }),
+    ).toMatchObject({
+      status: "ready",
+      cwd: "/foreign",
+      worktreePath: null,
+      ownerRef: taskWorkbenchRef({ environmentId, taskId: task.id }),
+    });
+    expect(
+      resolveWorkbench({ ...input, task: { ...input.task!, archivedAt: "2026-09-13T00:00:00Z" } })
+        .status,
+    ).toBe("unavailable");
+  });
+});

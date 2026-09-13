@@ -3,7 +3,6 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { useMemo } from "react";
 
-import { useProjects } from "~/state/entities";
 import { useTaskWorkbench } from "~/state/taskWorkbench";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
 
@@ -21,7 +20,6 @@ export interface ActiveProjectTarget {
  */
 export function useActiveProjectTarget(): ActiveProjectTarget | null {
   const { activeDraftThread, activeThread } = useHandleNewThread();
-  const projects = useProjects();
   const route = useParams({ strict: false, select: resolveThreadRouteTarget });
   const thread = activeThread ?? activeDraftThread;
   const threadId = activeThread?.id ?? activeDraftThread?.threadId;
@@ -30,30 +28,17 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
     () => (environmentId && threadId ? scopeThreadRef(environmentId, threadId) : null),
     [environmentId, threadId],
   );
-  const { ref: workbenchRef, task } = useTaskWorkbench(
+  const { resolution, project } = useTaskWorkbench(
     threadRef,
     thread,
     route?.kind === "task" ? route.taskRef : null,
   );
-  const project = task
-    ? projects.find(
-        (candidate) =>
-          candidate.environmentId === task.environmentId && candidate.id === task.primaryProjectId,
-      )
-    : thread
-      ? projects.find(
-          (candidate) =>
-            candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
-        )
-      : null;
-  const cwd = task ? project?.workspaceRoot : (thread?.worktreePath ?? project?.workspaceRoot);
-
-  if (!workbenchRef || !project || !cwd) return null;
+  if (resolution.status !== "ready" || !project) return null;
 
   return {
     environmentId: project.environmentId,
-    cwd,
+    cwd: resolution.cwd,
     projectName: project.title,
-    threadRef: workbenchRef,
+    threadRef: resolution.ownerRef,
   };
 }

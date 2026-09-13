@@ -1,24 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, TaskId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, TaskId, ThreadId } from "@t3tools/contracts";
 import { resolveMobileWorkbench } from "./task-workbench";
 
 const environmentId = EnvironmentId.make("environment");
 const taskId = TaskId.make("task");
 const taskRef = { environmentId, taskId };
-const task = { environmentId, id: taskId };
-const project = { workspaceRoot: "/primary" };
+const projectId = ProjectId.make("primary");
+const task = { environmentId, id: taskId, primaryProjectId: projectId };
+const project = { environmentId, id: projectId, workspaceRoot: "/primary" };
 
 describe("mobile task workbench", () => {
   it("waits for a known member's task shell instead of exposing standalone tools", () => {
     expect(
       resolveMobileWorkbench({
         threadRef: { environmentId, threadId: ThreadId.make("member") },
-        thread: { environmentId, taskId, worktreePath: "/member-checkout" },
+        thread: { environmentId, projectId, taskId, worktreePath: "/member-checkout" },
         taskRef,
         task: null,
-        project: { workspaceRoot: "/member-project" },
+        project: { ...project, workspaceRoot: "/member-project" },
       }),
-    ).toEqual({ ownerRef: null, workspaceRoot: null, worktreePath: null });
+    ).toMatchObject({ ownerRef: null, workspaceRoot: null, worktreePath: null });
   });
 
   it("retains the last resolved task tools across a sibling hydration gap", () => {
@@ -32,13 +33,17 @@ describe("mobile task workbench", () => {
     expect(
       resolveMobileWorkbench({
         threadRef: { environmentId, threadId: ThreadId.make("sibling") },
-        thread: { environmentId, taskId, worktreePath: "/sibling-checkout" },
+        thread: { environmentId, projectId, taskId, worktreePath: "/sibling-checkout" },
         taskRef,
         task: null,
         project: null,
         previous: { taskRef, workbench },
+        authoritative: false,
       }),
-    ).toBe(workbench);
+    ).toMatchObject({
+      ownerRef: workbench.ownerRef,
+      resolution: { status: "unavailable", reason: "loading" },
+    });
     expect(
       resolveMobileWorkbench({
         threadRef: null,
@@ -47,8 +52,12 @@ describe("mobile task workbench", () => {
         task,
         project: null,
         previous: { taskRef, workbench },
+        authoritative: false,
       }),
-    ).toBe(workbench);
+    ).toMatchObject({
+      ownerRef: workbench.ownerRef,
+      resolution: { status: "unavailable", reason: "loading" },
+    });
   });
 
   it("never retains another task or environment's tools while loading", () => {
@@ -71,18 +80,20 @@ describe("mobile task workbench", () => {
           task: null,
           project: null,
           previous: { taskRef, workbench },
+          authoritative: false,
         }),
-      ).toEqual({ ownerRef: null, workspaceRoot: null, worktreePath: null });
+      ).toMatchObject({ ownerRef: null, workspaceRoot: null, worktreePath: null });
     }
     const ungroupedRef = { environmentId, threadId: ThreadId.make("ungrouped") };
     expect(
       resolveMobileWorkbench({
         threadRef: ungroupedRef,
-        thread: { environmentId, taskId: null, worktreePath: "/member" },
+        thread: { environmentId, projectId, taskId: null, worktreePath: "/member" },
         taskRef: null,
         task: null,
         project,
         previous: { taskRef, workbench },
+        authoritative: false,
       }).ownerRef,
     ).toEqual(ungroupedRef);
   });
@@ -90,7 +101,7 @@ describe("mobile task workbench", () => {
   it("opens an empty task with no conversation ref and no detail lookup", () => {
     expect(
       resolveMobileWorkbench({ threadRef: null, thread: null, taskRef, task, project }),
-    ).toEqual({
+    ).toMatchObject({
       ownerRef: { environmentId, threadId: "task:task" },
       workspaceRoot: "/primary",
       worktreePath: null,
@@ -101,7 +112,7 @@ describe("mobile task workbench", () => {
     const resolve = (id: string) =>
       resolveMobileWorkbench({
         threadRef: { environmentId, threadId: ThreadId.make(id) },
-        thread: { environmentId, taskId, worktreePath: `/worktrees/${id}` },
+        thread: { environmentId, projectId, taskId, worktreePath: `/worktrees/${id}` },
         threadDetailWorktreePath: `/detail/${id}`,
         taskRef,
         task,
@@ -124,7 +135,7 @@ describe("mobile task workbench", () => {
       thread: null,
       taskRef,
       task,
-      project: { workspaceRoot: "/new-primary" },
+      project: { ...project, workspaceRoot: "/new-primary" },
     });
     expect(after.ownerRef).toEqual(before.ownerRef);
     expect(after.workspaceRoot).toBe("/new-primary");
@@ -135,13 +146,13 @@ describe("mobile task workbench", () => {
     expect(
       resolveMobileWorkbench({
         threadRef,
-        thread: { environmentId, taskId: null, worktreePath: "/shell" },
+        thread: { environmentId, projectId, taskId: null, worktreePath: "/shell" },
         threadDetailWorktreePath: "/detail",
         taskRef: null,
         task: null,
         project,
       }),
-    ).toEqual({ ownerRef: threadRef, workspaceRoot: "/primary", worktreePath: "/detail" });
+    ).toMatchObject({ ownerRef: threadRef, workspaceRoot: "/primary", worktreePath: "/detail" });
   });
 
   it("does not resolve a deleted task or a task from another environment", () => {
@@ -159,4 +170,25 @@ describe("mobile task workbench", () => {
       }).ownerRef,
     ).toBeNull();
   });
+});
+
+it("does not retain an authoritatively removed task", () => {
+  const workbench = resolveMobileWorkbench({
+    threadRef: null,
+    thread: null,
+    taskRef,
+    task,
+    project,
+  });
+  expect(
+    resolveMobileWorkbench({
+      threadRef: null,
+      thread: null,
+      taskRef,
+      task: null,
+      project,
+      authoritative: true,
+      previous: { taskRef, workbench },
+    }),
+  ).toMatchObject({ ownerRef: null, resolution: { status: "unavailable", reason: "missing" } });
 });

@@ -1,4 +1,5 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { WorkbenchResolution } from "@t3tools/client-runtime/state/task-workbench";
+import type { EnvironmentId, ThreadId, ScopedProjectRef } from "@t3tools/contracts";
 
 interface TerminalLocationLike {
   readonly cwd: string;
@@ -12,6 +13,8 @@ interface PendingTerminalLaunchTarget {
 }
 
 export interface PendingTerminalLaunch {
+  readonly projectRef?: ScopedProjectRef;
+  readonly projectCwd?: string;
   readonly cwd: string;
   readonly worktreePath: string | null;
   readonly env?: Record<string, string>;
@@ -29,6 +32,8 @@ export function stagePendingTerminalLaunch(input: {
   readonly launch: PendingTerminalLaunch;
 }) {
   pendingTerminalLaunches.set(pendingTerminalLaunchKey(input.target), {
+    projectRef: input.launch.projectRef,
+    projectCwd: input.launch.projectCwd,
     cwd: input.launch.cwd,
     worktreePath: input.launch.worktreePath,
     env: input.launch.env ? { ...input.launch.env } : undefined,
@@ -80,4 +85,20 @@ export function resolveTerminalOpenLocation(input: {
     cwd: preferredThreadWorktreePath ?? input.workspaceRoot,
     worktreePath: preferredThreadWorktreePath,
   };
+}
+
+/** Staged scripts cannot outlive the project/root they were selected for. */
+export function pendingTerminalLaunchMatchesWorkbench(
+  launch: PendingTerminalLaunch,
+  workbench: WorkbenchResolution,
+) {
+  if (!launch.projectRef) return workbench.status === "ready";
+  return (
+    workbench.status === "ready" &&
+    launch.projectRef.environmentId === workbench.projectRef.environmentId &&
+    launch.projectRef.projectId === workbench.projectRef.projectId &&
+    launch.projectCwd === workbench.workspaceRoot &&
+    launch.cwd === workbench.cwd &&
+    launch.worktreePath === workbench.worktreePath
+  );
 }

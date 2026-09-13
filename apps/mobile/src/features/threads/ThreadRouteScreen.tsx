@@ -223,7 +223,7 @@ function ThreadRouteContent(
     threadId: selectedThread?.id,
     threadDetailWorktreePath: selectedThreadDetail?.worktreePath,
   });
-  const workbenchCwd = workbench.worktreePath ?? workbench.workspaceRoot;
+  const workbenchCwd = workbench.resolution.status === "ready" ? workbench.resolution.cwd : null;
   // "Load earlier turns" header state for windowed (paginated) thread loads.
   const loadEarlierTurns = useMemo(() => {
     if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
@@ -531,10 +531,10 @@ function ThreadRouteContent(
       terminalDebugLog("terminal-menu:open-existing", {
         terminalId: nextTerminalId ?? null,
         hasThread: Boolean(selectedThread),
-        hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
+        hasWorkspaceRoot: Boolean(workbench.resolution.status === "ready"),
       });
 
-      if (!selectedThread || !workbench.workspaceRoot) {
+      if (!selectedThread || workbench.resolution.status !== "ready" || !workbench.workspaceRoot) {
         return;
       }
 
@@ -544,17 +544,17 @@ function ThreadRouteContent(
         ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
       });
     },
-    [navigation, selectedThread, workbench.workspaceRoot],
+    [navigation, selectedThread, workbench.workspaceRoot, workbench.resolution.status],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
     terminalDebugLog("terminal-menu:open-new", {
       hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
+      hasWorkspaceRoot: Boolean(workbench.resolution.status === "ready"),
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
-    if (!selectedThread || !workbench.workspaceRoot) {
+    if (!selectedThread || workbench.resolution.status !== "ready" || !workbench.workspaceRoot) {
       return;
     }
 
@@ -566,7 +566,13 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       terminalId: nextId,
     });
-  }, [navigation, selectedThread, workbench.workspaceRoot, terminalMenuSessions]);
+  }, [
+    navigation,
+    selectedThread,
+    workbench.workspaceRoot,
+    workbench.resolution.status,
+    terminalMenuSessions,
+  ]);
 
   const handleRunProjectScript = useCallback(
     async (script: ProjectScript) => {
@@ -574,10 +580,10 @@ function ThreadRouteContent(
         scriptId: script.id,
         command: script.command,
         hasThread: Boolean(selectedThread),
-        hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
+        hasWorkspaceRoot: Boolean(workbench.resolution.status === "ready"),
       });
 
-      if (!selectedThread || !workbench.workspaceRoot) {
+      if (!selectedThread || workbench.resolution.status !== "ready" || !workbench.workspaceRoot) {
         terminalDebugLog("project-script:abort", {
           scriptId: script.id,
           reason: "no-thread-or-workspace",
@@ -585,10 +591,14 @@ function ThreadRouteContent(
         return;
       }
 
+      const scriptCwd = workbench.resolution.cwd;
       const targetTerminalId = resolveProjectScriptTerminalId({
         existingTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
         hasRunningTerminal: terminalMenuSessions.some(
-          (session) => session.status === "running" || session.status === "starting",
+          (session) =>
+            session.status === "running" ||
+            session.status === "starting" ||
+            session.cwd !== scriptCwd,
         ),
       });
       const preferredWorktreePath = workbench.worktreePath;
@@ -607,6 +617,8 @@ function ThreadRouteContent(
           terminalId: targetTerminalId,
         },
         launch: {
+          projectRef: workbench.resolution.projectRef,
+          projectCwd: workbench.resolution.workspaceRoot,
           cwd,
           worktreePath: preferredWorktreePath,
           env,
@@ -644,14 +656,15 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(workbench.workspaceRoot),
-    canOpenFiles: Boolean(workbench.workspaceRoot),
-    projectScripts: workbench.project
-      ? resolveProjectScripts(
-          routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-          workbench.project,
-        )
-      : [],
+    canOpenTerminal: Boolean(workbench.resolution.status === "ready"),
+    canOpenFiles: Boolean(workbench.resolution.status === "ready"),
+    projectScripts:
+      workbench.resolution.status === "ready" && workbench.project
+        ? resolveProjectScripts(
+            routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+            workbench.project,
+          )
+        : [],
     terminalSessions: terminalMenuSessions,
     showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
