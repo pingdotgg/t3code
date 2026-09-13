@@ -458,6 +458,22 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
   },
 );
 
+export function serverConfigProjectionChanges(
+  state: SubscriptionRef.SubscriptionRef<Option.Option<ServerConfigProjection>>,
+) {
+  return Stream.concat(
+    Stream.fromEffect(SubscriptionRef.get(state)),
+    SubscriptionRef.changes(state),
+  ).pipe(
+    Stream.filterMap((projection) =>
+      Option.match(projection, {
+        onNone: () => Result.failVoid,
+        onSome: (value) => Result.succeed(value),
+      }),
+    ),
+  );
+}
+
 function serverConfigStateChanges(
   environmentId: EnvironmentId,
   subscription: ServerConfigSubscriptionOptions,
@@ -467,14 +483,8 @@ function serverConfigStateChanges(
     Stream.unwrap(
       makeEnvironmentServerConfigState(subscription).pipe(
         Effect.map((state) =>
-          SubscriptionRef.changes(state).pipe(
-            Stream.filterMap((projection) =>
-              Option.match(projection, {
-                onNone: () => Result.failVoid,
-                onSome: (value) => Result.succeed(value),
-              }),
-            ),
-          ),
+          // Replay cached configuration before waiting for live updates.
+          serverConfigProjectionChanges(state),
         ),
       ),
     ),

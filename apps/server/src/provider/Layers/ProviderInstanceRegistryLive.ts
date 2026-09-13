@@ -261,24 +261,32 @@ const makeReconcile = <R>(input: {
       const previousOrder = [...previousEntries.keys()];
       const nextOrder: Array<ProviderInstanceId> = [];
 
-      for (const [rawInstanceId, entry] of nextRaw) {
-        const instanceId = ProviderInstanceId.make(rawInstanceId);
+      // Provider creation may start a background health probe. Build the
+      // independent instances together so a slow provider cannot delay
+      // unrelated providers from becoming readable after a settings update.
+      const built = yield* Effect.forEach(
+        nextRaw,
+        ([rawInstanceId, entry]) => {
+          const instanceId = ProviderInstanceId.make(rawInstanceId);
+
+          const existing = previousEntries.get(instanceId);
+          if (existing !== undefined && !replacedIds.has(instanceId)) {
+            // No-op update: keep the existing live entry and scope.
+            return Effect.succeed([instanceId, { kind: "live" as const, live: existing }] as const);
+          }
+
+          return buildEntry({
+            driversById,
+            parentScope,
+            instanceId,
+            rawInstanceId,
+            entry,
+          }).pipe(Effect.map((result) => [instanceId, result] as const));
+        },
+        { concurrency: "unbounded" },
+      );
+      for (const [instanceId, result] of built) {
         nextOrder.push(instanceId);
-
-        const existing = previousEntries.get(instanceId);
-        if (existing !== undefined && !replacedIds.has(instanceId)) {
-          // No-op update: keep the existing live entry and scope.
-          builtEntries.set(instanceId, existing);
-          continue;
-        }
-
-        const result = yield* buildEntry({
-          driversById,
-          parentScope,
-          instanceId,
-          rawInstanceId,
-          entry,
-        });
         if (result.kind === "live") {
           builtEntries.set(instanceId, result.live);
         } else {

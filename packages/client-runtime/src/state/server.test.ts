@@ -41,6 +41,7 @@ import {
   resolveServerConfigValue,
   resolveServerWelcomeState,
   resolveServerUpdateProgressResult,
+  serverConfigProjectionChanges,
   serverUpdateStateForProgressEvent,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
@@ -48,7 +49,10 @@ import {
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
-import { applyServerConfigProjection } from "./serverConfigProjection.ts";
+import {
+  applyServerConfigProjection,
+  type ServerConfigProjection,
+} from "./serverConfigProjection.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -760,6 +764,23 @@ describe("server state projection", () => {
       ),
     ).toBe(live);
   });
+
+  it.effect("replays cached configuration to new consumers", () =>
+    Effect.gen(function* () {
+      const cachedProjection: ServerConfigProjection = {
+        config: CONFIG,
+        latestEvent: snapshotEvent(CONFIG),
+        source: "cache" as const,
+      };
+      const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
+        Option.some(cachedProjection),
+      );
+
+      const first = yield* serverConfigProjectionChanges(state).pipe(Stream.runHead);
+
+      expect(first).toEqual(Option.some(cachedProjection));
+    }),
+  );
 
   it.effect("starts from cached configuration and persists the live projection", () =>
     Effect.gen(function* () {

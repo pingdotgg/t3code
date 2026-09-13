@@ -729,6 +729,28 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
+export const DevinSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("devin").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Devin CLI binary.",
+        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type DevinSettings = typeof DevinSettings.Type;
+
 /**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
  * in the browser. The API key and Agent Platform methods take credentials from
@@ -861,6 +883,56 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
+
+export const OllamaSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    host: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("http://127.0.0.1:11434")),
+      Schema.annotateKey({
+        title: "Host",
+        description: "Ollama server URL. Use https://ollama.com for Ollama Cloud.",
+        providerSettingsForm: { placeholder: "http://127.0.0.1:11434", clearWhenEmpty: "omit" },
+      }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description: "Optional Ollama Cloud/API key. Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: makeBinaryPathSetting("ollama").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Optional Ollama binary path used for local installation diagnostics.",
+        providerSettingsForm: { placeholder: "ollama", clearWhenEmpty: "omit" },
+      }),
+    ),
+    defaultModel: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Default model",
+        description: "Optional model name used when a thread does not choose one.",
+        providerSettingsForm: { placeholder: "llama3.2", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["host", "apiKey", "binaryPath", "defaultModel"] },
+);
+export type OllamaSettings = typeof OllamaSettings.Type;
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The
@@ -1157,7 +1229,9 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    devin: DevinSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    ollama: OllamaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -1313,6 +1387,11 @@ const GrokSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
+const DevinSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+});
 
 const AntigravitySettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
@@ -1329,6 +1408,15 @@ const OpenCodeSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   serverUrl: Schema.optionalKey(TrimmedString),
   serverPassword: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+});
+
+const OllamaSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  host: Schema.optionalKey(TrimmedString),
+  apiKey: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  defaultModel: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
@@ -1404,7 +1492,9 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      devin: Schema.optionalKey(DevinSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      ollama: Schema.optionalKey(OllamaSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),

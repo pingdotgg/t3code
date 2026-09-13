@@ -273,6 +273,26 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+const providerLogo = (name: "devin" | "ollama") => `/provider-logos/${name}-color.svg`;
+
+const ProviderLogoIcon = ({
+  logo,
+  className,
+  "aria-hidden": ariaHidden,
+  ...props
+}: SVGProps<SVGSVGElement> & { readonly logo: "devin" | "ollama" }) => (
+  <img
+    src={providerLogo(logo)}
+    className={cn(logo === "ollama" && "dark:invert", className)}
+    aria-hidden={ariaHidden}
+    {...(props as React.ImgHTMLAttributes<HTMLImageElement>)}
+  />
+);
+
+export const DevinIcon: Icon = (props) => <ProviderLogoIcon logo="devin" {...props} />;
+
+export const OllamaIcon: Icon = (props) => <ProviderLogoIcon logo="ollama" {...props} />;
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

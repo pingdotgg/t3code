@@ -73,6 +73,27 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "ollama") {
+    return (
+      <Image
+        source={require("../../assets/ollama-color.svg")}
+        style={{ width: size, height: size }}
+        tintColor={mono}
+        contentFit="contain"
+      />
+    );
+  }
+
+  if (props.provider === "devin") {
+    return (
+      <Image
+        source={require("../../assets/devin-color.svg")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">

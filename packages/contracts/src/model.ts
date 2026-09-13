@@ -147,7 +147,9 @@ const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const OLLAMA_DRIVER_KIND = ProviderDriverKind.make("ollama");
 
 export const DEFAULT_MODEL = "gpt-6-astra";
 
@@ -172,7 +174,9 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",
+  [DEVIN_DRIVER_KIND]: "devin-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [OLLAMA_DRIVER_KIND]: "llama3.2",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
 };
 
@@ -184,7 +188,9 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
+  [DEVIN_DRIVER_KIND]: "devin-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [OLLAMA_DRIVER_KIND]: "llama3.2",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -221,5 +227,7 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
+  [DEVIN_DRIVER_KIND]: "Devin",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [OLLAMA_DRIVER_KIND]: "Ollama",
 };

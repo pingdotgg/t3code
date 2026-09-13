@@ -3,8 +3,10 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  DevinSettings,
   GrokSettings,
   OpenCodeSettings,
+  OllamaSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
@@ -13,9 +15,11 @@ import {
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  DevinIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  OllamaIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -71,10 +75,22 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     settingsSchema: GrokSettings,
   },
   {
+    value: ProviderDriverKind.make("devin"),
+    label: "Devin",
+    icon: DevinIcon,
+    settingsSchema: DevinSettings,
+  },
+  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("ollama"),
+    label: "Ollama",
+    icon: OllamaIcon,
+    settingsSchema: OllamaSettings,
   },
   {
     value: ProviderDriverKind.make("antigravity"),
