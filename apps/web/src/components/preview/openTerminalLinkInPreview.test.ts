@@ -1,3 +1,4 @@
+vi.mock("~/state/taskWorkbench", () => ({ canLaunchWorkbenchOwner: () => true }));
 import type { PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";

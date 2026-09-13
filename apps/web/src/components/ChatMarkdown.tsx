@@ -220,6 +220,8 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   /** Explicit source workspace for file-panel media; transcript media retains its thread. */
   assetSourceCwd?: string | undefined;
+  /** Resource owner for file-panel markdown, independent of its source cwd/conversation. */
+  ownerRef?: ScopedThreadRef | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
@@ -2237,6 +2239,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   imageBaseDir,
   assetSourceCwd,
+  ownerRef: explicitOwnerRef,
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
@@ -2281,6 +2284,7 @@ function useChatMarkdownState({
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
       const requestId = ++mediaRequestId.current;
+      const ownerRef = explicitOwnerRef ?? (threadRef ? readWorkbenchRef(threadRef) : null);
       void resolveMarkdownMediaPreview({
         source,
         resolvedFilePath,
@@ -2292,8 +2296,6 @@ function useChatMarkdownState({
         createAssetUrl,
         onOpenFile: threadRef
           ? (path) => {
-              const ownerRef =
-                assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef);
               if (ownerRef) useRightPanelStore.getState().openFile(ownerRef, path, undefined, cwd);
             }
           : undefined,
@@ -2323,7 +2325,15 @@ function useChatMarkdownState({
         },
       );
     },
-    [assetSourceCwd, createAssetUrl, cwd, expandMedia, preparedConnection, threadRef],
+    [
+      explicitOwnerRef,
+      assetSourceCwd,
+      createAssetUrl,
+      cwd,
+      expandMedia,
+      preparedConnection,
+      threadRef,
+    ],
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
@@ -2416,8 +2426,11 @@ function useChatMarkdownState({
         : payload.html,
     );
   }, []);
-  const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
-  const openDeferredMarkdownLink = useOpenLink(threadRef);
+  const openChangeRequestLink = useOpenChangeRequestLink(
+    threadRef?.threadId.startsWith("task:") ? undefined : threadRef,
+    explicitOwnerRef ?? pullRequestPanelRef,
+  );
+  const openDeferredMarkdownLink = useOpenLink(threadRef, explicitOwnerRef);
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
@@ -2425,6 +2438,7 @@ function useChatMarkdownState({
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
+        threadRef?.threadId.startsWith("task:") ||
         threadRef === undefined ||
         readThreadShell(threadRef) === null ||
         !pullRequestLinking.canLink(href)
@@ -2437,7 +2451,11 @@ function useChatMarkdownState({
   );
   const linkedThreadPullRequestFor = useCallback(
     (href: string) => {
-      if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
+      if (
+        threadRef?.threadId.startsWith("task:") ||
+        threadRef === undefined ||
+        !pullRequestLinking.isLinked(readThreadShell(threadRef), href)
+      )
         return null;
       const parsed = parseChangeRequestUrl(href);
       return parsed === null ? null : { ...parsed, url: href };
@@ -2446,7 +2464,12 @@ function useChatMarkdownState({
   );
   const updateThreadPullRequestLink = useCallback(
     async (href: string, linked: boolean) => {
-      if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
+      if (
+        threadRef?.threadId.startsWith("task:") ||
+        threadRef === undefined ||
+        (!linked && linkedThreadPullRequestFor(href) === null)
+      )
+        return;
       await pullRequestLinking.changeLink(threadRef, href, linked);
     },
     [linkedThreadPullRequestFor, pullRequestLinking, threadRef],
@@ -2464,9 +2487,17 @@ function useChatMarkdownState({
           ),
         );
       }
-      return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
-        if (result._tag === "Success") recordVisitForThread(threadRef, url);
-        else if (!isAtomCommandInterrupted(result)) {
+      const ownerRef = explicitOwnerRef ?? readWorkbenchRef(threadRef);
+      if (!ownerRef)
+        return Promise.resolve(
+          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+            Cause.fail(new BrowserPreviewUnavailableError({ message: "Workbench unavailable." })),
+          ),
+        );
+      return openUrlInPreview({ ownerRef, url, openPreview }).then((result) => {
+        if (result._tag === "Success") {
+          if (!threadRef.threadId.startsWith("task:")) recordVisitForThread(threadRef, url);
+        } else if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           if (error instanceof BrowserSettingsReadError) {
             toastManager.add(
@@ -2481,12 +2512,11 @@ function useChatMarkdownState({
         return result;
       });
     },
-    [openPreview, threadRef],
+    [explicitOwnerRef, openPreview, threadRef],
   );
   const openMarkdownFileInPreview = useCallback(
     (path: string) => {
-      const ownerRef =
-        threadRef && (assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef));
+      const ownerRef = threadRef && (explicitOwnerRef ?? readWorkbenchRef(threadRef));
       if (!ownerRef || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
@@ -2507,7 +2537,15 @@ function useChatMarkdownState({
         openPreview,
       });
     },
-    [assetSourceCwd, createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
+    [
+      explicitOwnerRef,
+      assetSourceCwd,
+      createAssetUrl,
+      cwd,
+      openPreview,
+      preparedConnection,
+      threadRef,
+    ],
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
@@ -2537,8 +2575,8 @@ function useChatMarkdownState({
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
+      const ownerRef = explicitOwnerRef ?? readWorkbenchRef(threadRef);
       const openAt = (path: string) => {
-        const ownerRef = assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef);
         if (ownerRef) useRightPanelStore.getState().openFile(ownerRef, path, line, cwd);
       };
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
@@ -2551,7 +2589,7 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [assetSourceCwd, cwd, findWorkspaceBasenameMatch, threadRef],
+    [explicitOwnerRef, cwd, findWorkspaceBasenameMatch, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2657,6 +2695,7 @@ function useChatMarkdownState({
       headingLevelOffset,
       imageBaseDir,
       assetSourceCwd,
+      explicitOwnerRef,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2687,6 +2726,7 @@ function useChatMarkdownState({
       headingLevelOffset,
       imageBaseDir,
       assetSourceCwd,
+      explicitOwnerRef,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -3113,8 +3153,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, assetSourceCwd, threadRef, renderContextReference } =
-      use(ChatMarkdownRendererContext);
+    const {
+      expandMedia,
+      cwd,
+      imageBaseDir,
+      assetSourceCwd,
+      explicitOwnerRef,
+      threadRef,
+      renderContextReference,
+    } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
     if (contextReference) {
@@ -3189,7 +3236,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       return (
         <ChatMarkdownAssetImage
-          ownerRef={assetSourceCwd !== undefined ? threadRef : undefined}
+          ownerRef={explicitOwnerRef}
           environmentId={threadRef.environmentId}
           resource={resource}
           alt={altText}

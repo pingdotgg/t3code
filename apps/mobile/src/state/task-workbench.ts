@@ -26,6 +26,8 @@ export function resolveMobileWorkbench(
   const retained =
     resolution.status === "unavailable" &&
     resolution.reason === "loading" &&
+    input.tasksSupported !== false &&
+    !input.task?.archivedAt &&
     input.taskRef &&
     input.previous?.taskRef.environmentId === input.taskRef.environmentId &&
     input.previous.taskRef.taskId === input.taskRef.taskId
@@ -34,6 +36,7 @@ export function resolveMobileWorkbench(
   return {
     resolution,
     ownerRef: resolution.status === "ready" ? resolution.ownerRef : (retained?.ownerRef ?? null),
+    displayCwd: resolution.status === "ready" ? resolution.cwd : (retained?.displayCwd ?? null),
     workspaceRoot:
       resolution.status === "ready" ? resolution.workspaceRoot : (retained?.workspaceRoot ?? null),
     worktreePath:
@@ -43,6 +46,7 @@ export function resolveMobileWorkbench(
 interface MobileWorkbench {
   readonly resolution: WorkbenchResolution;
   readonly ownerRef: ScopedThreadRef | null;
+  readonly displayCwd: string | null;
   readonly workspaceRoot: string | null;
   readonly worktreePath: string | null;
 }

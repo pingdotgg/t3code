@@ -1,3 +1,4 @@
+import { readWorkbenchRef } from "~/state/taskWorkbench";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback } from "react";
@@ -135,9 +136,15 @@ export function useOpenChangeRequestLink(
     (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
       if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
-      const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
       if (parsed === null) return false;
+      const resolvedPanelRef =
+        panelRef ?? (resolvedThreadRef ? readWorkbenchRef(resolvedThreadRef) : undefined);
+      if (resolvedThreadRef && !resolvedPanelRef) {
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      }
       const reads = (environmentId: string) =>
         serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
         true;

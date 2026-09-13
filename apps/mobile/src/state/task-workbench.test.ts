@@ -42,6 +42,7 @@ describe("mobile task workbench", () => {
       }),
     ).toMatchObject({
       ownerRef: workbench.ownerRef,
+      displayCwd: "/primary",
       resolution: { status: "unavailable", reason: "loading" },
     });
     expect(
@@ -56,6 +57,7 @@ describe("mobile task workbench", () => {
       }),
     ).toMatchObject({
       ownerRef: workbench.ownerRef,
+      displayCwd: "/primary",
       resolution: { status: "unavailable", reason: "loading" },
     });
   });
@@ -191,4 +193,26 @@ it("does not retain an authoritatively removed task", () => {
       previous: { taskRef, workbench },
     }),
   ).toMatchObject({ ownerRef: null, resolution: { status: "unavailable", reason: "missing" } });
+});
+
+it("clears retained display on archive and capability loss even during sync", () => {
+  const input = { threadRef: null, thread: null, taskRef, task, project };
+  const workbench = resolveMobileWorkbench(input);
+  expect(resolveMobileWorkbench({ ...input, authoritative: false })).toMatchObject({
+    displayCwd: "/primary",
+    resolution: { status: "ready", launchAllowed: false },
+  });
+  for (const change of [
+    { tasksSupported: false },
+    { task: { ...task, archivedAt: "2026-09-13" } },
+  ]) {
+    expect(
+      resolveMobileWorkbench({
+        ...input,
+        ...change,
+        authoritative: false,
+        previous: { taskRef, workbench },
+      }),
+    ).toMatchObject({ ownerRef: null, displayCwd: null });
+  }
 });

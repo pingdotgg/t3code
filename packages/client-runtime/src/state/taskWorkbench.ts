@@ -36,6 +36,7 @@ export type WorkbenchResolution =
   | { readonly status: "unavailable"; readonly reason: "loading" | "missing" }
   | {
       readonly status: "ready";
+      readonly launchAllowed: boolean;
       readonly ownerRef: ScopedThreadRef;
       readonly projectRef: ScopedProjectRef;
       readonly workspaceRoot: string;
@@ -74,6 +75,48 @@ export interface WorkbenchInput {
   readonly threadDetailWorktreePath?: string | null | undefined;
 }
 
+export function canLaunchWorkbench(
+  resolution: WorkbenchResolution,
+): resolution is Extract<WorkbenchResolution, { status: "ready" }> {
+  return resolution.status === "ready" && resolution.launchAllowed;
+}
+
+export type WorkbenchOwnerResolution =
+  | { readonly status: "ready"; readonly ownerRef: ScopedThreadRef }
+  | { readonly status: "unavailable"; readonly reason: "loading" | "missing" };
+
+/** Panel identity does not depend on project filesystem metadata. */
+export function resolveWorkbenchOwner(
+  input: Omit<WorkbenchInput, "projects" | "threadDetailWorktreePath">,
+): WorkbenchOwnerResolution {
+  const unavailable = (): WorkbenchOwnerResolution => ({
+    status: "unavailable",
+    reason: input.authoritative ? "missing" : "loading",
+  });
+  const { threadRef, thread } = input;
+  if (threadRef && (!thread || thread.environmentId !== threadRef.environmentId))
+    return unavailable();
+  const taskRef =
+    input.taskRef ??
+    (input.tasksSupported !== false && threadRef && thread?.taskId
+      ? { environmentId: threadRef.environmentId, taskId: thread.taskId }
+      : null);
+  if (taskRef) {
+    if (
+      input.tasksSupported === false ||
+      !input.task ||
+      input.task.archivedAt ||
+      input.task.environmentId !== taskRef.environmentId ||
+      input.task.id !== taskRef.taskId ||
+      (threadRef &&
+        (threadRef.environmentId !== taskRef.environmentId || thread?.taskId !== taskRef.taskId))
+    )
+      return unavailable();
+    return { status: "ready", ownerRef: taskWorkbenchRef(taskRef) };
+  }
+  return threadRef && thread ? { status: "ready", ownerRef: threadRef } : unavailable();
+}
+
 /** Resolves tool authority and its filesystem together; conversation operations keep threadRef. */
 export function resolveWorkbench(input: WorkbenchInput): WorkbenchResolution {
   const unavailable = (): WorkbenchResolution => ({
@@ -88,10 +131,9 @@ export function resolveWorkbench(input: WorkbenchInput): WorkbenchResolution {
       ? { environmentId: threadRef.environmentId, taskId: thread.taskId }
       : null);
   if (taskRef) {
-    if (!input.authoritative) return unavailable();
     const task = input.task;
     if (
-      !input.tasksSupported ||
+      input.tasksSupported === false ||
       !task ||
       task.archivedAt ||
       task.environmentId !== taskRef.environmentId ||
@@ -108,6 +150,7 @@ export function resolveWorkbench(input: WorkbenchInput): WorkbenchResolution {
     if (!project) return unavailable();
     return {
       status: "ready",
+      launchAllowed: input.authoritative && input.tasksSupported === true,
       ownerRef: taskWorkbenchRef(taskRef),
       projectRef: { environmentId: project.environmentId, projectId: project.id },
       workspaceRoot: project.workspaceRoot,
@@ -124,6 +167,7 @@ export function resolveWorkbench(input: WorkbenchInput): WorkbenchResolution {
   const worktreePath = input.threadDetailWorktreePath ?? thread.worktreePath;
   return {
     status: "ready",
+    launchAllowed: true,
     ownerRef: threadRef,
     projectRef: { environmentId: project.environmentId, projectId: project.id },
     workspaceRoot: project.workspaceRoot,

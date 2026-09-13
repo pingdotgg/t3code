@@ -1,3 +1,5 @@
+import { canLaunchWorkbenchOwner } from "../state/taskWorkbench";
+import { canLaunchWorkbench } from "@t3tools/client-runtime/state/task-workbench";
 import {
   resolveProjectScriptLaunch,
   workbenchLaunchKey,
@@ -3872,7 +3874,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!workbenchRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
-      if (!workbenchId || !workbenchProject) {
+      if (!workbenchId || !workbenchProject || !canLaunchWorkbench(workbench)) {
         return;
       }
       const cwdForOpen = workbenchRoot ?? workbenchProject.workspaceRoot;
@@ -3898,6 +3900,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     setTerminalOpen(nextOpen);
   }, [
+    workbench,
     workbenchProject,
     workbenchId,
     workbenchRef,
@@ -3913,7 +3916,13 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
-      if (!workbenchRef || hasReachedSplitLimit || !workbenchId || !workbenchProject) {
+      if (
+        !workbenchRef ||
+        hasReachedSplitLimit ||
+        !workbenchId ||
+        !workbenchProject ||
+        !canLaunchWorkbench(workbench)
+      ) {
         return;
       }
       const cwdForOpen = workbenchRoot ?? workbenchProject.workspaceRoot;
@@ -3942,6 +3951,7 @@ export default function ChatView(props: ChatViewProps) {
       });
     },
     [
+      workbench,
       workbenchProject,
       workbenchId,
       allocatableActiveTerminalIds,
@@ -3956,7 +3966,7 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const createNewTerminal = useCallback(() => {
-    if (!workbenchRef || !workbenchId || !workbenchProject) {
+    if (!workbenchRef || !workbenchId || !workbenchProject || !canLaunchWorkbench(workbench)) {
       return;
     }
     const cwdForOpen = workbenchRoot ?? workbenchProject.workspaceRoot;
@@ -3980,6 +3990,7 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
   }, [
+    workbench,
     workbenchProject,
     workbenchId,
     allocatableActiveTerminalIds,
@@ -4352,10 +4363,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const createBrowserSurface = useCallback(
     (profileId?: string) => {
-      if (!workbenchRef || workbench.status !== "ready") return;
+      if (!workbenchRef || !canLaunchWorkbench(workbench)) return;
       const userActionRevision = useRightPanelStore.getState().getUserActionRevision(workbenchRef);
       void addBrowserSurface({
         threadRef: workbenchRef,
+        isCurrent: () => canLaunchWorkbenchOwner(workbenchRef),
         shouldActivate: () =>
           currentRouteThreadKeyRef.current === routeThreadKey &&
           currentWorkbenchKeyRef.current === workbenchKey &&
@@ -4694,7 +4706,8 @@ export default function ChatView(props: ChatViewProps) {
     previewPanelOpen,
   ]);
   const addTerminalSurface = useCallback(() => {
-    if (!workbenchRef || !workbenchId || !workbenchProject) return;
+    if (!workbenchRef || !workbenchId || !workbenchProject || !canLaunchWorkbench(workbench))
+      return;
     const cwd = workbenchRoot ?? workbenchProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(workbenchRef, terminalId);
@@ -4713,6 +4726,7 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
   }, [
+    workbench,
     workbenchProject,
     workbenchId,
     workbenchRef,
@@ -4727,6 +4741,7 @@ export default function ChatView(props: ChatViewProps) {
         !workbenchRef ||
         !workbenchId ||
         !workbenchProject ||
+        !canLaunchWorkbench(workbench) ||
         activeRightPanelSurface?.kind !== "terminal" ||
         activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
       ) {
@@ -4753,6 +4768,7 @@ export default function ChatView(props: ChatViewProps) {
       });
     },
     [
+      workbench,
       workbenchProject,
       activeRightPanelSurface,
       workbenchId,
@@ -8674,7 +8690,7 @@ export default function ChatView(props: ChatViewProps) {
     renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
-          launchAllowed={workbench.status === "ready"}
+          launchAllowed={canLaunchWorkbench(workbench)}
           mode="embedded"
           threadRef={workbenchRef}
           tabId={renderedRightPanelSurface.resourceId}
@@ -8687,7 +8703,7 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
-        launchAllowed={workbench.status === "ready"}
+        launchAllowed={canLaunchWorkbench(workbench)}
         visible={rightPanelOpen}
         threadRef={workbenchRef}
         surface={renderedRightPanelSurface}
@@ -9409,7 +9425,7 @@ export default function ChatView(props: ChatViewProps) {
 
         {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
           <PersistentThreadTerminalDrawer
-            launchAllowed={mountedThreadKey === workbenchKey && workbench.status === "ready"}
+            launchAllowed={mountedThreadKey === workbenchKey && canLaunchWorkbench(workbench)}
             key={mountedThreadKey}
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}

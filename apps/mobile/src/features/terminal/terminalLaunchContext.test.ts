@@ -33,6 +33,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("keeps an existing task PTY at its old root after a primary project edit", () => {
     expect(
       resolveTerminalOpenLocation({
+        launchAllowed: true,
         terminalLocation: { cwd: "/old-primary", worktreePath: null },
         activeSessionLocation: null,
         workspaceRoot: "/new-primary",
@@ -42,6 +43,7 @@ describe("resolveTerminalOpenLocation", () => {
     ).toEqual({ cwd: "/old-primary", worktreePath: null });
     expect(
       resolveTerminalOpenLocation({
+        launchAllowed: true,
         terminalLocation: null,
         activeSessionLocation: null,
         workspaceRoot: "/new-primary",
@@ -53,6 +55,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("uses the thread detail worktree path before the workspace root for a fresh mobile open", () => {
     expect(
       resolveTerminalOpenLocation({
+        launchAllowed: true,
         terminalLocation: null,
         activeSessionLocation: null,
         workspaceRoot: "/repo/root",
@@ -68,6 +71,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("preserves the running terminal snapshot cwd when attaching to an existing session", () => {
     expect(
       resolveTerminalOpenLocation({
+        launchAllowed: true,
         terminalLocation: null,
         activeSessionLocation: {
           cwd: "/repo/worktrees/feature",
@@ -185,6 +189,12 @@ it("cancels staged script input when the scoped primary project changes or becom
   expect(
     pendingTerminalLaunchMatchesWorkbench(
       launch,
+      resolveWorkbench({ ...input, authoritative: false }),
+    ),
+  ).toBe(false);
+  expect(
+    pendingTerminalLaunchMatchesWorkbench(
+      launch,
       resolveWorkbench({ ...input, projects: [{ ...project, workspaceRoot: "/new-primary" }] }),
     ),
   ).toBe(false);
@@ -200,4 +210,25 @@ it("cancels staged script input when the scoped primary project changes or becom
       workbench,
     ),
   ).toBe(false);
+});
+
+it("never captures a cached root for a fresh terminal but retains existing sessions", () => {
+  const cached = {
+    launchAllowed: false,
+    terminalLocation: null,
+    activeSessionLocation: null,
+    workspaceRoot: "/cached-primary",
+    threadShellWorktreePath: null,
+    threadDetailWorktreePath: null,
+  };
+  expect(resolveTerminalOpenLocation(cached)).toBeNull();
+  expect(
+    resolveTerminalOpenLocation({
+      ...cached,
+      activeSessionLocation: { cwd: "/existing-pty", worktreePath: null },
+    }),
+  ).toEqual({ cwd: "/existing-pty", worktreePath: null });
+  expect(
+    resolveTerminalOpenLocation({ ...cached, launchAllowed: true, workspaceRoot: "/live-primary" }),
+  ).toEqual({ cwd: "/live-primary", worktreePath: null });
 });

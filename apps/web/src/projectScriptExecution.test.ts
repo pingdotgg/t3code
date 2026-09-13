@@ -68,7 +68,7 @@ describe("project script execution", () => {
     ).toBeNull();
   });
   it("never opens a terminal for unavailable context", async () => {
-    const unavailable = resolveWorkbench({ ...input, task: null });
+    const unavailable = resolveWorkbench({ ...input, authoritative: false });
     expect(
       resolveProjectScriptLaunch({ workbench: unavailable, project, scriptId: "dev" }),
     ).toBeNull();
@@ -80,7 +80,7 @@ describe("project script execution", () => {
     });
     expect(open).not.toHaveBeenCalled();
   });
-  it.each(["primary-project", "task", "environment"])(
+  it.each(["primary-project", "task", "environment", "cached", "capability"])(
     "cancels a prepared command after %s changes",
     async (change) => {
       let release!: (value: boolean) => void;
@@ -96,21 +96,25 @@ describe("project script execution", () => {
         write,
       });
       current =
-        change === "primary-project"
-          ? resolveWorkbench({
-              ...input,
-              task: { ...input.task, primaryProjectId: memberProject.id },
-            })
-          : change === "task"
-            ? resolveWorkbench({
-                ...input,
-                thread: { ...input.thread, taskId: TaskId.make("other") },
-                task: { ...input.task, id: TaskId.make("other") },
-              })
-            : resolveWorkbench({
-                ...input,
-                task: { ...input.task, environmentId: EnvironmentId.make("two") },
-              });
+        change === "cached"
+          ? resolveWorkbench({ ...input, authoritative: false })
+          : change === "capability"
+            ? resolveWorkbench({ ...input, tasksSupported: undefined })
+            : change === "primary-project"
+              ? resolveWorkbench({
+                  ...input,
+                  task: { ...input.task, primaryProjectId: memberProject.id },
+                })
+              : change === "task"
+                ? resolveWorkbench({
+                    ...input,
+                    thread: { ...input.thread, taskId: TaskId.make("other") },
+                    task: { ...input.task, id: TaskId.make("other") },
+                  })
+                : resolveWorkbench({
+                    ...input,
+                    task: { ...input.task, environmentId: EnvironmentId.make("two") },
+                  });
       release(true);
       await run;
       expect(write).not.toHaveBeenCalled();

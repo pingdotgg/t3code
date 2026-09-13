@@ -1,5 +1,7 @@
 "use client";
 
+import { canLaunchWorkbench } from "@t3tools/client-runtime/state/task-workbench";
+
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -57,7 +59,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { readWorkbench } from "~/state/taskWorkbench";
+import { canLaunchWorkbenchOwner, readWorkbench } from "~/state/taskWorkbench";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -342,7 +344,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       try {
         // Capture ownership once: membership may change while this request awaits the runtime.
         const workbench = readWorkbench(conversationRef);
-        if (workbench.status !== "ready") {
+        if (!canLaunchWorkbench(workbench)) {
           throw new PreviewAutomationTargetUnavailableError({
             requestId: request.requestId,
             operation: request.operation,
@@ -443,6 +445,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             tabId = activeTabId;
             if (!activeTabId) {
               const defaults = await resolveBrowserDefaults();
+              if (!canLaunchWorkbenchOwner(ownerRef)) {
+                throw new PreviewAutomationTargetUnavailableError({
+                  requestId: request.requestId,
+                  operation: request.operation,
+                  ...conversationRef,
+                  tabId,
+                  bridgeAvailable: Boolean(previewBridge),
+                });
+              }
               const result = await open({
                 environmentId,
                 input: {

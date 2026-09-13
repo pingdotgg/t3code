@@ -1,3 +1,4 @@
+vi.mock("~/state/taskWorkbench", () => ({ canLaunchWorkbenchOwner: vi.fn(() => true) }));
 import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Cause from "effect/Cause";
@@ -20,12 +21,14 @@ vi.mock("~/previewStateStore", () => ({
 }));
 vi.mock("~/rightPanelStore", () => ({ useRightPanelStore: { getState: () => ({ openBrowser }) } }));
 vi.mock("./browserDefaults", () => ({
-  resolveBrowserDefaults: async () => ({ viewport: { _tag: "fill" }, profileId: "default" }),
+  resolveBrowserDefaults: vi.fn(async () => ({ viewport: { _tag: "fill" }, profileId: "default" })),
   browserDefaultOpenViewport: () => ({ _tag: "fill" }),
   browserDefaultOpenProfileId: () => "default",
 }));
 
-import { openFileInPreview } from "./openFileInPreview";
+import { resolveBrowserDefaults } from "./browserDefaults";
+import { canLaunchWorkbenchOwner } from "~/state/taskWorkbench";
+import { openFileInPreview, openUrlInPreview } from "./openFileInPreview";
 
 const ownerRef = {
   environmentId: EnvironmentId.make("remote"),
@@ -146,4 +149,35 @@ describe("openFileInPreview", () => {
     expect(input.openPreview).not.toHaveBeenCalled();
     expect(openBrowser).not.toHaveBeenCalled();
   });
+});
+
+it("blocks cached browser creation before the RPC", async () => {
+  vi.mocked(canLaunchWorkbenchOwner).mockReturnValueOnce(false);
+  const input = fixture();
+  expect((await openUrlInPreview({ ...input, url: "https://example.com" }))._tag).toBe("Failure");
+  expect(input.openPreview).not.toHaveBeenCalled();
+});
+
+it("checks launch authority after a delayed settings read", async () => {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(resolveBrowserDefaults).mockImplementationOnce(async () => {
+    await wait;
+    return {
+      viewport: { _tag: "fill" },
+      profileId: "default",
+      zoomFactor: 1,
+      appearance: "system",
+      autoShowFloatingPreview: true,
+      profiles: [],
+    };
+  });
+  const input = fixture();
+  const pending = openUrlInPreview({ ...input, url: "https://example.com" });
+  vi.mocked(canLaunchWorkbenchOwner).mockReturnValueOnce(false);
+  release();
+  expect((await pending)._tag).toBe("Failure");
+  expect(input.openPreview).not.toHaveBeenCalled();
 });

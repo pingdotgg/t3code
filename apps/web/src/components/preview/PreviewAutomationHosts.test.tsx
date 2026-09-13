@@ -94,7 +94,10 @@ vi.mock("~/state/use-atom-query-runner", () => ({
 vi.mock("./previewBridge", () => ({
   previewBridge: { navigate: mocks.navigate, automation: { status: mocks.status } },
 }));
-vi.mock("~/state/taskWorkbench", () => ({ readWorkbench: mocks.readWorkbench }));
+vi.mock("~/state/taskWorkbench", () => ({
+  readWorkbench: mocks.readWorkbench,
+  canLaunchWorkbenchOwner: () => true,
+}));
 vi.mock("~/browser/browserRecording", () => ({
   startBrowserRecording: mocks.startRecording,
   readActiveBrowserRecordingTargets: mocks.activeRecordings,
@@ -256,9 +259,12 @@ describe("PreviewAutomationHosts open", () => {
 const taskRef = { environmentId, threadId: ThreadId.make("task:shared-task") };
 const siblingRef = { environmentId, threadId: ThreadId.make("sibling-thread") };
 
-function readyWorkbench(ownerRef: ScopedThreadRef): ReturnType<typeof readWorkbench> {
+function readyWorkbench(
+  ownerRef: ScopedThreadRef,
+): Extract<ReturnType<typeof readWorkbench>, { status: "ready" }> {
   return {
     status: "ready",
+    launchAllowed: true,
     ownerRef,
     projectRef: {
       environmentId: ownerRef.environmentId,
@@ -443,10 +449,14 @@ describe("PreviewAutomationHosts task ownership", () => {
     expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
   });
 
-  it.each(["loading", "missing"] as const)(
+  it.each(["loading", "missing", "cached"] as const)(
     "opens nothing when workbench data is %s",
     async (reason) => {
-      mocks.readWorkbench.mockReturnValue({ status: "unavailable", reason });
+      mocks.readWorkbench.mockReturnValue(
+        reason === "cached"
+          ? { ...readyWorkbench(taskRef), launchAllowed: false }
+          : { status: "unavailable", reason },
+      );
       const response = await sendRequest({});
       expect(response).toMatchObject({
         ok: false,

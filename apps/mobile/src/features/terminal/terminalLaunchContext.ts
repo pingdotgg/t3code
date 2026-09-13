@@ -1,3 +1,4 @@
+import { canLaunchWorkbench } from "@t3tools/client-runtime/state/task-workbench";
 import type { WorkbenchResolution } from "@t3tools/client-runtime/state/task-workbench";
 import type { EnvironmentId, ThreadId, ScopedProjectRef } from "@t3tools/contracts";
 
@@ -61,6 +62,7 @@ export function resolvePreferredThreadWorktreePath(input: {
 }
 
 export function resolveTerminalOpenLocation(input: {
+  readonly launchAllowed: boolean;
   readonly terminalLocation: TerminalLocationLike | null;
   readonly activeSessionLocation: TerminalLocationLike | null;
   readonly workspaceRoot: string;
@@ -69,13 +71,14 @@ export function resolveTerminalOpenLocation(input: {
 }): {
   readonly cwd: string;
   readonly worktreePath: string | null;
-} {
+} | null {
   // Existing PTYs retain their launch location, including an explicitly null
   // worktree, when the task's primary project or member selection changes.
   const existingLocation = input.terminalLocation ?? input.activeSessionLocation;
   if (existingLocation !== null) {
     return { cwd: existingLocation.cwd, worktreePath: existingLocation.worktreePath };
   }
+  if (!input.launchAllowed) return null;
   const preferredThreadWorktreePath = resolvePreferredThreadWorktreePath({
     threadShellWorktreePath: input.threadShellWorktreePath,
     threadDetailWorktreePath: input.threadDetailWorktreePath,
@@ -92,9 +95,9 @@ export function pendingTerminalLaunchMatchesWorkbench(
   launch: PendingTerminalLaunch,
   workbench: WorkbenchResolution,
 ) {
-  if (!launch.projectRef) return workbench.status === "ready";
+  if (!launch.projectRef) return canLaunchWorkbench(workbench);
   return (
-    workbench.status === "ready" &&
+    canLaunchWorkbench(workbench) &&
     launch.projectRef.environmentId === workbench.projectRef.environmentId &&
     launch.projectRef.projectId === workbench.projectRef.projectId &&
     launch.projectCwd === workbench.workspaceRoot &&

@@ -1,3 +1,4 @@
+import { canLaunchWorkbenchOwner } from "~/state/taskWorkbench";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
@@ -64,6 +65,10 @@ export async function openTerminalLinkInPreview<E>(
   };
 
   const defaults = await resolveBrowserDefaults();
+  if (!canLaunchWorkbenchOwner(input.threadRef)) {
+    input.fallbackToBrowser();
+    return;
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {

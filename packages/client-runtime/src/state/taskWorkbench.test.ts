@@ -5,6 +5,8 @@ import {
   taskWorkbenchRef,
   workbenchRefFor,
   workbenchTerminalAttachInput,
+  resolveWorkbenchOwner,
+  canLaunchWorkbench,
 } from "./taskWorkbench.ts";
 
 const environmentId = EnvironmentId.make("one");
@@ -87,9 +89,9 @@ describe("resolved workbench", () => {
     });
   });
   it("does not authorize launches from a cached task snapshot", () => {
-    expect(resolveWorkbench({ ...input, authoritative: false })).toEqual({
-      status: "unavailable",
-      reason: "loading",
+    expect(resolveWorkbench({ ...input, authoritative: false })).toMatchObject({
+      status: "ready",
+      launchAllowed: false,
     });
   });
   it("blocks missing task/project shells and distinguishes authoritative removal", () => {
@@ -153,5 +155,44 @@ describe("retained terminal attachment authority", () => {
   });
   it("keeps the explicit location and environment when launches are authorized", () => {
     expect(workbenchTerminalAttachInput(input, true)).toEqual(input);
+  });
+});
+
+describe("display and launch transitions", () => {
+  it("retains cached metadata, blocks launch, and resumes against current roots", () => {
+    for (const authoritative of [true, false, true]) {
+      const resolved = resolveWorkbench({ ...input, authoritative });
+      expect(resolved).toMatchObject({ status: "ready", cwd: "/primary" });
+      expect(canLaunchWorkbench(resolved)).toBe(authoritative);
+    }
+    expect(resolveWorkbench({ ...input, authoritative: false, projects: [] })).toEqual({
+      status: "unavailable",
+      reason: "loading",
+    });
+    expect(
+      resolveWorkbench({ ...input, projects: [{ ...primary, workspaceRoot: "/current" }] }),
+    ).toMatchObject({ status: "ready", cwd: "/current", launchAllowed: true });
+    expect(resolveWorkbench({ ...input, tasksSupported: undefined })).toMatchObject({
+      status: "ready",
+      launchAllowed: false,
+      ownerRef: taskWorkbenchRef({ environmentId, taskId: task.id }),
+    });
+  });
+  it("resolves panel identity without projects and refuses missing members", () => {
+    expect(resolveWorkbenchOwner({ ...input, thread: { ...input.thread!, taskId: null } })).toEqual(
+      { status: "ready", ownerRef: first },
+    );
+    expect(resolveWorkbenchOwner(input)).toEqual({
+      status: "ready",
+      ownerRef: taskWorkbenchRef({ environmentId, taskId: task.id }),
+    });
+    expect(resolveWorkbenchOwner({ ...input, task: null, authoritative: false })).toEqual({
+      status: "unavailable",
+      reason: "loading",
+    });
+    expect(resolveWorkbenchOwner({ ...input, thread: null })).toEqual({
+      status: "unavailable",
+      reason: "missing",
+    });
   });
 });

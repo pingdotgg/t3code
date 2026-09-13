@@ -1,3 +1,4 @@
+import { canLaunchWorkbenchOwner } from "~/state/taskWorkbench";
 import type {
   AssetCreateUrlResult,
   AssetResource,
@@ -52,20 +53,31 @@ export type OpenPreviewMutation<E = unknown> = (input: {
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
 export async function openUrlInPreview<E>(input: {
-  readonly threadRef: ScopedThreadRef;
+  readonly ownerRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
-}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+}): Promise<
+  AtomCommandResult<void, E | BrowserSettingsReadError | BrowserPreviewUnavailableError>
+> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  if (!canLaunchWorkbenchOwner(input.ownerRef)) {
+    return AsyncResult.failure(
+      Cause.fail(
+        new BrowserPreviewUnavailableError({
+          message: "The workbench is not ready to open a browser.",
+        }),
+      ),
+    );
+  }
   const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
+    environmentId: input.ownerRef.environmentId,
     input: {
-      threadId: input.threadRef.threadId,
+      threadId: input.ownerRef.threadId,
       url: input.url,
       // Built here rather than via `openPreviewSession` because this path
       // maps the result differently, so the configured defaults have to be
@@ -75,9 +87,9 @@ export async function openUrlInPreview<E>(input: {
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {
-    applyPreviewServerSnapshot(input.threadRef, snapshot);
-    rememberPreviewUrl(input.threadRef, input.url);
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    applyPreviewServerSnapshot(input.ownerRef, snapshot);
+    rememberPreviewUrl(input.ownerRef, input.url);
+    useRightPanelStore.getState().openBrowser(input.ownerRef, snapshot.tabId);
   });
 }
 
@@ -134,7 +146,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     );
   }
   return openUrlInPreview({
-    threadRef: input.ownerRef,
+    ownerRef: input.ownerRef,
     url: assetUrl,
     openPreview: input.openPreview,
   });

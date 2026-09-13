@@ -1,9 +1,12 @@
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import type { ScopedTaskRef, ScopedThreadRef } from "@t3tools/contracts";
+import { TaskId, type ScopedTaskRef, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopeTaskRef } from "@t3tools/client-runtime/environment";
 import {
   resolveWorkbench,
+  resolveWorkbenchOwner,
+  canLaunchWorkbench,
   taskWorkbenchRef,
   type WorkbenchInput,
 } from "@t3tools/client-runtime/state/task-workbench";
@@ -17,8 +20,10 @@ import { Atom } from "effect/unstable/reactivity";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 const emptyShellAtom = Atom.make<EnvironmentShellState | null>(null);
 
-export function readWorkbench(ref: ScopedThreadRef, page?: ScopedTaskRef | null) {
-  const thread = readThreadShell(ref) ?? useComposerDraftStore.getState().getDraftThreadByRef(ref);
+function readWorkbenchInput(ref: ScopedThreadRef, page?: ScopedTaskRef | null) {
+  const thread = page
+    ? null
+    : (readThreadShell(ref) ?? useComposerDraftStore.getState().getDraftThreadByRef(ref));
   const config = appAtomRegistry.get(environmentServerConfigsAtom).get(ref.environmentId);
   const tasksSupported = config ? config.environment.capabilities.tasks === true : undefined;
   const taskRef =
@@ -26,7 +31,7 @@ export function readWorkbench(ref: ScopedThreadRef, page?: ScopedTaskRef | null)
     (thread?.taskId && tasksSupported !== false
       ? scopeTaskRef(ref.environmentId, thread.taskId)
       : null);
-  return resolveWorkbench({
+  return {
     threadRef: page ? null : ref,
     thread: page ? null : thread,
     taskRef,
@@ -34,14 +39,45 @@ export function readWorkbench(ref: ScopedThreadRef, page?: ScopedTaskRef | null)
     authoritative:
       appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
     task: taskRef ? readTask(taskRef) : null,
-    projects: readProjects(),
-  });
+  };
 }
 
-/** Source links retain conversation identity; incomplete workbenches cannot accept destinations. */
+export function readWorkbench(ref: ScopedThreadRef, page?: ScopedTaskRef | null) {
+  return resolveWorkbench({ ...readWorkbenchInput(ref, page), projects: readProjects() });
+}
+
+export function readWorkbenchOwner(ref: ScopedThreadRef) {
+  return resolveWorkbenchOwner(readWorkbenchInput(ref));
+}
+
+/** Click entry points report unavailable identity instead of dropping the action. */
 export function readWorkbenchRef(ref: ScopedThreadRef): ScopedThreadRef | null {
-  const resolved = readWorkbench(ref);
-  return resolved.status === "ready" ? resolved.ownerRef : null;
+  const resolved = readWorkbenchOwner(ref);
+  if (resolved.status === "ready") return resolved.ownerRef;
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Workbench unavailable",
+      description:
+        resolved.reason === "loading"
+          ? "The workbench is still loading."
+          : "The workbench is no longer available.",
+    }),
+  );
+  return null;
+}
+
+/** Explicit task resource refs must never be loaded as conversation shells. */
+export function canLaunchWorkbenchOwner(ownerRef: ScopedThreadRef) {
+  const page = ownerRef.threadId.startsWith("task:")
+    ? { environmentId: ownerRef.environmentId, taskId: TaskId.make(ownerRef.threadId.slice(5)) }
+    : null;
+  const resolution = readWorkbench(ownerRef, page);
+  return (
+    canLaunchWorkbench(resolution) &&
+    resolution.ownerRef.environmentId === ownerRef.environmentId &&
+    resolution.ownerRef.threadId === ownerRef.threadId
+  );
 }
 
 export function useTaskWorkbench(
@@ -102,10 +138,10 @@ export function useTaskWorkbench(
         ) ?? null)
       : null;
   // Keep the intended task's mounted resource namespace while its shell is loading.
-  // Only the ready resolution authorizes new tools.
+  // Launch permission is separate from retained display metadata.
   const ref = useMemo(
     () => (taskRef ? taskWorkbenchRef(taskRef) : threadRef),
     [taskRef, threadRef],
   );
-  return { ref, task: tasksSupported ? candidate : null, resolution, project };
+  return { ref, task: tasksSupported !== false ? candidate : null, resolution, project };
 }

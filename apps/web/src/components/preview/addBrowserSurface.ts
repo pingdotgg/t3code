@@ -16,6 +16,7 @@ import { openPreviewSession } from "./openPreviewSession";
 /** Creates a new browser tab. Reopening an existing tab is a separate UI action. */
 export async function addBrowserSurface<E>(input: {
   readonly threadRef: ScopedThreadRef;
+  readonly isCurrent?: () => boolean;
   readonly openPreview: OpenPreviewMutation<E>;
   /** Omit to use the configured default profile. */
   readonly profileId?: string | undefined;
@@ -26,6 +27,7 @@ export async function addBrowserSurface<E>(input: {
 > {
   const result = await openPreviewSession({
     openPreview: input.openPreview,
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     threadRef: input.threadRef,
     ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
   });

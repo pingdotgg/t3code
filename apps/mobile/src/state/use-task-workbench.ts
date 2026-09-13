@@ -79,7 +79,7 @@ export function useTaskWorkbench(params: {
   );
   const isLoading =
     resolved.resolution.status === "unavailable" && resolved.resolution.reason === "loading";
-  if (taskRef === null && previous !== null) {
+  if ((taskRef === null || resolved.ownerRef === null) && previous !== null) {
     setPrevious(null);
   } else if (
     resolved.resolution.status === "ready" &&

@@ -1,3 +1,4 @@
+import { canLaunchWorkbench } from "@t3tools/client-runtime/state/task-workbench";
 import type { ProjectScript, ScopedProjectRef } from "@t3tools/contracts";
 import type { WorkbenchResolution } from "@t3tools/client-runtime/state/task-workbench";
 import { scopedProjectKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -16,7 +17,7 @@ export function resolveProjectScriptLaunch(input: {
 }) {
   const { workbench, project } = input;
   if (
-    workbench.status !== "ready" ||
+    !canLaunchWorkbench(workbench) ||
     !project ||
     project.environmentId !== workbench.projectRef.environmentId ||
     project.id !== workbench.projectRef.projectId ||
@@ -41,7 +42,7 @@ export function resolveProjectScriptLaunch(input: {
 }
 
 export function workbenchLaunchKey(workbench: WorkbenchResolution) {
-  return workbench.status === "ready"
+  return canLaunchWorkbench(workbench)
     ? JSON.stringify([
         scopedThreadKey(workbench.ownerRef),
         scopedProjectKey(workbench.projectRef),

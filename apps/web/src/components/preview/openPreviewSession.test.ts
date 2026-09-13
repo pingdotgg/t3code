@@ -1,3 +1,4 @@
+vi.mock("~/state/taskWorkbench", () => ({ canLaunchWorkbenchOwner: () => true }));
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_CLIENT_SETTINGS,
@@ -145,7 +146,7 @@ describe("openPreviewSession", () => {
         browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
       });
       const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
-      const input = { openPreview, threadRef, url: "https://t3.chat/" };
+      const input = { openPreview, threadRef, ownerRef: threadRef, url: "https://t3.chat/" };
       const open = entryPoint === "session" ? openPreviewSession : openUrlInPreview;
 
       const result = await open(input);

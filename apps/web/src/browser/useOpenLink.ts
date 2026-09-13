@@ -1,3 +1,4 @@
+import { readWorkbenchOwner } from "~/state/taskWorkbench";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -30,7 +31,10 @@ const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
  * where it should go first. Failed settings reads reject without opening a
  * browser. The promise also rejects if the system-browser fallback fails.
  */
-export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
+export function useOpenLink(
+  threadRef: ScopedThreadRef | null | undefined,
+  explicitOwnerRef?: ScopedThreadRef,
+): (
   url: string,
   options?: {
     readonly event?: { readonly metaKey: boolean; readonly ctrlKey: boolean };
@@ -42,6 +46,11 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   return useCallback(
     async (url, options = {}) => {
       const targetThreadRef = options.threadRef ?? threadRef;
+      const owner = explicitOwnerRef
+        ? { status: "ready" as const, ownerRef: explicitOwnerRef }
+        : targetThreadRef
+          ? readWorkbenchOwner(targetThreadRef)
+          : null;
       const target = resolveLinkTarget({
         url,
         event: options.event ?? NO_MODIFIER,
@@ -49,10 +58,12 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         canOpenInApp: canOpenLinksInApp(Boolean(targetThreadRef)),
       });
       if (target === "app" && targetThreadRef) {
-        const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });
+        if (owner?.status !== "ready") throw new Error("The workbench is unavailable.");
+        const result = await openUrlInPreview({ ownerRef: owner.ownerRef, url, openPreview });
         if (isAtomCommandInterrupted(result)) return;
         if (result._tag === "Success") {
-          recordVisitForThread(targetThreadRef, url);
+          if (!targetThreadRef.threadId.startsWith("task:"))
+            recordVisitForThread(targetThreadRef, url);
           return;
         }
         const failure = squashAtomCommandFailure(result);
@@ -63,6 +74,6 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       if (!api) throw new Error("Link opening is unavailable.");
       await api.shell.openExternal(url);
     },
-    [openPreview, threadRef],
+    [explicitOwnerRef, openPreview, threadRef],
   );
 }
