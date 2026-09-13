@@ -1,4 +1,5 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { ThreadGoal } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
   approval: false,
   sessionError: false,
   turnError: false,
+  goal: null as ThreadGoal | null,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -37,6 +39,7 @@ vi.mock("@effect/atom-react", () => ({
         {
           id: "thread-1",
           title: "Fix the login form",
+          goal: state.goal,
           archivedAt: state.archivedAt,
           hasPendingUserInput: state.input,
           hasPendingApprovals: state.approval,
@@ -109,6 +112,7 @@ beforeEach(() => {
     approval: false,
     sessionError: false,
     turnError: false,
+    goal: null,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -130,6 +134,49 @@ afterEach(async () => {
 });
 
 describe("thread notifications", () => {
+  it.each([
+    ["complete", "Goal completed"],
+    ["blocked", "Goal needs attention"],
+    ["budgetLimited", "Goal budget reached"],
+    ["usageLimited", "Goal usage limit reached"],
+  ] as const)("routes %s goals through in-app and system preferences", async (status, title) => {
+    state.goal = {
+      objective: "Fix login",
+      status: "active",
+      createdAt: "2026-09-13T09:00:00.000Z",
+      updatedAt: "2026-09-13T09:00:00.000Z",
+      timeUsedSeconds: 0,
+      tokensUsed: 0,
+      tokenBudget: null,
+    };
+    await render();
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    state.goal = { ...state.goal, status };
+    await render();
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenCalledWith(
+      expect.objectContaining({ title, description: "Fix the login form\nFix login" }),
+    );
+    expect(state.notification).not.toHaveBeenCalled();
+
+    state.goal = { ...state.goal, status: "active" };
+    await render();
+    state.focused = false;
+    state.mode = "notifications";
+    state.goal = { ...state.goal, status };
+    await render();
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+    expect(state.notification).toHaveBeenCalledWith(
+      title,
+      expect.objectContaining({
+        body: "Fix the login form\nFix login",
+      }),
+    );
+  });
+
   it("alerts once with system alerts off and opens the completed thread", async () => {
     await render();
     await complete();

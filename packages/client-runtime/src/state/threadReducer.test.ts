@@ -291,6 +291,35 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.meta-updated", () => {
+    it("retains native goal progress across metadata updates and clears it explicitly", () => {
+      const goal = {
+        objective: "Finish the migration",
+        status: "paused" as const,
+        createdAt: baseThread.createdAt,
+        updatedAt: baseThread.updatedAt,
+        timeUsedSeconds: 123,
+        tokensUsed: 456,
+        tokenBudget: null,
+        rounds: 3,
+      };
+      let thread = baseThread;
+      for (const patch of [{ goal }, { title: "Renamed" }, { goal: null }]) {
+        const result = applyThreadDetailEvent(thread, {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: baseThread.updatedAt,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: { threadId: baseThread.id, updatedAt: baseThread.updatedAt, ...patch },
+        });
+        expect(result.kind).toBe("updated");
+        if (result.kind !== "updated") throw new Error("Expected thread update");
+        thread = result.thread;
+        expect(thread.goal).toEqual("goal" in patch ? patch.goal : goal);
+      }
+    });
+
     it.each(["f", null] as const)(
       "updates the active key to %s without activity",
       (activeOrderKey) => {

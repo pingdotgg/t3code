@@ -1,3 +1,5 @@
+import Migration0052 from "./Migrations/052_ProjectionThreadGoal.ts";
+import Migration0053 from "./Migrations/053_GoalAwarenessEventIndex.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -126,6 +128,8 @@ const migrationEntries = [
   [49, "ProjectionThreadsActiveOrderKey", Migration0049],
   [50, "ProjectionThreadPullRequests", Migration0050],
   [51, "ProjectionThreadMessageContext", Migration0051],
+  [52, "ProjectionThreadGoal", Migration0052],
+  [53, "GoalAwarenessEventIndex", Migration0053],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

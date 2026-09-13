@@ -32,6 +32,10 @@ export function statusForPhase(phase: RelayAgentActivityState["phase"]): string 
   }
 }
 
+export function statusForActivity(state: RelayAgentActivityState): string {
+  return state.headline.startsWith("Goal ") ? state.headline : statusForPhase(state.phase);
+}
+
 function aggregateRowForState(state: RelayAgentActivityState) {
   return {
     environmentId: state.environmentId,
@@ -40,7 +44,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     threadTitle: state.threadTitle,
     modelTitle: state.modelTitle,
     phase: state.phase,
-    status: statusForPhase(state.phase),
+    status: statusForActivity(state),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
   };

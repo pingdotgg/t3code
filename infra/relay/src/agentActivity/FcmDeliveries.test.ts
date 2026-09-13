@@ -441,6 +441,16 @@ describe("Android delivery routing", () => {
     });
   }
 
+  it("keeps native goal wording in direct Android alerts", () => {
+    expect(
+      androidAlertForState(
+        { ...state, phase: "completed", headline: "Goal completed" },
+        preferences,
+        0,
+      ),
+    ).toMatchObject({ alert_body: `Goal completed: ${state.projectTitle}` });
+  });
+
   it("trims and truncates alert text like iOS", () => {
     expect(
       androidAlertForState(

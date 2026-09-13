@@ -225,6 +225,15 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      goal: {
+        objective: "Finish task",
+        status: "complete" as const,
+        createdAt: "2026-09-13T00:00:00.000Z",
+        updatedAt: "2026-09-13T00:00:22.000Z",
+        timeUsedSeconds: 22,
+        tokensUsed: 8806,
+        tokenBudget: null,
+      },
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
@@ -241,6 +250,8 @@ describe("environment entity projections", () => {
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
+    expect(merged?.goal).toEqual(shell.goal);
+    expect(mergeEnvironmentThread(merged, { ...shell, goal: null })?.goal).toBeNull();
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {

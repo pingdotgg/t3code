@@ -1,3 +1,4 @@
+import type { ThreadGoalSetInput } from "@t3tools/contracts";
 /**
  * ProviderAdapter - Provider-specific runtime adapter contract.
  *
@@ -87,6 +88,11 @@ export interface ProviderAdapterShape<TError> {
 
   /** Omitted when this adapter does not support manual context compaction. */
   readonly compaction?: ProviderCompaction<TError>;
+  readonly goals?: {
+    readonly refresh?: (threadId: ThreadId) => Effect.Effect<void, TError>;
+    readonly set: (threadId: ThreadId, input: ThreadGoalSetInput) => Effect.Effect<void, TError>;
+    readonly clear: (threadId: ThreadId) => Effect.Effect<void, TError>;
+  };
 
   /**
    * Interrupt an active turn.

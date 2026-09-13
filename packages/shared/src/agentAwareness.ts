@@ -40,6 +40,7 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "goal"
   >;
 }
 
@@ -54,24 +55,56 @@ export function projectThreadAwareness(
   input: ProjectThreadAwarenessInput,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  const phase = resolveThreadAwarenessPhase(thread);
+  const goal = resolveAwarenessGoal(thread);
+  const goalAwareness = goal ? GOAL_AWARENESS[goal.status] : null;
+  const phase = goalAwareness?.phase ?? resolveThreadAwarenessPhase(thread);
   if (!phase) {
     return null;
   }
 
-  const detail = detailForPhase(phase, thread);
+  const detail = goal ? undefined : detailForPhase(phase, thread);
   return {
     environmentId,
     threadId: thread.id,
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
-    headline: headlineForPhase(phase),
+    headline: goalAwareness?.headline ?? headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: thread.updatedAt,
+    updatedAt: goal && goal.status !== "active" ? goal.updatedAt : thread.updatedAt,
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
+}
+
+const GOAL_AWARENESS = {
+  active: { phase: "running", headline: "Goal is running" },
+  paused: { phase: "stale", headline: "Goal paused" },
+  complete: { phase: "completed", headline: "Goal completed" },
+  blocked: { phase: "waiting_for_input", headline: "Goal blocked" },
+  budgetLimited: { phase: "waiting_for_input", headline: "Goal budget reached" },
+  usageLimited: { phase: "waiting_for_input", headline: "Goal usage limit reached" },
+} as const;
+
+function resolveAwarenessGoal(thread: ProjectThreadAwarenessInput["thread"]) {
+  const goal = thread.goal;
+  if (
+    !goal ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.session?.status === "error" ||
+    thread.latestTurn?.state === "error"
+  ) {
+    return null;
+  }
+  // A retained terminal goal must not hide a later, ordinary conversation turn.
+  if (
+    goal.status !== "active" &&
+    Date.parse(thread.latestTurn?.requestedAt ?? "") > Date.parse(goal.updatedAt)
+  ) {
+    return null;
+  }
+  return goal;
 }
 
 function resolveThreadAwarenessPhase(

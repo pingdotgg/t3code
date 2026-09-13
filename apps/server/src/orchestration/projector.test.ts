@@ -40,6 +40,68 @@ function makeEvent(input: {
 }
 
 describe("orchestration projector", () => {
+  effectIt.effect("replays native goal progress and clear without changing thread ordering", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-13T00:00:00.000Z";
+      const created = makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: "goal-thread",
+        occurredAt: now,
+        commandId: "create",
+        payload: {
+          threadId: "goal-thread",
+          projectId: "project",
+          title: "Goal",
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      let state = yield* projectEvent(createEmptyReadModel(now), created);
+      const goal = {
+        objective: "Finish",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        tokensUsed: 250,
+        timeUsedSeconds: 12,
+        tokenBudget: null,
+        rounds: 3,
+      };
+      state = yield* projectEvent(
+        state,
+        makeEvent({
+          sequence: 2,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "goal-thread",
+          occurredAt: now,
+          commandId: "sync",
+          payload: { threadId: "goal-thread", goal, updatedAt: now },
+        }),
+      );
+      expect(state.threads[0]?.goal).toEqual(goal);
+      expect(state.threads[0]?.updatedAt).toBe(now);
+      state = yield* projectEvent(
+        state,
+        makeEvent({
+          sequence: 3,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "goal-thread",
+          occurredAt: now,
+          commandId: "clear",
+          payload: { threadId: "goal-thread", goal: null, updatedAt: now },
+        }),
+      );
+      expect(state.threads[0]?.goal).toBeNull();
+    }),
+  );
   it("applies thread.created events", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);

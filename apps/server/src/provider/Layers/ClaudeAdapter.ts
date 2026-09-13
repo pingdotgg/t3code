@@ -1,3 +1,4 @@
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -16,6 +17,7 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type SDKMessage,
+  type SDKActiveGoalMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SettingSource,
@@ -42,6 +44,8 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
+  type ThreadGoalSetInput,
+  ThreadGoal,
   type TurnTokenUsage,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
@@ -75,6 +79,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -160,6 +165,7 @@ interface ClaudeResumeState {
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
   readonly turnStartMessageIds?: ReadonlyArray<string | null>;
+  readonly nativeGoal?: ThreadGoal | null;
 }
 
 interface ClaudeTurnState {
@@ -357,9 +363,57 @@ interface ClaudeSessionContext {
   /** Limits already announced for the running turn, keyed `window:resetsAt`. */
   announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
   stopped: boolean;
+  nativeGoal?: ThreadGoal | null;
+  goalStatusRequestId?: string;
+  goalClearRequestId?: string;
+  goalStartTurnId?: TurnId;
+  restoreGoalOnInit?: boolean;
 }
 
-interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
+const ClaudeGoalCommandOutput = Schema.Struct({
+  type: Schema.Literals(["assistant"]),
+  parent_tool_use_id: Schema.Null,
+  local_command_source: Schema.String,
+  message: Schema.Struct({ model: Schema.Literals(["<synthetic>"]) }),
+});
+const decodeClaudeGoalCommandOutput = Schema.decodeUnknownExit(ClaudeGoalCommandOutput);
+const decodeClaudeResumeGoal = Schema.decodeUnknownOption(Schema.NullOr(ThreadGoal));
+
+/** Only native local-command output can confirm a goal; model prose cannot. */
+export function parseClaudeGoalCommandOutput(
+  message: unknown,
+):
+  | { readonly objective: string; readonly rounds: number; readonly lastReason?: string }
+  | null
+  | undefined {
+  const decoded = decodeClaudeGoalCommandOutput(message);
+  if (Exit.isFailure(decoded)) return undefined;
+  const output = decoded.value.local_command_source.match(
+    /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/,
+  )?.[1];
+  if (!output) return undefined;
+  if (output.startsWith("Goal set: ")) return { objective: output.slice(10), rounds: 0 };
+  if (
+    output.startsWith("Goal cleared: ") ||
+    output === "No goal set" ||
+    output === "No goal set. Usage: `/goal <condition>`"
+  )
+    return null;
+  const active = output.match(
+    /^Goal active: ([\s\S]+) \((not yet evaluated|\d+ turns?)\)(?:\nLast check: ([\s\S]+))?$/,
+  );
+  if (!active) return undefined;
+  return {
+    objective: active[1]!,
+    rounds: active[2] === "not yet evaluated" ? 0 : Number.parseInt(active[2]!, 10),
+    ...(active[3] ? { lastReason: active[3] } : {}),
+  };
+}
+
+// The SDK forwards active_goal messages but omits them from its query union.
+type ClaudeInboundMessage = SDKMessage | SDKActiveGoalMessage;
+
+interface ClaudeQueryRuntime extends AsyncIterable<ClaudeInboundMessage> {
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
@@ -390,7 +444,7 @@ function isSyntheticClaudeThreadId(value: string): boolean {
   return value.startsWith("claude-thread-");
 }
 
-function hasDurableClaudeSessionId(message: SDKMessage): boolean {
+function hasDurableClaudeSessionId(message: ClaudeInboundMessage): boolean {
   if (message.type !== "system") {
     return true;
   }
@@ -880,6 +934,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     resumeSessionAt?: unknown;
     turnCount?: unknown;
     turnStartMessageIds?: unknown;
+    nativeGoal?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -902,12 +957,14 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     cursor.turnStartMessageIds.every((id: unknown) => id === null || typeof id === "string")
       ? (cursor.turnStartMessageIds as Array<string | null>)
       : undefined;
+  const nativeGoal = Option.getOrUndefined(decodeClaudeResumeGoal(cursor.nativeGoal));
 
   return {
     ...(threadId ? { threadId } : {}),
     ...(resume ? { resume } : {}),
     ...(resumeSessionAt ? { resumeSessionAt } : {}),
     ...(turnStartMessageIds ? { turnStartMessageIds } : {}),
+    ...(nativeGoal !== undefined ? { nativeGoal } : {}),
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
@@ -1464,8 +1521,11 @@ function buildPromptText(
     input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
   const caps = getClaudeCatalogModelCapabilities(catalog, claudeModel);
 
+  const text = input.input?.trim() ?? "";
+  // Native commands must remain at the start of the final text block.
+  if (/^\/goal(?:\s|$)/.test(text)) return text;
   const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+  return applyClaudePromptEffortPrefix(text, promptEffort);
 }
 
 function buildUserMessage(input: {
@@ -1852,7 +1912,7 @@ function sdkMessageSubtype(value: unknown): string | undefined {
   return typeof record.subtype === "string" ? record.subtype : undefined;
 }
 
-function sdkNativeMethod(message: SDKMessage): string {
+function sdkNativeMethod(message: ClaudeInboundMessage): string {
   const subtype = sdkMessageSubtype(message);
   if (subtype) {
     return `claude/${message.type}/${subtype}`;
@@ -1921,7 +1981,7 @@ function describeUnknownSdkMessage(kind: string, message: unknown): string {
   return preview ? `${kind} — ${preview}` : `${kind} (no displayable text content)`;
 }
 
-function sdkNativeItemId(message: SDKMessage): string | undefined {
+function sdkNativeItemId(message: ClaudeInboundMessage): string | undefined {
   if (message.type === "assistant") {
     const maybeId = (message.message as { id?: unknown }).id;
     if (typeof maybeId === "string") {
@@ -2011,7 +2071,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const logNativeSdkMessage = Effect.fnUntraced(function* (
     context: ClaudeSessionContext,
-    message: SDKMessage,
+    message: ClaudeInboundMessage,
   ) {
     if (!nativeEventLogger) {
       return;
@@ -2078,6 +2138,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(context.lastAssistantUuid ? { resumeSessionAt: context.lastAssistantUuid } : {}),
       turnCount: context.turnStartMessageIds.length,
       turnStartMessageIds: [...context.turnStartMessageIds],
+      ...(context.nativeGoal !== undefined ? { nativeGoal: context.nativeGoal } : {}),
     };
 
     context.session = {
@@ -2268,7 +2329,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
-    message: SDKMessage,
+    message: ClaudeInboundMessage,
   ) {
     if (typeof message.session_id !== "string" || message.session_id.length === 0) {
       return;
@@ -3955,15 +4016,192 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  const enqueueGoalCommand = Effect.fn("enqueueGoalCommand")(function* (
+    context: ClaudeSessionContext,
+    command: "/goal" | "/goal clear",
+  ) {
+    if (command === "/goal" && context.goalStatusRequestId) return;
+    const uuid = yield* randomUUIDv4;
+    if (command === "/goal") context.goalStatusRequestId = uuid;
+    else context.goalClearRequestId = uuid;
+    yield* Queue.offer(context.promptQueue, {
+      type: "message",
+      message: {
+        ...buildUserMessage({ sdkContent: [{ type: "text", text: command }] }),
+        uuid: uuid as NonNullable<SDKUserMessage["uuid"]>,
+      },
+    });
+  });
+
   const handleSdkMessage = Effect.fn("handleSdkMessage")(function* (
     context: ClaudeSessionContext,
-    message: SDKMessage,
+    message: ClaudeInboundMessage,
   ) {
     yield* logNativeSdkMessage(context, message);
     yield* ensureThreadId(context, message);
 
     // Wire-only command bookkeeping has no user-facing T3 lifecycle.
     if (sdkMessageType(message) === "command_lifecycle") {
+      return;
+    }
+
+    if (message.type === "system" && message.subtype === "init" && context.restoreGoalOnInit) {
+      context.restoreGoalOnInit = false;
+      if (
+        typeof message.claude_code_version === "string" &&
+        parseSemver(message.claude_code_version) &&
+        compareSemverVersions(message.claude_code_version, "2.1.270") >= 0 &&
+        message.slash_commands.includes("goal")
+      )
+        yield* enqueueGoalCommand(context, "/goal");
+    }
+
+    if (
+      message.type === "result" &&
+      "local_command" in message &&
+      message.local_command === "goal"
+    ) {
+      if (
+        context.goalStatusRequestId &&
+        context.nativeGoal?.status === "active" &&
+        !context.goalClearRequestId &&
+        "user_message_uuid" in message &&
+        message.user_message_uuid === context.goalStatusRequestId &&
+        "result" in message &&
+        (message.result === "No goal set" ||
+          message.result === "No goal set. Usage: `/goal <condition>`")
+      ) {
+        const stamp = yield* makeEventStamp();
+        context.nativeGoal = {
+          ...context.nativeGoal,
+          status: "complete",
+          updatedAt: stamp.createdAt,
+        };
+        yield* updateResumeCursor(context);
+        yield* offerRuntimeEvent({
+          type: "thread.goal.updated",
+          ...stamp,
+          provider: PROVIDER,
+          threadId: context.session.threadId,
+          payload: { goal: context.nativeGoal },
+          providerRefs: nativeProviderRefs(context),
+          raw: { source: "claude.sdk.message", method: "claude/result", payload: message },
+        });
+      }
+      if (
+        context.goalClearRequestId &&
+        "user_message_uuid" in message &&
+        message.user_message_uuid === context.goalClearRequestId &&
+        "result" in message &&
+        typeof message.result === "string" &&
+        message.result !== "No goal set" &&
+        !message.result.startsWith("Goal cleared: ")
+      )
+        delete context.goalClearRequestId;
+      // Native clear aliases and rejections both return is_error:false.
+      // Settle only this request, never a concurrently running model turn.
+      if (
+        context.goalStartTurnId &&
+        context.turnState?.turnId === context.goalStartTurnId &&
+        "user_message_uuid" in message &&
+        message.user_message_uuid === context.goalStartTurnId
+      ) {
+        delete context.goalStartTurnId;
+        const resultText =
+          "result" in message && typeof message.result === "string" ? message.result : undefined;
+        const cleared = resultText === "No goal set" || resultText?.startsWith("Goal cleared: ");
+        yield* completeTurn(
+          context,
+          cleared ? "completed" : "failed",
+          cleared ? undefined : (resultText ?? "Claude could not start the requested goal."),
+        );
+      }
+      if (
+        !("user_message_uuid" in message) ||
+        message.user_message_uuid === context.goalStatusRequestId
+      ) {
+        delete context.goalStatusRequestId;
+      }
+      return;
+    }
+
+    const commandGoal = parseClaudeGoalCommandOutput(message);
+    if (commandGoal !== undefined) {
+      const stamp = yield* makeEventStamp();
+      const previous = context.nativeGoal;
+      const explicitlyCleared =
+        message.type === "assistant" &&
+        "local_command_source" in message &&
+        typeof message.local_command_source === "string" &&
+        message.local_command_source.startsWith("<local-command-stdout>Goal cleared: ");
+      context.nativeGoal =
+        commandGoal === null
+          ? (previous?.status === "complete" ||
+              (previous?.status === "active" && context.goalStatusRequestId)) &&
+            !context.goalClearRequestId &&
+            !explicitlyCleared
+            ? previous
+            : null
+          : {
+              objective: commandGoal.objective,
+              status: "active",
+              createdAt:
+                previous?.objective === commandGoal.objective
+                  ? previous.createdAt
+                  : stamp.createdAt,
+              updatedAt: stamp.createdAt,
+              timeUsedSeconds: null,
+              tokensUsed: null,
+              tokenBudget: null,
+              rounds: commandGoal.rounds,
+              ...(commandGoal.lastReason ? { lastReason: commandGoal.lastReason } : {}),
+            };
+      if (commandGoal === null) delete context.goalClearRequestId;
+      yield* updateResumeCursor(context);
+      yield* offerRuntimeEvent({
+        type: "thread.goal.updated",
+        ...stamp,
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        payload: { goal: context.nativeGoal },
+        providerRefs: nativeProviderRefs(context),
+        raw: { source: "claude.sdk.message", method: "claude/assistant", payload: message },
+      });
+      return;
+    }
+
+    if (message.type === "active_goal") {
+      const stamp = yield* makeEventStamp();
+      const value = message.value;
+      const previous = context.nativeGoal;
+      context.nativeGoal = value
+        ? {
+            objective: value.condition,
+            status: "active",
+            createdAt: DateTime.formatIso(DateTime.makeUnsafe(value.set_at)),
+            updatedAt: stamp.createdAt,
+            timeUsedSeconds: null,
+            tokensUsed: null,
+            tokenBudget: null,
+            rounds: value.iterations,
+            ...(value.last_reason ? { lastReason: value.last_reason } : {}),
+          }
+        : context.goalClearRequestId
+          ? null
+          : previous?.status === "active"
+            ? { ...previous, status: "complete", updatedAt: stamp.createdAt }
+            : (previous ?? null);
+      if (!value) delete context.goalClearRequestId;
+      yield* updateResumeCursor(context);
+      yield* offerRuntimeEvent({
+        type: "thread.goal.updated",
+        ...stamp,
+        provider: PROVIDER,
+        threadId: context.session.threadId,
+        payload: { goal: context.nativeGoal },
+        providerRefs: nativeProviderRefs(context),
+        raw: { source: "claude.sdk.message", method: "claude/active_goal", payload: message },
+      });
       return;
     }
 
@@ -3978,7 +4216,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* handleAssistantMessage(context, message);
         return;
       case "result":
+        delete context.goalStartTurnId;
         yield* handleResultMessage(context, message);
+        // Standard SDK mode reports goal changes through local /goal output.
+        if (context.nativeGoal?.status === "active") yield* enqueueGoalCommand(context, "/goal");
         return;
       case "system":
         yield* handleSystemMessage(context, message);
@@ -4815,6 +5056,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(sessionId ? { resume: sessionId } : {}),
           ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
           turnCount: resumeState?.turnCount ?? 0,
+          ...(resumeState?.nativeGoal !== undefined ? { nativeGoal: resumeState.nativeGoal } : {}),
           ...(resumeState?.turnStartMessageIds
             ? { turnStartMessageIds: resumeState.turnStartMessageIds }
             : {}),
@@ -4854,6 +5096,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastThreadStartedId: undefined,
         announcedUsageLimits: undefined,
         stopped: false,
+        ...(resumeState?.nativeGoal !== undefined ? { nativeGoal: resumeState.nativeGoal } : {}),
+        restoreGoalOnInit: existingResumeSessionId !== undefined,
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
@@ -4932,7 +5176,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
-  const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+  const sendTurn = Effect.fn("sendTurn")(function* (
+    input: ProviderSendTurnInput,
+    isGoalStart = false,
+  ) {
     const context = yield* requireSession(input.threadId);
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
@@ -5062,11 +5309,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
 
     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
+    if (isGoalStart && steeringTurnState === null) context.goalStartTurnId = turnId;
+    const goalArgument =
+      (input.attachments?.length ?? 0) === 0
+        ? /^\/goal\s+([\s\S]+)$/.exec(input.input?.trim() ?? "")?.[1]?.trim()
+        : undefined;
+    const clearsGoal =
+      goalArgument !== undefined && /^(clear|stop|off|reset|none|cancel)$/i.test(goalArgument);
+    if (clearsGoal) {
+      context.goalClearRequestId = steeringTurnState === null ? turnId : yield* randomUUIDv4;
+    }
     yield* updateResumeCursor(context);
     yield* Queue.offer(context.promptQueue, {
       type: "message",
-      message:
-        steeringTurnState === null
+      message: clearsGoal
+        ? { ...message, uuid: context.goalClearRequestId as NonNullable<SDKUserMessage["uuid"]> }
+        : steeringTurnState === null
           ? { ...message, uuid: turnId as NonNullable<SDKUserMessage["uuid"]> }
           : message,
     }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
@@ -5078,6 +5336,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? { resumeCursor: context.session.resumeCursor }
         : {}),
     };
+  });
+
+  const setGoal = Effect.fn("setGoal")(function* (threadId: ThreadId, input: ThreadGoalSetInput) {
+    if (!input.objective || input.status === "paused" || input.tokenBudget !== undefined) {
+      return yield* new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "setGoal",
+        issue: "Claude goals require an objective and do not support pausing or token budgets.",
+      });
+    }
+    yield* sendTurn(
+      { threadId, input: `/goal ${input.objective}`, interactionMode: "default" },
+      true,
+    );
+  });
+
+  const clearGoal = Effect.fn("clearGoal")(function* (threadId: ThreadId) {
+    yield* enqueueGoalCommand(yield* requireSession(threadId), "/goal clear");
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
@@ -5373,6 +5649,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessionModelSwitch: "in-session",
     },
     compaction: { type: "slash-command", command: "/compact" },
+    goals: {
+      set: setGoal,
+      clear: clearGoal,
+      refresh: (threadId) =>
+        requireSession(threadId).pipe(
+          Effect.flatMap((context) => enqueueGoalCommand(context, "/goal")),
+        ),
+    },
     startSession,
     sendTurn,
     interruptTurn,

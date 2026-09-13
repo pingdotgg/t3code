@@ -1,9 +1,113 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { OrchestrationThreadShell, ThreadGoal, TurnId } from "@t3tools/contracts";
+import type { SidebarThreadStatus } from "./components/Sidebar.logic";
 
 import completionUrl from "./assets/notification-completion.mp3";
 import inputUrl from "./assets/notification-input.mp3";
 
 type NotificationMode = ClientSettings["notificationMode"];
+
+export interface ThreadNotificationSnapshot {
+  input: string | null;
+  completion: number | null;
+  goal: Pick<ThreadGoal, "createdAt" | "status"> | null;
+  suppressedTurnId: TurnId | null;
+  baselineGoalUpdatedAt: string | null;
+}
+
+const goalNotificationTitles: Partial<Record<ThreadGoal["status"], string>> = {
+  complete: "Goal completed",
+  blocked: "Goal needs attention",
+  budgetLimited: "Goal budget reached",
+  usageLimited: "Goal usage limit reached",
+};
+
+export function resolveThreadNotification(
+  thread: Pick<OrchestrationThreadShell, "goal" | "latestTurn" | "session" | "title">,
+  status: SidebarThreadStatus,
+  prior: ThreadNotificationSnapshot | undefined,
+): {
+  snapshot: ThreadNotificationSnapshot;
+  notification: { kind: "completion" | "input"; title: string; body: string } | null;
+} {
+  const goal = thread.goal ?? null;
+  const input =
+    status === "input" || status === "approval" || status === "failed"
+      ? `${thread.latestTurn?.turnId ?? ""}:${status}`
+      : null;
+  const completedAt = Date.parse(thread.latestTurn?.completedAt ?? "");
+  const completion =
+    status === "ready" && thread.latestTurn?.state === "completed" && Number.isFinite(completedAt)
+      ? completedAt
+      : (prior?.completion ?? null);
+  const goalTitle =
+    goal &&
+    prior &&
+    (goal.createdAt !== prior.goal?.createdAt || goal.status !== prior.goal?.status)
+      ? goalNotificationTitles[goal.status]
+      : undefined;
+  // The native turn disappears from the session before its checkpoint reaches
+  // latestTurn. Keep its identity through that gap, including after clear/pause.
+  const suppressedTurnId =
+    goal?.status === "active" || goalTitle
+      ? (thread.session?.activeTurnId ??
+        prior?.suppressedTurnId ??
+        thread.latestTurn?.turnId ??
+        null)
+      : (prior?.suppressedTurnId ?? null);
+  // A retained terminal goal at reconnect does not own a newer manual turn.
+  // Keep its cutoff through clear until the delayed checkpoint identifies when
+  // the finishing turn began.
+  const baselineGoalUpdatedAt = prior
+    ? prior.baselineGoalUpdatedAt
+    : goal?.status !== "active"
+      ? (goal?.updatedAt ?? null)
+      : null;
+  const baselineGoalCompletion =
+    baselineGoalUpdatedAt !== null &&
+    Date.parse(thread.latestTurn?.requestedAt ?? "") <= Date.parse(baselineGoalUpdatedAt);
+  const snapshot = { input, completion, goal, suppressedTurnId, baselineGoalUpdatedAt };
+  if (!prior) return { snapshot, notification: null };
+  if (input && input !== prior.input) {
+    return {
+      snapshot,
+      notification: {
+        kind: "input",
+        title:
+          status === "approval"
+            ? "Approval needed"
+            : status === "failed"
+              ? "Thread failed"
+              : "Input needed",
+        body: thread.title,
+      },
+    };
+  }
+  if (goalTitle && goal) {
+    return {
+      snapshot,
+      notification: {
+        kind: goal.status === "complete" ? "completion" : "input",
+        title: goalTitle,
+        body: `${thread.title}\n${goal.lastReason || goal.objective}`,
+      },
+    };
+  }
+  if (
+    completion !== null &&
+    (prior.completion === null || completion > prior.completion) &&
+    goal?.status !== "active" &&
+    !baselineGoalCompletion &&
+    thread.latestTurn?.turnId !== suppressedTurnId
+  ) {
+    return {
+      snapshot,
+      notification: { kind: "completion", title: "Thread completed", body: thread.title },
+    };
+  }
+  return { snapshot, notification: null };
+}
+
 export const NOTIFICATION_MODE_LABELS = {
   off: "Off",
   notifications: "Notifications only",

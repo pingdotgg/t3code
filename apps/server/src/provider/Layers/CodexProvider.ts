@@ -668,6 +668,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             checkedAt,
           });
 
+  // Conservatively advertise the native goal protocol on verified CLI generations.
+  const nativeVersion = snapshot.version?.match(/^(\d+)\.(\d+)\.(\d+)/);
+  const supportsGoals =
+    nativeVersion !== undefined &&
+    nativeVersion !== null &&
+    (Number(nativeVersion[1]) > 0 || Number(nativeVersion[2]) >= 154);
+
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
@@ -675,6 +682,15 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     models: snapshot.models,
     skills: snapshot.skills,
     slashCommands: [
+      ...(supportsGoals
+        ? [
+            {
+              name: "goal",
+              description: "Work toward a durable goal",
+              input: { hint: "Objective" },
+            },
+          ]
+        : []),
       COMPACT_SLASH_COMMAND,
       {
         name: "feedback",
@@ -685,6 +701,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: snapshot.version ?? null,
+      ...(supportsGoals ? { goal: { pause: true, tokenBudget: true } } : {}),
       status: accountStatus.status,
       auth: accountStatus.auth,
       ...(accountStatus.message ? { message: accountStatus.message } : {}),

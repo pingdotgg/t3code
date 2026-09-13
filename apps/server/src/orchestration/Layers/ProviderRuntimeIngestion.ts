@@ -1484,6 +1484,15 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadRuntimeContext(event.threadId);
       if (!thread) return;
 
+      if (event.type === "thread.goal.updated") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.goal.sync",
+          commandId: CommandId.make(`provider:goal:${event.eventId}`),
+          threadId: event.threadId,
+          goal: event.payload.goal,
+        });
+        return;
+      }
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;

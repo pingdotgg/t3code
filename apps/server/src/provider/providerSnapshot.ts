@@ -58,6 +58,7 @@ export interface ProviderProbeResult {
   readonly auth: ServerProviderAuth;
   readonly message?: string;
   readonly usageLimits?: ServerProviderUsageLimits;
+  readonly goal?: ServerProvider["goal"];
 }
 
 export interface ServerProviderPresentation {
@@ -234,6 +235,7 @@ export function buildServerProvider(input: {
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
+    ...(input.probe.goal ? { goal: input.probe.goal } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

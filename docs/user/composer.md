@@ -12,6 +12,29 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Goals
+
+With a provider that supports goals, send `/goal <objective>` to start working
+toward a persistent target. Use `/goal` to refresh its status, `/goal edit <objective>`
+to revise it, and `/goal clear` to remove it. Codex also supports `/goal pause`
+and `/goal resume`; pausing the goal prevents further goal continuation but
+does not interrupt work already running.
+
+Switch out of Plan mode before starting or editing a goal.
+Codex goals reuse the current session model and options. After changing these
+settings, send a normal message to apply them before starting, editing, or resuming a goal.
+Claude may apply a queued goal command after its current response finishes.
+
+Goal progress stays with the thread across reconnects. Time, token usage, and
+rounds appear when the provider reports them. Codex reports goal token usage and
+supports a token budget; Claude reports rounds and resets its counters when its
+native session resumes. Availability depends on the installed provider version.
+
+Enable **Thread notifications** in Settings to receive goal completion and
+attention alerts on web and desktop while T3 Code is open. Blocked goals and
+token or usage limits need attention; intermediate rounds, pause, and clear stay
+silent. Goals use your existing notification and sound preference.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can

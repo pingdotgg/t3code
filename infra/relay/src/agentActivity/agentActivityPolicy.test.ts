@@ -31,6 +31,41 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
+  it("alerts once when a blocked goal reaches a different native limit", () => {
+    const blocked = aggregate([{ ...state, phase: "waiting_for_input", headline: "Goal blocked" }]);
+    const budget = aggregate([
+      { ...state, phase: "waiting_for_input", headline: "Goal budget reached" },
+    ]);
+    expect(
+      attentionTransitionRows({ previousAggregate: blocked, nextAggregate: budget, preferences }),
+    ).toHaveLength(1);
+    expect(
+      attentionTransitionRows({ previousAggregate: budget, nextAggregate: budget, preferences }),
+    ).toHaveLength(0);
+    expect(
+      attentionTransitionRows({ previousAggregate: null, nextAggregate: budget, preferences }),
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    ["completed", "Goal completed"],
+    ["waiting_for_input", "Goal blocked"],
+    ["waiting_for_input", "Goal budget reached"],
+    ["waiting_for_input", "Goal usage limit reached"],
+  ] as const)("preserves goal notification wording for %s", (phase, headline) => {
+    const nextAggregate = aggregate([{ ...state, phase, headline }]);
+    expect(nextAggregate.activities[0]?.status).toBe(headline);
+    const input = { previousAggregate: aggregate([state]), nextAggregate, preferences, nowMs: 0 };
+    expect(
+      phase === "completed" ? terminalTransitionRows(input) : attentionTransitionRows(input),
+    ).toHaveLength(1);
+    expect(
+      phase === "completed"
+        ? terminalTransitionRows({ ...input, previousAggregate: nextAggregate })
+        : attentionTransitionRows({ ...input, previousAggregate: nextAggregate }),
+    ).toHaveLength(0);
+  });
+
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {

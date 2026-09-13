@@ -1097,12 +1097,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* observeModelReroutedForAnalytics(source, canonicalEvent);
       } else if (
         canonicalEvent.type === "turn.completed" ||
-        canonicalEvent.type === "turn.aborted"
+        canonicalEvent.type === "turn.aborted" ||
+        canonicalEvent.type === "thread.goal.updated"
       ) {
-        yield* recordTurnCompletedAnalytics(source, canonicalEvent);
+        if (canonicalEvent.type !== "thread.goal.updated") {
+          yield* recordTurnCompletedAnalytics(source, canonicalEvent);
+        }
         if (source.provider === "claudeAgent") {
-          // Background Claude turns have no sendTurn response to persist their
-          // new native boundary. Save it before clients can checkpoint the turn.
+          // Background turns and local goal commands have no sendTurn response
+          // to persist their native state. Save it before publishing the event.
           yield* Effect.gen(function* () {
             const adapter = yield* registry.getByInstance(source.instanceId);
             const session = (yield* adapter.listSessions()).find(
@@ -1125,7 +1128,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             }
           }).pipe(
             Effect.catch((cause) =>
-              Effect.logWarning("failed to persist Claude turn resume state", { cause }),
+              Effect.logWarning("failed to persist Claude resume state", { cause }),
             ),
           );
         }
@@ -1792,6 +1795,52 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const refreshGoal: ProviderServiceMethod<"refreshGoal"> = Effect.fn("refreshGoal")(
+    function* (threadId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.refreshGoal",
+        allowRecovery: true,
+      });
+      if (!routed.adapter.goals?.refresh)
+        return yield* toValidationError(
+          "ProviderService.refreshGoal",
+          `Provider '${routed.adapter.provider}' does not support native goals.`,
+        );
+      yield* routed.adapter.goals.refresh(routed.threadId);
+    },
+  );
+  const setGoal: ProviderServiceMethod<"setGoal"> = Effect.fn("setGoal")(
+    function* (threadId, input) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.setGoal",
+        allowRecovery: true,
+      });
+      if (!routed.adapter.goals)
+        return yield* toValidationError(
+          "ProviderService.setGoal",
+          `Provider '${routed.adapter.provider}' does not support native goals.`,
+        );
+      yield* routed.adapter.goals.set(routed.threadId, input);
+    },
+  );
+  const clearGoal: ProviderServiceMethod<"clearGoal"> = Effect.fn("clearGoal")(
+    function* (threadId) {
+      const routed = yield* resolveRoutableSession({
+        threadId,
+        operation: "ProviderService.clearGoal",
+        allowRecovery: true,
+      });
+      if (!routed.adapter.goals)
+        return yield* toValidationError(
+          "ProviderService.clearGoal",
+          `Provider '${routed.adapter.provider}' does not support native goals.`,
+        );
+      yield* routed.adapter.goals.clear(routed.threadId);
+    },
+  );
+
   const compactThread: ProviderServiceMethod<"compactThread"> = Effect.fn("compactThread")(
     function* (threadId, modelSelection, requestId) {
       const routed = yield* resolveRoutableSession({
@@ -2402,6 +2451,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     compactThread,
+    setGoal,
+    refreshGoal,
+    clearGoal,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

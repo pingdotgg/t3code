@@ -26,6 +26,7 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  ThreadGoal,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -77,6 +78,16 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Minimal durable goal transitions needed to restore notification suppression. */
+  readonly getThreadGoalAwarenessHistory: (threadId: ThreadId) => Effect.Effect<
+    {
+      readonly snapshotSequence: number;
+      readonly updates: ReadonlyArray<
+        { readonly goal: ThreadGoal | null } | { readonly manualTurn: true }
+      >;
+    },
+    ProjectionRepositoryError
+  >;
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;

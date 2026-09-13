@@ -1,3 +1,4 @@
+import { ThreadGoal } from "@t3tools/contracts";
 import {
   AgentSessionImportSource,
   ApprovalRequestId,
@@ -128,6 +129,7 @@ const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFi
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   }),
@@ -578,6 +580,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
+          goal_json AS "goal",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -618,6 +621,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
+          goal_json AS "goal",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -660,6 +664,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
+          goal_json AS "goal",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -1220,6 +1225,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
+          goal_json AS "goal",
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
@@ -1588,19 +1594,78 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // Resolves a page of recent turns for a windowed thread detail read. Walks
-  // back from the exclusive (beforeAnchorAt, beforeTurnKey) keyset boundary
-  // (sentinels "~"/"" mean unbounded, i.e. the first page) until it has seen
-  // `userTurnLimit` user-anchored turns — turns whose pending message is a
-  // user message; subagent/fan-out turns between them ride along — or hits the
-  // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
-  // CTE applies the keyset bound and LIMIT before the window functions run;
-  // its ORDER BY uses raw columns so the migration-037
-  // (thread_id, requested_at, turn_id) index serves both range and order with
-  // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
-  // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
-  // real id.) The caller derives the continuation cursor from the oldest
-  // returned row.
+  const GoalAwarenessRow = Schema.Struct({
+    sequence: NonNegativeInt,
+    goal: Schema.NullOr(Schema.fromJsonString(ThreadGoal)),
+  });
+  const getGoalAwarenessRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      maxSequence: NonNegativeInt,
+      goalType: Schema.Literals(["object", "null"]),
+    }),
+    Result: GoalAwarenessRow,
+    execute: ({ threadId, maxSequence, goalType }) => sql`
+      SELECT sequence, json_extract(payload_json, '$.goal') AS goal
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+        AND (event_type = 'thread.turn-start-requested'
+          OR (event_type = 'thread.meta-updated' AND json_type(payload_json, '$.goal') IS NOT NULL))
+        AND event_type = 'thread.meta-updated' AND json_type(payload_json, '$.goal') = ${goalType}
+        AND sequence <= ${maxSequence}
+      ORDER BY sequence DESC LIMIT 1
+    `,
+  });
+  const getGoalAwarenessTurnRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, maxSequence: NonNegativeInt }),
+    Result: Schema.Struct({
+      sequence: NonNegativeInt,
+      text: Schema.NullOr(Schema.String),
+      attachmentCount: NonNegativeInt,
+    }),
+    execute: ({ threadId, maxSequence }) => sql`
+      WITH intent AS (
+        SELECT sequence, command_id, payload_json FROM orchestration_events INDEXED BY idx_orch_events_goal_awareness
+        WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+          AND (event_type = 'thread.turn-start-requested'
+            OR (event_type = 'thread.meta-updated' AND json_type(payload_json, '$.goal') IS NOT NULL))
+          AND event_type = 'thread.turn-start-requested' AND json_type(payload_json, '$.goal') IS NULL
+          AND sequence <= ${maxSequence}
+        ORDER BY sequence DESC LIMIT 1
+      )
+      SELECT intent.sequence, json_extract(message.payload_json, '$.text') AS text,
+        COALESCE(json_array_length(message.payload_json, '$.attachments'), 0) AS "attachmentCount"
+      FROM intent LEFT JOIN orchestration_events message
+        ON message.command_id = intent.command_id AND message.event_type = 'thread.message-sent'
+        AND message.stream_id = ${threadId} AND message.aggregate_kind = 'thread'
+        AND json_extract(message.payload_json, '$.messageId') = json_extract(intent.payload_json, '$.messageId')
+        AND message.sequence <= intent.sequence
+      ORDER BY message.sequence DESC LIMIT 1
+    `,
+  });
+  const getChangedGoalAwarenessRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({
+      threadId: ThreadId,
+      minSequence: NonNegativeInt,
+      maxSequence: NonNegativeInt,
+      goal: Schema.NullOr(ThreadGoal),
+    }),
+    Result: GoalAwarenessRow,
+    execute: ({ threadId, minSequence, maxSequence, goal }) => sql`
+      SELECT sequence, json_extract(payload_json, '$.goal') AS goal
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+        AND (event_type = 'thread.turn-start-requested'
+          OR (event_type = 'thread.meta-updated' AND json_type(payload_json, '$.goal') IS NOT NULL))
+        AND event_type = 'thread.meta-updated' AND json_type(payload_json, '$.goal') = 'object'
+        AND sequence > ${minSequence} AND sequence <= ${maxSequence}
+        AND (json_extract(payload_json, '$.goal.createdAt') IS NOT ${goal?.createdAt ?? null}
+          OR json_extract(payload_json, '$.goal.objective') IS NOT ${goal?.objective ?? null}
+          OR json_extract(payload_json, '$.goal.status') IS NOT ${goal?.status ?? null})
+      ORDER BY sequence DESC LIMIT 1
+    `,
+  });
+
   // Highest thread-DETAIL event sequence for this thread that the projection
   // has applied (bounded by the global snapshot sequence read in the same
   // transaction). This is the thread-scoped watermark a windowed page carries
@@ -1631,6 +1696,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Resolves a page of recent turns for a windowed thread detail read. Walks
+  // back from the exclusive (beforeAnchorAt, beforeTurnKey) keyset boundary
+  // (sentinels "~"/"" mean unbounded, i.e. the first page) until it has seen
+  // `userTurnLimit` user-anchored turns — turns whose pending message is a
+  // user message; subagent/fan-out turns between them ride along — or hits the
+  // `maxRawTurns` ceiling that bounds pathological fan-out. The `candidates`
+  // CTE applies the keyset bound and LIMIT before the window functions run;
+  // its ORDER BY uses raw columns so the migration-037
+  // (thread_id, requested_at, turn_id) index serves both range and order with
+  // no temp B-tree — the scan is genuinely bounded by the LIMIT. (Raw
+  // turn_id DESC places NULLs exactly where COALESCE-to-'' would, below every
+  // real id.) The caller derives the continuation cursor from the oldest
+  // returned row.
   const listTurnWindowRows = SqlSchema.findAll({
     Request: ThreadTurnWindowLookupInput,
     Result: ProjectionTurnWindowRowSchema,
@@ -2259,6 +2337,7 @@ pending_approval_requests AS (
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 activeOrderKey: row.activeOrderKey ?? null,
+                goal: row.goal,
                 titleRegeneration: mapTitleRegeneration(row),
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
@@ -2503,6 +2582,7 @@ pending_approval_requests AS (
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
+                  goal: row.goal,
                   titleRegeneration: mapTitleRegeneration(row),
                   deletedAt: row.deletedAt,
                   messages: [],
@@ -2658,6 +2738,7 @@ pending_approval_requests AS (
                         pinnedAt: row.pinnedAt,
                         pinOrderKey: row.pinOrderKey ?? null,
                         activeOrderKey: row.activeOrderKey ?? null,
+                        goal: row.goal,
                         titleRegeneration: mapTitleRegeneration(row),
                         session: sessionByThread.get(row.threadId) ?? null,
                         latestUserMessageAt: row.latestUserMessageAt,
@@ -2820,6 +2901,7 @@ pending_approval_requests AS (
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
+                  goal: row.goal,
                   titleRegeneration: mapTitleRegeneration(row),
                   session: sessionByThread.get(row.threadId) ?? null,
                   latestUserMessageAt: row.latestUserMessageAt,
@@ -2865,6 +2947,92 @@ pending_approval_requests AS (
         snapshotSequence: computeSnapshotSequence(stateRows),
       })),
     );
+
+  const getThreadGoalAwarenessHistory: ProjectionSnapshotQueryShape["getThreadGoalAwarenessHistory"] =
+    Effect.fn("ProjectionSnapshotQuery.getThreadGoalAwarenessHistory")(function* (threadId) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const { snapshotSequence } = yield* getSnapshotSequence();
+            const readGoal = (maxSequence: number, goalType: "object" | "null") =>
+              getGoalAwarenessRow({ threadId, maxSequence, goalType }).pipe(
+                Effect.map(Option.getOrNull),
+              );
+            const latestNative = yield* readGoal(snapshotSequence, "object");
+            const updates: Array<{ goal: ThreadGoal | null } | { manualTurn: true }> = [];
+            // Native status discovery can emit null for threads that never had a goal.
+            if (!latestNative) return { snapshotSequence, updates };
+            const latestClear = yield* readGoal(snapshotSequence, "null");
+            let turn = Option.getOrNull(
+              yield* getGoalAwarenessTurnRow({ threadId, maxSequence: snapshotSequence }),
+            );
+            while (
+              turn &&
+              turn.attachmentCount === 0 &&
+              /^\/goal(?:\s|$)/.test(turn.text?.trim() ?? "")
+            ) {
+              turn = Option.getOrNull(
+                yield* getGoalAwarenessTurnRow({ threadId, maxSequence: turn.sequence - 1 }),
+              );
+            }
+            if (turn) {
+              const nativeBefore =
+                latestNative.sequence < turn.sequence
+                  ? latestNative
+                  : yield* readGoal(turn.sequence - 1, "object");
+              const clearBefore =
+                !latestClear || latestClear.sequence < turn.sequence
+                  ? latestClear
+                  : yield* readGoal(turn.sequence - 1, "null");
+              const goalBefore =
+                nativeBefore && (!clearBefore || nativeBefore.sequence > clearBefore.sequence)
+                  ? nativeBefore.goal
+                  : null;
+              if (nativeBefore) {
+                updates.push({ goal: nativeBefore.goal });
+                if (goalBefore === null) updates.push({ goal: null });
+              }
+              updates.push({ manualTurn: true });
+              if (goalBefore?.status !== "active") {
+                const changed = Option.getOrNull(
+                  yield* getChangedGoalAwarenessRow({
+                    threadId,
+                    minSequence: turn.sequence,
+                    maxSequence: snapshotSequence,
+                    goal: goalBefore,
+                  }),
+                );
+                if (changed) updates.push({ goal: changed.goal });
+                else if (latestNative.sequence > turn.sequence) {
+                  const clearedBeforeLatest = yield* readGoal(latestNative.sequence - 1, "null");
+                  if (clearedBeforeLatest && clearedBeforeLatest.sequence > turn.sequence) {
+                    updates.push({ goal: null }, { goal: latestNative.goal });
+                  }
+                }
+              }
+            } else {
+              updates.push({ goal: latestNative.goal });
+            }
+            updates.push({
+              goal:
+                latestClear && latestClear.sequence > latestNative.sequence
+                  ? null
+                  : latestNative.goal,
+            });
+            return { snapshotSequence, updates };
+          }),
+        )
+        .pipe(
+          Effect.mapError((error) =>
+            isPersistenceError(error)
+              ? error
+              : toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadGoalAwarenessHistory:query",
+                  "ProjectionSnapshotQuery.getThreadGoalAwarenessHistory:decode",
+                )(error),
+          ),
+        );
+    });
 
   const getCounts: ProjectionSnapshotQueryShape["getCounts"] = () =>
     readProjectionCounts(undefined).pipe(
@@ -3175,6 +3343,7 @@ pending_approval_requests AS (
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
+        goal: threadRow.value.goal,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
@@ -3474,6 +3643,7 @@ pending_approval_requests AS (
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
+        goal: threadRow.value.goal,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         deletedAt: null,
         messages: messageRows.map((row) => {
@@ -3693,6 +3863,7 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    getThreadGoalAwarenessHistory,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

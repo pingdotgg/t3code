@@ -10,6 +10,7 @@ import type {
   PermissionMode,
   PermissionResult,
   SDKMessage,
+  SDKActiveGoalMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -49,7 +50,11 @@ import {
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  parseClaudeGoalCommandOutput,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -58,10 +63,12 @@ class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()
   "t3/provider/Layers/ClaudeAdapter.test/ClaudeAdapter",
 ) {}
 
-class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
-  private readonly queue: Array<SDKMessage> = [];
+type FakeClaudeMessage = SDKMessage | SDKActiveGoalMessage;
+
+class FakeClaudeQuery implements AsyncIterable<FakeClaudeMessage> {
+  private readonly queue: Array<FakeClaudeMessage> = [];
   private readonly waiters: Array<{
-    readonly resolve: (value: IteratorResult<SDKMessage>) => void;
+    readonly resolve: (value: IteratorResult<FakeClaudeMessage>) => void;
     readonly reject: (reason: unknown) => void;
   }> = [];
   private done = false;
@@ -73,7 +80,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public closeCalls = 0;
   public closeError: unknown | undefined;
 
-  emit(message: SDKMessage): void {
+  emit(message: FakeClaudeMessage): void {
     if (this.done) {
       return;
     }
@@ -127,7 +134,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     this.finish();
   };
 
-  [Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
+  [Symbol.asyncIterator](): AsyncIterator<FakeClaudeMessage> {
     return {
       next: () => {
         if (this.queue.length > 0) {
@@ -317,6 +324,729 @@ const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 const SYNTHETIC_SUBAGENT_MODEL = "claude-synthetic-subagent[expanded]";
 
 describe("ClaudeAdapterLive", () => {
+  it.effect.each(["rejected", "cleared"] as const)(
+    "restores default permission mode and settles an exact native goal %s result",
+    (outcome) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const planComplete = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "turn.completed"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "plan this change",
+          interactionMode: "plan",
+        });
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          session_id: "sdk-session",
+          uuid: "plan-result",
+        } as unknown as SDKMessage);
+        yield* Fiber.join(planComplete);
+        const goalComplete = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "turn.completed"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        assert.ok(adapter.goals);
+        yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+        assert.deepEqual(harness.query.setPermissionModeCalls, ["plan", "bypassPermissions"]);
+        const request = yield* Effect.promise(() =>
+          readFirstPromptMessage(harness.getLastCreateQueryInput()),
+        );
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          local_command: "goal",
+          user_message_uuid: request?.uuid,
+          result:
+            outcome === "cleared"
+              ? "Goal cleared: finish migration"
+              : "/goal can't run while hooks are restricted",
+          session_id: "sdk-session",
+          uuid: "rejected-goal",
+        } as unknown as SDKMessage);
+        const events = yield* Fiber.join(goalComplete);
+        assert.equal(events[0]?.payload.state, outcome === "cleared" ? "completed" : "failed");
+        assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, undefined);
+        assert.equal((yield* adapter.readThread(THREAD_ID)).turns.length, 2);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("does not close existing work when a steered goal is rejected locally", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "thread.goal.updated"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "real work" });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      assert.ok(adapter.goals);
+      yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        local_command: "goal",
+        result: "/goal can't run while hooks are restricted",
+        session_id: "sdk-session",
+        uuid: "rejected-edit",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "active_goal",
+        value: null,
+        uuid: "00000000-0000-4000-8000-000000000002",
+        session_id: "sdk-session",
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events.filter((event) => event.type === "turn.completed").length, 0);
+      assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, turn.turnId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it("recognizes native goal confirmations without treating model prose as goal state", () => {
+    const native = (text: string) => ({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { model: "<synthetic>" },
+      local_command_source: `<local-command-stdout>${text}</local-command-stdout>`,
+    });
+    assert.deepEqual(parseClaudeGoalCommandOutput(native("Goal set: all checks pass")), {
+      objective: "all checks pass",
+      rounds: 0,
+    });
+    assert.deepEqual(
+      parseClaudeGoalCommandOutput(
+        native("Goal active: all checks pass (3 turns)\nLast check: one remains"),
+      ),
+      { objective: "all checks pass", rounds: 3, lastReason: "one remains" },
+    );
+    assert.equal(parseClaudeGoalCommandOutput(native("No goal set")), null);
+    assert.equal(parseClaudeGoalCommandOutput(native("Goal cleared: all checks pass")), null);
+    assert.equal(
+      parseClaudeGoalCommandOutput({
+        ...native("Goal set: all checks pass"),
+        message: { model: "claude-sonnet-5" },
+      }),
+      undefined,
+    );
+  });
+
+  it.effect("keeps goal status and clear responses out of concurrent model turn lifecycles", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "thread.goal.updated" && event.payload.goal === null,
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "/goal all checks pass" });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        session_id: "sdk-session",
+        uuid: "confirmation",
+        local_command_source:
+          "<local-command-stdout>Goal set: all checks pass</local-command-stdout>",
+        message: {
+          id: "confirmation",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "Goal set: all checks pass" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["original failure"],
+        session_id: "sdk-session",
+        uuid: "result",
+      } as unknown as SDKMessage);
+      const statusMessage = yield* Effect.promise(() =>
+        readFirstPromptMessage(harness.getLastCreateQueryInput()),
+      );
+      assert.deepEqual(statusMessage?.message.content, [{ type: "text", text: "/goal" }]);
+      const nextTurn = yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "continue real work",
+      });
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        "continue real work",
+      );
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        session_id: "sdk-session",
+        uuid: "status",
+        local_command_source:
+          "<local-command-stdout>Goal active: all checks pass (1 turn)</local-command-stdout>",
+        message: {
+          id: "status",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "Goal active: all checks pass (1 turn)" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        local_command: "goal",
+        user_message_uuid: statusMessage?.uuid,
+        session_id: "sdk-session",
+        uuid: "status-result",
+      } as unknown as SDKMessage);
+      assert.ok(adapter.goals);
+      yield* adapter.goals.clear(THREAD_ID);
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        "/goal clear",
+      );
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        local_command: "goal",
+        session_id: "sdk-session",
+        uuid: "clear-result",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "active_goal",
+        value: null,
+        uuid: "00000000-0000-4000-8000-000000000002",
+        session_id: "sdk-session",
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events.filter((event) => event.type === "turn.started").length, 2);
+      const completed = events.filter((event) => event.type === "turn.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(completed[0]?.payload.state, "failed");
+      assert.equal(events.filter((event) => event.type === "content.delta").length, 0);
+      assert.equal((yield* adapter.readThread(THREAD_ID)).turns.length, 1);
+      assert.equal((yield* adapter.listSessions())[0]?.activeTurnId, nextTurn.turnId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "restores resumed goal state from advertised native status without starting a turn",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          resumeCursor: { resume: "550e8400-e29b-41d4-a716-446655440000", turnCount: 2 },
+        });
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "thread.goal.updated"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        harness.query.emit({
+          type: "system",
+          subtype: "init",
+          session_id: "sdk-session",
+          uuid: "init",
+          claude_code_version: "2.1.270",
+          slash_commands: ["goal"],
+        } as unknown as SDKMessage);
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          "/goal",
+        );
+        harness.query.emit({
+          type: "assistant",
+          parent_tool_use_id: null,
+          session_id: "sdk-session",
+          uuid: "restored",
+          local_command_source:
+            "<local-command-stdout>Goal active: finish migration (not yet evaluated)</local-command-stdout>",
+          message: {
+            id: "restored",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Goal active: finish migration (not yet evaluated)" }],
+          },
+        } as unknown as SDKMessage);
+        const events = yield* Fiber.join(eventsFiber);
+        assert.equal(events.filter((event) => event.type === "turn.started").length, 0);
+        const goal = events.find((event) => event.type === "thread.goal.updated");
+        assert.equal(goal?.payload.goal?.objective, "finish migration");
+        assert.equal(goal?.payload.goal?.timeUsedSeconds, null);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect.each(["rejected-clear", "unknown-status"] as const)(
+    "does not confuse %s with natural goal completion",
+    (scenario) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        assert.ok(adapter.goals);
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "thread.goal.updated"),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+        harness.query.emit({
+          type: "active_goal",
+          value: { condition: "finish migration", iterations: 3, set_at: 0, tokens_at_start: 0 },
+          uuid: "00000000-0000-4000-8000-000000000001",
+          session_id: "sdk-session",
+        });
+        if (scenario === "rejected-clear") {
+          yield* adapter.goals.clear(THREAD_ID);
+          const request = yield* Effect.promise(() =>
+            readFirstPromptMessage(harness.getLastCreateQueryInput()),
+          );
+          harness.query.emit({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            local_command: "goal",
+            user_message_uuid: request?.uuid,
+            result: "/goal can't run while hooks are restricted",
+            session_id: "sdk-session",
+            uuid: "rejected-clear",
+          } as unknown as SDKMessage);
+          harness.query.emit({
+            type: "active_goal",
+            value: null,
+            uuid: "00000000-0000-4000-8000-000000000002",
+            session_id: "sdk-session",
+          });
+        } else {
+          harness.query.emit({
+            type: "assistant",
+            parent_tool_use_id: null,
+            session_id: "sdk-session",
+            uuid: "status",
+            local_command_source: "<local-command-stdout>No goal set</local-command-stdout>",
+            message: {
+              id: "status",
+              model: "<synthetic>",
+              content: [{ type: "text", text: "No goal set" }],
+            },
+          } as unknown as SDKMessage);
+        }
+        const events = yield* Fiber.join(eventsFiber);
+        assert.equal(
+          events[1]?.payload.goal?.status ?? null,
+          scenario === "rejected-clear" ? "complete" : null,
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect.each(["synthetic-first", "result-first", "clear-pending"] as const)(
+    "correlates standard SDK goal completion with %s status output",
+    (order) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        assert.ok(adapter.goals);
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "thread.goal.updated"),
+          Stream.take(order === "clear-pending" ? 3 : 4),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+        harness.query.emit({
+          type: "assistant",
+          parent_tool_use_id: null,
+          session_id: "sdk-session",
+          uuid: "goal-set",
+          local_command_source:
+            "<local-command-stdout>Goal set: finish migration</local-command-stdout>",
+          message: {
+            id: "goal-set",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Goal set: finish migration" }],
+          },
+        } as unknown as SDKMessage);
+        assert(adapter.goals.refresh);
+        yield* adapter.goals.refresh(THREAD_ID);
+        const request = yield* Effect.promise(() =>
+          readFirstPromptMessage(harness.getLastCreateQueryInput()),
+        );
+        if (order === "clear-pending") {
+          yield* adapter.goals.clear(THREAD_ID);
+          yield* Effect.promise(() => readFirstPromptMessage(harness.getLastCreateQueryInput()));
+        }
+        const synthetic = {
+          type: "assistant",
+          parent_tool_use_id: null,
+          session_id: "sdk-session",
+          uuid: "goal-status",
+          local_command_source: "<local-command-stdout>No goal set</local-command-stdout>",
+          message: {
+            id: "goal-status",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "No goal set" }],
+          },
+        } as unknown as SDKMessage;
+        const result = {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          local_command: "goal",
+          user_message_uuid: request?.uuid,
+          result: "No goal set",
+          session_id: "sdk-session",
+          uuid: "status-result",
+        } as unknown as SDKMessage;
+        if (order === "result-first") harness.query.emit(result);
+        harness.query.emit(synthetic);
+        if (order !== "result-first") harness.query.emit(result);
+        harness.query.emit({
+          type: "active_goal",
+          value: null,
+          uuid: "00000000-0000-4000-8000-000000000002",
+          session_id: "sdk-session",
+        });
+        const events = yield* Fiber.join(eventsFiber);
+        const lastGoal = events.at(-1)?.payload.goal;
+        assert.equal(lastGoal?.status ?? null, order === "clear-pending" ? null : "complete");
+        assert.equal(
+          events.filter((event) => event.payload.goal?.status === "complete").length,
+          order === "clear-pending" ? 0 : order === "result-first" ? 3 : 2,
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("retains native goal completion through repeated null and status refresh", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.ok(adapter.goals);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.goal.updated"),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      harness.query.emit({
+        type: "active_goal",
+        value: { condition: "finish migration", iterations: 3, set_at: 0, tokens_at_start: 0 },
+        uuid: "00000000-0000-4000-8000-000000000001",
+        session_id: "sdk-session",
+      });
+      for (const uuid of [
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000003",
+      ] as const) {
+        harness.query.emit({ type: "active_goal", value: null, uuid, session_id: "sdk-session" });
+      }
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "sdk-session",
+        uuid: "completed-result",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        session_id: "sdk-session",
+        uuid: "status",
+        local_command_source: "<local-command-stdout>No goal set</local-command-stdout>",
+        message: {
+          id: "status",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "No goal set" }],
+        },
+      } as unknown as SDKMessage);
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events[0]?.payload.goal?.status, "active");
+      assert.equal(events[1]?.payload.goal?.status, "complete");
+      assert.equal(events[1]?.payload.goal?.rounds, 3);
+      assert.deepEqual(events[2]?.payload.goal, events[1]?.payload.goal);
+      assert.deepEqual(events[3]?.payload.goal, events[1]?.payload.goal);
+      assert.deepInclude((yield* adapter.listSessions())[0]?.resumeCursor, {
+        nativeGoal: events[1]?.payload.goal,
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "ordinary follow-up" });
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        "ordinary follow-up",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("retains a completed goal when a resumed session reports no active goal", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const nativeGoal = {
+        objective: "finish migration",
+        status: "complete" as const,
+        createdAt: "2026-09-13T10:00:00.000Z",
+        updatedAt: "2026-09-13T10:01:00.000Z",
+        timeUsedSeconds: null,
+        tokensUsed: null,
+        tokenBudget: null,
+        rounds: 3,
+      };
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        resumeCursor: { resume: "550e8400-e29b-41d4-a716-446655440000", nativeGoal },
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.goal.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: null,
+        session_id: "sdk-session",
+        uuid: "status",
+        local_command_source: "<local-command-stdout>No goal set</local-command-stdout>",
+        message: {
+          id: "status",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "No goal set" }],
+        },
+      } as unknown as SDKMessage);
+      const events = yield* Fiber.join(eventsFiber);
+      assert.deepEqual(events[0]?.payload.goal, nativeGoal);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect.each([
+    "native-first",
+    "synthetic-first",
+    "result-first",
+    "queued-next",
+    "CLEAR",
+    "STOP",
+    "OFF",
+    "RESET",
+    "NONE",
+    "CANCEL",
+  ] as const)("keeps explicit goal clear silent with %s output", (order) => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      assert.ok(adapter.goals);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.goal.updated"),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.goals.set(THREAD_ID, { objective: "finish migration" });
+      yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput()));
+      harness.query.emit({
+        type: "active_goal",
+        value: { condition: "finish migration", iterations: 3, set_at: 0, tokens_at_start: 0 },
+        uuid: "00000000-0000-4000-8000-000000000001",
+        session_id: "sdk-session",
+      });
+      if (order.includes("-")) yield* adapter.goals.clear(THREAD_ID);
+      else yield* adapter.goals.set(THREAD_ID, { objective: order });
+      const request = yield* Effect.promise(() =>
+        readFirstPromptMessage(harness.getLastCreateQueryInput()),
+      );
+      if (order === "queued-next") {
+        yield* adapter.goals.set(THREAD_ID, { objective: "next objective" });
+        yield* Effect.promise(() => readFirstPromptMessage(harness.getLastCreateQueryInput()));
+      }
+      const synthetic = {
+        type: "assistant",
+        parent_tool_use_id: null,
+        session_id: "sdk-session",
+        uuid: "clear",
+        local_command_source:
+          "<local-command-stdout>Goal cleared: finish migration</local-command-stdout>",
+        message: {
+          id: "clear",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "Goal cleared: finish migration" }],
+        },
+      } as unknown as SDKMessage;
+      if (order === "result-first")
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          local_command: "goal",
+          user_message_uuid: request?.uuid,
+          result: "Goal cleared: finish migration",
+          session_id: "sdk-session",
+          uuid: "clear-result",
+        } as unknown as SDKMessage);
+      if (order === "synthetic-first") harness.query.emit(synthetic);
+      harness.query.emit({
+        type: "active_goal",
+        value: null,
+        uuid: "00000000-0000-4000-8000-000000000002",
+        session_id: "sdk-session",
+      });
+      if (order !== "synthetic-first") harness.query.emit(synthetic);
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events[0]?.payload.goal?.status, "active");
+      assert.equal(events[1]?.payload.goal, null);
+      assert.equal(events[2]?.payload.goal, null);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "forwards native goal commands and projects provider rounds without inventing token usage",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        assert.ok(adapter.goals);
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "thread.goal.updated"),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.goals.set(THREAD_ID, { objective: "all checks pass" });
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          "/goal all checks pass",
+        );
+        harness.query.emit({
+          type: "active_goal",
+          value: {
+            condition: "all checks pass",
+            iterations: 3,
+            set_at: 0,
+            tokens_at_start: 1200,
+            last_reason: "one check remains",
+          },
+          uuid: "00000000-0000-4000-8000-000000000001",
+          session_id: "sdk-session",
+        });
+        yield* adapter.goals.clear(THREAD_ID);
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          "/goal clear",
+        );
+        harness.query.emit({
+          type: "active_goal",
+          value: null,
+          uuid: "00000000-0000-4000-8000-000000000002",
+          session_id: "sdk-session",
+        });
+        const events = yield* Fiber.join(eventsFiber);
+        assert.equal(events[0]?.payload.goal?.objective, "all checks pass");
+        assert.equal(events[0]?.payload.goal?.rounds, 3);
+        assert.equal(events[0]?.payload.goal?.lastReason, "one check remains");
+        assert.equal(events[0]?.payload.goal?.tokensUsed, null);
+        assert.equal(events[1]?.payload.goal, null);
+        const paused = yield* adapter.goals
+          .set(THREAD_ID, { status: "paused" })
+          .pipe(Effect.result);
+        assert.equal(paused._tag, "Failure");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -907,6 +907,7 @@ describe("openCodexThread", () => {
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
         serviceTier: "fast",
+        reasoningEffort: "high",
         resumeThreadId: "saved-thread",
       });
 
@@ -923,6 +924,7 @@ describe("openCodexThread", () => {
             cwd: "/tmp/project",
             model: "gpt-5.3-codex",
             serviceTier: "fast",
+            config: { model_reasoning_effort: "high" },
             approvalPolicy: "on-request",
             sandbox: "workspace-write",
             approvalsReviewer: "auto_review",
@@ -1000,9 +1002,15 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        reasoningEffort: "low",
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
+      for (const call of calls) {
+        NodeAssert.deepStrictEqual((call.payload as { config: unknown }).config, {
+          model_reasoning_effort: "low",
+        });
+      }
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],

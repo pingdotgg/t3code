@@ -133,6 +133,7 @@ import {
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
+import { GoalToolbar } from "./GoalToolbar";
 import { ComposerSurface } from "./ComposerSurface";
 import {
   ComposerBannerStack,
@@ -1273,6 +1274,12 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  onSetGoal: (input: {
+    objective?: string;
+    status?: "active" | "paused";
+    tokenBudget?: number | null;
+  }) => Promise<boolean>;
+  onClearGoal: () => Promise<boolean>;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -1881,6 +1888,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  const activeGoal = activeThread ? activeThread.goal : props.activeThreadShell?.goal;
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : [];
@@ -5944,6 +5952,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
+          {activeGoal ? (
+            <GoalToolbar
+              key={`goal:${activeThreadId}`}
+              goal={activeGoal}
+              capability={selectedProviderStatus?.goal}
+              disabled={isConnecting || Boolean(props.environmentUnavailable) || !activeThread}
+              onSet={props.onSetGoal}
+              onClear={props.onClearGoal}
+            />
+          ) : null}
           <ComposerBannerStack
             key={activeThreadId}
             className="relative z-0"

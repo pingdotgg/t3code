@@ -7,6 +7,8 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type EnvironmentId,
+  type ThreadGoal,
+  type ThreadId,
   type MessageId,
   type ModelSelection,
   type OrchestrationThreadShell,
@@ -58,6 +60,9 @@ import {
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+
+import { useAtomCommand } from "../../state/use-atom-command";
+import { threadEnvironment } from "../../state/threads";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -272,6 +277,82 @@ export function ComposerSurface(props: {
         {props.children}
       </Animated.View>
     </Animated.View>
+  );
+}
+
+const goalStatusLabels: Record<ThreadGoal["status"], string> = {
+  active: "Goaling",
+  paused: "Goal paused",
+  blocked: "Goal blocked",
+  usageLimited: "Usage limit",
+  budgetLimited: "Goal budget reached",
+  complete: "Goal complete",
+};
+
+function ComposerGoalStatus({
+  goal,
+  threadId,
+  environmentId,
+  canClear,
+}: {
+  readonly goal: ThreadGoal;
+  readonly threadId: ThreadId;
+  readonly environmentId: EnvironmentId;
+  readonly canClear: boolean;
+}) {
+  const clearGoal = useAtomCommand(threadEnvironment.clearGoal, "clear goal");
+  const [pending, setPending] = useState(false);
+  const seconds = goal.timeUsedSeconds;
+  const elapsed =
+    seconds === null
+      ? null
+      : `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  const handleClear = async () => {
+    if (pending || !canClear) return;
+    setPending(true);
+    try {
+      await clearGoal({ environmentId, input: { threadId } });
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <View
+      className="mb-2 flex-row items-center gap-3 rounded-2xl px-3 py-2"
+      style={{ backgroundColor: "#7c3aed18", borderColor: "#8b5cf655", borderWidth: 1 }}
+    >
+      <View className="min-w-0 flex-1">
+        <Text numberOfLines={1} className="text-xs font-medium" style={{ color: "#8b5cf6" }}>
+          {goal.objective}
+        </Text>
+        <Text className="text-xs" style={{ color: "#8b5cf6" }}>
+          {[
+            goalStatusLabels[goal.status],
+            elapsed,
+            goal.tokensUsed === null ? null : `${goal.tokensUsed.toLocaleString()} tokens`,
+            goal.rounds === undefined ? null : `${goal.rounds} rounds`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Text>
+      </View>
+      {canClear ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear goal"
+          accessibilityState={{ disabled: pending }}
+          disabled={pending}
+          hitSlop={8}
+          onPress={() => {
+            void handleClear();
+          }}
+        >
+          <Text className="text-xs" style={{ color: "#8b5cf6", opacity: pending ? 0.5 : 1 }}>
+            {pending ? "clearing…" : "clear"}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -657,6 +738,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onSelect={composerMenu.onSelect}
             />
           </View>
+        ) : null}
+
+        {props.selectedThread.goal ? (
+          <ComposerGoalStatus
+            goal={props.selectedThread.goal}
+            threadId={props.selectedThread.id}
+            environmentId={props.environmentId}
+            canClear={
+              props.connectionState === "connected" && Boolean(selectedProviderStatus?.goal)
+            }
+          />
         ) : null}
 
         {modelUnavailable ? (

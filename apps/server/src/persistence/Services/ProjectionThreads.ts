@@ -1,3 +1,4 @@
+import { ThreadGoal } from "@t3tools/contracts";
 /**
  * ProjectionThreadRepository - Projection repository interface for threads.
  *
@@ -29,6 +30,7 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  goal: Schema.optional(Schema.NullOr(ThreadGoal)),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,

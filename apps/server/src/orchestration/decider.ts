@@ -1198,6 +1198,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.goal.set":
+    case "thread.goal.clear":
+    case "thread.goal.sync": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const occurredAt = yield* nowIso;
+      const base = yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: command.threadId,
+        occurredAt,
+        commandId: command.commandId,
+      });
+      if (command.type === "thread.goal.sync")
+        return {
+          ...base,
+          type: "thread.meta-updated",
+          payload: { threadId: thread.id, goal: command.goal, updatedAt: thread.updatedAt },
+        };
+      if (command.type === "thread.goal.clear")
+        return { ...base, type: "thread.goal-clear-requested", payload: { threadId: thread.id } };
+      return {
+        ...base,
+        type: "thread.goal-set-requested",
+        payload: {
+          threadId: thread.id,
+          ...(command.objective !== undefined ? { objective: command.objective } : {}),
+          ...(command.status !== undefined ? { status: command.status } : {}),
+          ...(command.tokenBudget !== undefined ? { tokenBudget: command.tokenBudget } : {}),
+        },
+      };
+    }
+
     case "thread.title.regeneration.complete": {
       const thread = yield* requireThread({
         readModel,

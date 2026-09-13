@@ -171,6 +171,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly supportsGoals?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
@@ -346,6 +347,7 @@ describe("ProviderCommandReactor", () => {
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        ...(input?.supportsGoals === false ? {} : { goal: { pause: true, tokenBudget: true } }),
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
@@ -357,6 +359,9 @@ describe("ProviderCommandReactor", () => {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       compactThread,
+      setGoal: () => Effect.void,
+      refreshGoal: () => Effect.void,
+      clearGoal: () => Effect.void,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
@@ -628,6 +633,230 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  effectIt.effect("keeps the Claude session after a goal starts the conversation", () =>
+    Effect.gen(function* () {
+      const modelSelection = createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+      );
+      const harness = yield* Effect.promise(() =>
+        createHarness({ threadModelSelection: modelSelection }),
+      );
+      for (const [index, text] of ["/goal review the files", "/goal"].entries()) {
+        const events = yield* harness.engine.subscribeDomainEvents;
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`goal-session-${index}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make(`goal-message-${index}`),
+            role: "user",
+            text,
+            attachments: [],
+          },
+          modelSelection,
+          interactionMode: "default",
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "thread.activity-appended" &&
+              event.payload.activity.kind === "goal-command",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* Effect.promise(() => harness.drain());
+        expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      }
+      expect(harness.startSession).toHaveBeenCalledTimes(1);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+  );
+
+  effectIt.effect.each(["model", "options", "default options", "recovered", "provider"] as const)(
+    "rejects a pending Codex %s change only when reusing a live goal session",
+    (change) =>
+      Effect.gen(function* () {
+        const initial = createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-5-codex",
+          change === "default options" ? [] : [{ id: "reasoningEffort", value: "high" }],
+        );
+        const changed = createModelSelection(
+          ProviderInstanceId.make("codex"),
+          change === "model" ? "gpt-5.4" : initial.model,
+          [{ id: "reasoningEffort", value: change === "options" ? "low" : "high" }],
+        );
+        const harness = yield* Effect.promise(() =>
+          createHarness({ threadModelSelection: initial }),
+        );
+        const sendGoal = (
+          index: number,
+          modelSelection: ModelSelection | undefined,
+          failed: boolean,
+          text = "/goal review files",
+        ) =>
+          Effect.gen(function* () {
+            const events = yield* harness.engine.subscribeDomainEvents;
+            yield* harness.engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make(`goal-config-${index}`),
+              threadId: ThreadId.make("thread-1"),
+              message: {
+                messageId: MessageId.make(`goal-config-message-${index}`),
+                role: "user",
+                text,
+                attachments: [],
+              },
+              ...(modelSelection ? { modelSelection } : {}),
+              interactionMode: "default",
+              runtimeMode: "approval-required",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            });
+            yield* events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "thread.activity-appended" &&
+                  (failed
+                    ? event.payload.activity.summary === "Goal update failed"
+                    : event.payload.activity.kind === "goal-command"),
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+            );
+            yield* Effect.promise(() => harness.drain());
+            expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+          });
+        if (change === "recovered" || change === "provider") {
+          const nativeSelection =
+            change === "provider"
+              ? createModelSelection(ProviderInstanceId.make("claude"), "claude-sonnet-4-6")
+              : initial;
+          yield* harness.startSession(undefined, {
+            threadId: ThreadId.make("thread-1"),
+            providerInstanceId: nativeSelection.instanceId,
+            modelSelection: nativeSelection,
+            runtimeMode: "approval-required",
+            cwd: "/tmp/provider-project",
+          });
+          yield* harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("recovered-goal-session"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "ready",
+              providerName: change === "provider" ? "claudeAgent" : "codex",
+              providerInstanceId: nativeSelection.instanceId,
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+          });
+          yield* sendGoal(0, change === "provider" ? undefined : initial, true);
+          expect(harness.startSession).toHaveBeenCalledTimes(1);
+          expect(harness.stopSession).not.toHaveBeenCalled();
+          expect(harness.sendTurn).not.toHaveBeenCalled();
+          if (change === "provider") {
+            expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+            expect(harness.generateBranchName).not.toHaveBeenCalled();
+            expect(harness.createWorktree).not.toHaveBeenCalled();
+            const state = yield* Effect.promise(() => harness.readModel());
+            expect(
+              state.threads[0]?.activities.find(
+                (activity) => activity.summary === "Goal update failed",
+              )?.payload,
+            ).toMatchObject({ detail: expect.stringContaining("Explicitly select a provider") });
+          }
+          return;
+        }
+        yield* sendGoal(0, initial, false);
+        yield* sendGoal(1, changed, false, "/goal");
+        yield* sendGoal(2, changed, true);
+        yield* sendGoal(3, initial, false);
+        expect(harness.startSession).toHaveBeenCalledTimes(1);
+        const state = yield* Effect.promise(() => harness.readModel());
+        expect(
+          state.threads[0]?.activities.find((activity) => activity.summary === "Goal update failed")
+            ?.payload,
+        ).toMatchObject({ detail: expect.stringContaining("current session model and options") });
+        harness.runtimeSessions.splice(0);
+        yield* sendGoal(4, changed, false);
+        expect(harness.startSession).toHaveBeenCalledTimes(2);
+        expect(harness.startSession.mock.calls.at(-1)?.[1]).toMatchObject({
+          modelSelection: changed,
+        });
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+      }).pipe(Effect.scoped),
+  );
+
+  effectIt.effect.each(["Plan mode", "unsupported provider"] as const)(
+    "rejects model-starting goals in %s before title or worktree side effects",
+    (reason) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            supportsGoals: reason !== "unsupported provider",
+          }),
+        );
+        const events = yield* harness.engine.subscribeDomainEvents;
+        yield* harness.engine.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make("goal-select-plan"),
+          threadId: ThreadId.make("thread-1"),
+          interactionMode: reason === "Plan mode" ? "plan" : "default",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("goal-plan"),
+          threadId: ThreadId.make("thread-1"),
+          titleSeed: "Thread",
+          message: {
+            messageId: MessageId.make("goal-plan-message"),
+            role: "user",
+            text: "/goal edit files",
+            attachments: [],
+          },
+          interactionMode: reason === "Plan mode" ? "plan" : "default",
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "thread.activity-appended" &&
+              event.payload.activity.summary === "Goal update failed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.startSession).not.toHaveBeenCalled();
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+        expect(harness.generateBranchName).not.toHaveBeenCalled();
+        expect(harness.createWorktree).not.toHaveBeenCalled();
+        const state = yield* Effect.promise(() => harness.readModel());
+        expect(
+          state.threads[0]?.activities.find((activity) => activity.summary === "Goal update failed")
+            ?.payload,
+        ).toMatchObject({
+          detail:
+            reason === "Plan mode"
+              ? "Switch out of Plan mode before starting or editing a goal."
+              : "This provider does not advertise native goal support.",
+        });
+        expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",

@@ -8,6 +8,7 @@ import {
   ProjectId,
   ThreadId,
   type ThreadPullRequestLink,
+  type ThreadGoal,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
@@ -31,6 +32,7 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+import { updateGoalAwarenessTracking } from "../../relay/AgentAwarenessRelay.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -110,6 +112,94 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("restores goal notification suppression from bounded immutable events", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("goal-awareness-history");
+      const now = "2026-09-15T00:00:00.000Z";
+      const goal: ThreadGoal = {
+        objective: "Finish task",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+        tokensUsed: 100,
+        timeUsedSeconds: 1,
+        tokenBudget: null,
+      };
+      yield* sql`DELETE FROM orchestration_events`;
+      yield* sql`DELETE FROM projection_state`;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at) VALUES (${projector}, 0, ${now})`;
+      }
+      let version = 0;
+      const append = (type: string, payload: object, commandId: string | null = null) => {
+        version += 1;
+        return sql`INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, actor_kind, payload_json, metadata_json
+        ) VALUES (${`goal-awareness-${version}`}, 'thread', ${threadId}, ${version}, ${type}, ${now}, ${commandId}, 'provider', ${JSON.stringify({ threadId, ...payload })}, '{}')`;
+      };
+      const turn = (text: string, attachments: ReadonlyArray<object> = []) =>
+        Effect.gen(function* () {
+          const commandId = `goal-turn-${version}`;
+          const messageId = `goal-message-${version}`;
+          yield* append(
+            "thread.message-sent",
+            { messageId, text, attachments, role: "user" },
+            commandId,
+          );
+          yield* append("thread.turn-start-requested", { messageId }, commandId);
+          return messageId;
+        });
+      const restore = (advance = true) =>
+        Effect.gen(function* () {
+          if (advance)
+            yield* sql`UPDATE projection_state SET last_applied_sequence = (SELECT COALESCE(MAX(sequence), 0) FROM orchestration_events)`;
+          const history = yield* query.getThreadGoalAwarenessHistory(threadId);
+          return history.updates.reduce<ReturnType<typeof updateGoalAwarenessTracking>>(
+            updateGoalAwarenessTracking,
+            undefined,
+          );
+        });
+      yield* append("thread.meta-updated", { goal: null });
+      assert.equal(yield* restore(), undefined);
+      yield* append("thread.meta-updated", { goal });
+      yield* append("thread.meta-updated", { goal: null });
+      assert.deepEqual(yield* restore(), { goal: null, ignore: false });
+      yield* turn(" /goal\n ");
+      assert.deepEqual(yield* restore(), { goal: null, ignore: false });
+      yield* turn("ordinary work");
+      assert.deepEqual(yield* restore(), { goal: null, ignore: true });
+
+      const completed = { ...goal, status: "complete" as const };
+      yield* append("thread.meta-updated", { goal: completed });
+      const originalMessageId = yield* turn("a later manual turn without a checkpoint");
+      const metrics = { ...completed, tokensUsed: 200, updatedAt: "2026-09-15T00:01:00.000Z" };
+      yield* append("thread.meta-updated", { goal: metrics });
+      // Later edits cannot turn the immutable original turn intent into /goal.
+      yield* append(
+        "thread.message-sent",
+        { messageId: originalMessageId, text: "/goal", role: "user" },
+        "later-edit",
+      );
+      assert.deepEqual(yield* restore(), { goal: metrics, ignore: true });
+      yield* append("thread.meta-updated", { goal });
+      assert.deepEqual(yield* restore(false), { goal: metrics, ignore: true });
+      assert.deepEqual(yield* restore(), { goal, ignore: false });
+      yield* turn("continue active goal");
+      assert.deepEqual(yield* restore(), { goal, ignore: false });
+
+      yield* append("thread.meta-updated", { goal: completed });
+      yield* turn("ordinary next task");
+      yield* append("thread.meta-updated", { goal: null });
+      yield* append("thread.meta-updated", { goal: completed });
+      assert.deepEqual(yield* restore(), { goal: completed, ignore: false });
+      yield* turn("/goal", [{ type: "file", id: "attachment" }]);
+      assert.deepEqual(yield* restore(), { goal: completed, ignore: true });
+    }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
@@ -452,6 +542,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          goal: null,
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -574,6 +665,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
       assert.deepEqual(shellSnapshot.threads, [
         {
+          goal: null,
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
@@ -1319,27 +1411,27 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM orchestration_events`;
       yield* sql`
         INSERT INTO orchestration_events (
-          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          sequence, event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
           command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json
         )
         VALUES
           (
-            'replay-event-1', 'thread', 'thread-replay', 1, 'thread.activity-appended',
+            1, 'replay-event-1', 'thread', 'thread-replay', 1, 'thread.activity-appended',
             '2026-03-01T00:00:00.000Z', NULL, NULL, NULL, 'provider',
             json_object('output', printf('%.*c', 1000, 'x')), '{}'
           ),
           (
-            'replay-event-2', 'thread', 'thread-replay', 2, 'thread.activity-appended',
+            2, 'replay-event-2', 'thread', 'thread-replay', 2, 'thread.activity-appended',
             '2026-03-01T00:00:01.000Z', NULL, NULL, NULL, 'provider',
             json_object('output', printf('%.*c', 2000, 'x')), '{}'
           ),
           (
-            'replay-event-3', 'thread', 'thread-replay', 3, 'thread.activity-appended',
+            3, 'replay-event-3', 'thread', 'thread-replay', 3, 'thread.activity-appended',
             '2026-03-01T00:00:02.000Z', NULL, NULL, NULL, 'provider',
             json_object('output', printf('%.*c', 3000, 'x')), '{}'
           ),
           (
-            'replay-event-4', 'thread', 'thread-replay', 4, 'thread.activity-appended',
+            4, 'replay-event-4', 'thread', 'thread-replay', 4, 'thread.activity-appended',
             '2026-03-01T00:00:03.000Z', NULL, NULL, NULL, 'provider',
             json_object('output', '😀'), '{}'
           )

@@ -1,3 +1,4 @@
+import { ThreadGoal } from "./threadGoal.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -155,6 +156,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "session.exited",
   "thread.started",
   "thread.state.changed",
+  "thread.goal.updated",
   "thread.metadata.updated",
   "thread.token-usage.updated",
   "thread.realtime.started",
@@ -1233,6 +1235,11 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionExitedEvent,
   ProviderRuntimeThreadStartedEvent,
   ProviderRuntimeThreadStateChangedEvent,
+  Schema.Struct({
+    ...ProviderRuntimeEventBase.fields,
+    type: Schema.Literal("thread.goal.updated"),
+    payload: Schema.Struct({ goal: Schema.NullOr(ThreadGoal) }),
+  }),
   ProviderRuntimeThreadMetadataUpdatedEvent,
   ProviderRuntimeThreadTokenUsageUpdatedEvent,
   ProviderRuntimeThreadRealtimeStartedEvent,

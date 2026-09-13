@@ -18,6 +18,8 @@ import {
   type DismissThreadUserInputInput,
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
+  type SetThreadGoalInput,
+  type ClearThreadGoalInput,
   type SetThreadRuntimeModeInput,
   type PinThreadInput,
   type ReorderPinnedThreadInput,
@@ -42,6 +44,8 @@ import {
   dismissThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
+  setThreadGoal,
+  clearThreadGoal,
   setThreadRuntimeMode,
   pinThread,
   reorderPinnedThread,
@@ -96,6 +100,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    setGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-goal",
+      execute: (input: SetThreadGoalInput) => setThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
+    clearGoal: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:clear-goal",
+      execute: (input: ClearThreadGoalInput) => clearThreadGoal(input),
+      scheduler,
+      concurrency,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

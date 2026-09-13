@@ -29,6 +29,7 @@ function thread(
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "goal"
 > {
   return {
     id: "thread-1" as ThreadId,
@@ -44,6 +45,86 @@ function thread(
 }
 
 describe("projectThreadAwareness", () => {
+  const goal = {
+    objective: "Finish the change",
+    status: "active" as const,
+    createdAt: NOW,
+    updatedAt: NOW,
+    timeUsedSeconds: 30,
+    tokensUsed: 1000,
+    tokenBudget: null,
+  };
+  const completedTurn = {
+    turnId: "turn-1" as TurnId,
+    state: "completed" as const,
+    requestedAt: NOW,
+    startedAt: NOW,
+    completedAt: NOW,
+    assistantMessageId: null,
+  };
+
+  it.each([
+    ["active", "running", "Goal is running"],
+    ["paused", "stale", "Goal paused"],
+    ["complete", "completed", "Goal completed"],
+    ["blocked", "waiting_for_input", "Goal blocked"],
+    ["budgetLimited", "waiting_for_input", "Goal budget reached"],
+    ["usageLimited", "waiting_for_input", "Goal usage limit reached"],
+  ] as const)("projects native %s goals over settled rounds", (status, phase, headline) => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({ goal: { ...goal, status }, latestTurn: completedTurn }),
+      }),
+    ).toMatchObject({ phase, headline });
+  });
+
+  it.each([
+    [{ hasPendingApprovals: true }, "waiting_for_approval", "Approval needed"],
+    [{ hasPendingUserInput: true }, "waiting_for_input", "Waiting for input"],
+    [{ latestTurn: { ...completedTurn, state: "error" } }, "failed", "Agent failed"],
+  ] as const)("preserves attention and error priority for goals", (overrides, phase, headline) => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({ goal, ...overrides }),
+      }),
+    ).toMatchObject({ phase, headline });
+  });
+
+  it("keeps a retained completed goal from masking later manual turns", () => {
+    for (const state of ["running", "completed"] as const) {
+      expect(
+        projectThreadAwareness({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: thread({
+            goal: { ...goal, status: "complete" },
+            latestTurn: { ...completedTurn, requestedAt: "2026-05-22T12:01:00.000Z", state },
+          }),
+        }),
+      ).toMatchObject({
+        phase: state,
+        headline: state === "running" ? "Agent is working" : "Agent finished",
+      });
+    }
+  });
+
+  it("uses native goal completion time despite later session updates", () => {
+    expect(
+      projectThreadAwareness({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: thread({
+          goal: { ...goal, status: "complete" },
+          updatedAt: "2026-05-22T12:10:00.000Z",
+        }),
+      }),
+    ).toMatchObject({ updatedAt: NOW });
+  });
+
   it("returns null for idle threads without an active awareness state", () => {
     expect(
       projectThreadAwareness({

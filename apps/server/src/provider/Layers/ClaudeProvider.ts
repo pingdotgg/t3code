@@ -1,3 +1,4 @@
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -576,6 +577,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     slashCommands: dedupedSlashCommands,
     skills,
     probe: {
+      ...(parsedVersion &&
+      parseSemver(parsedVersion) &&
+      compareSemverVersions(parsedVersion, "2.1.270") >= 0 &&
+      dedupedSlashCommands.some((command) => command.name === "goal")
+        ? { goal: { pause: false, tokenBudget: false } }
+        : {}),
       installed: true,
       version: parsedVersion,
       status: "ready",

@@ -150,6 +150,16 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       metadata: {},
     };
 
+    for (const type of ["thread.goal-set-requested", "thread.goal-clear-requested"] as const) {
+      expect(
+        AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+          ...base,
+          type,
+          payload: { threadId: "thread-1" as ThreadId },
+        } as unknown as OrchestrationEvent),
+      ).toBe(false);
+    }
+
     expect(
       AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
         ...base,
@@ -317,6 +327,127 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       state: null,
       reason: "project-not-found",
     });
+  });
+
+  it("ignores retained goals after a manual turn until native goal identity or status changes", () => {
+    const goal = {
+      objective: "Finish the task",
+      status: "complete" as const,
+      createdAt: state.updatedAt,
+      updatedAt: state.updatedAt,
+      timeUsedSeconds: 10,
+      tokensUsed: 1000,
+      tokenBudget: null,
+    };
+    const observed = AgentAwarenessRelay.updateGoalAwarenessTracking(undefined, { goal });
+    const manual = AgentAwarenessRelay.updateGoalAwarenessTracking(observed, { manualTurn: true });
+    expect(manual?.ignore).toBe(true);
+    expect(
+      AgentAwarenessRelay.updateGoalAwarenessTracking(manual, {
+        goal: { ...goal, tokensUsed: 2000, updatedAt: "2026-05-25T00:00:01.000Z" },
+      })?.ignore,
+    ).toBe(true);
+    expect(AgentAwarenessRelay.updateGoalAwarenessTracking(manual, { goal: null })?.ignore).toBe(
+      true,
+    );
+    expect(AgentAwarenessRelay.updateGoalAwarenessTracking(observed, { goal: null })?.ignore).toBe(
+      false,
+    );
+    for (const changed of [
+      { ...goal, status: "active" as const },
+      { ...goal, objective: "Next task" },
+    ]) {
+      expect(
+        AgentAwarenessRelay.updateGoalAwarenessTracking(manual, { goal: changed })?.ignore,
+      ).toBe(false);
+    }
+    const active = AgentAwarenessRelay.updateGoalAwarenessTracking(undefined, {
+      goal: { ...goal, status: "active" },
+    });
+    expect(
+      AgentAwarenessRelay.updateGoalAwarenessTracking(active, { manualTurn: true })?.ignore,
+    ).toBe(false);
+  });
+
+  it("does not reinterpret a cleared goal's final round as a new completion", () => {
+    const environmentId = "env-1" as EnvironmentId;
+    const threadId = "thread-1" as ThreadId;
+    const clearedThread = {
+      id: threadId,
+      projectId: "project-1" as ProjectId,
+      title: "Goal thread",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      goal: null,
+      session: null,
+      latestTurn: {
+        turnId: "turn-1",
+        state: "completed",
+        requestedAt: state.updatedAt,
+        completedAt: state.updatedAt,
+      },
+      updatedAt: state.updatedAt,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+    } as OrchestrationThreadShell;
+    const input = {
+      environmentId,
+      threadId,
+      thread: Option.some(clearedThread),
+      project: Option.some({
+        id: clearedThread.projectId,
+        title: "Project",
+      } as OrchestrationProjectShell),
+      suppressClearedGoalCompletion: true,
+    };
+    expect(AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot(input).state).toBeNull();
+    expect(
+      AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+        ...input,
+        suppressClearedGoalCompletion: false,
+      }).state?.phase,
+    ).toBe("completed");
+    expect(
+      AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+        ...input,
+        thread: Option.some({ ...clearedThread, hasPendingApprovals: true }),
+      }).state?.phase,
+    ).toBe("waiting_for_approval");
+
+    const retainedGoalThread = {
+      ...clearedThread,
+      goal: {
+        objective: "Previous task",
+        status: "complete" as const,
+        createdAt: state.updatedAt,
+        updatedAt: state.updatedAt,
+        timeUsedSeconds: 10,
+        tokensUsed: 1000,
+        tokenBudget: null,
+      },
+      latestTurn: null,
+      session: {
+        threadId,
+        status: "running" as const,
+        providerName: "Codex",
+        runtimeMode: "full-access" as const,
+        activeTurnId: "new-turn" as TurnId,
+        lastError: null,
+        updatedAt: state.updatedAt,
+      },
+    };
+    for (const status of ["running", "ready"] as const) {
+      expect(
+        AgentAwarenessRelay.resolveAgentAwarenessRelayPublishSnapshot({
+          ...input,
+          thread: Option.some({
+            ...retainedGoalThread,
+            session: { ...retainedGoalThread.session, status },
+          }),
+          suppressClearedGoalCompletion: false,
+          ignoreRetainedGoal: true,
+        }).state?.headline,
+      ).toBe(status === "running" ? "Agent is working" : "Agent finished");
+    }
   });
 
   it("selects only active shell snapshot threads for startup catch-up", () => {
@@ -518,6 +649,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         } satisfies OrchestrationEngineShape;
 
         const snapshotQuery = {
+          getThreadGoalAwarenessHistory: () => Effect.succeed({ snapshotSequence: 0, updates: [] }),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 1,
@@ -743,6 +875,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             latestSequence: Effect.succeed(0),
           } satisfies OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadGoalAwarenessHistory: () =>
+              Effect.succeed({ snapshotSequence: 0, updates: [] }),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 1,

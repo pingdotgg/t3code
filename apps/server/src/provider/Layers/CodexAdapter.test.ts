@@ -85,6 +85,9 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   );
 
   public readonly compactThread = Effect.void;
+  public readonly setGoal = () => Effect.void;
+  public readonly refreshGoal = Effect.void;
+  public readonly clearGoal = Effect.void;
 
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
     Promise.resolve(undefined),
@@ -282,6 +285,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
           { id: "serviceTier", value: "priority" },
+          { id: "reasoningEffort", value: "high" },
         ]),
         runtimeMode: "full-access",
       });
@@ -293,6 +297,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
         model: "gpt-5.3-codex",
         providerInstanceId: ProviderInstanceId.make("codex"),
         serviceTier: "priority",
+        reasoningEffort: "high",
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
@@ -670,6 +675,63 @@ function codexTurnEvent(method: "turn/started" | "turn/completed", turnId: strin
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("preserves native goal usage and clears goal state", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "thread.goal.updated"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("goal-update"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-09-13T00:00:00.000Z",
+        method: "thread/goal/updated",
+        payload: {
+          threadId: "native-thread",
+          goal: {
+            threadId: "native-thread",
+            objective: "Finish the task",
+            status: "active",
+            createdAt: 100,
+            updatedAt: 110,
+            timeUsedSeconds: 8,
+            tokensUsed: 1234,
+            tokenBudget: 5000,
+          },
+        },
+      });
+      yield* runtime.emit({
+        id: asEventId("goal-clear"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-09-13T00:00:01.000Z",
+        method: "thread/goal/cleared",
+        payload: { threadId: "native-thread" },
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.payload.goal),
+        [
+          {
+            objective: "Finish the task",
+            status: "active",
+            createdAt: "1970-01-01T00:01:40.000Z",
+            updatedAt: "1970-01-01T00:01:50.000Z",
+            timeUsedSeconds: 8,
+            tokensUsed: 1234,
+            tokenBudget: 5000,
+          },
+          null,
+        ],
+      );
+    }),
+  );
   it.effect("calculates one Codex turn total from cumulative counters", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

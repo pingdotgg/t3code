@@ -1,3 +1,4 @@
+import type { ThreadGoalSetInput } from "@t3tools/contracts";
 /**
  * ProviderService - Service interface for provider sessions, turns, and checkpoints.
  *
@@ -53,6 +54,13 @@ export interface ProviderServiceShape {
   readonly sendTurn: (
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+
+  readonly refreshGoal: (threadId: ThreadId) => Effect.Effect<void, ProviderServiceError>;
+  readonly setGoal: (
+    threadId: ThreadId,
+    input: ThreadGoalSetInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+  readonly clearGoal: (threadId: ThreadId) => Effect.Effect<void, ProviderServiceError>;
 
   readonly compactThread: (
     threadId: ThreadId,

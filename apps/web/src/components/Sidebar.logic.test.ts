@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { resolveThreadNotification } from "../threadNotifications";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -56,6 +57,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
+  type ThreadGoal,
 } from "@t3tools/contracts";
 
 import {
@@ -321,6 +324,155 @@ function makeLatestTurn(overrides?: {
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("thread goal notifications", () => {
+  const goal: ThreadGoal = {
+    objective: "Finish the review",
+    status: "active",
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    timeUsedSeconds: 0,
+    tokensUsed: 0,
+    tokenBudget: null,
+  };
+
+  it.each([
+    ["complete", "Goal completed", "completion"],
+    ["blocked", "Goal needs attention", "input"],
+    ["budgetLimited", "Goal budget reached", "input"],
+    ["usageLimited", "Goal usage limit reached", "input"],
+  ] as const)("notifies once when a goal becomes %s", (status, title, kind) => {
+    const thread = makeThread({ goal });
+    const baseline = resolveThreadNotification(thread, "working", undefined);
+    expect(baseline.notification).toBeNull();
+    const updated = makeThread({ goal: { ...goal, status, lastReason: "Review is ready" } });
+    const result = resolveThreadNotification(updated, "ready", baseline.snapshot);
+    expect(result.notification).toMatchObject({ title, kind, body: "Thread\nReview is ready" });
+    expect(
+      resolveThreadNotification(
+        {
+          ...updated,
+          goal: { ...updated.goal!, tokensUsed: 100, updatedAt: "2026-03-09T10:06:00.000Z" },
+        },
+        "ready",
+        result.snapshot,
+      ).notification,
+    ).toBeNull();
+    // Mounting or reconnecting establishes a baseline, even for a terminal goal.
+    expect(resolveThreadNotification(updated, "ready", undefined).notification).toBeNull();
+  });
+
+  it("keeps rounds, pause and clear silent without replaying their turn completion", () => {
+    const active = makeThread({ goal, latestTurn: makeLatestTurn() });
+    const baseline = resolveThreadNotification(active, "working", undefined);
+    const round = resolveThreadNotification(active, "ready", baseline.snapshot);
+    expect(round.notification).toBeNull();
+    const paused = resolveThreadNotification(
+      { ...active, goal: { ...goal, status: "paused" } },
+      "ready",
+      round.snapshot,
+    );
+    expect(paused.notification).toBeNull();
+    expect(
+      resolveThreadNotification({ ...active, goal: null }, "ready", paused.snapshot).notification,
+    ).toBeNull();
+  });
+
+  it("suppresses a delayed goal turn completion but not a new manual turn", () => {
+    const latestTurn = { ...makeLatestTurn({ completedAt: null }), state: "running" as const };
+    const active = makeThread({ goal, latestTurn });
+    const baseline = resolveThreadNotification(active, "working", undefined);
+    const completed = makeThread({ goal: { ...goal, status: "complete" }, latestTurn });
+    const terminal = resolveThreadNotification(completed, "working", baseline.snapshot);
+    expect(terminal.notification?.title).toBe("Goal completed");
+    const settled = resolveThreadNotification(
+      { ...completed, latestTurn: makeLatestTurn() },
+      "ready",
+      terminal.snapshot,
+    );
+    expect(settled.notification).toBeNull();
+    const manual = resolveThreadNotification(
+      {
+        ...completed,
+        latestTurn: {
+          ...makeLatestTurn({ completedAt: "2026-03-09T10:10:00.000Z" }),
+          turnId: TurnId.make("manual-turn"),
+        },
+      },
+      "ready",
+      settled.snapshot,
+    );
+    expect(manual.notification?.title).toBe("Thread completed");
+  });
+
+  it.each(["complete", "paused", "blocked"] as const)(
+    "keeps a %s goal quiet through the session-to-checkpoint gap after reconnect",
+    (status) => {
+      const thread = makeThread({
+        goal: { ...goal, status },
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: goal.updatedAt,
+        },
+      });
+      const baseline = resolveThreadNotification(thread, "working", undefined);
+      const gap = resolveThreadNotification(
+        { ...thread, goal: null, session: null },
+        "ready",
+        baseline.snapshot,
+      );
+      const checkpoint = resolveThreadNotification(
+        { ...thread, goal: null, session: null, latestTurn: makeLatestTurn() },
+        "ready",
+        gap.snapshot,
+      );
+      expect(baseline.notification).toBeNull();
+      expect(gap.notification).toBeNull();
+      expect(checkpoint.notification).toBeNull();
+
+      const laterManual = makeThread({
+        ...thread,
+        session: { ...thread.session!, activeTurnId: TurnId.make("manual-turn") },
+      });
+      const reconnected = resolveThreadNotification(laterManual, "working", undefined);
+      const manualCompletion = resolveThreadNotification(
+        {
+          ...laterManual,
+          session: null,
+          latestTurn: {
+            ...makeLatestTurn(),
+            turnId: TurnId.make("manual-turn"),
+            requestedAt: "2026-03-09T10:03:00.000Z",
+          },
+        },
+        "ready",
+        reconnected.snapshot,
+      );
+      expect(manualCompletion.notification?.title).toBe("Thread completed");
+    },
+  );
+
+  it("notifies again after resuming a blocked goal and retains approval priority", () => {
+    const active = makeThread({ goal });
+    const baseline = resolveThreadNotification(active, "working", undefined);
+    const blocked = makeThread({ goal: { ...goal, status: "blocked" } });
+    const first = resolveThreadNotification(blocked, "ready", baseline.snapshot);
+    const resumed = resolveThreadNotification(active, "working", first.snapshot);
+    expect(resumed.notification).toBeNull();
+    expect(resolveThreadNotification(blocked, "ready", resumed.snapshot).notification?.title).toBe(
+      "Goal needs attention",
+    );
+    expect(
+      resolveThreadNotification(blocked, "approval", resumed.snapshot).notification?.title,
+    ).toBe("Approval needed");
+  });
+});
 
 describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {
@@ -1969,6 +2121,27 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("does not label a failed goal turn as goaling", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: { ...baseThread.session, status: "ready", activeTurnId: null },
+          latestTurn: { ...makeLatestTurn(), state: "error" },
+          goal: {
+            objective: "Finish task",
+            status: "active",
+            createdAt: "2026-03-09T10:00:00.000Z",
+            updatedAt: "2026-03-09T10:00:00.000Z",
+            timeUsedSeconds: 1,
+            tokensUsed: 10,
+            tokenBudget: null,
+          },
+        },
+      }),
+    ).toBeNull();
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {

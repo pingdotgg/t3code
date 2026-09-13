@@ -34,6 +34,10 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
+function attentionKey(row: RelayAgentActivityAggregateRow): string {
+  return `${rowKey(row)}:${row.status.startsWith("Goal ") ? row.status : "attention"}`;
+}
+
 export function alertAllowedForPhase(
   preferences: RelayAgentAwarenessPreferences | null,
   phase: string,
@@ -57,12 +61,14 @@ export function alertAllowedForPhase(
 export function attentionTransitionRows(input: TransitionInput) {
   if (input.previousAggregate === null) return [];
   const previouslyAttention = new Set(
-    input.previousAggregate.activities.filter((row) => isAttentionPhase(row.phase)).map(rowKey),
+    input.previousAggregate.activities
+      .filter((row) => isAttentionPhase(row.phase))
+      .map(attentionKey),
   );
   return input.nextAggregate.activities.filter(
     (row) =>
       isAttentionPhase(row.phase) &&
-      !previouslyAttention.has(rowKey(row)) &&
+      !previouslyAttention.has(attentionKey(row)) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }

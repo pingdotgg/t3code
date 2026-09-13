@@ -32,6 +32,7 @@ import {
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
@@ -1486,6 +1487,37 @@ function mapToRuntimeEvents(
     ];
   }
 
+  if (event.method === "thread/goal/updated") {
+    const payload = readPayload(EffectCodexSchema.V2ThreadGoalUpdatedNotification, event.payload);
+    if (!payload) return [];
+    const native = payload.goal;
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "thread.goal.updated",
+        payload: {
+          goal: {
+            objective: native.objective,
+            status: native.status,
+            createdAt: DateTime.formatIso(DateTime.makeUnsafe(native.createdAt * 1000)),
+            updatedAt: DateTime.formatIso(DateTime.makeUnsafe(native.updatedAt * 1000)),
+            timeUsedSeconds: native.timeUsedSeconds,
+            tokensUsed: native.tokensUsed,
+            tokenBudget: native.tokenBudget ?? null,
+          },
+        },
+      },
+    ];
+  }
+  if (event.method === "thread/goal/cleared") {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "thread.goal.updated",
+        payload: { goal: null },
+      },
+    ];
+  }
   if (event.method === "thread/started") {
     const payload = readPayload(EffectCodexSchema.V2ThreadStartedNotification, event.payload);
     if (!payload) {
@@ -2254,6 +2286,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
+        const reasoningEffort =
+          input.modelSelection?.instanceId === boundInstanceId
+            ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
+            : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
@@ -2271,6 +2307,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
           ...(mcpSession
             ? {
                 environment: {
@@ -2719,6 +2756,35 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     startSession,
     sendTurn,
     compaction: { type: "native", start: compactThread },
+    goals: {
+      refresh: (threadId) =>
+        requireSession(threadId).pipe(
+          Effect.flatMap((session) => session.runtime.refreshGoal),
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterSessionNotFoundError"
+              ? cause
+              : mapCodexRuntimeError(threadId, "thread/goal/get", cause),
+          ),
+        ),
+      set: (threadId, input) =>
+        requireSession(threadId).pipe(
+          Effect.flatMap((session) => session.runtime.setGoal(input)),
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterSessionNotFoundError"
+              ? cause
+              : mapCodexRuntimeError(threadId, "thread/goal/set", cause),
+          ),
+        ),
+      clear: (threadId) =>
+        requireSession(threadId).pipe(
+          Effect.flatMap((session) => session.runtime.clearGoal),
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterSessionNotFoundError"
+              ? cause
+              : mapCodexRuntimeError(threadId, "thread/goal/clear", cause),
+          ),
+        ),
+    },
     interruptTurn,
     readThread,
     rollbackThread,

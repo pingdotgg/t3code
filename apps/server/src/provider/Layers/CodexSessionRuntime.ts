@@ -1,3 +1,4 @@
+import type { ThreadGoalSetInput } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
   DEFAULT_MODEL,
@@ -176,6 +177,7 @@ export interface CodexSessionRuntimeOptions {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly reasoningEffort?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
@@ -211,6 +213,9 @@ export interface CodexSessionRuntimeShape {
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
+  readonly refreshGoal: Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly setGoal: (input: ThreadGoalSetInput) => Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly clearGoal: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -546,6 +551,7 @@ function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
+  readonly reasoningEffort?: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
@@ -555,6 +561,7 @@ function buildThreadStartParams(input: {
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.reasoningEffort ? { config: { model_reasoning_effort: input.reasoningEffort } } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
 }
@@ -722,6 +729,7 @@ export const openCodexThread = (input: {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string;
   readonly requestedModel: string | undefined;
+  readonly reasoningEffort?: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
@@ -730,6 +738,7 @@ export const openCodexThread = (input: {
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
+    reasoningEffort: input.reasoningEffort,
     serviceTier: input.serviceTier,
   });
 
@@ -805,6 +814,8 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "item/reasoning/summaryTextDelta":
     case "item/reasoning/summaryPartAdded":
     case "item/reasoning/textDelta":
+    case "thread/goal/updated":
+    case "thread/goal/cleared":
     case "thread/compacted":
     case "thread/realtime/started":
     case "thread/realtime/itemAdded":
@@ -1047,6 +1058,8 @@ function shouldSuppressChildConversationNotification(
     method === "thread/archived" ||
     method === "thread/unarchived" ||
     method === "thread/closed" ||
+    method === "thread/goal/updated" ||
+    method === "thread/goal/cleared" ||
     method === "thread/compacted" ||
     method === "thread/name/updated" ||
     method === "thread/settings/updated" ||
@@ -1110,6 +1123,8 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "thread/archived",
   "thread/unarchived",
   "thread/compacted",
+  "thread/goal/updated",
+  "thread/goal/cleared",
   // Registration path 1 handles a child's first thread/started; a repeat
   // must not reach the parent (it would restart the parent's thread state).
   "thread/started",
@@ -2375,6 +2390,7 @@ export const makeCodexSessionRuntime = (
         runtimeMode: options.runtimeMode,
         cwd: options.cwd,
         requestedModel,
+        reasoningEffort: options.reasoningEffort,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
       });
@@ -2390,6 +2406,17 @@ export const makeCodexSessionRuntime = (
       } satisfies ProviderSession;
       yield* Ref.set(sessionRef, session);
       yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
+      yield* client.request("thread/goal/get", { threadId: providerThreadId }).pipe(
+        Effect.flatMap(({ goal }) =>
+          emitEvent({
+            kind: "notification",
+            threadId: options.threadId,
+            method: goal ? "thread/goal/updated" : "thread/goal/cleared",
+            payload: goal ? { threadId: providerThreadId, goal } : { threadId: providerThreadId },
+          }),
+        ),
+        Effect.catch(() => Effect.void),
+      );
       return session;
     });
 
@@ -2427,6 +2454,42 @@ export const makeCodexSessionRuntime = (
     return {
       start,
       getSession: Ref.get(sessionRef),
+      refreshGoal: Effect.gen(function* () {
+        const threadId = yield* readProviderThreadId;
+        const { goal } = yield* client.request("thread/goal/get", { threadId });
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: goal ? "thread/goal/updated" : "thread/goal/cleared",
+          payload: goal ? { threadId, goal } : { threadId },
+        });
+      }),
+      setGoal: (input) =>
+        Effect.gen(function* () {
+          const threadId = yield* readProviderThreadId;
+          const { goal } = yield* client.request("thread/goal/set", {
+            threadId,
+            ...(input.objective !== undefined ? { objective: input.objective } : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.tokenBudget !== undefined ? { tokenBudget: input.tokenBudget } : {}),
+          });
+          yield* emitEvent({
+            kind: "notification",
+            threadId: options.threadId,
+            method: "thread/goal/updated",
+            payload: { threadId, goal },
+          });
+        }),
+      clearGoal: Effect.gen(function* () {
+        const threadId = yield* readProviderThreadId;
+        yield* client.request("thread/goal/clear", { threadId });
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: "thread/goal/cleared",
+          payload: { threadId },
+        });
+      }),
       compactThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;
         yield* client.request("thread/compact/start", { threadId: providerThreadId });

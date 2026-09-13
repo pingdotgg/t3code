@@ -1,4 +1,5 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { formatGoalDuration } from "./chat/GoalToolbar";
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -765,6 +766,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </a>
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+          {threadStatus?.label === "Goaling" && thread.goal?.timeUsedSeconds != null ? (
+            <span className="text-[10px] tabular-nums text-purple-600 dark:text-purple-400">
+              {formatGoalDuration(thread.goal.timeUsedSeconds)}
+            </span>
+          ) : null}
           {renamingThreadKey === threadKey ? (
             <input
               ref={handleRenameInputRef}
