@@ -19,6 +19,37 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
   });
 }
 
+const RELEASE_NOTE_PREFIX = /^(feat|fix|chore)(?:\([^)]*\))?!?:\s+/i;
+
+interface ReleaseNoteGroup {
+  readonly title: "Features" | "Fixes" | "Other";
+  readonly items: ReadonlyArray<string>;
+}
+
+export function groupSidebarUpdateReleaseNotes(
+  items: ReadonlyArray<string>,
+): ReadonlyArray<ReleaseNoteGroup> {
+  const features: string[] = [];
+  const fixes: string[] = [];
+  const other: string[] = [];
+
+  for (const item of items) {
+    const match = RELEASE_NOTE_PREFIX.exec(item);
+    const type = match?.[1]?.toLowerCase();
+    if (type === "chore") continue;
+    if (type === "feat") features.push(item);
+    else if (type === "fix") fixes.push(item);
+    else other.push(item);
+  }
+
+  const groups: ReadonlyArray<ReleaseNoteGroup> = [
+    { title: "Features", items: features },
+    { title: "Fixes", items: fixes },
+    { title: "Other", items: other },
+  ];
+  return groups.filter((group) => group.items.length > 0);
+}
+
 function ReleaseLink({
   children,
   releaseUrl,
@@ -77,7 +108,9 @@ export function SidebarUpdateReleaseNotes({
       <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => {
           const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
-          const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
+          const groups = groupSidebarUpdateReleaseNotes(releaseNote.items);
+          const displayedItemCount = groups.reduce((total, group) => total + group.items.length, 0);
+          const omittedItemCount = Math.max(0, releaseNote.totalItems - displayedItemCount);
           const linkLabel =
             omittedItemCount === 0
               ? "View release on GitHub"
@@ -90,13 +123,22 @@ export function SidebarUpdateReleaseNotes({
                 <h3 className="text-foreground text-xs leading-4 font-semibold">
                   {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
                 </h3>
-                <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
-                    <li className="list-disc break-words" key={key}>
-                      {item}
-                    </li>
+                <div className="mt-2 space-y-3">
+                  {groups.map((group) => (
+                    <div key={group.title}>
+                      <h4 className="text-xs leading-4 font-medium text-muted-foreground">
+                        {group.title}
+                      </h4>
+                      <ul className="mt-1 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                        {keyReleaseNoteItems(group.items).map(({ item, key }) => (
+                          <li className="list-disc break-words" key={key}>
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   ))}
-                </ul>
+                </div>
                 {releaseUrl ? (
                   <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
                     {linkLabel}

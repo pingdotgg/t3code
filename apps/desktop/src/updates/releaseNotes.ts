@@ -90,6 +90,10 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
   );
 }
 
+function isChoreReleaseNoteLine(line: string): boolean {
+  return /^chore(?:\([^)]*\))?!?:\s+/i.test(line);
+}
+
 interface ExtractedReleaseNoteItems {
   readonly items: ReadonlyArray<string>;
   readonly totalItems: number;
@@ -111,6 +115,7 @@ function extractReleaseNoteItems(note: string | null | undefined): ExtractedRele
     if (/^#{1,6}\s+/.test(item)) continue;
     if (isIgnoredReleaseNoteLine(item)) continue;
     totalItems += 1;
+    if (isChoreReleaseNoteLine(item)) continue;
     items.push(truncateReleaseNoteItem(item));
     if (items.length > MAX_RELEASE_NOTE_ITEMS_PER_GROUP) items.shift();
   }
@@ -135,7 +140,7 @@ export function normalizeDesktopUpdateReleaseNotes(
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
     const { items, totalItems } = extractReleaseNoteItems(entry.note);
-    if (totalItems === 0) return [];
+    if (items.length === 0) return [];
     return [
       {
         version: entry.version,

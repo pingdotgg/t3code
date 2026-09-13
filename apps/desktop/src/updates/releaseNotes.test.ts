@@ -58,6 +58,35 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     });
   });
 
+  it("omits chores while counting them as changes available on GitHub", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      [
+        "- feat(web): add grouped release notes",
+        "- chore(deps): update dependencies",
+        "- chore!: rebuild generated assets",
+        "- fix: keep updates readable",
+      ].join("\n"),
+      "1.2.3",
+    );
+
+    expect(result).toEqual({
+      releaseNotes: [
+        {
+          version: "1.2.3",
+          items: ["fix: keep updates readable", "feat(web): add grouped release notes"],
+          totalItems: 4,
+        },
+      ],
+      omittedReleaseCount: 0,
+    });
+  });
+
+  it("drops releases containing only chores", () => {
+    expect(
+      normalizeDesktopUpdateReleaseNotes("- chore(deps): update dependencies", "1.2.3"),
+    ).toEqual({ releaseNotes: [], omittedReleaseCount: 0 });
+  });
+
   it("does not count Markdown or HTML section headings as changes", () => {
     const changes = Array.from({ length: 8 }, (_, index) => `Change ${index + 1}`);
     const result = normalizeDesktopUpdateReleaseNotes(
