@@ -1,0 +1,5 @@
+<resources>
+  <color name="t3_widget_background">#FAFAFA</color>
+  <color name="t3_widget_foreground">#18181B</color>
+  <color name="t3_widget_secondary">#52525B</color>
+</resources>
