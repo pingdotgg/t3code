@@ -2144,7 +2144,7 @@ it("persists task aggregates and membership through restart and receipt retries"
     taskId,
     primaryProjectId: projectId,
     name: "Durable task",
-    createdAt: now(),
+    createdAt: "2020-01-01T00:00:00.000Z",
   } as const;
   const membership = {
     type: "thread.task.set",
@@ -2189,6 +2189,11 @@ it("persists task aggregates and membership through restart and receipt retries"
     const membershipReceipt = await system.run(system.engine.dispatch(membership));
     const before = await system.readModel();
     expect(before.tasks[0]).toMatchObject({ id: taskId, name: "Durable task" });
+    expect(Date.parse(before.tasks[0]!.updatedAt)).toBeGreaterThan(
+      Date.parse(taskCommand.createdAt),
+    );
+    expect(before.tasks[0]!.activeOrderKey).toBeNull();
+    expect(before.tasks[0]!.unsettledAt).toBeNull();
     expect(before.threads[0]).toMatchObject({
       taskId,
       pinnedAt: null,

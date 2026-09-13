@@ -3,6 +3,8 @@ import {
   ProjectId,
   TaskId,
   ThreadId,
+  TurnId,
+  CheckpointRef,
   ProviderInstanceId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -10,6 +12,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { TestClock } from "effect/testing";
+import { resolveTaskAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
@@ -121,6 +125,7 @@ it.layer(NodeServices.layer)("task decisions", (it) => {
         const moved = yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId });
         model = moved.model;
         expect(moved.events.map((event) => event.type)).toEqual([
+          "task.meta-updated",
           "thread.unpinned",
           "thread.task-set",
         ]);
@@ -544,7 +549,10 @@ it.layer(NodeServices.layer)("task lifecycle", (it) => {
       ({ model } = yield* apply(model, { type: "thread.settle", commandId, threadId }));
       ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
       const moved = yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId });
-      expect(moved.events.map((event) => event.type)).toEqual(["thread.task-set"]);
+      expect(moved.events.map((event) => event.type)).toEqual([
+        "task.meta-updated",
+        "thread.task-set",
+      ]);
       model = {
         ...moved.model,
         tasks: moved.model.tasks.map((task) => ({
@@ -569,5 +577,354 @@ it.layer(NodeServices.layer)("task lifecycle", (it) => {
         snoozedUntil: null,
       });
     }),
+  );
+});
+
+const resultAt = "2026-01-02T00:00:00.000Z";
+const wakeAt = "2026-02-01T00:00:00.000Z";
+const resultTurnId = TurnId.make("result-turn");
+
+it.layer(NodeServices.layer)("task result wake and membership activity", (it) => {
+  const memberSeed = Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(now));
+    const model = yield* seed;
+    return (yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId })).model;
+  });
+  for (const kind of ["error", "checkpoint", "session-completion"] as const) {
+    for (const snoozedAt of [now, resultAt, wakeAt, null]) {
+      it.effect(`${kind} compares its effective result timestamp with snooze ${snoozedAt}`, () =>
+        Effect.gen(function* () {
+          const original = yield* memberSeed;
+          const model = {
+            ...original,
+            tasks: original.tasks.map((task) => ({ ...task, snoozedAt, snoozedUntil: wakeAt })),
+            threads: original.threads.map((thread) => ({
+              ...thread,
+              latestTurn: {
+                turnId: resultTurnId,
+                state: "running" as const,
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                assistantMessageId: null,
+              },
+            })),
+          };
+          const command: OrchestrationCommand =
+            kind === "checkpoint"
+              ? {
+                  type: "thread.turn.diff.complete",
+                  commandId,
+                  threadId,
+                  turnId: resultTurnId,
+                  checkpointTurnCount: 1,
+                  checkpointRef: CheckpointRef.make("refs/checkpoints/result"),
+                  status: "ready",
+                  files: [],
+                  completedAt: resultAt,
+                  createdAt: "2026-01-20T00:00:00.000Z",
+                }
+              : {
+                  type: "thread.session.set",
+                  commandId,
+                  threadId,
+                  createdAt: "2026-01-20T00:00:00.000Z",
+                  session: {
+                    threadId,
+                    status: kind === "error" ? "error" : "ready",
+                    providerName: "Codex",
+                    runtimeMode: "full-access",
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: resultAt,
+                  },
+                };
+          const result = yield* apply(model, command);
+          const wakes = snoozedAt === now || (snoozedAt === null && kind === "error");
+          expect(result.model.tasks[0]?.snoozedUntil).toBe(wakes ? null : wakeAt);
+          expect(result.events.at(-1)?.aggregateKind).toBe("thread");
+          expect(result.model.threads[0]?.settledOverride).toBe(model.threads[0]?.settledOverride);
+          expect(result.model.threads[0]?.snoozedUntil).toBe(model.threads[0]?.snoozedUntil);
+          if (wakes) {
+            expect(result.events.slice(0, -1).map((event) => event.type)).toEqual([
+              "task.unsettled",
+              "task.unsnoozed",
+            ]);
+            expect(result.model.tasks[0]?.updatedAt).toBe(resultAt);
+            yield* TestClock.setTime(Date.parse("2026-01-03T00:00:00.000Z"));
+            const snoozed = yield* apply(result.model, {
+              type: "task.snooze",
+              commandId,
+              taskId,
+              snoozedUntil: wakeAt,
+            });
+            const duplicate = yield* apply(snoozed.model, command);
+            expect(duplicate.model.tasks).toEqual(snoozed.model.tasks);
+          }
+          for (const state of [
+            "settled",
+            "active",
+            "archived-member",
+            "deleted-member",
+            "archived-task",
+            "deleted-task",
+            "expired",
+          ] as const) {
+            const guarded = {
+              ...model,
+              tasks: model.tasks.map((task) => ({
+                ...task,
+                settledOverride: state === "settled" ? ("settled" as const) : null,
+                snoozedUntil: state === "active" ? null : state === "expired" ? resultAt : wakeAt,
+                archivedAt: state === "archived-task" ? now : null,
+                deletedAt: state === "deleted-task" ? now : null,
+                activeOrderKey: "saved",
+              })),
+              threads: model.threads.map((thread) => ({
+                ...thread,
+                archivedAt: state === "archived-member" ? now : null,
+                deletedAt: state === "deleted-member" ? now : null,
+              })),
+            };
+            expect((yield* apply(guarded, command)).model.tasks).toEqual(guarded.tasks);
+          }
+        }),
+      );
+    }
+  }
+  it.effect(
+    "ignores non-current, interrupted, failed, running and superseded placeholder checkpoints",
+    () =>
+      Effect.gen(function* () {
+        const original = yield* memberSeed;
+        const command = {
+          type: "thread.turn.diff.complete",
+          commandId,
+          threadId,
+          turnId: resultTurnId,
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/checkpoints/result"),
+          status: "ready",
+          files: [],
+          completedAt: resultAt,
+          createdAt: resultAt,
+        } as const;
+        for (const scenario of [
+          "other-turn",
+          "interrupted",
+          "error",
+          "running",
+          "placeholder",
+        ] as const) {
+          const model = {
+            ...original,
+            tasks: original.tasks.map((task) => ({
+              ...task,
+              snoozedAt: now,
+              snoozedUntil: wakeAt,
+            })),
+            threads: original.threads.map((thread) => ({
+              ...thread,
+              latestTurn: {
+                turnId: scenario === "other-turn" ? TurnId.make("new-turn") : resultTurnId,
+                state: scenario === "interrupted" ? ("interrupted" as const) : ("running" as const),
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                assistantMessageId: null,
+              },
+              session:
+                scenario === "running"
+                  ? {
+                      threadId,
+                      status: "running" as const,
+                      providerName: "Codex",
+                      runtimeMode: "full-access" as const,
+                      activeTurnId: resultTurnId,
+                      lastError: null,
+                      updatedAt: now,
+                    }
+                  : null,
+              checkpoints:
+                scenario === "placeholder"
+                  ? [
+                      {
+                        turnId: resultTurnId,
+                        checkpointTurnCount: 1,
+                        checkpointRef: command.checkpointRef,
+                        status: "ready" as const,
+                        files: [],
+                        completedAt: now,
+                        assistantMessageId: null,
+                      },
+                    ]
+                  : [],
+            })),
+          };
+          const result = yield* apply(model, {
+            ...command,
+            status:
+              scenario === "error" ? "error" : scenario === "placeholder" ? "missing" : "ready",
+          });
+          expect(result.model.tasks).toEqual(model.tasks);
+        }
+      }),
+  );
+  for (const operation of [
+    "remove",
+    "add-parked",
+    "move",
+    "archive",
+    "unarchive",
+    "delete",
+    "create",
+  ] as const) {
+    it.effect(
+      `${operation} persists membership activity and restarts the complete inactivity window`,
+      () =>
+        Effect.gen(function* () {
+          let model = yield* memberSeed;
+          const otherTaskId = TaskId.make("other-task");
+          ({ model } = yield* apply(model, { ...taskCreate, taskId: otherTaskId }));
+          ({ model } = yield* apply(model, { type: "thread.settle", commandId, threadId }));
+          if (operation === "add-parked")
+            ({ model } = yield* apply(model, {
+              type: "thread.task.set",
+              commandId,
+              threadId,
+              taskId: null,
+            }));
+          if (operation === "unarchive")
+            ({ model } = yield* apply(model, { type: "thread.archive", commandId, threadId }));
+          yield* TestClock.setTime(Date.parse(resultAt));
+          const command: OrchestrationCommand =
+            operation === "create"
+              ? {
+                  ...threadCreate,
+                  threadId: ThreadId.make("created-member"),
+                  taskId,
+                  createdAt: resultAt,
+                }
+              : operation === "remove" || operation === "add-parked" || operation === "move"
+                ? {
+                    type: "thread.task.set",
+                    commandId,
+                    threadId,
+                    taskId:
+                      operation === "remove" ? null : operation === "move" ? otherTaskId : taskId,
+                  }
+                : {
+                    type:
+                      operation === "archive"
+                        ? "thread.archive"
+                        : operation === "unarchive"
+                          ? "thread.unarchive"
+                          : "thread.delete",
+                    commandId,
+                    threadId,
+                  };
+          const before = model.tasks;
+          const result = yield* apply(model, command);
+          expect(result.events.at(-1)?.aggregateKind).toBe("thread");
+          const affected =
+            operation === "move"
+              ? result.model.tasks
+              : result.model.tasks.filter((task) => task.id === taskId);
+          for (const task of affected) {
+            expect(task).toEqual({
+              ...before.find((previous) => previous.id === task.id),
+              updatedAt: resultAt,
+            });
+            const members = result.model.threads
+              .filter((thread) => thread.taskId === task.id && thread.deletedAt === null)
+              .map((thread) => ({
+                ...thread,
+                latestUserMessageAt: null,
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+              }));
+            if (operation === "create") continue; // Newly created live work independently blocks settlement.
+            const policy = { task, members, settings: { sidebarAutoSettleAfterDays: 3 } };
+            const boundary = Date.parse(resultAt) + 3 * 86_400_000;
+            expect(
+              resolveTaskAutoSettlementAt({ ...policy, nowMs: Date.parse(resultAt) }),
+            ).toBeNull();
+            expect(resolveTaskAutoSettlementAt({ ...policy, nowMs: boundary })).toBeNull();
+            expect(resolveTaskAutoSettlementAt({ ...policy, nowMs: boundary + 1 })).toBe(resultAt);
+            expect(
+              resolveTaskAutoSettlementAt({
+                ...policy,
+                nowMs: boundary + 1,
+                settings: { sidebarAutoSettleAfterDays: null },
+              }),
+            ).toBeNull();
+            expect(
+              resolveTaskAutoSettlementAt({
+                ...policy,
+                nowMs: boundary + 1,
+                task: { ...task, settledOverride: "active" },
+              }),
+            ).toBeNull();
+          }
+        }),
+    );
+  }
+  it.effect(
+    "idempotent assignment and ordering leave activity unchanged; delayed creation cannot regress it",
+    () =>
+      Effect.gen(function* () {
+        let model = yield* memberSeed;
+        yield* TestClock.setTime(Date.parse(resultAt));
+        const duplicate = yield* apply(model, {
+          type: "thread.task.set",
+          commandId,
+          threadId,
+          taskId,
+        });
+        expect(duplicate.events.map((event) => event.type)).toEqual(["thread.task-set"]);
+        expect(duplicate.model.tasks).toEqual(model.tasks);
+        ({ model } = yield* apply(model, {
+          type: "task.unsettle",
+          commandId,
+          taskId,
+          reason: "user",
+        }));
+        ({ model } = yield* apply(model, {
+          type: "task.active.reorder",
+          commandId,
+          taskId,
+          orderKey: "saved",
+        }));
+        const before = model.tasks[0]!;
+        yield* TestClock.setTime(Date.parse(wakeAt));
+        const reordered = yield* apply(model, {
+          type: "task.active.reorder",
+          commandId,
+          taskId,
+          orderKey: "next",
+        });
+        expect(reordered.model.tasks[0]?.updatedAt).toBe(before.updatedAt);
+        const delayed = yield* apply(model, {
+          ...threadCreate,
+          threadId: ThreadId.make("delayed"),
+          taskId,
+          createdAt: now,
+        });
+        expect(delayed.model.tasks[0]?.updatedAt).toBe(before.updatedAt);
+        const parked = {
+          ...model,
+          threads: model.threads.map((thread) => ({
+            ...thread,
+            settledOverride: "settled" as const,
+          })),
+        };
+        const removed = yield* apply(parked, {
+          type: "thread.task.set",
+          commandId,
+          threadId,
+          taskId: null,
+        });
+        expect(removed.model.tasks[0]).toEqual({ ...before, updatedAt: wakeAt });
+      }),
   );
 });

@@ -3537,6 +3537,11 @@ it.effect("hydrates task membership and opt-in active and archived task inventor
       ["task-active"],
     );
     assert.equal(shell.updatedAt, updatedAt);
+    assert.equal(shell.tasks?.[0]?.updatedAt, updatedAt);
+    assert.equal(
+      commandModel.tasks.find((task) => task.id === "task-active")?.updatedAt,
+      updatedAt,
+    );
     assert.equal(shell.threads[0]?.taskId, "task-active");
     assert.isFalse("deletedAt" in shell.tasks![0]!);
     assert.deepStrictEqual(

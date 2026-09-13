@@ -8532,6 +8532,168 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       ).pipe(Effect.provide([NodeHttpServer.layerTest, NodeServices.layer])),
   );
 
+  for (const scenario of ["task result wake", "task membership activity"] as const) {
+    effectTest.live(
+      `${scenario} reaches both task clients while legacy subscriptions survive`,
+      () =>
+        Effect.acquireUseRelease(
+          makeOrchestrationIntegrationHarness({ provider: ProviderDriverKind.make("codex") }),
+          (harness) =>
+            Effect.gen(function* () {
+              const taskId = TaskId.make("activity-wire-task");
+              const projectId = ProjectId.make("activity-wire-project");
+              const threadId = ThreadId.make("activity-wire-member");
+              yield* harness.engine.dispatch({
+                type: "project.create",
+                commandId: CommandId.make("activity-project"),
+                projectId,
+                title: "Activity",
+                workspaceRoot: harness.workspaceDir,
+                createdAt: taskWireNow,
+              });
+              yield* harness.engine.dispatch({
+                type: "task.create",
+                commandId: CommandId.make("activity-task"),
+                taskId,
+                primaryProjectId: projectId,
+                name: "Activity",
+                createdAt: taskWireNow,
+              });
+              yield* harness.engine.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make("activity-member"),
+                threadId,
+                projectId,
+                taskId,
+                title: "Member",
+                createdAt: taskWireNow,
+                modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+              });
+              if (scenario === "task result wake") {
+                yield* harness.engine.dispatch({
+                  type: "task.snooze",
+                  commandId: CommandId.make("activity-snooze"),
+                  taskId,
+                  snoozedUntil: "2099-01-01T00:00:00.000Z",
+                });
+              }
+              yield* buildAppUnderTest({
+                layers: {
+                  orchestrationEngine: harness.engine,
+                  projectionSnapshotQuery: harness.snapshotQuery,
+                },
+              });
+              const before = Option.getOrThrow(
+                yield* harness.snapshotQuery.getTaskShellById(taskId),
+              );
+              const effectiveAt = DateTime.formatIso(
+                DateTime.add(DateTime.makeUnsafe(before.updatedAt), { milliseconds: 1 }),
+              );
+              const terminalAt = "2098-01-01T00:00:00.000Z";
+              const wsUrl = yield* getWsServerUrl("/ws");
+              const ready = yield* Deferred.make<void>();
+              let synchronizedCount = 0;
+              yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const clients = yield* Effect.forEach([true, true, false], (includeTasks) =>
+                    withWsRpcClient(wsUrl, (client) =>
+                      client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+                        includeTasks,
+                        requestCompletionMarker: true,
+                      }).pipe(
+                        Stream.tap((item) =>
+                          item.kind === "synchronized"
+                            ? Effect.sync(() => ++synchronizedCount).pipe(
+                                Effect.flatMap((count) =>
+                                  count === 3 ? Deferred.succeed(ready, undefined) : Effect.void,
+                                ),
+                              )
+                            : Effect.void,
+                        ),
+                        Stream.takeUntil(
+                          (item) =>
+                            item.kind === "thread-upserted" &&
+                            item.thread.id === threadId &&
+                            item.thread.session?.updatedAt === terminalAt,
+                        ),
+                        Stream.runCollect,
+                      ),
+                    ).pipe(Effect.forkScoped),
+                  );
+                  yield* Deferred.await(ready);
+                  if (scenario === "task result wake") {
+                    yield* harness.engine.dispatch({
+                      type: "thread.session.set",
+                      commandId: CommandId.make("activity-error"),
+                      threadId,
+                      createdAt: effectiveAt,
+                      session: {
+                        threadId,
+                        status: "error",
+                        providerName: "Codex",
+                        runtimeMode: "full-access",
+                        activeTurnId: null,
+                        lastError: "Failed",
+                        updatedAt: effectiveAt,
+                      },
+                    });
+                  } else {
+                    yield* withWsRpcClient(wsUrl, (client) =>
+                      client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                        type: "thread.task.set",
+                        commandId: CommandId.make("activity-remove"),
+                        threadId,
+                        taskId: null,
+                      }),
+                    );
+                  }
+                  const after = Option.getOrThrow(
+                    yield* harness.snapshotQuery.getTaskShellById(taskId),
+                  );
+                  if (scenario === "task result wake") assert.equal(after.snoozedUntil, null);
+                  else {
+                    assert.isAbove(Date.parse(after.updatedAt), Date.parse(before.updatedAt));
+                    assert.equal(after.activeOrderKey, before.activeOrderKey);
+                    assert.equal(after.unsettledAt, before.unsettledAt);
+                  }
+                  yield* harness.engine.dispatch({
+                    type: "thread.session.set",
+                    commandId: CommandId.make("activity-done"),
+                    threadId,
+                    createdAt: terminalAt,
+                    session: {
+                      threadId,
+                      status: "ready",
+                      providerName: "Codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: terminalAt,
+                    },
+                  });
+                  for (const [index, fiber] of clients.entries()) {
+                    const items = yield* Fiber.join(fiber);
+                    const tasks = items.flatMap((item) =>
+                      item.kind === "task-upserted" ? [item.task] : [],
+                    );
+                    if (index < 2) assert.deepEqual(tasks.at(-1), after);
+                    else {
+                      assert.deepEqual(tasks, []);
+                      for (const item of items) decodeLegacyTaskWireItem(item);
+                    }
+                  }
+                }),
+              );
+            }),
+          (harness) => harness.dispose,
+        ).pipe(Effect.provide([NodeHttpServer.layerTest, NodeServices.layer])),
+    );
+  }
+
   it.effect("task opt-in reaches HTTP, full/reset shell and archived snapshots", () =>
     Effect.gen(function* () {
       const snapshot = (options?: { includeTasks?: boolean | undefined }) =>

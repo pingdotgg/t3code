@@ -246,6 +246,75 @@ const taskReengagementEvents = Effect.fn("taskReengagementEvents")(function* ({
   return events;
 });
 
+/** Results wake only a currently snoozed parent, never a manually settled task. */
+function taskResultWakesSnooze(
+  readModel: OrchestrationReadModel,
+  thread: OrchestrationThread,
+  resultAt: string,
+  kind: "error" | "completed",
+) {
+  if (thread.archivedAt !== null || thread.deletedAt !== null) return false;
+  const task = readModel.tasks.find((candidate) => candidate.id === thread.taskId);
+  if (
+    !task ||
+    task.archivedAt !== null ||
+    task.deletedAt !== null ||
+    task.settledOverride === "settled" ||
+    task.snoozedUntil === null ||
+    Date.parse(task.snoozedUntil) <= Date.parse(resultAt)
+  )
+    return false;
+  return task.snoozedAt === null
+    ? kind === "error"
+    : Date.parse(resultAt) > Date.parse(task.snoozedAt);
+}
+
+/** Membership changes restart inactivity without moving the task's saved slot. */
+const taskMembershipActivityEvents = Effect.fn("taskMembershipActivityEvents")(function* ({
+  readModel,
+  taskIds,
+  commandId,
+  occurredAt,
+  companions = [],
+}: {
+  readModel: OrchestrationReadModel;
+  taskIds: ReadonlyArray<OrchestrationThread["taskId"]>;
+  commandId: OrchestrationCommand["commandId"];
+  occurredAt: string;
+  companions?: ReadonlyArray<PlannedOrchestrationEvent>;
+}) {
+  const events: PlannedOrchestrationEvent[] = [...companions];
+  for (const taskId of new Set(taskIds)) {
+    const task = readModel.tasks.find(
+      (candidate) => candidate.id === taskId && candidate.deletedAt === null,
+    );
+    if (!task) continue;
+    const updatedAt =
+      Date.parse(task.updatedAt) > Date.parse(occurredAt) ? task.updatedAt : occurredAt;
+    if (
+      companions.some(
+        (event) =>
+          event.aggregateKind === "task" &&
+          event.aggregateId === taskId &&
+          "updatedAt" in event.payload &&
+          event.payload.updatedAt === updatedAt,
+      )
+    )
+      continue;
+    events.push({
+      ...(yield* withEventBase({
+        aggregateKind: "task",
+        aggregateId: task.id,
+        commandId,
+        occurredAt,
+      })),
+      type: "task.meta-updated",
+      payload: { taskId: task.id, updatedAt },
+    });
+  }
+  return events;
+});
+
 function isLiveTaskMember(thread: OrchestrationThread, now: string) {
   if (thread.archivedAt !== null || thread.deletedAt !== null) return false;
   if (openRequests(thread).size > 0 || hasQueuedTurnStartForThread(thread, now)) return true;
@@ -516,7 +585,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               : { type: "thread.delete", commandId: command.commandId, threadId: member.id },
           );
       }
-      const events = yield* decideCommandSequence({ readModel, commands });
+      const events = (yield* decideCommandSequence({ readModel, commands })).filter(
+        // The enclosing lifecycle event already stamps this parent and ends the receipt batch.
+        (event) => event.type !== "task.meta-updated" || event.aggregateId !== task.id,
+      );
       const base = yield* withEventBase({
         aggregateKind: "task",
         aggregateId: task.id,
@@ -836,7 +908,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: unchanged ? thread.updatedAt : occurredAt,
         },
       };
-      const taskEvents =
+      const wakeEvents =
         !unchanged && command.taskId !== null && isLiveTaskMember(thread, occurredAt)
           ? yield* taskReengagementEvents({
               readModel,
@@ -845,6 +917,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               occurredAt,
             })
           : [];
+      const taskEvents = unchanged
+        ? []
+        : yield* taskMembershipActivityEvents({
+            readModel,
+            taskIds: [thread.taskId, command.taskId],
+            commandId: command.commandId,
+            occurredAt,
+            companions: wakeEvents,
+          });
       if (!unchanged && command.taskId !== null && thread.pinnedAt != null) {
         return [
           ...taskEvents,
@@ -1059,23 +1140,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-      const taskEvents = yield* taskReengagementEvents({
+      const wakeEvents = yield* taskReengagementEvents({
         readModel,
         thread: { taskId: command.taskId },
         commandId: command.commandId,
         occurredAt: command.createdAt,
       });
+      const taskEvents = yield* taskMembershipActivityEvents({
+        readModel,
+        taskIds: [command.taskId],
+        commandId: command.commandId,
+        occurredAt: command.createdAt,
+        companions: wakeEvents,
+      });
       return taskEvents.length > 0 ? [...taskEvents, event] : event;
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const event: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1088,16 +1176,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           deletedAt: occurredAt,
         },
       };
+      const taskEvents =
+        thread.deletedAt === null && thread.archivedAt === null
+          ? yield* taskMembershipActivityEvents({
+              readModel,
+              taskIds: [thread.taskId],
+              commandId: command.commandId,
+              occurredAt,
+            })
+          : [];
+      return taskEvents.length > 0 ? [...taskEvents, event] : event;
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const event: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1111,16 +1209,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      const taskEvents =
+        thread.deletedAt === null
+          ? yield* taskMembershipActivityEvents({
+              readModel,
+              taskIds: [thread.taskId],
+              commandId: command.commandId,
+              occurredAt,
+            })
+          : [];
+      return taskEvents.length > 0 ? [...taskEvents, event] : event;
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const thread = yield* requireThreadArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const event: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1133,6 +1241,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      const taskEvents =
+        thread.deletedAt === null
+          ? yield* taskMembershipActivityEvents({
+              readModel,
+              taskIds: [thread.taskId],
+              commandId: command.commandId,
+              occurredAt,
+            })
+          : [];
+      return taskEvents.length > 0 ? [...taskEvents, event] : event;
     }
 
     case "thread.settle":
@@ -2429,7 +2547,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       // Only a session coming alive is activity worth waking a settled thread
       // for — status writes like ready/stopped/error arrive after the fact and
-      // must not fight a user's explicit settle. Snooze is deliberately NOT
+      // must not fight a user's explicit settle. Thread snooze is deliberately NOT
       // cleared here: snooze never pauses the agent, so its session starting
       // or erroring is not the user re-engaging. Blocked/failed work still
       // surfaces immediately — effectiveSnoozed refuses to classify a thread
@@ -2437,15 +2555,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
+      // Match the projector's running-turn completion on idle/ready session transitions.
+      const sessionResult =
+        command.session.status === "error"
+          ? "error"
+          : (command.session.status === "idle" || command.session.status === "ready") &&
+              thread.latestTurn?.state === "running"
+            ? "completed"
+            : null;
       const taskEvents =
-        isSessionActivity &&
-        thread.session?.status !== "starting" &&
-        thread.session?.status !== "running"
+        (isSessionActivity &&
+          thread.session?.status !== "starting" &&
+          thread.session?.status !== "running") ||
+        (sessionResult !== null &&
+          taskResultWakesSnooze(readModel, thread, command.session.updatedAt, sessionResult))
           ? yield* taskReengagementEvents({
               readModel,
               thread,
               commandId: command.commandId,
-              occurredAt: command.createdAt,
+              occurredAt: isSessionActivity ? command.createdAt : command.session.updatedAt,
             })
           : [];
       // Real activity resets ANY override (settled wakes, active unpins).
@@ -2630,12 +2758,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.diff.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const event: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -2654,6 +2782,30 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           completedAt: command.completedAt,
         },
       };
+      const existingCheckpoint = thread.checkpoints.find(
+        (entry) => entry.turnId === command.turnId,
+      );
+      const completesCurrentTurn =
+        (thread.latestTurn === null || thread.latestTurn.turnId === command.turnId) &&
+        thread.latestTurn?.state !== "interrupted" &&
+        thread.session?.status !== "running" &&
+        !(
+          existingCheckpoint &&
+          existingCheckpoint.status !== "missing" &&
+          command.status === "missing"
+        ) &&
+        command.status !== "error";
+      const taskEvents =
+        completesCurrentTurn &&
+        taskResultWakesSnooze(readModel, thread, command.completedAt, "completed")
+          ? yield* taskReengagementEvents({
+              readModel,
+              thread,
+              commandId: command.commandId,
+              occurredAt: command.completedAt,
+            })
+          : [];
+      return taskEvents.length > 0 ? [...taskEvents, event] : event;
     }
 
     case "thread.revert.complete": {

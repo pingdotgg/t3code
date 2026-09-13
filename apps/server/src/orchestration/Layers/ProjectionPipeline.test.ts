@@ -303,6 +303,11 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection
           },
           {
             ...fields,
+            type: "task.meta-updated",
+            payload: { taskId, updatedAt: future },
+          },
+          {
+            ...fields,
             type: "task.unsettled",
             payload: { taskId, reason: "activity", updatedAt: later },
           },

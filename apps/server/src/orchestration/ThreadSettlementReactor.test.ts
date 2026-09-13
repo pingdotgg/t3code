@@ -1360,6 +1360,41 @@ describe("task automatic settlement", () => {
     ),
   );
 
+  it.effect(
+    "waits a full window after persisted membership activity when retrying a stale snapshot",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const task = makeTask("membership-touched", { updatedAt: NOW });
+          const fixture = yield* makeHarness({
+            snapshot: { ...makeSnapshot([]), snapshotSequence: 4, tasks: [task] },
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.strictEqual((yield* Ref.get(fixture.taskCommands)).length, 0);
+            // Merge notifications request a fresh policy pass without wall-clock waits.
+            for (const elapsed of [3 * 86_400_000, 3 * 86_400_000 + 1]) {
+              yield* TestClock.setTime(Date.parse(NOW) + elapsed);
+              yield* fixture.publishMerge;
+              yield* Queue.take(fixture.snapshotReads);
+              yield* reactor.drain;
+              const commands = yield* Ref.get(fixture.taskCommands);
+              if (elapsed === 3 * 86_400_000) assert.strictEqual(commands.length, 0);
+              else {
+                assert.strictEqual(commands.length, 1);
+                assert.strictEqual(commands[0]?.settledAt, NOW);
+                assert.strictEqual(commands[0]?.snapshotSequence, 4);
+                assert.deepStrictEqual(commands[0]?.memberThreadIds, []);
+              }
+            }
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("settles tasks before unrelated network work completes", () =>
     Effect.scoped(
       Effect.gen(function* () {

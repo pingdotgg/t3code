@@ -44,12 +44,20 @@ it.effect("replays empty task creation and sparse metadata updates deterministic
       pinnedAt: null,
       deletedAt: null,
     });
+    const beforeActivity = model.tasks[0]!;
+    model = yield* projectEvent(model, {
+      ...base,
+      sequence: 3,
+      type: "task.meta-updated",
+      payload: { taskId: TaskId.make("task"), updatedAt: "2026-01-02T00:00:00.000Z" },
+    });
+    expect(model.tasks[0]).toEqual({ ...beforeActivity, updatedAt: "2026-01-02T00:00:00.000Z" });
     expect(model.threads).toEqual([]);
     const unchanged = yield* projectEvent(model, {
       ...base,
       aggregateKind: "thread",
       aggregateId: ThreadId.make("missing"),
-      sequence: 3,
+      sequence: 4,
       type: "thread.task-set",
       payload: { threadId: ThreadId.make("missing"), taskId: null, updatedAt: now },
     });
