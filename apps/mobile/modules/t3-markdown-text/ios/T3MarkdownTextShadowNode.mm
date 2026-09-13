@@ -241,13 +241,26 @@ Size T3MarkdownTextShadowNode::measureContent(
     [layoutManager ensureLayoutForTextContainer:textContainer];
     const CGRect usedRect = [layoutManager usedRectForTextContainer:textContainer];
 
+    // NSLayoutManager with usesFontLeading=NO can underreport height by up to
+    // one line's worth of leading, causing text to be clipped at the bottom of
+    // its container on iOS. Adding a fraction of the base line height as a
+    // buffer ensures the measured size always encompasses the rendered glyphs.
+    Float heightBuffer = 0;
+    if (!baseAttributedString.isEmpty()) {
+      const auto &firstFragment = baseAttributedString.getFragments().front();
+      const Float lineHeight = firstFragment.textAttributes.lineHeight.value_or(0);
+      if (lineHeight > 0) {
+        heightBuffer = lineHeight * 0.15f;
+      }
+    }
+
     return {
         std::clamp(
             static_cast<Float>(std::ceil(usedRect.size.width)),
             layoutConstraints.minimumSize.width,
             layoutConstraints.maximumSize.width),
         std::clamp(
-            static_cast<Float>(std::ceil(usedRect.size.height)),
+            static_cast<Float>(std::ceil(usedRect.size.height + heightBuffer)),
             layoutConstraints.minimumSize.height,
             layoutConstraints.maximumSize.height),
     };
