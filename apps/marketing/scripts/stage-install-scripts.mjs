@@ -2,14 +2,14 @@
 // the release tooling; the site serves them at /install.sh and /install.ps1.
 // Copy them into public/ before every Astro build and dev server so the two
 // never drift. The copies are gitignored.
-import { copyFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const marketingDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const repoRoot = dirname(dirname(marketingDir));
-const publicDir = join(marketingDir, "public");
-mkdirSync(publicDir, { recursive: true });
+const marketingDir = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
+const repoRoot = NodePath.dirname(NodePath.dirname(marketingDir));
+const publicDir = NodePath.join(marketingDir, "public");
+NodeFS.mkdirSync(publicDir, { recursive: true });
 for (const name of ["install.sh", "install.ps1"]) {
-  copyFileSync(join(repoRoot, "scripts", name), join(publicDir, name));
+  NodeFS.copyFileSync(NodePath.join(repoRoot, "scripts", name), NodePath.join(publicDir, name));
 }
