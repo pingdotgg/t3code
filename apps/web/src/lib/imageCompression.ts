@@ -1,3 +1,8 @@
+import {
+  IMAGE_DIMENSIONS_HEADER_BYTES,
+  readImageDimensions,
+} from "@t3tools/shared/imageDimensions";
+
 /**
  * Downscale + re-encode for image attachments that are too big for where
  * they're headed. Two consumers share the same pipeline:
@@ -20,13 +25,13 @@ const MAX_DIMENSION = 2048;
 /** Base64 budget for a single stashed image (~975KB of binary). */
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 /**
- * Ceiling on the *source* file handed to the re-encoder. File size is a
- * proxy for pixel count, and decoding hundreds of megapixels into an
- * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
+ * Ceiling on source bytes handed to the re-encoder. Compressed file size
+ * does not bound decoded pixels; wallpaper and HEIC imports also check dimensions.
  */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
+const MAX_WALLPAPER_IMAGE_PIXELS = 64_000_000;
 /**
  * Quality ladder tried in order until the encoded image fits the budget.
  * The floor stays high enough to avoid visible blocking on UI screenshots;
@@ -364,13 +369,16 @@ export async function compressImageForStash(
   file: File,
   budgetChars: number = MAX_STASH_IMAGE_DATA_URL_CHARS,
 ): Promise<CompressStashImageResult> {
-  let originalDataUrl: string;
-  try {
-    originalDataUrl = await blobToDataUrl(file);
-  } catch {
-    return { ok: false, reason: "unreadable" };
-  }
-  if (originalDataUrl.length <= budgetChars) {
+  // Avoid allocating a full base64 copy of a source that must be re-encoded anyway.
+  const originalDataUrlLength =
+    `data:${file.type || "application/octet-stream"};base64,`.length + 4 * Math.ceil(file.size / 3);
+  if (originalDataUrlLength <= budgetChars) {
+    let originalDataUrl: string;
+    try {
+      originalDataUrl = await blobToDataUrl(file);
+    } catch {
+      return { ok: false, reason: "unreadable" };
+    }
     return {
       ok: true,
       image: {
@@ -395,6 +403,25 @@ export async function compressImageForStash(
       imageSize: reencoded.imageSize,
     },
   };
+}
+
+/** Check local wallpaper dimensions before even a small compressed file reaches a decoder. */
+export async function compressImageForWallpaper(file: File): Promise<CompressStashImageResult> {
+  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+  try {
+    const header = new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer());
+    const dimensions = readImageDimensions(header);
+    // Unknown dimensions cannot safely fall back to decoding the source.
+    if (!dimensions) return { ok: false, reason: "unreadable" };
+    if (dimensions.width > MAX_WALLPAPER_IMAGE_PIXELS / dimensions.height) {
+      return { ok: false, reason: "too-large" };
+    }
+    return await compressImageForStash(file);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
 }
 
 /**

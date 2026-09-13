@@ -18,6 +18,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
+import { useHasTimelineBackground } from "./ChatTimelineBackground";
 import { Badge } from "../ui/badge";
 import {
   Dialog,
@@ -145,8 +146,16 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     })();
   };
 
+  const glass = useHasTimelineBackground();
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div
+      className={cn(
+        "rounded-[24px] border border-border/80 p-4 sm:p-5",
+        glass
+          ? "surface-glass [--surface-glass-color:var(--card)] [text-shadow:none]"
+          : "bg-card/70",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
