@@ -822,6 +822,161 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect(
+    "reseeds progressive history from a bounded snapshot when the cursor anchor is gone",
+    () =>
+      Effect.gen(function* () {
+        const refreshedProjection: OrchestrationV2ThreadProjection = {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Refreshed snapshot" },
+        };
+        const requestedPaths: string[] = [];
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            requestedPaths.push(url.pathname);
+            if (url.pathname.endsWith("/history")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(
+                    {
+                      _tag: "EnvironmentRequestInvalidError",
+                      code: "invalid_request",
+                      reason: "invalid_history_cursor",
+                      traceId: "trace-dead-cursor",
+                    },
+                    { status: 400 },
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 20,
+                  projection: refreshedProjection,
+                  historyCursor: "fresh-history-cursor",
+                  hasMoreHistory: true,
+                  latestLocalTurnOrdinal: 12,
+                }),
+              ),
+            );
+          }),
+        });
+        yield* Queue.offer(harness.inputs, {
+          kind: "snapshot",
+          snapshotSequence: 14,
+          projection: BASE_PROJECTION,
+          historyCursor: "dead-history-cursor",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 10,
+          payloadBudgetExceeded: false,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+        );
+
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        expect(requestedPaths.some((path) => path.endsWith("/history"))).toBe(true);
+        expect(requestedPaths.some((path) => path.endsWith("/bounded"))).toBe(true);
+        expect(state.history).toMatchObject({
+          historyCursor: "fresh-history-cursor",
+          hasMoreHistory: true,
+          loading: false,
+          error: null,
+          expanded: false,
+          latestLocalTurnOrdinal: 12,
+        });
+        expect(Option.getOrThrow(state.data).thread.title).toBe("Refreshed snapshot");
+      }),
+  );
+
+  it.effect("skips a stale bounded reseed when a newer socket event landed in flight", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const boundedRequested = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        historyHttpClient: HttpClient.make((request, url) => {
+          if (url.pathname.endsWith("/history")) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    _tag: "EnvironmentRequestInvalidError",
+                    code: "invalid_request",
+                    reason: "invalid_history_cursor",
+                    traceId: "trace-dead-cursor",
+                  },
+                  { status: 400 },
+                ),
+              ),
+            );
+          }
+          return Deferred.succeed(boundedRequested, void 0).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.map(() =>
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 20,
+                  projection: {
+                    ...BASE_PROJECTION,
+                    thread: { ...BASE_PROJECTION.thread, title: "Stale reseed" },
+                  },
+                  historyCursor: "fresh-history-cursor",
+                  hasMoreHistory: true,
+                  latestLocalTurnOrdinal: 12,
+                }),
+              ),
+            ),
+          );
+        }),
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "dead-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 10,
+        payloadBudgetExceeded: false,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+      );
+
+      const pending = yield* Effect.forkChild(harness.loadEarlier());
+      // The bounded reseed must be in flight before the socket event lands.
+      yield* Deferred.await(boundedRequested);
+      // A socket event newer than the in-flight reseed must not be discarded.
+      yield* Queue.offer(harness.inputs, titleUpdated("In-flight update", 21));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "In-flight update",
+      );
+      yield* Deferred.succeed(gate, void 0);
+
+      const result = yield* Fiber.join(pending);
+      expect(result._tag).toBe("error");
+
+      const state = yield* SubscriptionRef.get(harness.threadState);
+      expect(Option.getOrThrow(state.data).thread.title).toBe("In-flight update");
+      expect(state.history).toMatchObject({
+        historyCursor: "dead-history-cursor",
+        loading: false,
+      });
+      expect(state.history.error).not.toBeNull();
+    }),
+  );
+
   it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>
     Effect.gen(function* () {
       const httpProjection: OrchestrationV2ThreadProjection = {
