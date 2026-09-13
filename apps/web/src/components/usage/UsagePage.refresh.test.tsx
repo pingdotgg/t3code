@@ -1,5 +1,6 @@
 import { EnvironmentId, ProviderInstanceId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -8,11 +9,21 @@ const state = vi.hoisted(() => ({
   presentations: new Map(),
   refreshProviders: vi.fn(async () => undefined),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.presentations }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: unknown) =>
+    atom === "keybindings" ? DEFAULT_RESOLVED_KEYBINDINGS : state.presentations,
+}));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+  useCanGoBack: () => false,
+}));
 vi.mock("../../state/presentation", () => ({
   environmentPresentations: { presentationsAtom: null },
 }));
-vi.mock("../../state/server", () => ({ serverEnvironment: { refreshProviders: null } }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { refreshProviders: null },
+  primaryServerKeybindingsAtom: "keybindings",
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.refreshProviders }));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../hooks/useSettings", () => ({ usePrimarySettings: () => "24h" }));
@@ -84,6 +95,7 @@ import { UsagePage } from "./UsagePage";
 
 let renderer: ReactTestRenderer;
 beforeEach(() => {
+  vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-11T12:00:00Z"));
   state.refreshProviders.mockClear();
