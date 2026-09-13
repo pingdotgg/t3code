@@ -10,5 +10,10 @@
       "bun",
       "node"
     ]
-  }
+  },
+  "references": [
+    {
+      "path": "../../distilled/packages/aws/tsconfig.json"
+    },
+  ]
 }

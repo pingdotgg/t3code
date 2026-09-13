@@ -63,24 +63,21 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * backend authenticates management calls with the create-only `secret`
  * (a bearer token). The only configurable property is the human-readable
  * `name`, which is mutable in place.
- * @resource
- * @product Calls
- * @category Media
- * @section Creating an App
- * @example App with a generated name
+ * ### Creating an App
+ * **Example:** App with a generated name
  * ```typescript
  * const app = yield* Cloudflare.Calls.App("realtime", {});
  * ```
  *
- * @example App with an explicit name
+ * **Example:** App with an explicit name
  * ```typescript
  * const app = yield* Cloudflare.Calls.App("realtime", {
  *   name: "my-realtime-app",
  * });
  * ```
  *
- * @section Using the credentials
- * @example Passing the appId and secret to a backend
+ * ### Using the credentials
+ * **Example:** Passing the appId and secret to a backend
  * ```typescript
  * // appId is public — it appears in client session URLs:
  * const appId = app.appId;
@@ -91,6 +88,10 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * ```
  *
  * @see https://developers.cloudflare.com/realtime/
+ *
+ * @resource
+ * @product Calls
+ * @category Media
  */
 export const App = Resource<App>(TypeId);
 

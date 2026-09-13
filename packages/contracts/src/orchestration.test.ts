@@ -2,10 +2,12 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
   ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
@@ -24,10 +26,12 @@ import {
   OrchestrationMessage,
   ThreadMessageSentPayload,
   ThreadMetaUpdatedPayload,
+  ThreadLinkedPullRequest,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  SnapShotAccessibility,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
@@ -64,6 +68,7 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -373,6 +378,115 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
   }),
 );
 
+it.effect("preserves window capture metadata in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-snap-shot",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-snap-shot",
+        role: "user",
+        text: "Review this window",
+        attachments: [
+          {
+            type: "image",
+            id: "snap-shot-1",
+            name: "editor.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            source: {
+              kind: "snap-shot",
+              capturedAt: "2026-08-24T11:00:00.000Z",
+              appName: "Editor",
+              windowTitle: "main.ts",
+              accessibleText: "const answer = 42;",
+              accessibility: {
+                format: "element-tree",
+                coordinateSpace: "captured-image",
+                imageSize: { width: 800, height: 600 },
+                truncated: false,
+                root: {
+                  role: "window",
+                  name: "main.ts",
+                  bounds: { x: 0, y: 0, width: 800, height: 600 },
+                  children: [
+                    {
+                      role: "text",
+                      value: "const answer = 42;",
+                      bounds: { x: 20, y: 40, width: 180, height: 20 },
+                      children: [],
+                    },
+                  ],
+                },
+              },
+              appIdentifier: "com.example.editor",
+              appIconDataUrl: "data:image/png;base64,iVBORw==",
+            },
+          },
+        ],
+      },
+      createdAt: "2026-08-24T11:00:00.000Z",
+    });
+
+    const attachment = parsed.message.attachments[0];
+    assert.strictEqual(attachment?.type, "image");
+    assert.deepStrictEqual((attachment as ChatImageAttachment).source, {
+      kind: "snap-shot",
+      capturedAt: "2026-08-24T11:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+      accessibleText: "const answer = 42;",
+      accessibility: {
+        format: "element-tree",
+        coordinateSpace: "captured-image",
+        imageSize: { width: 800, height: 600 },
+        truncated: false,
+        root: {
+          role: "window",
+          name: "main.ts",
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          children: [
+            {
+              role: "text",
+              value: "const answer = 42;",
+              bounds: { x: 20, y: 40, width: 180, height: 20 },
+              children: [],
+            },
+          ],
+        },
+      },
+      appIdentifier: "com.example.editor",
+      appIconDataUrl: "data:image/png;base64,iVBORw==",
+    });
+  }),
+);
+
+it.effect("rejects accessibility trees above the serialized payload limit", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeSnapShotAccessibility({
+        format: "element-tree",
+        coordinateSpace: "captured-image",
+        imageSize: { width: 800, height: 600 },
+        truncated: false,
+        root: {
+          role: "window",
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          children: Array.from({ length: 10 }, () => ({
+            role: "text",
+            value: "x".repeat(8_000),
+            bounds: null,
+            children: [],
+          })),
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(result), true);
+  }),
+);
+
 it.effect("preserves explicit provider and runtime mode in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -569,6 +683,116 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    // Pre-link servers omit the array entirely.
+    assert.deepStrictEqual(thread.pullRequests, []);
+    assert.deepStrictEqual(shell.pullRequests, []);
+
+    const legacyLink = {
+      projectId: ProjectId.make("project-1"),
+      repository: "acme/web",
+      number: 42,
+      url: "https://github.com/acme/web/pull/42",
+    };
+    const oldServerShell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      linkedPullRequest: legacyLink,
+    });
+    assert.deepStrictEqual(oldServerShell.pullRequests, []);
+    assert.deepStrictEqual(oldServerShell.linkedPullRequest, legacyLink);
+
+    // A decoder from before the array must still read its single-link field
+    // after a new server encodes the expanded snapshot.
+    const oldLinkFields = Schema.Struct({
+      linkedPullRequest: Schema.optional(ThreadLinkedPullRequest),
+    });
+    const newServerWire = yield* Schema.encodeEffect(OrchestrationThreadShell)({
+      ...oldServerShell,
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: legacyLink.repository,
+          number: legacyLink.number,
+          url: legacyLink.url,
+          source: "agent",
+          linkedAt: common.createdAt,
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    });
+    const oldClientFields = yield* Schema.decodeUnknownEffect(oldLinkFields)(newServerWire);
+    assert.deepStrictEqual(oldClientFields.linkedPullRequest, legacyLink);
+  }),
+);
+
+it.effect("decodes thread pull request links with snapshot and stack", () =>
+  Effect.gen(function* () {
+    const shell = yield* decodeOrchestrationThreadShell({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      branch: "feature/stack-2",
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          source: "agent",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 43,
+          url: "https://github.com/pingdotgg/t3code/pull/43",
+          source: "stack",
+          linkedAt: "2026-01-01T00:01:00.000Z",
+          snapshot: {
+            state: "open",
+            title: "Layer two",
+            headBranch: "feature/stack-2",
+            baseBranch: "feature/stack-1",
+            isDraft: false,
+            updatedAt: "2026-01-01T00:02:00.000Z",
+            syncedAt: "2026-01-01T00:03:00.000Z",
+          },
+          stack: {
+            kind: "native",
+            id: "7",
+            number: 3,
+            url: "https://github.com/pingdotgg/t3code/stacks/3",
+            base: "main",
+            layers: [
+              { number: 42, headBranch: "feature/stack-1", state: "open" },
+              { number: 43, headBranch: "feature/stack-2", state: "open" },
+            ],
+          },
+        },
+      ],
+    });
+
+    assert.strictEqual(shell.pullRequests.length, 2);
+    assert.strictEqual(shell.pullRequests[1]?.stack?.layers.length, 2);
+    assert.strictEqual(shell.pullRequests[1]?.snapshot?.state, "open");
   }),
 );
 
@@ -783,6 +1007,61 @@ it.effect("accepts a title seed in thread.turn.start", () =>
   }),
 );
 
+it.effect("decodes active reorder commands through client and orchestration boundaries", () =>
+  Effect.gen(function* () {
+    const input = {
+      type: "thread.active.reorder",
+      commandId: "cmd-active-reorder",
+      threadId: "thread-1",
+      orderKey: "gm",
+    };
+    const clientCommand = yield* decodeClientOrchestrationCommand(input);
+    const command = yield* decodeOrchestrationCommand(input);
+    for (const decoded of [clientCommand, command]) {
+      assert.strictEqual(decoded.type, "thread.active.reorder");
+      if (decoded.type === "thread.active.reorder") {
+        assert.strictEqual(decoded.threadId, "thread-1");
+        assert.strictEqual(decoded.orderKey, "gm");
+      }
+    }
+    const emptyKey = yield* Effect.exit(
+      decodeClientOrchestrationCommand({ ...input, orderKey: " " }),
+    );
+    assert.isTrue(Exit.isFailure(emptyKey));
+  }),
+);
+
+it.effect("decodes active placement on existing metadata events while accepting old payloads", () =>
+  Effect.gen(function* () {
+    const payload = { threadId: "thread-1", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const oldPayload = yield* decodeThreadMetaUpdatedPayload(payload);
+    assert.strictEqual(oldPayload.activeOrderKey, undefined);
+    const resetPayload = yield* decodeThreadMetaUpdatedPayload({
+      ...payload,
+      activeOrderKey: null,
+    });
+    assert.strictEqual(resetPayload.activeOrderKey, null);
+    const event = yield* decodeOrchestrationEvent({
+      type: "thread.meta-updated",
+      sequence: 1,
+      eventId: "event-active-reorder",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-02T00:00:00.000Z",
+      commandId: "cmd-active-reorder",
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { ...payload, activeOrderKey: "gm" },
+    });
+    assert.strictEqual(event.type, "thread.meta-updated");
+    if (event.type === "thread.meta-updated") {
+      assert.strictEqual(event.payload.activeOrderKey, "gm");
+      assert.strictEqual(event.payload.updatedAt, payload.updatedAt);
+    }
+  }),
+);
+
 it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeOrchestrationCommand({
@@ -798,25 +1077,64 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
-it.effect("accepts a linked pull request in thread.meta.update", () =>
+it.effect("accepts thread.pull-request.link and .unlink commands", () =>
   Effect.gen(function* () {
-    const linkedPullRequest = {
-      projectId: "project-1",
+    const link = yield* decodeOrchestrationCommand({
+      type: "thread.pull-request.link",
+      commandId: "cmd-link-pull-request",
+      threadId: "thread-1",
+      host: "github.com",
       repository: "pingdotgg/t3code",
       number: 42,
       url: "https://github.com/pingdotgg/t3code/pull/42",
-    };
-    const parsed = yield* decodeOrchestrationCommand({
-      type: "thread.meta.update",
-      commandId: "cmd-link-pull-request",
-      threadId: "thread-1",
-      linkedPullRequest,
+      source: "manual",
     });
-
-    assert.strictEqual(parsed.type, "thread.meta.update");
-    if (parsed.type === "thread.meta.update") {
-      assert.deepStrictEqual(parsed.linkedPullRequest, linkedPullRequest);
+    assert.strictEqual(link.type, "thread.pull-request.link");
+    if (link.type === "thread.pull-request.link") {
+      assert.strictEqual(link.source, "manual");
+      assert.strictEqual(link.number, 42);
     }
+
+    const unlink = yield* decodeOrchestrationCommand({
+      type: "thread.pull-request.unlink",
+      commandId: "cmd-unlink-pull-request",
+      threadId: "thread-1",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+    });
+    assert.strictEqual(unlink.type, "thread.pull-request.unlink");
+  }),
+);
+
+it.effect("still decodes a persisted thread.meta-updated event carrying linkedPullRequest", () =>
+  Effect.gen(function* () {
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-legacy-link",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.meta-updated",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-legacy-link",
+      causationEventId: null,
+      correlationId: "cmd-legacy-link",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        linkedPullRequest: {
+          projectId: "project-1",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    if (event.type !== "thread.meta-updated") {
+      assert.fail(`Expected thread.meta-updated event, received ${event.type}.`);
+    }
+    assert.strictEqual(event.payload.linkedPullRequest?.number, 42);
   }),
 );
 
@@ -834,6 +1152,47 @@ it.effect("accepts an internal title regeneration completion", () =>
       assert.strictEqual(parsed.requestId, "cmd-title-regenerate");
       assert.strictEqual(parsed.title, "Updated title");
     }
+  }),
+);
+
+it.effect("accepts pull request synchronization only as an internal command", () =>
+  Effect.gen(function* () {
+    const pullRequest = {
+      projectId: ProjectId.make("project-1"),
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+    };
+    const command = {
+      type: "thread.pull-request.sync" as const,
+      commandId: CommandId.make("cmd-pull-request-sync"),
+      threadId: ThreadId.make("thread-1"),
+      projectId: pullRequest.projectId,
+      snapshotSequence: 12,
+      expected: {
+        workspaceRoot: "/workspace/project",
+        branch: "feature",
+        worktreePath: null,
+        linkedPullRequest: null,
+        branchPullRequest: null,
+      },
+      branchPullRequest: pullRequest,
+      linkedPullRequest: pullRequest,
+    };
+
+    assert.deepStrictEqual(yield* decodeOrchestrationCommand(command), command);
+    assert.ok(yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip));
+
+    const cleared = { ...command, branchPullRequest: null };
+    assert.deepStrictEqual(yield* decodeOrchestrationCommand(cleared), cleared);
+
+    const metadata = yield* decodeClientOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-forged-branch-pull-request",
+      threadId: "thread-1",
+      branchPullRequest: pullRequest,
+    });
+    assert.isFalse("branchPullRequest" in metadata);
   }),
 );
 

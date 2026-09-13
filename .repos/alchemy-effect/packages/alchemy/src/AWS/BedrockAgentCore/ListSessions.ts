@@ -15,9 +15,8 @@ export interface ListSessionsRequest extends Omit<
  * an actor has recorded events under. Provide `AgentCore.ListSessionsHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Listing Sessions
- * @example List an Actor's Sessions
+ * ### Listing Sessions
+ * **Example:** List an Actor's Sessions
  * ```typescript
  * // init
  * const listSessions = yield* AgentCore.ListSessions(memory);
@@ -32,6 +31,8 @@ export interface ListSessionsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface ListSessions extends Binding.Service<
   ListSessions,

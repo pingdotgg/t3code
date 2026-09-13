@@ -4,7 +4,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ComponentProps } from "react";
+import { CircleArrowUpIcon } from "lucide-react";
+import { type ComponentProps, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -32,6 +33,117 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
 
 function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
+}
+
+export interface ServerUpdateTarget {
+  readonly environmentId: EnvironmentId;
+  readonly serverLabel: string;
+  readonly selfUpdate: ServerSelfUpdateCapability | null;
+  readonly desktopAppUpdate?: boolean;
+  readonly threadContinuation?: boolean;
+  readonly targetVersion: string;
+  readonly continueThreadsAfterServerUpdate?: boolean;
+}
+
+type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" | "className"> & {
+  readonly label?: string;
+  /** "icon" renders a compact icon button with the label in a tooltip. */
+  readonly appearance?: "button" | "icon";
+};
+
+function useServerUpdate() {
+  const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
+  return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
+    const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
+    if (pendingUpdateEnvironmentIds.has(environmentId)) return;
+    pendingUpdateEnvironmentIds.add(environmentId);
+    try {
+      const result = await updateServer({
+        environmentId,
+        input: {
+          targetVersion,
+          ...(target.threadContinuation && target.continueThreadsAfterServerUpdate
+            ? { continueRunningThreads: true }
+            : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        throw squashAtomCommandFailure(result);
+      }
+      toastManager.add({
+        type: "success",
+        title: `${serverLabel} updated`,
+        description:
+          selfUpdate === "desktop-managed"
+            ? `Desktop app relaunched on ${result.value.targetVersion}.`
+            : `Reconnected on t3@${result.value.targetVersion}.`,
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: failureTitle,
+        description: updateFailureMessage(error),
+      });
+    } finally {
+      pendingUpdateEnvironmentIds.delete(environmentId);
+    }
+  };
+}
+
+/** Updates eligible machines independently; manual paths remain in the machine list. */
+export function ServerUpdatesAction({
+  targets,
+  label = "Update all",
+  variant = "outline",
+  size = "xs",
+  className,
+}: UpdateButtonProps & {
+  readonly targets: ReadonlyArray<ServerUpdateTarget>;
+}) {
+  const update = useServerUpdate();
+  const pending = useRef(false);
+  const [isPending, setIsPending] = useState(false);
+  const eligible = targets.filter(
+    (target) =>
+      target.selfUpdate !== null &&
+      (target.selfUpdate !== "desktop-managed" || target.desktopAppUpdate),
+  );
+  const handleUpdate = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setIsPending(true);
+    try {
+      const available = eligible.filter(
+        (target) => !pendingUpdateEnvironmentIds.has(target.environmentId),
+      );
+      const desktopTargets = available.filter((target) => target.selfUpdate === "desktop-managed");
+      if (desktopTargets.length > 0) {
+        const confirmed =
+          (await requestConfirmDialog(
+            `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
+          )) ?? true;
+        if (!confirmed) return;
+      }
+      await Promise.all(
+        available.map((target) => update(target, `${target.serverLabel} update failed`)),
+      );
+    } finally {
+      pending.current = false;
+      setIsPending(false);
+    }
+  };
+  return (
+    <Button
+      size={size}
+      variant={variant}
+      className={className}
+      disabled={isPending || eligible.length === 0}
+      onClick={() => void handleUpdate()}
+    >
+      {label}
+    </Button>
+  );
 }
 
 /**
@@ -84,28 +196,15 @@ export function ServerUpdateAction({
   label = "Update",
   variant = "outline",
   size = "xs",
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly serverLabel: string;
-  readonly selfUpdate: ServerSelfUpdateCapability | null;
-  /** The desktop app supervising this server accepts remote update
-      requests (capabilities.desktopAppUpdate). */
-  readonly desktopAppUpdate?: boolean;
-  /** The server can durably continue running provider turns after updating. */
-  readonly threadContinuation?: boolean;
-  readonly targetVersion: string;
-  readonly label?: string;
-  readonly variant?: ComponentProps<typeof Button>["variant"];
-  readonly size?: ComponentProps<typeof Button>["size"];
-}) {
+  className,
+  appearance = "button",
+}: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
     (settings) => settings.continueThreadsAfterServerUpdate,
   );
-  const updateServer = useAtomCommand(serverEnvironment.updateServer, {
-    reportFailure: false,
-  });
+  const update = useServerUpdate();
   const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
     target: "update command",
     onCopy: ({ command }) => {
@@ -140,41 +239,15 @@ export function ServerUpdateAction({
         return;
       }
     }
-    if (pendingUpdateEnvironmentIds.has(environmentId)) {
-      return;
-    }
-    pendingUpdateEnvironmentIds.add(environmentId);
-    try {
-      const result = await updateServer({
-        environmentId,
-        input: {
-          targetVersion,
-          ...(threadContinuation && continueThreadsAfterServerUpdate
-            ? { continueRunningThreads: true }
-            : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) {
-          return;
-        }
-        toastManager.add({
-          type: "error",
-          title: "Server update failed",
-          description: updateFailureMessage(squashAtomCommandFailure(result)),
-        });
-        return;
-      }
-      toastManager.add({
-        type: "success",
-        title: `${serverLabel} updated`,
-        description: isDesktopAppUpdate
-          ? `Desktop app relaunched on ${result.value.targetVersion}.`
-          : `Reconnected on t3@${result.value.targetVersion}.`,
-      });
-    } finally {
-      pendingUpdateEnvironmentIds.delete(environmentId);
-    }
+    await update({
+      environmentId,
+      serverLabel,
+      selfUpdate,
+      desktopAppUpdate,
+      threadContinuation,
+      targetVersion,
+      continueThreadsAfterServerUpdate,
+    });
   };
 
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
@@ -185,18 +258,37 @@ export function ServerUpdateAction({
     );
   }
 
-  if (selfUpdate === null) {
-    const command = manualServerUpdateCommand(targetVersion);
+  const manualCommand = selfUpdate === null ? manualServerUpdateCommand(targetVersion) : null;
+  const actionLabel = manualCommand !== null ? "Copy update command" : label;
+  const onClick =
+    manualCommand !== null
+      ? () => copyToClipboard(manualCommand, { command: manualCommand })
+      : () => void handleUpdate();
+
+  if (appearance === "icon") {
     return (
-      <Button size={size} variant={variant} onClick={() => copyToClipboard(command, { command })}>
-        Copy update command
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className={className ?? "text-muted-foreground hover:text-foreground"}
+              aria-label={`${actionLabel} for ${serverLabel}`}
+              onClick={onClick}
+            />
+          }
+        >
+          <CircleArrowUpIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{actionLabel}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <Button size={size} variant={variant} onClick={() => void handleUpdate()}>
-      {label}
+    <Button size={size} variant={variant} className={className} onClick={onClick}>
+      {actionLabel}
     </Button>
   );
 }

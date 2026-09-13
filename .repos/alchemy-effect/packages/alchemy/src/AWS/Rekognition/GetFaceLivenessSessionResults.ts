@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.GetFaceLivenessSessionResultsHttp)`.
  *
- * @binding
- * @section Face Liveness
- * @example Fetch Liveness Results
+ * ### Face Liveness
+ * **Example:** Fetch Liveness Results
  * ```typescript
  * // init
  * const getFaceLivenessSessionResults = yield* AWS.Rekognition.GetFaceLivenessSessionResults();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const isLive = results.Status === "SUCCEEDED" && (results.Confidence ?? 0) > 80;
  * ```
+ *
+ * @binding
  */
 export interface GetFaceLivenessSessionResults extends Binding.Service<
   GetFaceLivenessSessionResults,

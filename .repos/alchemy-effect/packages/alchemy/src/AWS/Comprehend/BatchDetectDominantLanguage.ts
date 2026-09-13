@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * real-time APIs the action has no resource-level IAM, so the binding takes
  * no arguments and grants the action on `*`.
  *
- * @binding
- * @section Batch Real-Time Analysis
- * @example DominantLanguage for a Batch of Documents
+ * ### Batch Real-Time Analysis
+ * **Example:** DominantLanguage for a Batch of Documents
  * ```typescript
  * // init
  * const batchDetectDominantLanguage = yield* AWS.Comprehend.BatchDetectDominantLanguage();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.ResultList[0].Languages[0].LanguageCode === "en"
  * ```
+ *
+ * @binding
  */
 export interface BatchDetectDominantLanguage extends Binding.Service<
   BatchDetectDominantLanguage,

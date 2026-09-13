@@ -1,0 +1,133 @@
+// Alchemy modifications are licensed under Apache-2.0.
+// This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+/*
+  Configuration file for the Router Worker
+
+  Please note that wrangler has a dependency on this file, and will
+  attempt to read it as part of setting up a new Miniflare instance
+  in development mode. We should ensure that any configuration changes
+  to this file are persisted in wrangler as well, when necessary.
+  (see packages/wrangler/src/dev/miniflare.ts -> buildMiniflareOptions())
+*/
+{
+  "name": "router-worker",
+  "account_id": "0f1b8aa119a907021f659042f95ea9ba",
+  "workers_dev": false,
+  "main": "src/worker.ts",
+  "compatibility_date": "2024-07-31",
+  // nodejs_compat required when using @cloudflare/vitest-pool-workers
+  "compatibility_flags": [
+    "nodejs_compat",
+    "no_nodejs_compat_v2",
+    "enable_ctx_exports",
+  ],
+  "version_metadata": {
+    "binding": "VERSION_METADATA",
+  },
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "CONFIG",
+        "type": "param",
+        "param": "routerConfig",
+      },
+      {
+        "name": "EYEBALL_CONFIG",
+        "type": "param",
+        "param": "eyeballRouterConfig",
+        "optional": true,
+      },
+      {
+        "name": "ASSET_WORKER",
+        "type": "internal_assets",
+        "fetcherApi": "fetcher",
+      },
+      {
+        "name": "USER_WORKER",
+        "type": "origin",
+      },
+      {
+        "name": "workers-router-worker",
+        "type": "internal_capability_grants",
+      },
+    ],
+    "metadata": {
+      "build_options": {
+        "stable_id": "cloudflare/cf_router_worker",
+        "networks": ["cf", "jdc"],
+      },
+    },
+  },
+  "env": {
+    "staging": {
+      "name": "router-worker-staging",
+      "version_metadata": {
+        "binding": "VERSION_METADATA",
+      },
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "CONFIG",
+            "type": "param",
+            "param": "routerConfig",
+          },
+          {
+            "name": "ASSET_WORKER",
+            "type": "internal_assets",
+            "fetcherApi": "fetcher",
+          },
+          {
+            "name": "USER_WORKER",
+            "type": "origin",
+          },
+          {
+            "name": "workers-router-worker-staging",
+            "type": "internal_capability_grants",
+          },
+        ],
+        "metadata": {
+          "build_options": {
+            "stable_id": "cloudflare/cf_router_worker",
+            "networks": ["cf", "jdc"],
+          },
+        },
+      },
+    },
+    "fed-prod": {
+      "name": "router-worker-fed-prod",
+      "account_id": "fca6c231dc1d1780777997c5bce5a5e3", // workers assets
+      "version_metadata": {
+        "binding": "VERSION_METADATA",
+      },
+      "compliance_region": "fedramp_high",
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "CONFIG",
+            "type": "param",
+            "param": "routerConfig",
+          },
+          {
+            "name": "ASSET_WORKER",
+            "type": "internal_assets",
+            "fetcherApi": "fetcher",
+          },
+          {
+            "name": "USER_WORKER",
+            "type": "origin",
+          },
+          {
+            "name": "workers-router-worker",
+            "type": "internal_capability_grants",
+          },
+        ],
+        "metadata": {
+          "build_options": {
+            "stable_id": "cloudflare/cf_router_worker",
+            "networks": ["cf"],
+          },
+        },
+      },
+    },
+  },
+}

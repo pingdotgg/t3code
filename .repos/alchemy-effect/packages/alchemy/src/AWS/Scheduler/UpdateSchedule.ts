@@ -48,9 +48,8 @@ export interface UpdateScheduleRequest extends Omit<
  * **execution role** and optionally a scoping `ScheduleGroup`; it contributes
  * both `scheduler:UpdateSchedule` on the group's schedule ARN pattern and
  * `iam:PassRole` on the execution role.
- * @binding
- * @section Updating Schedules At Runtime
- * @example Reschedule A Reminder
+ * ### Updating Schedules At Runtime
+ * **Example:** Reschedule A Reminder
  * ```typescript
  * const updateSchedule = yield* AWS.Scheduler.UpdateSchedule(role);
  *
@@ -66,10 +65,12 @@ export interface UpdateScheduleRequest extends Omit<
  * });
  * ```
  *
- * @example Scope Updates To A Schedule Group
+ * **Example:** Scope Updates To A Schedule Group
  * ```typescript
  * const updateSchedule = yield* AWS.Scheduler.UpdateSchedule(role, group);
  * ```
+ *
+ * @binding
  */
 export interface UpdateSchedule extends Binding.Service<
   UpdateSchedule,

@@ -511,21 +511,18 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
               },
               localSecondaryIndexes: [
                 {
-                  IndexName: "lsi-by-sk",
-                  KeySchema: [
-                    { AttributeName: "pk", KeyType: "HASH" },
-                    { AttributeName: "sk", KeyType: "RANGE" },
-                  ],
-                  Projection: {
+                  indexName: "lsi-by-sk",
+                  sortKey: "sk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
               ],
               globalSecondaryIndexes: [
                 {
-                  IndexName: "gsi-by-lookup",
-                  KeySchema: [{ AttributeName: "gsi1pk", KeyType: "HASH" }],
-                  Projection: {
+                  indexName: "gsi-by-lookup",
+                  partitionKey: "gsi1pk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
@@ -577,6 +574,182 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
     { timeout: 180_000 },
   );
 
+  test.provider(
+    "create table with multi-attribute GSI keys and query them",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* logTestStep("starting multi-attribute GSI key test");
+        yield* stack.destroy();
+
+        const multiAttrTable = Effect.gen(function* () {
+          return yield* Table("MultiAttrKeyTable", {
+            partitionKey: "matchId",
+            attributes: {
+              matchId: "S",
+              tournamentId: "S",
+              region: "S",
+              round: "S",
+            },
+            globalSecondaryIndexes: [
+              {
+                indexName: "TournamentRegionIndex",
+                partitionKey: ["tournamentId", "region"],
+                sortKey: ["round", "matchId"],
+                projection: { ProjectionType: "ALL" },
+              },
+            ],
+          });
+        });
+
+        yield* logTestStep("deploying table with multi-attribute GSI keys");
+        const table = yield* stack.deploy(multiAttrTable);
+
+        const actualTable = yield* expectTableIndexes(table.tableName, {
+          local: [],
+          global: ["TournamentRegionIndex"],
+        });
+
+        // The composite key's element order is significant — DescribeTable
+        // must report the HASH attributes then the RANGE attributes in
+        // declaration order.
+        expect(
+          actualTable?.GlobalSecondaryIndexes?.[0]?.KeySchema?.map(
+            (element) => [element.AttributeName, element.KeyType],
+          ),
+        ).toEqual([
+          ["tournamentId", "HASH"],
+          ["region", "HASH"],
+          ["round", "RANGE"],
+          ["matchId", "RANGE"],
+        ]);
+
+        yield* logTestStep("writing items with natural attributes");
+        const matches = [
+          { matchId: "match-001", region: "NA-EAST", round: "FINALS" },
+          { matchId: "match-002", region: "NA-EAST", round: "SEMIFINALS" },
+          { matchId: "match-003", region: "NA-WEST", round: "FINALS" },
+        ];
+        yield* Effect.forEach(matches, (match) =>
+          DynamoDB.putItem({
+            TableName: table.tableName,
+            Item: {
+              matchId: { S: match.matchId },
+              tournamentId: { S: "WINTER2024" },
+              region: { S: match.region },
+              round: { S: match.round },
+            },
+          }),
+        );
+
+        // Query with every partition attribute (equality on both HASH
+        // elements), retried through GSI propagation.
+        yield* logTestStep("querying GSI by composite partition key");
+        const byRegion = yield* DynamoDB.query({
+          TableName: table.tableName,
+          IndexName: "TournamentRegionIndex",
+          KeyConditionExpression: "tournamentId = :t AND #r = :r",
+          ExpressionAttributeNames: { "#r": "region" },
+          ExpressionAttributeValues: {
+            ":t": { S: "WINTER2024" },
+            ":r": { S: "NA-EAST" },
+          },
+        }).pipe(
+          Effect.repeat({
+            schedule: Schedule.max([
+              Schedule.fixed("2 seconds"),
+              Schedule.recurs(30),
+            ]),
+            until: (response) => (response.Count ?? 0) === 2,
+          }),
+        );
+        expect(byRegion.Count).toEqual(2);
+
+        // Narrow by the first sort key attribute (left-to-right).
+        const byRound = yield* DynamoDB.query({
+          TableName: table.tableName,
+          IndexName: "TournamentRegionIndex",
+          KeyConditionExpression:
+            "tournamentId = :t AND #r = :r AND round = :round",
+          ExpressionAttributeNames: { "#r": "region" },
+          ExpressionAttributeValues: {
+            ":t": { S: "WINTER2024" },
+            ":r": { S: "NA-EAST" },
+            ":round": { S: "SEMIFINALS" },
+          },
+        });
+        expect(byRound.Count).toEqual(1);
+        expect(byRound.Items?.[0]?.matchId).toEqual({ S: "match-002" });
+
+        // An identical redeploy must be a no-op — the order-sensitive GSI
+        // diff must not see a phantom change in the multi-attribute schema.
+        yield* logTestStep("redeploying unchanged table (expect no-op)");
+        const unchanged = yield* stack.deploy(multiAttrTable);
+        expect(unchanged.tableName).toEqual(table.tableName);
+        expect(unchanged.tableId).toEqual(table.tableId);
+
+        yield* logTestStep("destroying multi-attribute GSI table");
+        yield* stack.destroy();
+        yield* assertTableIsDeleted(table.tableName);
+      }),
+    { timeout: 240_000 },
+  );
+
+  test.provider(
+    "reordering multi-attribute GSI key attributes replaces the table",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* logTestStep("starting multi-attribute GSI reorder test");
+        yield* stack.destroy();
+
+        const makeTable = (sortKey: string[]) =>
+          Effect.gen(function* () {
+            return yield* Table("ReorderedMultiAttrKeyTable", {
+              partitionKey: "id",
+              attributes: {
+                id: "S",
+                category: "S",
+                subcategory: "S",
+              },
+              globalSecondaryIndexes: [
+                {
+                  indexName: "CategoryIndex",
+                  partitionKey: "category",
+                  sortKey,
+                  projection: { ProjectionType: "KEYS_ONLY" },
+                },
+              ],
+            });
+          });
+
+        yield* logTestStep("deploying table with ordered sort attributes");
+        const original = yield* stack.deploy(makeTable(["subcategory", "id"]));
+
+        // Swapping the two sort attributes defines a different index
+        // (sort attributes are queried left-to-right in declaration order),
+        // so the deploy must replace the table, not no-op.
+        yield* logTestStep("reordering sort attributes (expect replacement)");
+        const replaced = yield* stack.deploy(makeTable(["id", "subcategory"]));
+        expect(replaced.tableName).not.toEqual(original.tableName);
+
+        const replacedTable = yield* expectTableIndexes(replaced.tableName, {
+          local: [],
+          global: ["CategoryIndex"],
+        });
+        expect(
+          replacedTable?.GlobalSecondaryIndexes?.[0]?.KeySchema?.map(
+            (element) => element.AttributeName,
+          ),
+        ).toEqual(["category", "id", "subcategory"]);
+
+        yield* assertTableIsDeleted(original.tableName);
+
+        yield* logTestStep("destroying reordered multi-attribute GSI table");
+        yield* stack.destroy();
+        yield* assertTableIsDeleted(replaced.tableName);
+      }),
+    { timeout: 300_000 },
+  );
+
   // it's super slow because GSIs are awfully slow to create
   test.provider.skip(
     "update global secondary indexes across multiple deploys",
@@ -619,9 +792,9 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
               },
               globalSecondaryIndexes: [
                 {
-                  IndexName: "gsi-by-lookup-1",
-                  KeySchema: [{ AttributeName: "gsi1pk", KeyType: "HASH" }],
-                  Projection: {
+                  indexName: "gsi-by-lookup-1",
+                  partitionKey: "gsi1pk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
@@ -670,16 +843,16 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
               },
               globalSecondaryIndexes: [
                 {
-                  IndexName: "gsi-by-lookup-1",
-                  KeySchema: [{ AttributeName: "gsi1pk", KeyType: "HASH" }],
-                  Projection: {
+                  indexName: "gsi-by-lookup-1",
+                  partitionKey: "gsi1pk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
                 {
-                  IndexName: "gsi-by-lookup-2",
-                  KeySchema: [{ AttributeName: "gsi2pk", KeyType: "HASH" }],
-                  Projection: {
+                  indexName: "gsi-by-lookup-2",
+                  partitionKey: "gsi2pk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
@@ -707,9 +880,9 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
               },
               globalSecondaryIndexes: [
                 {
-                  IndexName: "gsi-by-lookup-2",
-                  KeySchema: [{ AttributeName: "gsi2pk", KeyType: "HASH" }],
-                  Projection: {
+                  indexName: "gsi-by-lookup-2",
+                  partitionKey: "gsi2pk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },
@@ -790,12 +963,9 @@ describe.skipIf(!!process.env.FAST)("AWS.DynamoDB.Table", () => {
               },
               localSecondaryIndexes: [
                 {
-                  IndexName: "lsi-by-sk",
-                  KeySchema: [
-                    { AttributeName: "pk", KeyType: "HASH" },
-                    { AttributeName: "sk", KeyType: "RANGE" },
-                  ],
-                  Projection: {
+                  indexName: "lsi-by-sk",
+                  sortKey: "sk",
+                  projection: {
                     ProjectionType: "ALL",
                   },
                 },

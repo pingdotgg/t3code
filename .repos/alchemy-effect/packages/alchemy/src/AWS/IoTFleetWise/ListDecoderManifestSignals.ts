@@ -21,15 +21,16 @@ export interface ListDecoderManifestSignalsRequest extends Omit<
  * the bound decoder manifest. Provide the implementation with
  * `Effect.provide(AWS.IoTFleetWise.ListDecoderManifestSignalsHttp)`.
  *
- * @binding
- * @section Inspecting Signal Definitions
- * @example List a Decoder's Signal Decoders
+ * ### Inspecting Signal Definitions
+ * **Example:** List a Decoder's Signal Decoders
  * ```typescript
  * const listDecoderSignals =
  *   yield* IoTFleetWise.ListDecoderManifestSignals(decoder);
  *
  * const { signalDecoders } = yield* listDecoderSignals();
  * ```
+ *
+ * @binding
  */
 export interface ListDecoderManifestSignals extends Binding.Service<
   ListDecoderManifestSignals,

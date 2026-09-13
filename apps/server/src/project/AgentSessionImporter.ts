@@ -32,7 +32,7 @@ import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-class AgentSessionUnresumableSessionError extends Schema.TaggedErrorClass<AgentSessionUnresumableSessionError>()(
+class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
   {
     source: AgentSessionSource,
@@ -44,7 +44,7 @@ class AgentSessionUnresumableSessionError extends Schema.TaggedErrorClass<AgentS
   }
 }
 
-class AgentSessionThreadProjectConflictError extends Schema.TaggedErrorClass<AgentSessionThreadProjectConflictError>()(
+class AgentSessionThreadProjectConflictError extends Schema.TaggedError<AgentSessionThreadProjectConflictError>()(
   "AgentSessionThreadProjectConflictError",
   {
     threadId: ThreadId,
@@ -57,7 +57,7 @@ class AgentSessionThreadProjectConflictError extends Schema.TaggedErrorClass<Age
   }
 }
 
-class AgentSessionThreadModifiedError extends Schema.TaggedErrorClass<AgentSessionThreadModifiedError>()(
+class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThreadModifiedError>()(
   "AgentSessionThreadModifiedError",
   { threadId: ThreadId },
 ) {

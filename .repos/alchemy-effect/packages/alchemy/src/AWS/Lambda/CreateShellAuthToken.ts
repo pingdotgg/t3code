@@ -12,9 +12,8 @@ export interface CreateShellAuthTokenRequest
  * Bind it to a {@link MicrovmImage} to get a callable that mints a short-lived
  * token for interactive shell access to a running MicroVM (the MicroVM must
  * have been run with the shell ingress connector attached).
- * @binding
- * @section Auth Tokens
- * @example Mint a shell auth token
+ * ### Auth Tokens
+ * **Example:** Mint a shell auth token
  * ```typescript
  * const createShellAuthToken = yield* AWS.Lambda.CreateShellAuthToken(Sandbox);
  * const { authToken } = yield* createShellAuthToken({
@@ -22,6 +21,8 @@ export interface CreateShellAuthTokenRequest
  *   expirationInMinutes: 5,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateShellAuthToken extends Binding.Service<
   CreateShellAuthToken,

@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.DisassociateFromAdministratorAccountHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Leave the Administrator
+ * ### Administrator & Invitations
+ * **Example:** Leave the Administrator
  * ```typescript
  * // init
  * const disassociateFromAdministratorAccount = yield* AWS.GuardDuty.DisassociateFromAdministratorAccount(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * yield* disassociateFromAdministratorAccount();
  * ```
+ *
+ * @binding
  */
 export interface DisassociateFromAdministratorAccount extends Binding.Service<
   DisassociateFromAdministratorAccount,

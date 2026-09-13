@@ -14,7 +14,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
-export class DesktopApplicationMenuActionError extends Schema.TaggedErrorClass<DesktopApplicationMenuActionError>()(
+export class DesktopApplicationMenuActionError extends Schema.TaggedError<DesktopApplicationMenuActionError>()(
   "DesktopApplicationMenuActionError",
   {
     action: Schema.String,
@@ -46,7 +46,9 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   action: string,
 ): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  yield* desktopWindow.dispatchMenuAction(action);
+  yield* desktopWindow.dispatchMenuAction(action, {
+    reveal: action !== "paste-as-text",
+  });
 });
 
 const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
@@ -103,6 +105,7 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -133,6 +136,9 @@ export const make = Effect.gen(function* () {
     };
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
+    };
+    const pasteAsTextClick = () => {
+      runMenuEffect("paste-as-text", dispatchMenuAction("paste-as-text"));
     };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
       runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
@@ -183,7 +189,34 @@ export const make = Effect.gen(function* () {
           { role: environment.platform === "darwin" ? "close" : "quit" },
         ],
       },
-      { role: "editMenu" },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          {
+            label: "Paste as Text",
+            accelerator: "CmdOrCtrl+Shift+V",
+            click: pasteAsTextClick,
+          },
+          { role: "delete" },
+          { type: "separator" },
+          { role: "selectAll" },
+          ...(environment.platform === "darwin"
+            ? [
+                { type: "separator" as const },
+                {
+                  label: "Speech",
+                  submenu: [{ role: "startSpeaking" as const }, { role: "stopSpeaking" as const }],
+                },
+              ]
+            : []),
+        ],
+      },
       {
         label: "View",
         submenu: [

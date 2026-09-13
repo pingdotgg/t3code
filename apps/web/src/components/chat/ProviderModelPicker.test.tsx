@@ -34,6 +34,7 @@ function renderPicker(input: {
   model: string;
   options: ReadonlyArray<ModelEsque>;
   includeEntry?: boolean;
+  triggerLabel?: string;
 }) {
   const instanceId = ProviderInstanceId.make(input.instanceId);
   const entry = providerEntry(input.instanceId, input.driver);
@@ -45,11 +46,25 @@ function renderPicker(input: {
       instanceEntries={input.includeEntry === false ? [] : [entry]}
       modelOptionsByInstance={new Map([[instanceId, input.options]])}
       onInstanceModelChange={() => {}}
+      {...(input.triggerLabel ? { triggerLabel: input.triggerLabel } : {})}
     />,
   );
 }
 
 describe("ProviderModelPicker", () => {
+  it("shows a neutral aggregate value without a representative model or availability badge", () => {
+    const markup = renderPicker({
+      instanceId: "codex_personal",
+      driver: "codex",
+      model: "gpt-5",
+      options: [{ slug: "gpt-5", name: "GPT 5", isUnavailable: true }],
+      triggerLabel: "Mixed values",
+    });
+    expect(markup).toContain("Mixed values");
+    expect(markup).not.toContain("GPT 5");
+    expect(markup).not.toContain("Unavailable");
+  });
+
   it.each(["", ANTIGRAVITY_DEFAULT_MODEL])(
     "shows a choice prompt before Antigravity has an account catalog for %s",
     (model) => {

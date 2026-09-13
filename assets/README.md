@@ -49,16 +49,19 @@ Verify every result is 1024×1024 and has the classic macOS safe area: an 824×8
 
 Do not edit the generated PNG or ICO files directly.
 
-## Android adaptive foreground
+## Android launcher and splash artwork
 
-`apps/mobile/assets/android-icon-foreground.svg` is the source of truth for the foreground used by
-the normal Android adaptive launcher icon. Export its paired PNG after changing it:
+Android masks the central 72dp of a 108dp adaptive canvas, and the Android 12+ splash screen masks
+the central two thirds of a 288dp canvas, so the Icon Composer exports cannot be used directly:
+their rounded-square silhouette gets framed again and the wordmark is cropped. The Android artwork
+is instead rendered from the same Icon Composer SVG sources by `vp run icons:export:android`:
 
-```sh
-rsvg-convert -w 432 -h 432 \
-  -o apps/mobile/assets/android-icon-foreground.png \
-  apps/mobile/assets/android-icon-foreground.svg
-```
+- `apps/mobile/assets/android-icon-foreground.png`: the shared transparent wordmark, sized to stay
+  inside the safe zone
+- `apps/mobile/assets/android-icon-background-dev.png` and `-nightly.png`: full-bleed variant
+  artwork (blueprint grid and annotations; night sky and clouds). Production uses a solid color.
+- `apps/mobile/assets/android-splash-icon-*.png`: the two layers composed into one 288dp image, so
+  the splash mask reproduces the launcher icon's framing.
 
-The foreground must remain transparent and keep the T3 mark inside Android's adaptive-icon safe
-zone. `android-icon-mark.png` remains a flat silhouette for Android's monochrome themed icon.
+Rerun the export after changing a layer SVG. `android-icon-mark.png` remains a flat silhouette for
+Android's monochrome themed icon.

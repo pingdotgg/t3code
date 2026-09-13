@@ -19,9 +19,7 @@ import CloudFrontKvsTestFunctionLive, {
 
 // The fixture deploys a CloudFront Distribution, which takes 3-10 minutes to
 // reach `Deployed` — gate the live run per the catalog's slow-test guidance.
-const runLive =
-  process.env.AWS_TEST_SLOW === "1" ||
-  process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS === "true";
+const runLive = !process.env.FAST;
 
 const testOptions = { providers: AWS.providers() };
 const { test, beforeAll, afterAll } = Test.make(testOptions);

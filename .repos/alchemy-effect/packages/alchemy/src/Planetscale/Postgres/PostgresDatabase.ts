@@ -1,17 +1,22 @@
 import { Credentials } from "@distilled.cloud/planetscale/Credentials";
-import * as planetscale from "@distilled.cloud/planetscale/Operations";
+import * as planetscale from "@distilled.cloud/planetscale";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { isResolved } from "../../Diff.ts";
+import { havePropsChanged, isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { hashImports, hashMigrations } from "../../SQL/SqlFile.ts";
+import {
+  diffMigrations,
+  migrationsAttrs,
+  migrationsInputOf,
+  stampedOf,
+} from "../../SQL/Migrations/index.ts";
 import { recordsEqual } from "../../Util/equal.ts";
 import type { BaseDatabaseAttributes, BaseDatabaseProps } from "../Database.ts";
 import type { Providers } from "../Providers.ts";
 import {
-  DEFAULT_MIGRATIONS_TABLE,
   PlanetscaleConflict,
   waitForBranchReady,
   waitForDatabaseReady,
@@ -32,8 +37,14 @@ import {
 export interface PostgresDatabaseProps extends BaseDatabaseProps {
   /**
    * The PostgreSQL database cluster size. Required.
-   * Short sizes are expanded using the target region and architecture.
+   *
+   * Short NAS sizes (`"PS_10"`) are expanded using the target region and
+   * architecture. [PlanetScale Metal](https://planetscale.com/docs/metal)
+   * requires the full SKU (e.g. `"M1_10_AWS_ARM_D_METAL_10"`) because
+   * Metal also encodes CPU series, architecture, and NVMe drive size.
+   *
    * @see https://planetscale.com/docs/postgres/pricing
+   * @see {@link PostgresClusterSize}
    */
   clusterSize: PostgresClusterSize;
 
@@ -62,16 +73,24 @@ export interface PostgresDatabaseAttributes extends BaseDatabaseAttributes {
  * A PostgreSQL PlanetScale database. For MySQL, use {@link MySQLDatabase}
  * instead.
  *
- * @section Creating a PostgreSQL Database
- * @example Basic PostgreSQL database
+ * ### Creating a PostgreSQL Database
+ * **Example:** Basic PostgreSQL database
  * ```typescript
  * const db = yield* Planetscale.PostgresDatabase("MyDb", {
  *   clusterSize: "PS_10",
  * });
  * ```
  *
- * @section Migrations and seed data
- * @example Apply migrations and seed files
+ * **Example:** PlanetScale Metal (NVMe)
+ * ```typescript
+ * const db = yield* Planetscale.PostgresDatabase("MyDb", {
+ *   clusterSize: "M1_10_AWS_ARM_D_METAL_10",
+ *   arch: "arm",
+ * });
+ * ```
+ *
+ * ### Migrations and seed data
+ * **Example:** Apply migrations and seed files
  * ```typescript
  * const db = yield* Planetscale.PostgresDatabase("MyDb", {
  *   clusterSize: "PS_10",
@@ -80,8 +99,8 @@ export interface PostgresDatabaseAttributes extends BaseDatabaseAttributes {
  * });
  * ```
  *
- * @section Adoption
- * @example Adopting an existing database
+ * ### Adoption
+ * **Example:** Adopting an existing database
  * ```typescript
  * import { adopt } from "alchemy/AdoptPolicy";
  *
@@ -110,6 +129,25 @@ export const PostgresDatabaseProvider = () =>
     diff: Effect.fn(function* ({ news, olds, output }) {
       if (!isResolved(news)) return undefined;
 
+      // Database names are rename-mutable (reconcile folds `new_name`
+      // into the settings sync), so `name` cannot live in the
+      // provider-level stables. Almost no update is a rename though —
+      // for those, advertise `name` as stable on the update so
+      // downstream consumers (branches, roles) still resolve
+      // `database.name` at plan time instead of seeing `undefined` and
+      // falsely planning a replacement. The name only changes when the
+      // `name` prop itself changes: an explicit name renames iff it
+      // differs from the observed name, and an omitted name is
+      // engine-generated deterministically (stable across updates).
+      const nameIsStable =
+        output?.name !== undefined &&
+        (news.name !== undefined
+          ? news.name === output.name
+          : olds?.name === undefined);
+      const stables = nameIsStable
+        ? ["id", "organization", "region", "name"]
+        : undefined;
+
       if (
         news.region?.slug &&
         output?.region?.slug &&
@@ -127,26 +165,26 @@ export const PostgresDatabaseProvider = () =>
         return { action: "replace" } as const;
       }
 
-      if (news.migrationsDir) {
-        const newHashes = yield* hashMigrations(news.migrationsDir);
-        if (!recordsEqual(newHashes, output?.migrationsHashes ?? {})) {
-          return { action: "update" } as const;
-        }
-        if (
-          (news.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE) !==
-          (output?.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE)
-        ) {
-          return { action: "update" } as const;
-        }
+      if (yield* diffMigrations({ news, output })) {
+        return { action: "update", stables } as const;
       }
       if (news.importFiles?.length) {
         const newHashes = yield* hashImports(news.importFiles, yield* rootDir);
         if (!recordsEqual(newHashes, output?.importHashes ?? {})) {
-          return { action: "update" } as const;
+          return { action: "update", stables } as const;
         }
       }
 
-      // Otherwise allow the engine to apply the default update logic.
+      // Remaining prop changes (rename, settings, clusterSize, …) are
+      // in-place updates. Decide them here instead of falling back to
+      // the engine's default deep-compare so the conditional `name`
+      // stable above is attached — the default path uses the
+      // provider-level stables, which strip `name` from downstream plan
+      // resolution.
+      if (havePropsChanged(olds, news)) {
+        return { action: "update", stables } as const;
+      }
+
       return undefined;
     }),
 
@@ -202,8 +240,10 @@ export const PostgresDatabaseProvider = () =>
         updatedAt: data.updated_at,
         htmlUrl: data.html_url,
         region: { slug: data.region.slug },
-        migrationsDir: output?.migrationsDir ?? olds?.migrationsDir,
-        migrationsTable: output?.migrationsTable ?? olds?.migrationsTable,
+        migrationsDir:
+          output?.migrationsDir ?? (olds && migrationsInputOf(olds))?.dir,
+        migrationsTable:
+          output?.migrationsTable ?? (olds && migrationsInputOf(olds))?.table,
         migrationsHashes: output?.migrationsHashes ?? {},
         importHashes: output?.importHashes ?? {},
         clusterSize,
@@ -325,20 +365,17 @@ export const PostgresDatabaseProvider = () =>
         database: updated.name,
         branch,
       };
-      if (news.migrationsDir || news.importFiles?.length) {
+      const migrationsInput = migrationsInputOf(news);
+      if (migrationsInput || news.importFiles?.length) {
         yield* waitForBranchReady(organization, updated.name, branch, session);
       }
-      const migrationsTable =
-        news.migrationsTable ??
-        output?.migrationsTable ??
-        DEFAULT_MIGRATIONS_TABLE;
-      const migrationsHashes = news.migrationsDir
+      const migrations = migrationsInput
         ? yield* runPostgresMigrations(
             migrationTarget,
-            news.migrationsDir,
-            migrationsTable,
+            migrationsInput,
+            stampedOf(output),
           )
-        : (output?.migrationsHashes ?? {});
+        : undefined;
       const importHashes = news.importFiles?.length
         ? yield* runPostgresImports(
             migrationTarget,
@@ -360,9 +397,7 @@ export const PostgresDatabaseProvider = () =>
         htmlUrl: updated.html_url,
         region: { slug: updated.region.slug },
         clusterSize: clusterSize,
-        migrationsDir: news.migrationsDir,
-        migrationsTable: news.migrationsDir ? migrationsTable : undefined,
-        migrationsHashes,
+        ...migrationsAttrs({ input: migrationsInput, run: migrations, output }),
         importHashes,
         arch: news.arch ?? output?.arch ?? "x86",
         requireApprovalForDeploy: updated.require_approval_for_deploy ?? false,

@@ -153,6 +153,7 @@ const buildIdleSnapshot = (input: {
   updatedAt: input.updatedAt,
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const serverEpoch = NodeCrypto.randomUUID();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);

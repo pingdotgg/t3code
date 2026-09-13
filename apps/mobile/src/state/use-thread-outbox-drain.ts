@@ -17,13 +17,24 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
-import { scopedProjectKey, scopedThreadKey } from "../lib/scopedEntities";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import {
+  retainAcknowledgedThreadMessage,
+  forgetAcknowledgedThreadMessage,
+} from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
+import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import { useProjects, useServerConfigs, useThreadShells } from "./entities";
+import {
+  clearPendingThreadCreationOutcome,
+  pendingThreadCreationOutcomesAtom,
+  recordPendingThreadCreationOutcome,
+} from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
 import {
   confirmThreadOutboxMessageQueued,
@@ -195,6 +206,7 @@ export async function completeQueuedMessageDelivery(
     if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
       return "edited";
     }
+    retainAcknowledgedThreadMessage(queuedMessage);
     // Removal also releases the message's local attachment files.
     const removed = await removeThreadOutboxMessage(
       queuedMessage,
@@ -202,6 +214,7 @@ export async function completeQueuedMessageDelivery(
       () => !appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId],
     );
     if (!removed) {
+      forgetAcknowledgedThreadMessage(queuedMessage);
       console.warn(
         "[thread-outbox] delivered message was edited before cleanup; keeping the newer message",
         {
@@ -214,6 +227,7 @@ export async function completeQueuedMessageDelivery(
     }
     return "removed";
   } catch (error) {
+    forgetAcknowledgedThreadMessage(queuedMessage);
     console.warn("[thread-outbox] failed to remove delivered queued message", {
       environmentId: queuedMessage.environmentId,
       threadId: queuedMessage.threadId,
@@ -280,7 +294,11 @@ export async function recoverEditedCreationAfterDelivery(
     // from deleting the attachment files. allowOverflow mirrors the
     // send-failure restore; the send path refuses over-cap drafts, so the
     // state stays recoverable.
-    await mergeComposerDraftContent(draftKey, { text: kept.text, attachments: [] });
+    await mergeComposerDraftContent(draftKey, {
+      text: kept.text,
+      context: kept.context,
+      attachments: [],
+    });
     if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[kept.messageId]) {
       return true;
     }
@@ -369,8 +387,10 @@ export async function restoreRejectedQueuedMessage(
 
     let mergedDraft: ComposerDraft;
     try {
+      stampRecoveryDraftProject(queuedMessage, draftKey);
       await mergeComposerDraftContent(draftKey, {
         text: queuedMessage.text,
+        context: queuedMessage.context,
         attachments: queuedMessage.attachments,
       });
     } finally {
@@ -430,6 +450,15 @@ export async function restoreRejectedQueuedMessage(
     // The queued message is gone; from here the draft owns the content and
     // must never be rolled back.
     rollback = null;
+    if (queuedMessage.creation) {
+      // The thread screen for this creation is likely open; it reads the
+      // outcome to offer reopening the restored draft.
+      recordPendingThreadCreationOutcome({
+        kind: "failed",
+        message: queuedMessage,
+        reason: message,
+      });
+    }
     setPendingConnectionError(message);
     return "restored";
   } catch (error) {
@@ -451,10 +480,29 @@ export async function restoreRejectedQueuedMessage(
   }
 }
 
+/**
+ * A rejected creation becomes its own new-task draft rather than merging into
+ * whatever the user is typing for that project. The key derives from the
+ * message id so a retry after a mid-recovery failure lands on the same draft
+ * instead of minting another.
+ */
 function recoveryDraftKey(queuedMessage: QueuedThreadMessage): string {
   return queuedMessage.creation
-    ? `new-task:${scopedProjectKey(queuedMessage.environmentId, queuedMessage.creation.projectId)}`
+    ? restoredNewTaskDraftKey(queuedMessage.messageId)
     : scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
+}
+
+function stampRecoveryDraftProject(queuedMessage: QueuedThreadMessage, draftKey: string): void {
+  if (!queuedMessage.creation) {
+    return;
+  }
+  updateComposerDraftSettings(draftKey, {
+    project: {
+      environmentId: queuedMessage.environmentId,
+      projectId: queuedMessage.creation.projectId,
+      createdAt: queuedMessage.createdAt,
+    },
+  });
 }
 
 async function preserveUploadedAttachmentsForEditor(
@@ -510,6 +558,7 @@ export function useThreadOutboxDrain(): void {
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
+  const creationOutcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -758,7 +807,15 @@ export function useThreadOutboxDrain(): void {
           message: {
             messageId: queuedMessage.messageId,
             role: "user",
-            text: queuedMessage.text,
+            ...serializeComposerMessageForServer(
+              queuedMessage.text,
+              uploadedComposerContext(
+                queuedMessage.context,
+                queuedMessage.attachments,
+                prepared.attachments,
+              ),
+              currentConfig.environment.capabilities.inlineMessageContext === true,
+            ),
             attachments: prepared.attachments,
           },
           modelSelection: sendSettings.modelSelection,
@@ -879,7 +936,15 @@ export function useThreadOutboxDrain(): void {
           commandId: queuedMessage.commandId,
           messageId: queuedMessage.messageId,
           createdAt: queuedMessage.createdAt,
-          text: queuedMessage.text.trim(),
+          ...serializeComposerMessageForServer(
+            queuedMessage.text.trim(),
+            uploadedComposerContext(
+              queuedMessage.context,
+              queuedMessage.attachments,
+              prepared.attachments,
+            ),
+            currentConfig.environment.capabilities.inlineMessageContext === true,
+          ),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,
@@ -899,6 +964,9 @@ export function useThreadOutboxDrain(): void {
       if (failure?.action === "restore") {
         return restoreQueuedMessage(persistedMessage, failure.message);
       }
+      // Recorded before the queue entry goes so the thread screen never sees a
+      // gap between the queued creation and the server's shell.
+      recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
       const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision);
       if (outcome === "edited") {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
@@ -915,6 +983,30 @@ export function useThreadOutboxDrain(): void {
     },
     [makeDeliveryHelpers, restoreQueuedMessage, startTurn],
   );
+
+  // A creation outcome bridges setup until the server's shell has a turn.
+  // Drop it once that happens so the map cannot grow for a whole session; a
+  // failed outcome stays until its thread screen consumes it.
+  // Subscribed, not read once: the shell often lands before the outcome is
+  // recorded, and a non-reactive read would leave that entry uncollected
+  // because `threads` never changes again.
+  useEffect(() => {
+    for (const [threadKey, outcome] of Object.entries(creationOutcomes)) {
+      if (
+        outcome.kind === "delivered" &&
+        threads.some(
+          (thread) =>
+            scopedThreadKey(thread.environmentId, thread.id) === threadKey &&
+            (thread.latestTurn !== null ||
+              thread.session?.status === "error" ||
+              thread.session?.status === "stopped" ||
+              thread.session?.status === "interrupted"),
+        )
+      ) {
+        clearPendingThreadCreationOutcome(threadKey);
+      }
+    }
+  }, [creationOutcomes, threads]);
 
   useEffect(() => {
     if (dispatchingQueuedMessageId !== null) {

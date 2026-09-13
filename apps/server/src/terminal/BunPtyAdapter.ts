@@ -7,7 +7,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as PtyAdapter from "./PtyAdapter.ts";
 
-export class BunPtyUnsupportedPlatformError extends Schema.TaggedErrorClass<BunPtyUnsupportedPlatformError>()(
+export class BunPtyUnsupportedPlatformError extends Schema.TaggedError<BunPtyUnsupportedPlatformError>()(
   "BunPtyUnsupportedPlatformError",
   {
     platform: Schema.Literal("win32"),
@@ -18,7 +18,7 @@ export class BunPtyUnsupportedPlatformError extends Schema.TaggedErrorClass<BunP
   }
 }
 
-export class BunPtyOperationUnavailableError extends Schema.TaggedErrorClass<BunPtyOperationUnavailableError>()(
+export class BunPtyOperationUnavailableError extends Schema.TaggedError<BunPtyOperationUnavailableError>()(
   "BunPtyOperationUnavailableError",
   {
     operation: Schema.Literals(["write", "resize"]),

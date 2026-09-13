@@ -7,14 +7,15 @@ import * as Binding from "../../Binding.ts";
  *
  * Deletes a graph snapshot by id — e.g. a retention Lambda pruning old backups found via {@link ListGraphSnapshots}. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.DeleteGraphSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Prune an old snapshot
+ * ### Managing Snapshots
+ * **Example:** Prune an old snapshot
  * ```typescript
  * const deleteSnapshot = yield* NeptuneGraph.DeleteGraphSnapshot();
  *
  * yield* deleteSnapshot({ snapshotIdentifier });
  * ```
+ *
+ * @binding
  */
 export interface DeleteGraphSnapshot extends Binding.Service<
   DeleteGraphSnapshot,

@@ -42,7 +42,7 @@ const errorTagged = <A, E extends { _tag: string }, R>(
 export default GuardDutyTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {
