@@ -37,7 +37,7 @@ import {
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 
-function SelectionRow(props: {
+export function SelectionRow(props: {
   readonly icon?: "arrow.triangle.branch" | ReactNode;
   readonly onPress: () => void;
   readonly disabled?: boolean;
@@ -111,7 +111,7 @@ function ToggleRow(props: {
   );
 }
 
-function BranchSelectionRow(props: {
+export function BranchSelectionRow(props: {
   readonly badge: string | null;
   readonly branch: VcsRef;
   readonly disabled: boolean;
@@ -142,7 +142,7 @@ function BranchSelectionRow(props: {
   );
 }
 
-function PickerSurface(props: { readonly children: ReactNode }) {
+export function PickerSurface(props: { readonly children: ReactNode }) {
   return <View className="overflow-hidden rounded-2xl bg-card">{props.children}</View>;
 }
 

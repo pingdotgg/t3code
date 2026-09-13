@@ -490,7 +490,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       ),
     ),
   );
-  const continueAfterRestartFor = (projectId: ProjectId) =>
+  const continueAfterRestartFor = (projectId: ProjectId | null) =>
     Option.isSome(restartSettings)
       ? resolveProjectSettings(restartSettings.value, projectId).settings
           .continueThreadsAfterServerUpdate

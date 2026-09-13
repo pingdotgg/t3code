@@ -1,6 +1,12 @@
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
-import { ArchiveIcon, ArchiveX, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  ChevronRightIcon,
+  MessageSquareIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -3135,7 +3141,28 @@ export function ArchivedThreadsPanel() {
         });
       }
     }
-    return groups;
+    if (selectedProjectKeys !== null) return groups;
+    const quickChatGroups = archivedSnapshots.flatMap(({ environmentId, snapshot }) => {
+      const quickChats = snapshot.threads
+        .filter((thread) => thread.projectId === null && thread.archivedAt !== null)
+        .map((thread) => ({ ...thread, environmentId }))
+        .toSorted((left, right) =>
+          (right.archivedAt ?? right.createdAt).localeCompare(left.archivedAt ?? left.createdAt),
+        );
+      return quickChats.length === 0
+        ? []
+        : [
+            {
+              project: {
+                id: null,
+                environmentId,
+                title: "Quick chats",
+              },
+              threads: quickChats,
+            },
+          ];
+    });
+    return [...groups, ...quickChatGroups];
   }, [archivedSnapshots, scope]);
 
   const handleArchivedThreadContextMenu = useCallback(
@@ -3221,7 +3248,13 @@ export function ArchivedThreadsPanel() {
             key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.title}
-            icon={<ProjectFavicon project={project} />}
+            icon={
+              project.id === null ? (
+                <MessageSquareIcon className="size-4" />
+              ) : (
+                <ProjectFavicon project={project} />
+              )
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow

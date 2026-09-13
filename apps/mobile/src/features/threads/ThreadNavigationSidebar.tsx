@@ -297,8 +297,10 @@ function ThreadNavigationSidebarPane(
         ? []
         : selectedProjectRefs === null
           ? threads
-          : threads.filter((thread) =>
-              selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+          : threads.filter(
+              (thread) =>
+                thread.projectId === null ||
+                selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
             ),
     [threadListV2Enabled, selectedProjectRefs, threads],
   );
@@ -516,19 +518,12 @@ function ThreadNavigationSidebarPane(
     snoozeWakeTick,
   ]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled)
-      return {
-        items: [],
-        hiddenSettledCount: 0,
-        snoozedCount: 0,
-        snoozedShelfHeaderIndex: null,
-        settledCount: 0,
-        settledShelfHeaderIndex: null,
-        nextSnoozeWakeAt: null,
-      };
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: threads.filter(
+        (thread) =>
+          thread.archivedAt === null && (threadListV2Enabled || thread.projectId === null),
+      ),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
@@ -575,7 +570,6 @@ function ThreadNavigationSidebarPane(
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
-    if (!threadListV2Enabled) return listLayout.items;
     // Queued offline tasks are not thread shells, so the v2 item builder
     // never sees them; the shared splice puts them below the active block
     // (mirrors the compact Home v2 list) where they stay visible and
@@ -595,7 +589,7 @@ function ThreadNavigationSidebarPane(
     );
     const items: SidebarListItem[] = buildThreadListV2ListItems({
       items: threadListV2Layout.items,
-      pendingTasks: v2PendingTasks,
+      pendingTasks: threadListV2Enabled ? v2PendingTasks : [],
       snoozedCount: threadListV2Layout.snoozedCount,
       snoozedShelfExpanded,
       snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
@@ -611,7 +605,7 @@ function ThreadNavigationSidebarPane(
         hiddenCount: threadListV2Layout.hiddenSettledCount,
       });
     }
-    return items;
+    return threadListV2Enabled ? items : [...listLayout.items, ...items];
   }, [
     listLayout.items,
     nowMinute,
@@ -829,11 +823,13 @@ function ThreadNavigationSidebarPane(
         return previous.count === item.count && previous.expanded === item.expanded;
       }
       if (
+        previous.type === "v2-quick-chats-header" ||
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
         previous.type === "v2-pending" ||
         previous.type === "v2-snoozed-shelf" ||
         previous.type === "v2-settled-shelf" ||
+        item.type === "v2-quick-chats-header" ||
         item.type === "v2-thread" ||
         item.type === "v2-show-more" ||
         item.type === "v2-pending" ||
@@ -889,6 +885,10 @@ function ThreadNavigationSidebarPane(
             />
           );
         }
+        case "v2-quick-chats-header":
+          return (
+            <Text className="px-4 pt-4 pb-2 text-sm font-t3-bold text-foreground">Quick chats</Text>
+          );
         case "v2-thread": {
           const thread = item.item.thread;
           const movePlanner = item.item.pinned
@@ -932,14 +932,21 @@ function ThreadNavigationSidebarPane(
               onArchiveThread={archiveThread}
               onRegenerateThreadTitle={regenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
-              settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
+              settlementSupported={
+                thread.projectId !== null && settlementEnvironmentIds.has(thread.environmentId)
+              }
               onSettleThread={settleThread}
-              snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
-              pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+              snoozeSupported={
+                thread.projectId !== null && snoozeEnvironmentIds.has(thread.environmentId)
+              }
+              pinningSupported={
+                thread.projectId !== null && pinningEnvironmentIds.has(thread.environmentId)
+              }
               reorderSupported={
-                item.item.pinned
+                thread.projectId !== null &&
+                (item.item.pinned
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
-                  : activeReorderEnvironmentIds.has(thread.environmentId)
+                  : activeReorderEnvironmentIds.has(thread.environmentId))
               }
               canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
               canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}

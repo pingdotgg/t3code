@@ -2,7 +2,7 @@ export const DEFAULT_THREAD_TITLE = "New thread";
 
 export function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
   const trimmedCurrentTitle = currentTitle.trim();
-  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
+  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE || trimmedCurrentTitle === "New quick chat") {
     return true;
   }
 

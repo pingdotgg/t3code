@@ -284,6 +284,24 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...args, index: lastIndex })).toEqual(stationary);
   });
 
+  it("keeps quick chats below their measured heading while reordering project rows", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("project-a", "active"),
+      thread("project-b", "active"),
+      marker("quick-chats-header"),
+      thread("quick-chat", "active"),
+      settledHeader,
+    ];
+    const transforms = preview(
+      { items, settledOrder: [], settledExpanded: false },
+      "project-a",
+      "project-b",
+    );
+    expect(transforms.get("quick-chat")).toEqual(stationary);
+    expect(transforms.get(sidebarMarkerId("quick-chats-header"))).toEqual(stationary);
+  });
   const pinned = [
     pinnedHeader,
     thread("p1", "pinned"),

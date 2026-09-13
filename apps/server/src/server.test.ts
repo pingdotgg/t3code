@@ -5507,6 +5507,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves relative media from a quick-chat workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-quick-media-" });
+      const thread = makeDefaultOrchestrationThreadShell({ projectId: null });
+      yield* buildAppUnderTest({
+        config: { stateDir },
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+          },
+        },
+      });
+      const scratch = path.join(
+        stateDir,
+        "quick-chats",
+        Buffer.from(thread.id).toString("base64url"),
+      );
+      yield* fileSystem.makeDirectory(scratch, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(scratch, "plot.png"), "quick chat plot");
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const issued = yield* client[WS_METHODS.assetsCreateUrl]({
+              resource: { _tag: "media-file", threadId: thread.id, path: "plot.png" },
+            });
+            const response = yield* HttpClient.get(issued.relativeUrl);
+            assert.equal(response.status, 200);
+            assert.equal(yield* response.text, "quick chat plot");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves absolute host media without a local thread and rejects relative media", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -8271,6 +8308,107 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.each([undefined, true])(
+    "keeps quick chats compatible with older thread lists (opt in: %s)",
+    (includeQuickChats) =>
+      Effect.gen(function* () {
+        const projectThread = makeDefaultOrchestrationThreadShell();
+        const quickThread = makeDefaultOrchestrationThreadShell({
+          id: ThreadId.make("quick-chat"),
+          projectId: null,
+        });
+        const snapshot = {
+          snapshotSequence: 1,
+          projects: [],
+          threads: [projectThread, quickThread],
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* buildAppUnderTest({
+          layers: {
+            orchestrationEngine: {
+              latestSequence: Effect.succeed(1),
+              readEvents: () =>
+                Stream.make({
+                  sequence: 1,
+                  eventId: EventId.make("quick-chat-title"),
+                  aggregateKind: "thread",
+                  aggregateId: quickThread.id,
+                  occurredAt: snapshot.updatedAt,
+                  commandId: null,
+                  causationEventId: null,
+                  correlationId: null,
+                  metadata: {},
+                  type: "thread.meta-updated",
+                  payload: {
+                    threadId: quickThread.id,
+                    title: "Quick question",
+                    updatedAt: snapshot.updatedAt,
+                  },
+                }),
+            },
+            projectionSnapshotQuery: {
+              getShellSnapshot: () => Effect.succeed(snapshot),
+              getArchivedShellSnapshot: () => Effect.succeed(snapshot),
+              getThreadShellById: () => Effect.succeed(Option.some(quickThread)),
+            },
+          },
+        });
+        const expectedIds = includeQuickChats
+          ? [projectThread.id, quickThread.id]
+          : [projectThread.id];
+        const cookie = yield* getAuthenticatedSessionCookieHeader();
+        const response = yield* HttpClient.get(
+          `/api/orchestration/shell${includeQuickChats ? "?includeQuickChats=true" : ""}`,
+          { headers: { cookie } },
+        );
+        assert.equal(response.status, 200);
+        const httpSnapshot = yield* HttpClientResponse.schemaBodyJson(OrchestrationShellSnapshot)(
+          response,
+        );
+        assert.deepEqual(
+          httpSnapshot.threads.map((thread) => thread.id),
+          expectedIds,
+        );
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const input = includeQuickChats ? { includeQuickChats } : {};
+        const initial = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell](input).pipe(
+              Stream.take(1),
+              Stream.runCollect,
+            ),
+          ),
+        );
+        assertTrue(initial[0]?.kind === "snapshot");
+        assert.deepEqual(
+          initial[0].snapshot.threads.map((thread) => thread.id),
+          expectedIds,
+        );
+        const archived = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot](input),
+          ),
+        );
+        assert.deepEqual(
+          archived.threads.map((thread) => thread.id),
+          expectedIds,
+        );
+        const replay = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+              ...input,
+              afterSequence: 0,
+              requestCompletionMarker: true,
+            }).pipe(Stream.take(2), Stream.runCollect),
+          ),
+        );
+        assert.equal(replay[0]?.kind, includeQuickChats ? "thread-upserted" : "thread-removed");
+        assertTrue(replay[0] !== undefined && "sequence" in replay[0]);
+        assert.equal(replay[0].sequence, 1);
+        assert.deepEqual(replay[1], { kind: "synchronized" });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc orchestration shell snapshot errors", () =>

@@ -1,3 +1,4 @@
+import { QuickChatCreationActions } from "./QuickChatCreationActions";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -102,7 +103,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
         : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  const screenTitle = incomingShare ? "Start a task" : "New thread";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const resumedDestinationKeyRef = useRef<string | null>(null);
   const reservedDestinationProject = incomingShare?.destination
@@ -315,6 +316,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               );
             })}
           </View>
+        )}
+        {!incomingShare && (
+          <QuickChatCreationActions preferredEnvironmentId={selectedEnvironmentId} />
         )}
       </ScrollView>
     </View>

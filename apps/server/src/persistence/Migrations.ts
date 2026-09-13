@@ -1,3 +1,4 @@
+import Migration0052 from "./Migrations/052_QuickChats.ts";
 /**
  * Migration runner with an inline loader.
  *
@@ -126,6 +127,7 @@ const migrationEntries = [
   [49, "ProjectionThreadsActiveOrderKey", Migration0049],
   [50, "ProjectionThreadPullRequests", Migration0050],
   [51, "ProjectionThreadMessageContext", Migration0051],
+  [52, "QuickChats", Migration0052],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

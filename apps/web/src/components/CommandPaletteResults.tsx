@@ -14,7 +14,7 @@ import {
   CommandList,
   CommandShortcut,
 } from "./ui/command";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
@@ -166,7 +166,9 @@ function CommandPaletteResultRow(props: {
 }) {
   const shortcutLabel = props.item.shortcutCommand
     ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
-    : null;
+    : props.item.shortcutKey
+      ? `${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl+"}${props.item.shortcutKey}`
+      : null;
 
   return (
     <CommandItem

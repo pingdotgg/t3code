@@ -1,3 +1,8 @@
+import { makeQuickChatWorkspace } from "./orchestration/quickChatWorkspace.ts";
+import {
+  projectQuickChatShellItem,
+  projectQuickChatShellSnapshot,
+} from "./orchestration/quickChatCompatibility.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -555,6 +560,7 @@ const makeWsRpcLayer = (
       const providerInstallation = yield* makeProviderInstallation();
       const serverUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
+      const quickChatWorkspace = yield* makeQuickChatWorkspace;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -1622,13 +1628,22 @@ const makeWsRpcLayer = (
                 }),
                 synchronizedThenLive,
               );
-            }),
+            }).pipe(
+              Effect.map((stream) =>
+                stream.pipe(
+                  Stream.map((item) => projectQuickChatShellItem(item, input.includeQuickChats)),
+                ),
+              ),
+            ),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
             projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              Effect.map((snapshot) =>
+                projectQuickChatShellSnapshot(snapshot, input.includeQuickChats),
+              ),
               Effect.tapError((cause) =>
                 Effect.logError("orchestration archived shell snapshot load failed", { cause }),
               ),
@@ -2579,6 +2594,12 @@ const makeWsRpcLayer = (
               if (Option.isNone(thread)) {
                 return yield* new AssetWorkspaceContextNotFoundError({
                   resource: input.resource,
+                });
+              }
+              if (thread.value.projectId === null) {
+                return yield* issueAssetUrl({
+                  resource: input.resource,
+                  workspaceRoot: quickChatWorkspace.directory(thread.value.id),
                 });
               }
               const project = yield* projectionSnapshotQuery

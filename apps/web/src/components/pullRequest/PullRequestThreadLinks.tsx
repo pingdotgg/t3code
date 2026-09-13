@@ -198,6 +198,7 @@ function ThreadPicker({
       (thread) =>
         thread.environmentId === environmentId &&
         thread.archivedAt === null &&
+        thread.projectId !== null &&
         `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
           .toLocaleLowerCase()
           .includes(search),
@@ -213,6 +214,7 @@ function ThreadPicker({
           </div>
         ) : (
           candidates.map((thread) => {
+            if (thread.projectId === null) return null;
             const linked = linking.isLinked(thread, url);
             return (
               <CommandItem

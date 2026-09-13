@@ -158,6 +158,7 @@ const main = Effect.gen(function* () {
           }
           const next = new Map<string, RelayAgentActivityState>();
           for (const thread of threads.values()) {
+            if (thread.projectId === null) continue;
             const project = projects.get(thread.projectId);
             if (!project || thread.archivedAt) continue;
             const state = projectThreadAwareness({

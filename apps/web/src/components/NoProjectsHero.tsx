@@ -19,12 +19,19 @@ export function NoProjectsHero() {
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project to start your first thread.
+                Add a project, or start a quick chat from New thread.
               </EmptyDescription>
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex justify-center gap-3">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
                   Add project
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => openCommandPalette({ open: "new-thread-in" })}
+                >
+                  New thread
                 </Button>
               </div>
             </EmptyHeader>

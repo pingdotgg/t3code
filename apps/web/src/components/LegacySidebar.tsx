@@ -1,6 +1,7 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { LegacyQuickChatList } from "./LegacyQuickChatList";
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
@@ -1310,6 +1311,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
     );
     for (const thread of projectThreads) {
+      if (thread.projectId === null) continue;
       const member = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -2249,7 +2251,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (!api) return;
       const threadKey = scopedThreadKey(threadRef);
       const thread = sidebarThreadByKeyRef.current.get(threadKey) ?? null;
-      if (!thread) return;
+      if (!thread || thread.projectId === null) return;
+      const threadProjectRef = scopeProjectRef(thread.environmentId, thread.projectId);
       const threadProject = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
@@ -2283,7 +2286,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         // Explicit branch carry-over: reuse the thread's worktree when it
         // has one, otherwise its branch on the local checkout.
         const result = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
+          handleNewThread(threadProjectRef, {
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             envMode: thread.worktreePath ? "worktree" : "local",
@@ -3046,6 +3049,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             Projects
           </span>
           <div className="flex items-center gap-1">
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              aria-label="New thread"
+              onClick={() => openCommandPalette({ open: "new-thread-in" })}
+            >
+              <SquarePenIcon className="size-3.5" />
+            </Button>
             <div className="group-data-[collapsible=icon]:hidden">
               <ProjectSortMenu
                 projectSortOrder={projectSortOrder}
@@ -3151,6 +3162,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenu>
         )}
 
+        <LegacyQuickChatList />
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-secondary-label text-xs group-data-[collapsible=icon]:hidden">
             No projects yet
@@ -3311,7 +3323,7 @@ export default function LegacySidebar() {
       return null;
     }
     const activeThread = sidebarThreadByKey.get(routeThreadKey);
-    if (!activeThread) return null;
+    if (!activeThread || activeThread.projectId === null) return null;
     const physicalKey =
       projectPhysicalKeyByScopedRef.get(
         scopedProjectKey(scopeProjectRef(activeThread.environmentId, activeThread.projectId)),
@@ -3324,6 +3336,7 @@ export default function LegacySidebar() {
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
     for (const thread of sidebarThreads) {
+      if (thread.projectId === null) continue;
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3454,7 +3467,8 @@ export default function LegacySidebar() {
       ...project,
       id: project.projectKey,
     }));
-    const sortableThreads = visibleThreads.map((thread) => {
+    const sortableThreads = visibleThreads.flatMap((thread) => {
+      if (thread.projectId === null) return [];
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3483,42 +3497,50 @@ export default function LegacySidebar() {
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      sortedProjects.flatMap((project) => {
-        const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
-          sidebarThreadSortOrder,
-        );
-        const projectExpanded = resolveProjectExpanded(
-          projectExpandedById,
-          projectExpansionPreferenceKeys(project),
-        );
-        const activeThreadKey = routeThreadKey ?? undefined;
-        const pinnedCollapsedThread =
-          !projectExpanded && activeThreadKey
-            ? (projectThreads.find(
-                (thread) =>
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
-                  activeThreadKey,
-              ) ?? null)
-            : null;
-        const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
-        if (!shouldShowThreadPanel) {
-          return [];
-        }
-        const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, sidebarThreadPreviewCount);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-        return renderedThreads.map((thread) =>
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        );
-      }),
+      sortedProjects
+        .flatMap((project) => {
+          const projectThreads = sortThreads(
+            (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+              (thread) => thread.archivedAt === null,
+            ),
+            sidebarThreadSortOrder,
+          );
+          const projectExpanded = resolveProjectExpanded(
+            projectExpandedById,
+            projectExpansionPreferenceKeys(project),
+          );
+          const activeThreadKey = routeThreadKey ?? undefined;
+          const pinnedCollapsedThread =
+            !projectExpanded && activeThreadKey
+              ? (projectThreads.find(
+                  (thread) =>
+                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                    activeThreadKey,
+                ) ?? null)
+              : null;
+          const shouldShowThreadPanel = projectExpanded || pinnedCollapsedThread !== null;
+          if (!shouldShowThreadPanel) {
+            return [];
+          }
+          const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
+          const hasOverflowingThreads = projectThreads.length > sidebarThreadPreviewCount;
+          const previewThreads =
+            isThreadListExpanded || !hasOverflowingThreads
+              ? projectThreads
+              : projectThreads.slice(0, sidebarThreadPreviewCount);
+          const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+          return renderedThreads.map((thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          );
+        })
+        .concat(
+          visibleThreads
+            .filter((thread) => thread.projectId === null)
+            .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+            .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+        ),
     [
+      visibleThreads,
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,

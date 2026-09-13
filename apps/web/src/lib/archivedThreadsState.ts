@@ -13,7 +13,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({
     environmentId,
-    input: {},
+    input: { includeQuickChats: true },
   });
 }
 

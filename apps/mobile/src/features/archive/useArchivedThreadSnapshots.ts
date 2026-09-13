@@ -13,7 +13,7 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
   return orchestrationEnvironment.archivedShellSnapshot({
     environmentId,
-    input: {},
+    input: { includeQuickChats: true },
   });
 }
 

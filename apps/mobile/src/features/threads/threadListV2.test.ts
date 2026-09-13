@@ -1478,3 +1478,29 @@ describe("cross-section thread drops", () => {
     ).toEqual({ pin: false, unpin: false, unsettle: false, unsnooze: false });
   });
 });
+
+it("keeps quick chats below project work when a project filter is selected", () => {
+  const projectThread = makeThread({ id: ThreadId.make("project-thread"), title: "Project work" });
+  const quick = makeThread({
+    id: ThreadId.make("quick"),
+    title: "Passkeys",
+    projectId: null,
+    createdAt: "2026-06-02T00:00:00.000Z",
+  });
+  const layout = buildThreadListV2Items({
+    threads: [quick, projectThread],
+    now: NOW,
+    environmentId,
+    projectRefs: [{ environmentId, projectId: ProjectId.make("project-1") }],
+    searchQuery: "",
+  });
+  const rows = buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] });
+  expect(rows.map((row) => (row.type === "v2-thread" ? row.item.thread.id : row.type))).toEqual([
+    projectThread.id,
+    "v2-quick-chats-header",
+    quick.id,
+  ]);
+  expect(
+    getThreadListV2OrderedSection({ threads: [quick, projectThread], section: "active", now: NOW }),
+  ).toEqual([projectThread]);
+});

@@ -282,9 +282,13 @@ export function useThreadActions() {
       opts.onArchived?.();
 
       if (shouldNavigateToDraft) {
-        const navigationResult = await settlePromise(() =>
-          handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
-        );
+        const navigationResult = await settlePromise(async () => {
+          if (thread.projectId === null) await router.navigate({ to: "/" });
+          else
+            await handleNewThreadRef.current(
+              scopeProjectRef(thread.environmentId, thread.projectId),
+            );
+        });
         if (navigationResult._tag === "Failure") {
           return navigationResult;
         }
@@ -293,7 +297,13 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [
+      archiveThreadMutation,
+      getCurrentRouteThreadRef,
+      markThreadVisited,
+      resolveThreadTarget,
+      router,
+    ],
   );
 
   const unarchiveThread = useCallback(
@@ -329,10 +339,8 @@ export function useThreadActions() {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
-      const threadProject = readProject({
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
+      const projectRef = scopeProjectRef(threadRef.environmentId, thread.projectId);
+      const threadProject = projectRef ? readProject(projectRef) : null;
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -407,10 +415,7 @@ export function useThreadActions() {
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       releaseComposerDraftUploads(threadRef);
       clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
+      if (projectRef) clearProjectDraftThreadById(projectRef, threadRef);
       clearTerminalUiState(threadRef);
 
       if (shouldNavigateToFallback) {

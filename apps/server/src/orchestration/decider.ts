@@ -365,11 +365,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      if (command.projectId !== null) {
+        yield* requireProject({ readModel, command, projectId: command.projectId });
+      } else if (command.branch !== null || command.worktreePath !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Quick chats cannot have a branch or worktree before attaching to a project.",
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,
@@ -891,6 +894,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.projectId !== undefined) {
+        const attachmentAt = yield* nowIso;
+        if (
+          thread.projectId !== null ||
+          thread.deletedAt !== null ||
+          thread.archivedAt !== null ||
+          thread.session?.status === "running" ||
+          thread.session?.status === "starting" ||
+          thread.latestTurn?.state === "running" ||
+          openRequests(thread).size > 0 ||
+          hasQueuedTurnStartForThread(thread, attachmentAt)
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Only an idle, unarchived quick chat can be attached to a project.",
+          });
+        }
+        const project = yield* requireProject({ readModel, command, projectId: command.projectId });
+        if (project.deletedAt !== null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "A quick chat cannot be attached to a deleted project.",
+          });
+        }
+      }
+      if (
+        thread.projectId === null &&
+        command.projectId === undefined &&
+        (command.branch != null ||
+          command.worktreePath != null ||
+          command.linkedPullRequest != null)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Attach the quick chat to a project before setting repository metadata.",
+        });
+      }
       // Old clients only see the derived single link. Unlink that request through
       // the same command path as modern clients, including stack dismissal, while
       // retaining other links they cannot see. Historical metadata events still replay unchanged.
@@ -982,6 +1022,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.projectId !== undefined ? { projectId: command.projectId } : {}),
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.regenerateTitle === true
             ? {
@@ -1015,6 +1056,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (thread.projectId === null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Attach the quick chat to a project before linking a pull request.",
+        });
+      }
       const key = normalizeThreadPullRequestKey(command);
       const existing = findPullRequestLink(thread, key);
       // An explicit link on a dismissed stack member un-dismisses it; any

@@ -15,7 +15,7 @@ export type ArchivedThreadSortOrder = "newest" | "oldest";
 
 export interface ArchivedThreadGroup {
   readonly key: string;
-  readonly project: EnvironmentProject;
+  readonly project: EnvironmentProject | null;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
@@ -44,7 +44,7 @@ export function buildArchivedThreadGroups(input: {
     }
 
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
-    const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
+    const threadsByProjectId = new Map<string | null, EnvironmentThreadShell[]>();
     for (const thread of entry.snapshot.threads) {
       if (thread.archivedAt === null) {
         continue;
@@ -53,6 +53,26 @@ export function buildArchivedThreadGroups(input: {
       threads.push(scopeThreadShell(entry.environmentId, thread));
       threadsByProjectId.set(thread.projectId, threads);
     }
+
+    const quickChats = (threadsByProjectId.get(null) ?? [])
+      .filter(
+        (thread) =>
+          query.length === 0 ||
+          query === "quick chats" ||
+          matchesQuery(thread.title, query) ||
+          matchesQuery(environmentLabel, query),
+      )
+      .sort(
+        (left, right) =>
+          (input.sortOrder === "newest" ? -1 : 1) *
+          (archiveTimestamp(left) - archiveTimestamp(right)),
+      );
+    if (quickChats.length > 0)
+      groups.push({
+        key: `${entry.environmentId}:quick-chats`,
+        project: null,
+        threads: quickChats,
+      });
 
     for (const rawProject of entry.snapshot.projects) {
       const project = scopeProject(entry.environmentId, rawProject);
@@ -98,7 +118,7 @@ export function buildArchivedThreadGroups(input: {
       Order.Struct({ timestamp: timestampOrder, title: Order.String, key: Order.String }),
       (group: ArchivedThreadGroup) => ({
         timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
-        title: group.project.title,
+        title: group.project?.title ?? "Quick chats",
         key: group.key,
       }),
     ),

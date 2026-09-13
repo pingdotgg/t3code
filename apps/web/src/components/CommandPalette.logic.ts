@@ -139,6 +139,8 @@ export interface CommandPaletteItem {
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
+  /** Primary-modifier shortcut available only while this item is visible in the palette. */
+  readonly shortcutKey?: string;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -272,7 +274,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);
 
   return visibleThreads.map((thread) => {
-    const projectTitle = input.projectTitleById.get(thread.projectId);
+    const projectTitle =
+      thread.projectId === null ? "Quick chat" : input.projectTitleById.get(thread.projectId);
     const descriptionParts: string[] = [];
 
     if (projectTitle) {

@@ -7,7 +7,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  EnvironmentId,
+  VcsRef,
+  ThreadId,
+  ProjectId,
+} from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon, GitBranchIcon, SearchIcon } from "lucide-react";
 import {
@@ -74,6 +80,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
+  /** Select a workspace for attachment without mutating the current thread or checkout. */
+  selection?: {
+    projectId: ProjectId;
+    value: string | null;
+    mode: "base" | "worktree";
+    disabled: boolean;
+    onSelect: (ref: VcsRef) => void;
+  };
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -93,6 +107,7 @@ function toBranchActionErrorMessage(error: unknown): string {
 
 export function BranchToolbarBranchSelector({
   className,
+  selection,
   environmentId,
   threadId,
   draftId,
@@ -131,19 +146,24 @@ export function BranchToolbarBranchSelector({
   const serverSession = serverThread?.session ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
-  const activeProjectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
+  const activeProjectRef = selection
+    ? scopeProjectRef(environmentId, selection.projectId)
+    : serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
   const activeProject = useProject(activeProjectRef);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
-  const activeThreadBranch =
-    activeThreadBranchOverride !== undefined
+  const activeThreadBranch = selection
+    ? selection.value
+    : activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const activeWorktreePath = selection
+    ? null
+    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
@@ -160,7 +180,7 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null, automatic = false) => {
-      if (!activeThreadId || !activeProject) return;
+      if (selection || !activeThreadId || !activeProject) return;
       if (serverSession && worktreePath !== activeWorktreePath) {
         void stopThreadSession({
           environmentId,
@@ -196,6 +216,7 @@ export function BranchToolbarBranchSelector({
     },
     [
       activeThreadId,
+      selection,
       activeProject,
       serverSession,
       activeWorktreePath,
@@ -255,12 +276,14 @@ export function BranchToolbarBranchSelector({
     [branchStatusQuery.data?.sourceControlProvider],
   );
   const SourceControlIcon = sourceControlPresentation.Icon;
-  const canonicalActiveBranch = resolveBranchToolbarValue({
-    envMode: effectiveEnvMode,
-    activeWorktreePath,
-    activeThreadBranch,
-    currentGitBranch,
-  });
+  const canonicalActiveBranch = selection
+    ? selection.value
+    : resolveBranchToolbarValue({
+        envMode: effectiveEnvMode,
+        activeWorktreePath,
+        activeThreadBranch,
+        currentGitBranch,
+      });
   const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
     () => new Map(refs.map((refName) => [refName.name, refName] as const)),
@@ -272,7 +295,7 @@ export function BranchToolbarBranchSelector({
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
-  const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
+  const canCreateBranch = !selection && !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
   // The ref is created under its sanitized name, so the collision check has to
   // use that name too. Matching on the raw query would offer to create a ref
   // that already exists whenever sanitizing changes the name.
@@ -398,6 +421,11 @@ export function BranchToolbarBranchSelector({
   };
 
   const selectBranch = (refName: VcsRef) => {
+    if (selection) {
+      if (!selection.disabled) selection.onSelect(refName);
+      setIsBranchMenuOpen(false);
+      return;
+    }
     if (!branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
     if (isSelectingWorktreeBase) {
@@ -505,7 +533,14 @@ export function BranchToolbarBranchSelector({
     : (defaultBranchName ?? currentGitBranch);
 
   useEffect(() => {
+    if (selection?.mode !== "base" || selection.value || selection.disabled) return;
+    const candidate = refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current);
+    if (candidate) selection.onSelect(candidate);
+  }, [refs, selection]);
+
+  useEffect(() => {
     if (
+      selection ||
       effectiveEnvMode !== "worktree" ||
       activeWorktreePath ||
       activeThreadBranch ||
@@ -518,6 +553,7 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     activeWorktreePath,
     effectiveEnvMode,
+    selection,
     setThreadBranch,
     worktreeBaseBranchCandidate,
   ]);
@@ -612,13 +648,15 @@ export function BranchToolbarBranchSelector({
     void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
   }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
 
-  const triggerLabel = resolveBranchTriggerLabel({
-    activeWorktreePath,
-    effectiveEnvMode,
-    resolvedActiveBranch,
-    resolvedActiveBranchIsRemote,
-    startFromOrigin,
-  });
+  const triggerLabel = selection
+    ? (selection.value ?? (selection.mode === "base" ? "Select base branch" : "Select worktree"))
+    : resolveBranchTriggerLabel({
+        activeWorktreePath,
+        effectiveEnvMode,
+        resolvedActiveBranch,
+        resolvedActiveBranchIsRemote,
+        startFromOrigin,
+      });
 
   // Branch status is the fallback when this thread has no linked pull requests.
   const branchPrBranch = resolveBranchToolbarPrBranch({
@@ -719,6 +757,10 @@ export function BranchToolbarBranchSelector({
         index={index}
         value={itemValue}
         className="pe-1.5"
+        disabled={
+          selection?.mode === "worktree" &&
+          (!refName.worktreePath || refName.worktreePath === activeProjectCwd)
+        }
         onClick={() => selectBranch(refName)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
@@ -732,6 +774,7 @@ export function BranchToolbarBranchSelector({
 
   return (
     <Combobox
+      disabled={selection?.disabled}
       items={branchPickerItems}
       filteredItems={filteredBranchPickerItems}
       autoHighlight
@@ -772,11 +815,14 @@ export function BranchToolbarBranchSelector({
           onContextMenu={(event) => handleBranchContextMenu(event, resolvedActiveBranch)}
         >
           <ComboboxTrigger
+            aria-label={
+              selection ? (selection.mode === "base" ? "Base branch" : "Worktree") : undefined
+            }
             render={<Button variant="ghost" size="xs" />}
             // No press-scale: the popup aligns live to this trigger, so a
             // momentary 0.97 shrink would drag the open popup ~3px sideways.
             className="min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80 active:scale-100"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+            disabled={selection?.disabled || isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
             <span
