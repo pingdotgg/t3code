@@ -232,6 +232,16 @@ export function createSidebarSortingStrategy(input: {
   };
 }
 
+/** Hide the dragged task's children without changing its saved expansion state. */
+export function collapseDraggedTask(items: readonly TaskSidebarItem[], activeKey: string | null) {
+  const active = items.find((item) => taskSidebarItemId(item) === activeKey);
+  if (active?.kind !== "task") return items;
+  return items.flatMap<TaskSidebarItem>((item) => {
+    if (item === active) return [{ ...item, expanded: false }];
+    return "taskKey" in item && item.taskKey === active.taskKey ? [] : [item];
+  });
+}
+
 /** Expanded task children occupy the same moving block as their header. Measured
  * row heights include drafts and sub-shelves, so no child can be orphaned by a gap. */
 export function createTaskSidebarSortingStrategy(input: {

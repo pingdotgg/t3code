@@ -17,7 +17,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import type { SortableThreadRowBag } from "../Sidebar";
-import { createTaskSidebarSortingStrategy } from "../Sidebar.drag";
+import { collapseDraggedTask, createTaskSidebarSortingStrategy } from "../Sidebar.drag";
 import { animateSidebarLayoutChanges, type SidebarSection } from "../Sidebar.logic";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "../Sidebar.pointer";
 import { resolveTaskSidebarDrop, taskSidebarItemId, type TaskSidebarItem } from "../Sidebar.tasks";
@@ -90,6 +90,10 @@ export function TaskSidebar(props: {
   const setSettledExpanded = useUiStateStore((state) => state.setTaskSettledExpanded);
   const [dragging, setDragging] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const items = useMemo(
+    () => collapseDraggedTask(model.items, activeKey),
+    [model.items, activeKey],
+  );
   const [targetKey, setTargetKey] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [placement, setPlacement] = useState<"on" | "before" | "after">("on");
@@ -135,19 +139,18 @@ export function TaskSidebar(props: {
           : "on";
       placementRef.current = next;
       const intent = resolveTaskSidebarDrop(
-        model.items,
+        items,
         String(args.active.id),
         String(nearest.id),
         next,
       );
       return intent ? collisions : collisions.filter((entry) => entry.id === args.active.id);
     },
-    [model.items],
+    [items],
   );
   const strategy = useMemo(
-    () =>
-      createTaskSidebarSortingStrategy({ items: model.items, placement, activeOffsetY: offset }),
-    [model.items, placement, offset],
+    () => createTaskSidebarSortingStrategy({ items, placement, activeOffsetY: offset }),
+    [items, placement, offset],
   );
   const threadByKey = useMemo(
     () =>
@@ -176,7 +179,7 @@ export function TaskSidebar(props: {
       onDragEnd={(event) => {
         if (!event.over) return;
         const intent = resolveTaskSidebarDrop(
-          model.items,
+          items,
           String(event.active.id),
           String(event.over.id),
           placementRef.current,
@@ -185,14 +188,14 @@ export function TaskSidebar(props: {
       }}
     >
       <SidebarDragLifecycle onUnmount={cancel} />
-      <SortableContext items={model.items.map(taskSidebarItemId)} strategy={strategy}>
+      <SortableContext items={items.map(taskSidebarItemId)} strategy={strategy}>
         <ul
           id={props.searching ? "sidebar-thread-search-results" : undefined}
           role={props.searching ? "listbox" : "list"}
           aria-label={props.searching ? "Task and thread search results" : "Tasks and threads"}
           className="relative flex flex-col gap-px"
         >
-          {model.items.map((item) => (
+          {items.map((item) => (
             <SortableItem
               key={taskSidebarItemId(item)}
               item={item}

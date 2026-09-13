@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { closestCenter, type CollisionDetection } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
+  collapseDraggedTask,
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
   createTaskSidebarSortingStrategy,
@@ -875,6 +876,41 @@ describe("task block drag projection", () => {
       activeNodeRect: rects[activeIndex]!,
     } satisfies Parameters<SortingStrategy>[0];
   }
+  it("collapses all dragged task children and restores the original inventory after dragging", () => {
+    const visible = collapseDraggedTask(items, "task");
+    expect(visible.map(taskSidebarItemId)).toEqual(["task", "free"]);
+    expect(visible[0]).toMatchObject({ expanded: false });
+    expect(items[0]).toMatchObject({ expanded: true });
+    expect(collapseDraggedTask(items, null)).toBe(items);
+  });
+  it("keeps an already collapsed task collapsed after dragging, including retained selected rows", () => {
+    const collapsed = items.flatMap<TaskSidebarItem>((item) => {
+      if (item.kind === "task") return [{ ...item, expanded: false }];
+      return ["member", "free"].includes(taskSidebarItemId(item)) ? [item] : [];
+    });
+    expect(collapseDraggedTask(collapsed, "task").map(taskSidebarItemId)).toEqual(["task", "free"]);
+    expect(collapseDraggedTask(collapsed, null)).toBe(collapsed);
+    expect(collapsed[0]).toMatchObject({ expanded: false });
+  });
+  it("leaves task expansion alone when dragging a member or an unrelated thread", () => {
+    for (const active of ["member", "free", "missing"]) {
+      expect(collapseDraggedTask(items, active)).toBe(items);
+    }
+  });
+  it.each([1, 2])("reserves only the dragged task card at scale %s", (scale) => {
+    const visible = collapseDraggedTask(items, "task");
+    const strategy = createTaskSidebarSortingStrategy({ items: visible, placement: "after" });
+    const rects = [0, 1].map((index) => ({
+      top: 100 + index * 82 * scale,
+      bottom: 100 + (index + 1) * 82 * scale,
+      height: 82 * scale,
+      left: 0,
+      right: 260,
+      width: 260,
+    }));
+    const args = { rects, activeIndex: 0, overIndex: 1, activeNodeRect: rects[0]! };
+    expect(strategy({ ...args, index: 1 })).toEqual({ ...stationary, y: -82 * scale });
+  });
   it.each([1, 2])(
     "moves the complete expanded block with measured structural geometry at scale %s",
     (scale) => {
