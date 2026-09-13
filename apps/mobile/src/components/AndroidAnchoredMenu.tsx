@@ -125,7 +125,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     return () => subscription.remove();
   }, [anchor, close, submenuDepth]);
 
-  const parent = path.length > 0 ? path[path.length - 1] : null;
+  const parent = path[path.length - 1] ?? null;
   const levelActions = (parent?.subactions ?? props.actions).filter(
     (action) => !(action.attributes?.hidden ?? false),
   );

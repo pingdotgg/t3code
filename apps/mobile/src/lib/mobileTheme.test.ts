@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES, T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
 import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
 
 import {
@@ -49,7 +49,7 @@ function compositeOver(overlay: string, background: string): string {
 
 describe("mobile themes", () => {
   it("declares every runtime theme variable in the static stylesheet", () => {
-    const generatedVariables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
+    const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(
       Object.keys(generatedVariables).sort(),
     );
@@ -152,16 +152,16 @@ describe("mobile themes", () => {
   });
 
   it("maps semantic palette roles onto every mobile color variable", () => {
-    const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
+    const variables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(variables)).toHaveLength(75);
     expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.chrome),
     );
     expect(variables["--color-warning"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.warningSurface),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningSurface),
     );
     expect(variables["--color-warning-foreground"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.warningForeground),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningForeground),
     );
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");
